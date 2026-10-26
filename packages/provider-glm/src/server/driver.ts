@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { GlmSettings } from "../settings.ts";
+import { readGlmPromptFailure } from "./promptFailure.ts";
 import { readGlmUsageLimits } from "./usageLimits.ts";
 
 export type GlmDriverEnv =
@@ -45,6 +46,14 @@ export const GlmDriver: ProviderDriver<GlmSettings, GlmDriverEnv> = {
       displayName: "GLM Agent",
       // Keep imported native item IDs stable across the ACP Registry migration.
       itemIdentityDriver: ProviderDriverKind.make("acpRegistry"),
+      resolvePromptFailure: (cause, environment) =>
+        readGlmPromptFailure({ cause, environment }).pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HttpClient.HttpClient, client),
+        ),
       readUsageLimits: (environment) =>
         readGlmUsageLimits({ enabled: input.enabled, environment }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),

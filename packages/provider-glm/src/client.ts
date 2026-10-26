@@ -16,6 +16,7 @@ export const glmClient = defineProviderClient({
       name: "ACP_GLM_BASE_URL",
       label: "Coding Plan endpoint",
       placeholder: "https://api.z.ai/api/coding/paas/v4",
+      sensitive: false,
     },
   ],
   icon: {

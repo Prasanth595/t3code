@@ -454,13 +454,18 @@ export interface AcpRegistryDriverOptions {
   readonly readUsageLimits?: (
     environment: NodeJS.ProcessEnv,
   ) => Effect.Effect<ServerProviderUsageLimits | undefined>;
+  readonly resolvePromptFailure?: Parameters<typeof makeAcpRegistryAdapterV2Driver>[2];
 }
 
 function makeAcpRegistryDriverCreate(
   options: AcpRegistryDriverOptions,
 ): ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv>["create"] {
   const { driverKind } = options;
-  const adapterDriver = makeAcpRegistryAdapterV2Driver(driverKind, options.itemIdentityDriver);
+  const adapterDriver = makeAcpRegistryAdapterV2Driver(
+    driverKind,
+    options.itemIdentityDriver,
+    options.resolvePromptFailure,
+  );
   const maintenance = makeManualOnlyProviderMaintenanceCapabilities({
     provider: driverKind,
     packageName: null,
@@ -572,8 +577,10 @@ function makeAcpRegistryDriverCreate(
             }),
           );
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const checkProviderReadiness = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+    );
+    const checkProvider = checkProviderReadiness.pipe(
       Effect.flatMap(
         Effect.fn("AcpRegistryDriver.readUsageLimits")(function* (provider) {
           if (!provider.installed || options.readUsageLimits === undefined) return provider;
@@ -646,7 +653,7 @@ function makeAcpRegistryDriverCreate(
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => checkProvider,
+      initialSnapshot: () => checkProviderReadiness.pipe(Effect.flatMap(withLiveRuntimeState)),
       checkProvider,
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,

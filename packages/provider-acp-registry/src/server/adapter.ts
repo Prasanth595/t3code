@@ -64,10 +64,12 @@ export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_R
 
 const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+const decodeErrorDetails = Schema.decodeUnknownOption(Schema.Struct({ details: Schema.String }));
 
 export interface AcpRegistryAdapterV2Options {
   readonly driverKind?: ProviderDriverKind;
   readonly itemIdentityDriver?: ProviderDriverKind;
+  readonly resolvePromptFailure?: AcpAdapterV2Flavor["resolvePromptFailure"];
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -116,14 +118,29 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
 }
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  const details = isAcpRequestError(cause) ? decodeErrorDetails(cause.data) : Option.none();
+  const glmMessage =
+    agentId === "glm-acp-agent" &&
+    isAcpRequestError(cause) &&
+    (cause.code === 429 || cause.code === -32603)
+      ? Option.isSome(details)
+        ? details.value.details
+        : cause.errorMessage
+      : undefined;
+  const glmLimit =
+    glmMessage !== undefined &&
+    /^429\s+Usage limit reached for\s+[^\n]+\. Your limit will reset at\s+\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/iu.test(
+      glmMessage,
+    );
   return makeProviderFailure({
     cause,
+    ...(glmLimit ? { retryable: true } : {}),
     ...(isAcpRequestError(cause)
       ? {
-          message: cause.errorMessage,
+          message: glmLimit ? glmMessage : cause.errorMessage,
           code: String(cause.code),
           class:
-            agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
+            glmLimit || (agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED)
               ? ("usage_limit" as const)
               : ("provider_error" as const),
         }
@@ -218,6 +235,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     capabilities: AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
+    ...(options.resolvePromptFailure === undefined
+      ? {}
+      : { resolvePromptFailure: options.resolvePromptFailure }),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
       : {}),
@@ -315,6 +335,10 @@ export type AcpRegistryAdapterV2DriverEnv =
 export function makeAcpRegistryAdapterV2Driver(
   driverKind: ProviderDriverKind,
   itemIdentityDriver?: ProviderDriverKind,
+  resolvePromptFailure?: (
+    cause: unknown,
+    environment: NodeJS.ProcessEnv,
+  ) => ReturnType<NonNullable<AcpAdapterV2Flavor["resolvePromptFailure"]>>,
 ): ProviderAdapterDriver<AcpRegistrySettings, AcpRegistryAdapterV2DriverEnv> {
   return {
     driverKind,
@@ -326,12 +350,21 @@ export function makeAcpRegistryAdapterV2Driver(
         const selfInvocation = yield* resolveSelfInvocation();
         const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
         const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+        const environment = yield* mergeProviderInstanceEnvironment(
+          input.environment,
+          hostEnvironment,
+        );
         return yield* makeAcpRegistryAdapterV2({
           driverKind,
           ...(itemIdentityDriver === undefined ? {} : { itemIdentityDriver }),
           instanceId: input.instanceId,
           settings: { ...input.config, enabled: input.enabled },
-          environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+          environment,
+          ...(resolvePromptFailure === undefined
+            ? {}
+            : {
+                resolvePromptFailure: (cause: unknown) => resolvePromptFailure(cause, environment),
+              }),
           selfInvocation,
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
           nativeLogging: (threadId) =>

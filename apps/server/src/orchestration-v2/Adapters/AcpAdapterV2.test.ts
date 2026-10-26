@@ -29,6 +29,7 @@ import {
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
+import { makeGlmAdapterV2, readGlmPromptFailure } from "@t3tools/provider-glm/testing";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deriveBlockedOnThreadWait } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -49,6 +50,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
@@ -97,6 +100,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const GLM_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "glm-acp-agent" });
 
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
@@ -795,6 +799,150 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(Option.getOrThrow(terminal).status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each(["rpc", "idle", "interrupted", "interrupted-idle"] as const)(
+    "resolves GLM quota resets through the %s prompt outcome",
+    (outcome) =>
+      Effect.gen(function* () {
+        const interrupted = outcome.startsWith("interrupted");
+        const path = yield* Path.Path;
+        const requested = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        const resetAt = "2100-10-27T03:41:01.000Z";
+        const message =
+          "429 Usage limit reached for 5 hour. Your limit will reset at 2100-10-27 05:41:01";
+        const error = { code: -32603, message: "Internal error", data: { details: message } };
+        const client = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(requested, undefined);
+            yield* Deferred.await(release);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                code: 200,
+                success: true,
+                data: {
+                  limits: [
+                    {
+                      type: "CREDIT_LIMIT",
+                      unit: 3,
+                      number: 5,
+                      percentage: 100,
+                      nextResetTime: Date.parse(resetAt),
+                    },
+                  ],
+                },
+              }),
+            );
+          }),
+        );
+        const instanceId = ProviderInstanceId.make(`glm-limit-${outcome}`);
+        const threadId = ThreadId.make(`thread-glm-limit-${outcome}`);
+        const adapter = yield* makeGlmAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          settings: GLM_SETTINGS,
+          environment: { Z_AI_API_KEY: "fixture-key" },
+          resolvePromptFailure: (cause) =>
+            readGlmPromptFailure({
+              cause,
+              environment: { Z_AI_API_KEY: "fixture-key" },
+            }).pipe(
+              Effect.provide(NodeServices.layer),
+              Effect.provideService(HostProcess.HomeDirectory, "/unused-glm-home"),
+              Effect.provideService(HttpClient.HttpClient, client),
+            ),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              cancel: runtime.cancel.pipe(Effect.andThen(Deferred.succeed(cancelled, undefined))),
+              prompt: () =>
+                outcome.endsWith("idle")
+                  ? Effect.succeed({ stopReason: "error" as const, error })
+                  : Effect.fail(
+                      new EffectAcpErrors.AcpRequestError({
+                        code: error.code,
+                        errorMessage: error.message,
+                        data: error.data,
+                      }),
+                    ),
+            }),
+          }),
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistryCatalog)({
+              resolve: () => Effect.die("runtime is injected"),
+            }),
+          ),
+        );
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-glm-limit-${outcome}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        yield* Deferred.await(requested);
+        const interrupt = interrupted
+          ? yield* Effect.gen(function* () {
+              const started = Option.getOrThrow(
+                yield* runtime.events.pipe(
+                  Stream.filter((event) => event.type === "provider_turn.updated"),
+                  Stream.runHead,
+                ),
+              );
+              const fiber = yield* runtime
+                .interruptTurn({
+                  providerThread,
+                  providerTurnId: started.providerTurn.id,
+                })
+                .pipe(Effect.forkScoped);
+              yield* Deferred.await(cancelled);
+              return fiber;
+            })
+          : undefined;
+        yield* Deferred.succeed(release, undefined);
+        if (interrupt) yield* Fiber.join(interrupt);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.isDefined(terminal);
+        if (terminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.status, interrupted ? "interrupted" : "failed");
+        if (interrupted) {
+          assert.isNull(terminal.failure);
+        } else {
+          assert.equal(terminal.failure?.class, "usage_limit");
+          assert.equal(terminal.failure?.resetAt, resetAt);
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live.each(["failed", "recovered", "cancelled"] as const)(

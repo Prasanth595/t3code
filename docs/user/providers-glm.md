@@ -32,6 +32,11 @@ BigModel Coding Plan endpoints are supported; a custom proxy does not report lim
 Limits after changing the key or account. Session history is not included in Usage's cost and
 token totals.
 
+To continue automatically after a Coding Plan limit resets, enable **Resume after usage limits**
+in **Settings → General** (mobile: **Settings → Thread behavior**), or choose **Resume at reset**
+on a limited thread. T3 Code uses the quota API's reset time. If that time is unavailable, retry
+manually; the timezone-free timestamp in GLM Agent's error is not used to schedule a resume.
+
 ## Models, permissions, and checkpoints
 
 Models and options come from GLM Agent. Add unlisted model IDs under **Custom models** in the

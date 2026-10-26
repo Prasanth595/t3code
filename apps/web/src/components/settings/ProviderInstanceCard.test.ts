@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ServerProviderModel } from "@t3tools/contracts";
+import { glmClient } from "@t3tools/provider-glm/client";
 
 import {
   deriveProviderModelsForDisplay,
@@ -44,6 +45,28 @@ describe("provider environment helpers", () => {
     label: "Cursor API key",
     sensitive: true,
   };
+
+  it("saves GLM endpoints as visible values while retaining the sensitive API key", () => {
+    const field = glmClient.environmentFields?.find((field) => field.name === "ACP_GLM_BASE_URL");
+    expect(field).toBeDefined();
+    expect(
+      nextProviderEnvironmentWithFieldValue(
+        [
+          { name: "Z_AI_API_KEY", value: "", sensitive: true, valueRedacted: true },
+          { name: "ACP_GLM_BASE_URL", value: "", sensitive: true, valueRedacted: true },
+        ],
+        field!,
+        "  https://open.bigmodel.cn/api/coding/paas/v4  ",
+      ),
+    ).toEqual([
+      { name: "Z_AI_API_KEY", value: "", sensitive: true, valueRedacted: true },
+      {
+        name: "ACP_GLM_BASE_URL",
+        value: "https://open.bigmodel.cn/api/coding/paas/v4",
+        sensitive: false,
+      },
+    ]);
+  });
 
   it("writes dedicated provider secrets as sensitive environment variables", () => {
     expect(

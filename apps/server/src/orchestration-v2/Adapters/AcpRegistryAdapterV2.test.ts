@@ -412,6 +412,38 @@ const claudeUnrelatedChildren = [
 ];
 
 describe("AcpRegistryAdapterV2", () => {
+  it("recognizes GLM Coding Plan stops inside the ACP SDK error details", () => {
+    const message =
+      "429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-27 05:41:01";
+    const error = new EffectAcpErrors.AcpRequestError({
+      code: -32603,
+      errorMessage: "Internal error",
+      data: { details: message },
+    });
+    assert.deepEqual(acpRegistryPromptFailure("glm-acp-agent", error), {
+      class: "usage_limit",
+      message,
+      code: "-32603",
+      retryable: true,
+    });
+    assert.equal(acpRegistryPromptFailure("other-agent", error).class, "provider_error");
+    assert.equal(
+      acpRegistryPromptFailure("glm-acp-agent", new Error(message)).class,
+      "provider_error",
+    );
+    assert.equal(
+      acpRegistryPromptFailure(
+        "glm-acp-agent",
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "Internal error",
+          data: { details: `The model quoted: ${message}` },
+        }),
+      ).class,
+      "provider_error",
+    );
+  });
+
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
     const limit = new EffectAcpErrors.AcpRequestError({
       code: -31001,

@@ -11,6 +11,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -139,6 +140,49 @@ const setup = Effect.fn("test.setupGlmDriver")(function* () {
 });
 
 it.layer(layerTest)("GlmDriver", (it) => {
+  it.effect("creates while the initial quota refresh is pending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* setup();
+        const requested = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = HttpClient.make((request) =>
+          Deferred.succeed(requested, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(fixture.client.execute(request)),
+          ),
+        );
+        const instance = yield* GlmDriver.create({
+          instanceId: ProviderInstanceId.make("glm_startup"),
+          displayName: undefined,
+          enabled: true,
+          environment: [{ name: "Z_AI_API_KEY", value: "instance-key", sensitive: true }],
+          config: GlmDriver.defaultConfig(),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
+          Effect.provideService(HostProcess.Environment, fixture.environment),
+          Effect.provideService(HostProcess.HomeDirectory, fixture.home),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+        yield* Deferred.await(requested);
+        expect((yield* instance.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        expect(fixture.requests).toEqual([]);
+        const refreshed = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.usageLimits !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        const published = Option.getOrThrow(yield* Fiber.join(refreshed));
+        expect(fixture.requests).toHaveLength(1);
+        expect(published.usageLimits?.windows[0]?.usedPercent).toBe(11);
+        expect((yield* instance.snapshot.refresh).usageLimits?.windows[0]?.usedPercent).toBe(12);
+        expect(fixture.requests).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("refreshes instance quota even while ACP discovery is cached", () =>
     Effect.scoped(
       Effect.gen(function* () {

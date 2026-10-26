@@ -223,6 +223,7 @@ export interface AcpAdapterV2Flavor {
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly resolvePromptFailure?: (cause: unknown) => Effect.Effect<OrchestrationV2ProviderFailure>;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
    * so a rewrite can turn the user's text into a native command.
@@ -4397,19 +4398,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const resolvePromptFailure = (cause: unknown, fallback: OrchestrationV2ProviderFailure) =>
+          flavor.resolvePromptFailure?.(cause) ??
+          Effect.succeed(flavor.promptFailure?.(cause) ?? fallback);
+
         const idleErrorFailure = (error: EffectAcpSchema.PromptResponse["error"]) =>
-          flavor.promptFailure?.(
+          resolvePromptFailure(
             new EffectAcpErrors.AcpRequestError({
               code: error?.code ?? -32603,
               errorMessage: error?.message ?? "Provider turn failed.",
               ...(error?.data === undefined ? {} : { data: error.data }),
             }),
-          ) ??
-          makeProviderFailure({
-            message: error?.message,
-            code: error == null ? null : String(error.code),
-            class: "provider_error",
-          });
+            makeProviderFailure({
+              message: error?.message,
+              code: error == null ? null : String(error.code),
+              class: "provider_error",
+            }),
+          );
 
         const settleIdleWork = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -4427,7 +4432,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (work.stopReason === "cancelled" && pendingStopCloseTurn === context) {
             context.interrupted = true;
           }
-          const failure = work.stopReason === "error" ? idleErrorFailure(work.error) : undefined;
+          const failure =
+            work.stopReason === "error" ? yield* idleErrorFailure(work.error) : undefined;
           yield* finalizeTurn(
             context,
             failure !== undefined
@@ -7542,6 +7548,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
               ),
               Effect.flatMap((result) =>
+                Effect.gen(function* () {
+                  const failure =
+                    result.stopReason === "error"
+                      ? yield* idleErrorFailure(result.error)
+                      : undefined;
+                  return { result, failure };
+                }),
+              ),
+              Effect.flatMap(({ result, failure }) =>
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
@@ -7567,7 +7582,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       yield* terminalizeOpenForegroundTools(context, "failed");
                       // Unlike an RPC failure, the agent survives an idle error, so its
                       // background tools and subagents keep reporting to this run.
-                      yield* finalizeTurn(context, "failed", idleErrorFailure(result.error), {
+                      yield* finalizeTurn(context, "failed", failure, {
                         childTurnsContinue: hasSurvivingBackgroundWork(context),
                       });
                       return;
@@ -7588,39 +7603,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ).pipe(Effect.asVoid),
               ),
               Effect.catchCause((cause) =>
-                runRuntimeCallbackAtGeneration(
-                  promptGeneration,
-                  Effect.gen(function* () {
-                    if (context.finalized) return;
-                    const error = Cause.findError(cause);
-                    // Native close rejects prompts cancelled before insertion with -32800.
-                    const interrupted =
-                      context.interrupted ||
-                      (pendingStopCloseTurn === context &&
-                        Result.isSuccess(error) &&
-                        error.success._tag === "AcpRequestError" &&
-                        error.success.code === -32800);
-                    yield* finalizeTurn(
-                      context,
-                      interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
-                        makeProviderFailure({
-                          cause: Cause.squash(cause),
-                          class: "provider_error",
-                        }),
-                    ).pipe(
-                      Effect.andThen(
-                        Effect.logWarning("orchestration-v2.acp-prompt-failed", {
-                          driver,
-                          providerSessionId: input.providerSessionId,
-                          providerThreadId: turnInput.providerThread.id,
-                          providerTurnId,
-                          cause,
-                        }),
-                      ),
-                    );
-                  }),
-                ).pipe(Effect.asVoid),
+                resolvePromptFailure(
+                  Cause.squash(cause),
+                  makeProviderFailure({ cause: Cause.squash(cause), class: "provider_error" }),
+                ).pipe(
+                  Effect.flatMap((failure) =>
+                    runRuntimeCallbackAtGeneration(
+                      promptGeneration,
+                      Effect.gen(function* () {
+                        if (context.finalized) return;
+                        const error = Cause.findError(cause);
+                        // Native close rejects prompts cancelled before insertion with -32800.
+                        const interrupted =
+                          context.interrupted ||
+                          (pendingStopCloseTurn === context &&
+                            Result.isSuccess(error) &&
+                            error.success._tag === "AcpRequestError" &&
+                            error.success.code === -32800);
+                        yield* finalizeTurn(
+                          context,
+                          interrupted ? "interrupted" : "failed",
+                          failure,
+                        ).pipe(
+                          Effect.andThen(
+                            Effect.logWarning("orchestration-v2.acp-prompt-failed", {
+                              driver,
+                              providerSessionId: input.providerSessionId,
+                              providerThreadId: turnInput.providerThread.id,
+                              providerTurnId,
+                              cause,
+                            }),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                  Effect.asVoid,
+                ),
               ),
               Effect.forkIn(sessionScope),
             );

@@ -1,6 +1,8 @@
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { makeAcpRegistryAdapterV2 } from "@t3tools/provider-acp-registry/testing";
 
+export { readGlmPromptFailure } from "./server/promptFailure.ts";
+
 export const GLM_PROVIDER = ProviderDriverKind.make("glm");
 export const GLM_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GLM_PROVIDER);
 

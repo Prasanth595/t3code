@@ -1589,7 +1589,7 @@ export const layerWsRpc = (
               });
             }
             const threadId = importedAcpThreadId({
-              driver: instance.driverKind,
+              driver: manager.identityDriver ?? instance.driverKind,
               instanceId: input.instanceId,
               sessionId: input.sessionId,
             });
