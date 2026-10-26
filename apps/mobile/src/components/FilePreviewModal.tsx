@@ -53,7 +53,7 @@ async function resolvePreviewItem(
   }
   if (!("environmentId" in item)) return { source: { ...item, name } };
   // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
-  const url = await refreshAssetUrl(item.environmentId, item.resource)
+  const url = await refreshAssetUrl(item.environmentId, item.resource, signal)
     .then((value) => {
       if (!value) throw new Error("Reconnect to this environment and try again.");
       return value;

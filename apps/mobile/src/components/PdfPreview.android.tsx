@@ -18,7 +18,17 @@ const preparedPdfAtom = Atom.family((uri: string) =>
     // stays interruptible so closing the viewer aborts the download.
     Effect.acquireRelease(
       Effect.tryPromise({
-        try: (signal) => preparePdfPreview(uri, signal),
+        try: (signal) => {
+          const prepared = preparePdfPreview(uri, signal);
+          // An interrupt can land after the copy exists but before acquireRelease owns it.
+          signal.addEventListener("abort", () => {
+            void prepared.then(
+              (file) => file?.dispose(),
+              () => undefined,
+            );
+          });
+          return prepared;
+        },
         catch: (cause) => (cause instanceof Error ? cause.message : "The PDF could not be loaded."),
       }).pipe(
         Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file))),
