@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { TimelineEntry } from "../../session-logic";
 import {
   type CitedThreadSnapshot,
+  citedThreadSnapshot,
   loadCitedHistory,
   resolveCitationPhase,
 } from "./citationProcedure";
@@ -96,6 +97,37 @@ describe("loadCitedHistory", () => {
     const outcome = history.run();
     history.controller.abort();
     await expect(outcome).resolves.toEqual({ _tag: "aborted" });
+  });
+});
+
+describe("citedThreadSnapshot", () => {
+  const settledHistory = {
+    historyCursor: null,
+    hasMoreHistory: false,
+    loading: false,
+    error: null,
+    expanded: false,
+    latestLocalTurnOrdinal: null,
+  };
+  const unloaded = {
+    thread: null,
+    history: settledHistory,
+    status: "synchronizing",
+    error: null,
+    messageId: "cited",
+  } satisfies Parameters<typeof citedThreadSnapshot>[0];
+
+  it("keeps waiting while a thread that has not loaded yet is still synchronizing", () => {
+    expect(citedThreadSnapshot(unloaded)).toBeNull();
+  });
+
+  it("fails the citation when the thread could not load at all", async () => {
+    const snapshot = citedThreadSnapshot({ ...unloaded, error: "Thread not found." });
+    expect(snapshot).not.toBeNull();
+    await expect(scriptedHistory([snapshot]).run()).resolves.toMatchObject({
+      _tag: "failed",
+      title: "Could not load the cited response",
+    });
   });
 });
 

@@ -22,6 +22,7 @@ export type CitationPhase =
 export interface CitedThreadSnapshot {
   readonly message: "assistant" | "other" | null;
   readonly hasMoreHistory: boolean;
+  readonly loadFailed?: true;
 }
 
 export type CitedHistoryOutcome =
@@ -62,6 +63,7 @@ export async function loadCitedHistory(input: {
   for (let attempts = 0; ; attempts += 1) {
     const thread = await input.readThread();
     if (thread === null || input.signal.aborted) return { _tag: "aborted" };
+    if (thread.loadFailed) return COULD_NOT_LOAD;
     if (thread.message === "assistant") return { _tag: "found" };
     if (thread.message === "other") {
       return {
@@ -100,6 +102,39 @@ export function resolveCitationPhase(input: {
   );
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
+}
+
+type ThreadDetail<K extends keyof typeof environmentThreadDetails> = Atom.Type<
+  ReturnType<(typeof environmentThreadDetails)[K]>
+>;
+
+/**
+ * The cited thread as `loadCitedHistory` reads it, or null while it is still
+ * settling. A thread that failed to load before any projection arrived counts
+ * as settled, so the citation fails instead of waiting on the stream's retries.
+ */
+export function citedThreadSnapshot(input: {
+  readonly thread: ThreadDetail<"quietThreadAtom">;
+  readonly history: ThreadDetail<"historyAtom">;
+  readonly status: ThreadDetail<"statusAtom">;
+  readonly error: ThreadDetail<"errorAtom">;
+  readonly messageId: string;
+}): CitedThreadSnapshot | null {
+  if (input.history.loading) return null;
+  if (input.thread === null) {
+    if (input.status === "deleted") return { message: null, hasMoreHistory: false };
+    return input.error === null ? null : { message: null, hasMoreHistory: false, loadFailed: true };
+  }
+  // Older pages merge into the visible turn items, not the message list.
+  const item = input.thread.projection.visibleTurnItems.find(
+    (row) =>
+      (row.item.type === "assistant_message" || row.item.type === "user_message") &&
+      row.item.messageId === input.messageId,
+  )?.item;
+  return {
+    message: item === undefined ? null : item.type === "assistant_message" ? "assistant" : "other",
+    hasMoreHistory: input.history.hasMoreHistory,
+  };
 }
 
 interface CitedHistoryKey {
@@ -146,26 +181,16 @@ const citedHistoryAtom = Atom.family(
     const threadAtom = environmentThreadDetails.quietThreadAtom(ref);
     const historyAtom = environmentThreadDetails.historyAtom(ref);
     const statusAtom = environmentThreadDetails.statusAtom(ref);
-    const settledThreadAtom = Atom.make((get): CitedThreadSnapshot | null => {
-      const thread = get(threadAtom);
-      const history = get(historyAtom);
-      const status = get(statusAtom);
-      if (history.loading) return null;
-      if (thread === null) {
-        return status === "deleted" ? { message: null, hasMoreHistory: false } : null;
-      }
-      // Older pages merge into the visible turn items, not the message list.
-      const item = thread.projection.visibleTurnItems.find(
-        (row) =>
-          (row.item.type === "assistant_message" || row.item.type === "user_message") &&
-          row.item.messageId === messageId,
-      )?.item;
-      return {
-        message:
-          item === undefined ? null : item.type === "assistant_message" ? "assistant" : "other",
-        hasMoreHistory: history.hasMoreHistory,
-      };
-    });
+    const errorAtom = environmentThreadDetails.errorAtom(ref);
+    const settledThreadAtom = Atom.make((get) =>
+      citedThreadSnapshot({
+        thread: get(threadAtom),
+        history: get(historyAtom),
+        status: get(statusAtom),
+        error: get(errorAtom),
+        messageId,
+      }),
+    );
     return Atom.make((get): CitedHistory => {
       const controller = new AbortController();
       get.addFinalizer(() => controller.abort());

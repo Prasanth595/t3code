@@ -1,7 +1,14 @@
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
-import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  RunAttemptId,
+  RunId,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, Profiler, StrictMode, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -272,6 +279,42 @@ describe("MessagesTimeline citations", () => {
       { router: false },
     );
     // StrictMode replays effect cleanups on mount; the activation must survive them.
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-citation-highlighted]")?.textContent).toContain(
+        "the cited answer",
+      ),
+    );
+  });
+
+  it("opens the superseded attempt that folds the cited response", async () => {
+    const runId = RunId.make("run-steered");
+    const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
+      id: RunAttemptId.make(id),
+      runId,
+      attemptOrdinal: ordinal,
+      rootNodeId: `node-${id}` as never,
+      status,
+      completedAt: null,
+    });
+    const superseded = attempt("attempt-1", 1, "superseded");
+    const active = attempt("attempt-2", 2, "running");
+    const inAttempt = (entry: Entry, entryAttempt: typeof superseded): Entry => ({
+      ...entry,
+      attempt: entryAttempt,
+    });
+    await using _screen = await renderTimeline(
+      [
+        inAttempt(message("Build it", { runId }, "question"), superseded),
+        inAttempt(message("the cited answer", { role: "assistant", runId }, "cited"), superseded),
+        inAttempt(message("Change direction", { runId }, "steer"), active),
+        inAttempt(message("Current response", { role: "assistant", runId }, "current"), active),
+      ],
+      {
+        latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
+        citationRequest: CITATION_REQUEST,
+        citationHistory: { _tag: "found" },
+      },
+    );
     await vi.waitFor(() =>
       expect(document.querySelector("[data-citation-highlighted]")?.textContent).toContain(
         "the cited answer",

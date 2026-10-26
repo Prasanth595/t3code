@@ -609,6 +609,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
         previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
       );
     }
+    const citedAttempt = citedEntry.attempt;
+    if (citedAttempt?.status === "superseded") {
+      setExpandedAttemptIds((previous) =>
+        previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
+      );
+    }
   }
   const visibleExpandedRunIds =
     !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)
