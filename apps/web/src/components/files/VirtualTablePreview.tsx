@@ -75,8 +75,7 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
-      className="relative min-h-0 flex-1 overflow-x-auto"
-      style={{ contain: "strict" }}
+      className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
         event.currentTarget.style.setProperty(
           "--preview-scroll-left",
@@ -137,10 +136,7 @@ export default function VirtualTablePreview(props: {
               role="row"
               className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-muted/60 font-medium backdrop-blur"
             >
-              <div
-                className="sticky left-0 z-10 shrink-0 border-r border-border bg-background"
-                style={{ width: rowHeader }}
-              />
+              <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
                 <Tooltip key={column}>
