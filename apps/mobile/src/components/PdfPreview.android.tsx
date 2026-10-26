@@ -14,12 +14,16 @@ import { ControlPill } from "./ui/ControlPill";
 const preparedPdfAtom = Atom.family((uri: string) =>
   Atom.make(
     // The downloaded copy lives as long as a viewer reads it; Retry refreshes the atom,
-    // which closes the scope and discards the copy before downloading again.
+    // which closes the scope and discards the copy before downloading again. Acquisition
+    // stays interruptible so closing the viewer aborts the download.
     Effect.acquireRelease(
       Effect.tryPromise({
         try: (signal) => preparePdfPreview(uri, signal),
         catch: (cause) => (cause instanceof Error ? cause.message : "The PDF could not be loaded."),
-      }).pipe(Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file)))),
+      }).pipe(
+        Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file))),
+        Effect.interruptible,
+      ),
       (file) => Effect.sync(file.dispose),
     ),
   ).pipe(Atom.withLabel(`android-pdf-preview:${uri}`)),

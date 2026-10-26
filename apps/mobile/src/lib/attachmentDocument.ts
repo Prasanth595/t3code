@@ -41,7 +41,9 @@ async function readAttachmentText(key: AttachmentTextKey, signal: AbortSignal) {
   let target = key.uri;
   if (key.authorizedAt === null || Date.now() - key.authorizedAt > STALE_URL_MS) {
     const refreshed =
-      key.environmentId === null ? null : await refreshAssetUrl(key.environmentId, key.resource);
+      key.environmentId === null
+        ? null
+        : await refreshAssetUrl(key.environmentId, key.resource, signal);
     if (!refreshed) throw new Error("Reconnect to this environment and try again.");
     target = refreshed;
   }

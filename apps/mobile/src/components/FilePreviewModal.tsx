@@ -89,20 +89,26 @@ function ResolvedFilePreview(props: {
   useEffect(() => {
     if (items.every((item) => "uri" in item)) return;
     const controller = new AbortController();
+    // The first failure closes the preview at once and cancels the rest of the gallery.
+    const fail = (error: unknown) => {
+      if (controller.signal.aborted) return;
+      controller.abort();
+      onResolutionError(
+        error instanceof PreviewResolutionError
+          ? error
+          : new PreviewResolutionError(error, "Try again."),
+      );
+    };
     const resolving = Promise.allSettled(
-      items.map((item) => resolvePreviewItem(item, controller.signal)),
+      items.map((item) =>
+        resolvePreviewItem(item, controller.signal).catch((error: unknown) => {
+          fail(error);
+          throw error;
+        }),
+      ),
     );
     void resolving.then((settled) => {
       if (controller.signal.aborted) return;
-      const failure = settled.find((item) => item.status === "rejected");
-      if (failure) {
-        onResolutionError(
-          failure.reason instanceof PreviewResolutionError
-            ? failure.reason
-            : new PreviewResolutionError(failure.reason, "Try again."),
-        );
-        return;
-      }
       const sources = settled.flatMap((item) =>
         item.status === "fulfilled" && item.value ? [item.value.source] : [],
       );

@@ -101,20 +101,21 @@ export function useRefreshAssetUrl(
 export async function refreshAssetUrl(
   environmentId: EnvironmentId,
   resource: AssetResource,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const connection = appAtomRegistry.get(
-    environmentSession.preparedConnectionValueAtom(environmentId),
-  );
-  if (connection._tag === "None") return null;
+  const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
+  if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
   const atom = assetEnvironment.createUrl({ environmentId, input: { resource } });
-  const state = assetUrlStateFromResult(
-    await executeAtomQuery(appAtomRegistry, atom, {
-      label: atom.label?.[0] ?? "asset url",
-      refresh: true,
-      reportFailure: false,
-    }),
-    connection.value.httpBaseUrl,
-  );
+  const result = await executeAtomQuery(appAtomRegistry, atom, {
+    label: atom.label?.[0] ?? "asset url",
+    refresh: true,
+    reportFailure: false,
+    ...(signal ? { signal } : {}),
+  });
+  // The query can wait through a reconnect; resolve against the connection that answered it.
+  const connection = appAtomRegistry.get(connectionAtom);
+  if (connection._tag === "None") return null;
+  const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
   return state._tag === "Success" ? state.url : null;
 }
 
@@ -136,11 +137,11 @@ interface FreshAssetUrlKey {
 const freshAssetUrlFamily = Atom.family((key: FreshAssetUrlKey) =>
   Atom.make(
     Effect.tryPromise({
-      try: async (): Promise<AuthorizedAssetUrl> => {
+      try: async (signal): Promise<AuthorizedAssetUrl> => {
         const url =
           key.environmentId === null
             ? null
-            : await refreshAssetUrl(key.environmentId, key.resource);
+            : await refreshAssetUrl(key.environmentId, key.resource, signal);
         if (!url) throw new Error("Reconnect to this environment and try again.");
         return { url, authorizedAt: Date.now() };
       },
