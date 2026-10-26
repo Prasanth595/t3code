@@ -52,11 +52,7 @@ const BitbucketApiEnvConfig = Config.all({
   apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
-/**
- * This client speaks only the Bitbucket Cloud API. Bitbucket Server and Data Center answer a
- * different one, so a repository on another host is not read unless
- * T3CODE_BITBUCKET_API_BASE_URL names the Cloud API to send it to.
- */
+// Server and Data Center use a different API; a custom Cloud endpoint must be explicit.
 export const BitbucketServesHost = Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
   Config.option,
   Config.map(
