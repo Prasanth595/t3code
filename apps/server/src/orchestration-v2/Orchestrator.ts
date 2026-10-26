@@ -5074,6 +5074,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         return;
       }
+      if (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now)) {
+        const event = yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            limitRecovery: {
+              ...recovery,
+              runId: idAllocator.derive.run({
+                threadId: command.threadId,
+                ordinal: nextRunOrdinal(projection),
+              }),
+              waitForReset: true,
+            },
+          },
+        });
+        projection = applyToProjection(projection, event);
+      }
     }
 
     if (command.restartContinuationOfRunId !== undefined) {

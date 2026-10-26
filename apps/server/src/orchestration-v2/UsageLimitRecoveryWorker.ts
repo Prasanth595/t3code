@@ -38,6 +38,10 @@ export function limitRecoveryCommand(
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
+    autoResume ||=
+      recovery?.runId === thread.latestRunId &&
+      recovery.autoResume &&
+      recovery.waitForReset === true;
     if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",

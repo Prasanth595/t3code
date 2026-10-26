@@ -3916,7 +3916,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND (
               (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
-                AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
+                AND (
+                  json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
+                  OR json_extract(t.payload_json, '$.limitRecovery.waitForReset') = 1
+                )
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
@@ -7089,7 +7092,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   return false;
                 if (
                   thread.limitRecovery?.runId !== thread.latestRunId ||
-                  thread.limitRecovery.resetAt !== thread.usageLimitResetAt
+                  (thread.limitRecovery.resetAt !== thread.usageLimitResetAt &&
+                    !(
+                      thread.limitRecovery.autoResume && thread.limitRecovery.waitForReset === true
+                    ))
                 ) {
                   return options.autoResume || (options.snooze && resetMs > nowMs);
                 }

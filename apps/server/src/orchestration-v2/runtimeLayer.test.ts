@@ -6184,7 +6184,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
   );
 
   it.effect(
-    "resumes an armed continuation early once a fresh reading shows the limits cleared",
+    "resumes an armed continuation early and preserves its reset fallback with global auto-resume off",
     () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -6368,6 +6368,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         // The reading can omit the limit that stopped the run, such as a
         // per-model weekly limit. The early run then fails on the same limit.
         const earlyRun = resumed.runs[1]!;
+        const retryResetAt = DateTime.formatIso(DateTime.add(now, { hours: 4 }));
         yield* events.write({
           events: [
             {
@@ -6403,30 +6404,22 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                   message: "Plan limit reached.",
                   code: "usageLimitExceeded",
                   retryable: null,
-                  resetAt,
+                  resetAt: retryResetAt,
                 },
               },
             },
           ],
         });
-        const failedAgain = (yield* orchestrator.getShellSnapshot()).threads.find(
-          (thread) => thread.id === threadId,
-        )!;
-        const rearm = limitRecoveryCommand(failedAgain, true, nowMs);
-        assert(rearm?.type === "thread.metadata.update" && rearm.limitRecovery != null);
-        yield* orchestrator.autoArmLimitRecovery({
-          commandId: rearm.commandId,
-          threadId,
-          limitRecovery: rearm.limitRecovery,
-        });
         yield* TestClock.adjust("1 minute");
         const laterNow = yield* DateTime.now;
+        yield* sweep(reading(laterNow, 0));
         const rearmed = (yield* projections.getLimitRecoveryCandidates({
           now: laterNow,
-          autoResume: true,
+          autoResume: false,
           snooze: false,
         })).find((row) => row.id === threadId)!;
         assert.equal(rearmed.limitRecovery?.waitForReset, true);
+        assert.equal(rearmed.limitRecovery?.resetAt, retryResetAt);
         yield* sweep(reading(laterNow, 0));
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
         assert.isNull(
@@ -6438,10 +6431,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             reading(laterNow, 0),
           ),
         );
-        const onTime = limitRecoveryCommand(rearmed, true, Date.parse(resetAt));
+        const onTime = limitRecoveryCommand(rearmed, false, Date.parse(retryResetAt));
         assert(onTime?.type === "message.dispatch");
         assert.isUndefined(onTime.usageLimitClearedAt);
-        yield* TestClock.setTime(Date.parse(resetAt));
+        yield* TestClock.setTime(Date.parse(retryResetAt));
         yield* orchestrator.dispatch(onTime);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
       }),

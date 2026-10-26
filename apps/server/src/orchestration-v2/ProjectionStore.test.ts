@@ -980,6 +980,11 @@ it.effect.each([
 
     yield* updateThread("armed", {});
     assert.deepEqual((yield* candidate)?.limitRecovery, recovery);
+    const retry = { ...recovery, resetAt: "2099-01-02T00:00:00.000Z", waitForReset: true };
+    yield* updateThread("retry", { limitRecovery: retry });
+    assert.deepEqual((yield* candidate)?.limitRecovery, retry);
+    yield* updateThread("retry-cancelled", { limitRecovery: { ...retry, autoResume: false } });
+    assert.isUndefined(yield* candidate);
     yield* updateThread("snoozed", { snoozedUntil: DateTime.makeUnsafe(resetAt) });
     assert.isUndefined(yield* candidate);
     yield* updateThread("cancelled", { limitRecovery: { ...recovery, autoResume: false } });
