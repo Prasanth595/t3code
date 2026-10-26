@@ -1,3 +1,6 @@
+import { RegistryContext } from "@effect/atom-react";
+import { AtomRegistry } from "effect/reactivity";
+import "~/index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -14,13 +17,17 @@ import { DeviceStreamView } from "./DeviceStreamView";
 
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
+  const registry = AtomRegistry.make();
   const touches: unknown[] = [];
+  const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
   Reflect.deleteProperty(globalThis, "VideoDecoder");
   const fetch = stubGlobal("fetch", () => Promise.resolve(new Response("prime")));
   // The client opens its input socket only after the MJPEG prime resolves.
-  type InputSocket = { onmessage?: (event: { data: ArrayBuffer }) => void };
+  type InputSocket = {
+    onmessage?: (event: { data: ArrayBuffer }) => void;
+  };
   let open!: (socket: InputSocket) => void;
   const opened = new Promise<InputSocket>((resolve) => {
     open = resolve;
@@ -43,15 +50,22 @@ function setup() {
     },
   );
   return {
+    view: () => (
+      <RegistryContext.Provider value={registry}>
+        <div style={{ width: 400, height: 800 }}>{view()}</div>
+      </RegistryContext.Provider>
+    ),
     [Symbol.dispose]() {
+      registry.dispose();
+      image.mockRestore();
       socket[Symbol.dispose]();
       fetch[Symbol.dispose]();
       decoder[Symbol.dispose]();
     },
     touches,
-    async configure() {
+    async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
-        JSON.stringify({ width: 400, height: 800, orientation: "portrait" }),
+        JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
       );
       const packet = new Uint8Array(1 + json.length);
       packet[0] = 0x82;
@@ -72,6 +86,11 @@ function view() {
       platform="ios"
       visible
       allowPhoneView={false}
+      renderControls={(controls) => (
+        <output>
+          {controls.handle?.inputConnected ? "Input connected" : "Input disconnected"}
+        </output>
+      )}
     />
   );
 }
@@ -80,7 +99,7 @@ function view() {
 const options = { router: false } as const;
 
 function flatPointer(container: HTMLElement) {
-  const surface = container.querySelector("canvas")!.parentElement!;
+  const surface = container.querySelector("canvas")!.parentElement!.parentElement!;
   // Synthetic IDs exercise concurrent touches independently of the browser's capture state.
   surface.setPointerCapture = () => {};
   const rect = new DOMRect(0, 0, 400, 800);
@@ -103,8 +122,9 @@ function flatPointer(container: HTMLElement) {
 it("keeps the first flat pointer active when a second finger moves and lifts", async () => {
   using input = setup();
   const { configure, touches } = input;
-  await using screen = await render(view(), options);
+  await using screen = await render(input.view(), options);
   await act(async () => configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
   const { send } = flatPointer(screen.container);
   send("pointerdown", 1);
   send("pointerdown", 2, 0.75, 0.75);
@@ -124,10 +144,11 @@ it("keeps the first flat pointer active when a second finger moves and lifts", a
 it("ignores a flat pointer that goes down before input connects", async () => {
   using input = setup();
   const { configure, touches } = input;
-  await using screen = await render(view(), options);
+  await using screen = await render(input.view(), options);
   const { send } = flatPointer(screen.container);
   send("pointerdown", 1);
   await act(async () => configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
   send("pointerdown", 2, 0.5, 0.5);
   send("pointerup", 2, 0.75, 0.75);
   expect(touches).toEqual([
@@ -141,8 +162,9 @@ it.each(["pointerup", "pointercancel", "lostpointercapture"])(
   async (ending) => {
     using input = setup();
     const { configure, touches } = input;
-    await using screen = await render(view(), options);
+    await using screen = await render(input.view(), options);
     await act(async () => configure());
+    await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
     const { send } = flatPointer(screen.container);
     send("pointerdown", 7);
     send("pointermove", 7, 0.5, 0.5);
@@ -164,3 +186,23 @@ it.each(["pointerup", "pointercancel", "lostpointercapture"])(
     ]);
   },
 );
+
+it("releases flat pointer ownership when input disconnects", async () => {
+  using input = setup();
+  await using screen = await render(input.view(), options);
+  await act(() => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const { send } = flatPointer(screen.container);
+  send("pointerdown", 1);
+  await act(() => input.configure(true));
+  await expect.element(screen.getByText("Input disconnected", { exact: true })).toBeVisible();
+  await act(() => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  send("pointerdown", 2, 0.5, 0.5);
+  send("pointerup", 2, 0.75, 0.75);
+  expect(input.touches).toEqual([
+    { type: "begin", x: 0.25, y: 0.25 },
+    { type: "begin", x: 0.5, y: 0.5 },
+    { type: "end", x: 0.75, y: 0.75 },
+  ]);
+});
