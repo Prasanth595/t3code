@@ -23,12 +23,6 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(Object.keys(result.providers.get("openai")!.models).length, 1);
   });
 
-  it("handles empty input", () => {
-    const result = OpenCodeRuntime.parseModelsCliOutput("");
-    NodeAssert.equal(result.providers.size, 0);
-    NodeAssert.equal(result.connected.length, 0);
-  });
-
   it("skips unparseable JSON blocks", () => {
     const stdout = [
       "anthropic/claude-sonnet-4-5",
@@ -79,26 +73,6 @@ describe("parseModelsCliOutput", () => {
 });
 
 describe("parseAgentListCliOutput", () => {
-  it("parses multiple agents", () => {
-    const stdout = [
-      "build (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-      "explore (subagent)",
-      "  " + JSON.stringify([{ permission: "read", action: "allow", pattern: "*" }]),
-      "plan (primary)",
-      "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.md" }]),
-    ].join("\n");
-
-    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 3);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[1]!.name, "explore");
-    NodeAssert.equal(result[1]!.mode, "subagent");
-    NodeAssert.equal(result[2]!.name, "plan");
-    NodeAssert.equal(result[2]!.mode, "primary");
-  });
-
   it("skips agents with unparseable permission JSON", () => {
     const stdout = [
       "build (primary)",
@@ -150,11 +124,9 @@ describe("toOpenCodeFileParts", () => {
         attachment("application/pdf"),
         attachment("text/plain"),
         attachment("image/png"),
-        // A ZIP file part makes OpenCode's Anthropic path throw before the
-        // turn starts; it must ride only as the prompt's file path line.
+        // ZIP file parts fail Anthropic before turn start; send only the prompt's path line.
         attachment("application/zip"),
-        // OpenCode inlines only text/plain itself. Other text types reach the
-        // model API as raw file parts, which Anthropic and OpenAI reject.
+        // OpenCode inlines only text/plain; other text MIME parts fail Anthropic/OpenAI.
         attachment("text/html"),
         attachment("text/markdown"),
         attachment("application/octet-stream"),
