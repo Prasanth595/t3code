@@ -2649,18 +2649,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
         link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
       });
+      const rateLimited = new PullRequestOperationError({
+        operation: "detail",
+        detail: "GitHub requests are paused until the rate limit resets",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "getChangeRequest",
+          reason: "rate-limited",
+          detail: "paused",
+        }),
+      });
+      let paused = true;
+      const read = () => (paused ? Effect.fail(rateLimited) : Effect.die("host unreachable"));
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.die("host unreachable"),
-              activity: () => Effect.die("host unreachable"),
+              detail: read,
+              activity: read,
             }),
           ),
         ),
       );
-      for (let pass = 0; pass < 15; pass += 1) yield* reactor.sweep;
+      for (let pass = 0; pass < 8; pass += 1) yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      paused = false;
+      for (let pass = 0; pass < 7; pass += 1) yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      yield* reactor.sweep;
 
       const thread = yield* orchestrator.getThreadShell(threadId);
       assert.isUndefined(thread?.pullRequests?.[0]?.watch);
@@ -2680,8 +2697,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   ] as const)("ends a refused watch on its first read and says why: %s", (reason) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-refused");
-      const projectId = ProjectId.make("pr-watch-refused-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-refused-${reason}`);
+      const projectId = ProjectId.make(`pr-watch-refused-project-${reason}`);
       yield* seedProject({
         projectId,
         title: "Watch refused",
@@ -2693,7 +2710,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-refused-create"),
+        commandId: CommandId.make(`pr-watch-refused-create-${reason}`),
         threadId,
         projectId,
         title: "Watch refused",
@@ -2705,7 +2722,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-refused-start"),
+        commandId: CommandId.make(`pr-watch-refused-start-${reason}`),
         threadId,
         host: "github.com",
         repository: "pingdotgg/t3code",

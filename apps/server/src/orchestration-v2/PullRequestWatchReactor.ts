@@ -55,6 +55,17 @@ const isRateLimited = (cause: Cause.Cause<PullRequestService.PullRequestError>) 
       error.cause.reason === "rate-limited",
   });
 
+// GitHub also uses not-found when the credential cannot see a private repository.
+const lastingFailure = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => null,
+    onSome: (error) =>
+      error._tag === "PullRequestUnavailableError" ||
+      (error._tag === "PullRequestOperationError" && error.reason === "not-found")
+        ? error.message
+        : null,
+  });
+
 const logFailure =
   (message: string, fields: Record<string, unknown>) =>
   <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
@@ -278,9 +289,12 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const giveUp = (target: WatchTarget) =>
+  const giveUp = (target: WatchTarget, lasting: string | null) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+      text:
+        lasting === null
+          ? `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`
+          : `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because the host refused to show it: ${lasting} Check which account T3 Code uses for this host in Settings → Source Control, then call watch_pull_request to watch it again.`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -474,9 +488,13 @@ export const make = Effect.gen(function* () {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
       if (isRateLimited(read.cause)) return;
+      const lasting = lastingFailure(read.cause);
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
+      if (
+        (lasting !== null || failures >= READ_FAILURE_LIMIT) &&
+        (yield* eachTarget(group, (target) => giveUp(target, lasting)))
+      ) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(read.cause);
