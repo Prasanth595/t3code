@@ -26,6 +26,7 @@ const disclosureMotionProps = { [DISCLOSURE_MOTION_ATTRIBUTE]: "" };
  * it spends most of its time before the first paint and appears to pop in.
  */
 function useStartOnNextFrame(ref: RefObject<HTMLElement | null>, enabled: boolean) {
+  // oxlint-disable-next-line t3code/react-effect-budget -- Start after the mounted DOM has painted and cancel frames on unmount.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!enabled || !element) return;
@@ -39,15 +40,8 @@ function useStartOnNextFrame(ref: RefObject<HTMLElement | null>, enabled: boolea
 }
 
 /**
- * Grows content in from zero height as it mounts. Pass `animate` only for a
- * mount the user just caused: virtualized rows remount while scrolling, and a
- * restored expansion must not replay the reveal. Clipping lasts only as long
- * as the transition so popovers and focus rings are not cut off afterwards.
- *
- * Height animates to the measured content height, kept current while content
- * settles, then returns to auto. A `0fr -> 1fr` grid makes Chrome size the box
- * ahead of its track, opening a blank gap, and animating to `auto` through
- * `interpolate-size` does not work in Safari or Firefox.
+ * Only user toggles reveal; virtualized remounts must not replay it. Measured height
+ * avoids grid-track gaps in Chrome and works without interpolate-size in other browsers.
  */
 export function TimelineReveal({ animate, children }: { animate: boolean; children: ReactNode }) {
   const [revealing, setRevealing] = useState(
@@ -56,6 +50,7 @@ export function TimelineReveal({ animate, children }: { animate: boolean; childr
   const revealRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   useStartOnNextFrame(revealRef, revealing);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Observe the mounted content while its reveal tracks changing DOM height.
   useLayoutEffect(() => {
     const reveal = revealRef.current;
     const content = contentRef.current;
@@ -188,6 +183,7 @@ function attachCollapseGhost(host: HTMLElement, ghost: CollapseGhost) {
 export function CollapseGhostView({ ghost, onDone }: { ghost: CollapseGhost; onDone: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const shrinkRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Attach the captured DOM and restore scroll offsets before paint.
   useLayoutEffect(() => {
     if (hostRef.current) attachCollapseGhost(hostRef.current, ghost);
   }, [ghost]);

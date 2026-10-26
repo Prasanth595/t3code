@@ -443,7 +443,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
-
   const disclosurePinsEndRef = useRef(false);
   // Following the end stops where the toggled row reaches the top, so opening a
   // tall disclosure shows its start rather than pushing its header out of view.
@@ -969,7 +968,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
@@ -1073,7 +1071,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (restoringThreadPosition || listRef.current?.getState?.().data !== rows) return;
     const isAtEnd = rememberPosition(liveFollowEnabled && !anchoredEndSpace);
     if (isAtEnd !== undefined && !citationPositioning && !disclosureToggleSettlingRef.current) {
-
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
@@ -1356,14 +1353,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-          <TimelineRowMotion
-            revealPending={revealingDisclosure}
-            collapseGhost={
-              collapseGhostOffer?.rowId === item.id ? collapseGhostOffer.ghost : undefined
-            }
-          >
-            <TimelineRowContent row={item} />
-          </TimelineRowMotion>
+            <TimelineRowMotion
+              revealPending={revealingDisclosure}
+              collapseGhost={
+                collapseGhostOffer?.rowId === item.id ? collapseGhostOffer.ghost : undefined
+              }
+            >
+              <TimelineRowContent row={item} />
+            </TimelineRowMotion>
           </AudioPreviewUnmountContext>
         </div>
       </div>
