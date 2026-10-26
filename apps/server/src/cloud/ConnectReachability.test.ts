@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads the user guide to check its anchors.
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -10,11 +11,14 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { classifyReachability, type ReachabilityFacts } from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+
+vi.mock("node:net", { spy: true });
 
 const checkedAt = "2026-10-19T00:00:00.000Z";
 const connected = { pid: 1, readyConnections: 4, hostname: "env.example.test", protocol: "quic" };
@@ -90,6 +94,11 @@ describe("classifyReachability", () => {
 describe("ConnectReachability stale connector recovery", () => {
   it.effect("restarts cloudflared when Cloudflare has no connector but it reports ready", () =>
     Effect.gen(function* () {
+      using _connect = vi.spyOn(NodeNet, "connect").mockImplementation(() => {
+        const socket = new NodeNet.Socket();
+        queueMicrotask(() => socket.emit("connect"));
+        return socket;
+      });
       const restarted: Array<number> = [];
       let status = 530;
       const reachability = yield* Effect.service(ConnectReachability.ConnectReachability).pipe(
