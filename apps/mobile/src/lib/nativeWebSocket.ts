@@ -113,6 +113,7 @@ class NativeWebSocket implements Socket.WebSocketLike {
         this.dispatch("open", { type: "open" });
         return;
       case "onMessage": {
+        if (this.readyState !== OPEN) return;
         const text = payload.data ?? "";
         const data = payload.binary === true ? base64ToBytes(text) : text;
         this.dispatch("message", { type: "message", data });

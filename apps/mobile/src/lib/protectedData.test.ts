@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   appState: "background" as string | null,
   nativeCheckSupported: true,
   platform: "ios",
+  webSocketSupported: true,
   subscribed: Promise.withResolvers<void>(),
   listeners: new Set<(state: string) => void>(),
   isProtectedDataAvailable: vi.fn<() => Promise<boolean>>(),
@@ -22,7 +23,7 @@ vi.mock("expo", () => ({
         }),
       };
     }
-    if (name === "T3WebSocket") {
+    if (name === "T3WebSocket" && mocks.webSocketSupported) {
       return {
         connect: mocks.webSocketConnect,
         close: () => undefined,
@@ -80,6 +81,7 @@ beforeEach(() => {
   mocks.appState = "background";
   mocks.nativeCheckSupported = true;
   mocks.platform = "ios";
+  mocks.webSocketSupported = true;
   mocks.subscribed = Promise.withResolvers<void>();
   mocks.listeners.clear();
   mocks.isProtectedDataAvailable.mockReset();
@@ -137,6 +139,27 @@ describe("protected storage startup", () => {
 });
 
 describe("runtime WebSocket", () => {
+  it.each([
+    { platform: "android", webSocketSupported: true },
+    { platform: "ios", webSocketSupported: false },
+  ])(
+    "keeps the global socket on $platform with native support $webSocketSupported",
+    async (scenario) => {
+      mocks.appState = "active";
+      mocks.platform = scenario.platform;
+      mocks.webSocketSupported = scenario.webSocketSupported;
+      const globalWebSocket = vi.fn(function () {});
+      vi.stubGlobal("WebSocket", globalWebSocket);
+      ({ runtime } = await import("./runtime"));
+
+      const makeWebSocket = await runtime.runPromise(Socket.WebSocketConstructor);
+      makeWebSocket("wss://host.test/ws");
+
+      expect(globalWebSocket).toHaveBeenCalledWith("wss://host.test/ws", undefined);
+      expect(mocks.webSocketConnect).not.toHaveBeenCalled();
+    },
+  );
+
   it("dials iOS sockets through URLSession instead of React Native's WebSocket", async () => {
     mocks.appState = "active";
     // React Native's iOS WebSocket is SocketRocket, which never offers permessage-deflate.

@@ -53,6 +53,42 @@ vi.mock("expo", () => ({
 import { layerWebSocketConstructor } from "./nativeWebSocket";
 
 describe("iOS WebSocket constructor", () => {
+  it.effect("closes live sockets and removes native listeners when the layer is released", () =>
+    Effect.gen(function* () {
+      native.setup();
+      native.state.acknowledgeClose = false;
+      const closes: Array<unknown> = [];
+      const socket = yield* Effect.gen(function* () {
+        const makeWebSocket = yield* Socket.WebSocketConstructor;
+        const socket = makeWebSocket("wss://host.test/ws");
+        socket.addEventListener("close", (event) => closes.push(event));
+        return socket;
+      }).pipe(Effect.provide(layerWebSocketConstructor));
+
+      native.emit("onOpen", { id: native.state.lastId });
+      native.emit("onClose", { id: native.state.lastId, code: 1006 });
+
+      expect(socket.readyState).toBe(3);
+      expect(closes).toEqual([{ type: "close", code: 1001, reason: "" }]);
+      expect(native.listeners.size).toBe(0);
+    }),
+  );
+
+  it.effect("discards queued messages after the caller starts closing", () =>
+    Effect.gen(function* () {
+      native.setup();
+      native.state.acknowledgeClose = false;
+      const socket = (yield* Socket.WebSocketConstructor)("wss://host.test/ws");
+      const messages: Array<unknown> = [];
+      socket.addEventListener("message", (event) => messages.push(event));
+
+      socket.close();
+      native.emit("onMessage", { id: native.state.lastId, data: "stale", binary: false });
+
+      expect(messages).toEqual([]);
+    }).pipe(Effect.provide(layerWebSocketConstructor)),
+  );
+
   it.effect("dials through URLSession and round-trips text and binary frames", () =>
     Effect.gen(function* () {
       native.setup();
