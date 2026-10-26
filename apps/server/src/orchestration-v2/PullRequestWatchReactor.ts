@@ -96,6 +96,7 @@ type WatchEndReason =
   | "closed"
   | "unreadable"
   | "comment-limit"
+  | "checks-finished"
   | "settled"
   | "subagent"
   | "stopped";
@@ -162,6 +163,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.passed === right.passed &&
     left.passedChecks.join("\n") === right.passedChecks.join("\n") &&
     (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
+    (left.finished ?? false) === (right.finished ?? false) &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
@@ -539,14 +541,19 @@ export const make = Effect.gen(function* () {
           headSha: report.next.headSha,
           report,
         });
+        const end: WatchEndReason | undefined = report.exhausted
+          ? "comment-limit"
+          : report.finished
+            ? "checks-finished"
+            : undefined;
         // An ending watch keeps what this pass saw, so watching again starts from it.
         return (
-          report.exhausted
-            ? record(target, null, wake, report.next)
-            : record(target, report.next, wake)
+          end === undefined
+            ? record(target, report.next, wake)
+            : record(target, null, wake, report.next)
         ).pipe(
           Effect.tap(() => woke(target)),
-          Effect.tap(() => (report.exhausted ? ended(target, "comment-limit") : Effect.void)),
+          Effect.tap(() => (end === undefined ? Effect.void : ended(target, end))),
         );
       }
       return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
