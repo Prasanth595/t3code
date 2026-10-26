@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import {
+  markdownForNativeRendering,
+  markdownWithFileEmbeds,
   markdownWithHtml,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
@@ -14,14 +16,7 @@ import { markdownImageSources } from "./markdownImageSources";
 import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 
 function nativeDocument(markdown: string) {
-  return parseMarkdown(
-    markdownWithTableBreaks(
-      markdownWithInlineFileLinks(
-        markdownWithWindowsPathDestinations(markdownWithHtml(markdown)),
-        ENRICHED_INLINE_FILE_LINK_REGEX,
-      ),
-    ),
-  );
+  return parseMarkdown(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX));
 }
 
 function destinations(node: MarkdownNode | ASTNode): string[] {
@@ -100,6 +95,23 @@ describe("markdownWithWindowsPathDestinations", () => {
       String.raw`C:\me\.t3\&copy;.png`,
       String.raw`C:\repo\_private\a&copy;.ts`,
     ]);
+  });
+
+  it("preserves Windows destinations when turning file embeds into native links", async () => {
+    const paths = [String.raw`C:\repo\.t3\report.csv`, String.raw`\\server\share\_report.pdf`];
+    const source = `![report](<${paths[0]}>)\n\n![ref][file]\n\n[file]: <${paths[1]}>`;
+    const content = markdownWithInlineFileLinks(
+      markdownWithWindowsPathDestinations(markdownWithHtml(source)),
+      ENRICHED_INLINE_FILE_LINK_REGEX,
+    );
+    const files = markdownWithFileEmbeds(content, () => "Report");
+    const document = await parseMarkdown(markdownWithTableBreaks(files.markdown));
+
+    expect(files.fileHrefs).toEqual(new Set(paths));
+    expect(destinations(document)).toEqual(paths);
+    expect(document.children?.flatMap((node) => node.children?.map((child) => child.type))).toEqual(
+      ["Link", "Link"],
+    );
   });
 
   it("does not let a code example redirect a real image with a lookalike decoded path", () => {
