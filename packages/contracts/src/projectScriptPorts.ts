@@ -30,6 +30,7 @@ export class ProjectRunScriptError extends Schema.TaggedError<ProjectRunScriptEr
 }
 
 export const ProjectScriptPortsInput = Schema.Struct({
+  threadId: ThreadId,
   cwd: TrimmedNonEmptyString,
   scriptIds: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(100)),
 });
@@ -38,6 +39,15 @@ export type ProjectScriptPortsInput = typeof ProjectScriptPortsInput.Type;
 export const ProjectScriptPortsResult = Schema.Struct({
   ports: Schema.Record(Schema.String, PortSchema),
 });
+
+export class ProjectScriptPortsError extends Schema.TaggedError<ProjectScriptPortsError>()(
+  "ProjectScriptPortsError",
+  { threadId: ThreadId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not load preview ports for this thread.";
+  }
+}
 
 export class ProjectScriptPortUnavailableError extends Schema.TaggedError<ProjectScriptPortUnavailableError>()(
   "ProjectScriptPortUnavailableError",

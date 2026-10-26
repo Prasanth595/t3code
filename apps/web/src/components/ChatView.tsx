@@ -1149,6 +1149,7 @@ export default function ChatView(props: ChatViewProps) {
       ? projectEnvironment.scriptPorts({
           environmentId: activeThreadRef.environmentId,
           input: {
+            threadId: activeThreadRef.threadId,
             cwd: projectScriptCwd({
               project: { cwd: activeProject.workspaceRoot },
               worktreePath: activeThread?.worktreePath ?? null,

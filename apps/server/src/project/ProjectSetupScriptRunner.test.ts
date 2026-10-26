@@ -451,6 +451,16 @@ const setup = Effect.fn(function* (options: { readonly history?: string } = {}) 
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect("ReservedScript-idleTerminalSnapshot-deliversWithoutNewOutput", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ reserved: true, history: "% \x1b[?2004h" });
+      yield* harness.start;
+      expect(yield* Queue.size(harness.writes)).toBe(1);
+      expect(yield* harness.runManual).toMatchObject({ status: "started", port: 43123 });
+      expect(harness.openCount()).toBe(1);
+    }),
+  );
+
   it.effect(
     "shares a reserved launch while startup waits and reports delivery to manual callers",
     () =>
@@ -531,7 +541,9 @@ describe("ProjectSetupScriptRunner", () => {
 
   it.effect("ignores line editor state restored from an earlier shell", () =>
     Effect.gen(function* () {
-      const { writes, emit } = yield* setup({ history: "old run\r\n% \x1b[?2004h" });
+      const { writes, emit } = yield* setup({
+        history: "old run\r\n% \x1b[?2004h\x1b[?1;9;66;67;1000;2004l",
+      });
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: true, label: "fnm" });
       yield* TestClock.adjust("1 minute");
       expect(yield* Queue.size(writes)).toBe(0);

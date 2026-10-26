@@ -174,14 +174,14 @@ function stripTerminalControl(text: string): string {
 
 // Line editors (zsh, fish, bash 5.1+) enable bracketed paste when they start reading a command.
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
-const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 // Longer than one subprocess poll plus its ps timeout, so a startup prompt is seen as busy first.
 const SHELL_QUIET_FALLBACK = "3 seconds";
 
 function lineEditorReading(text: string, previous: boolean): boolean {
-  const on = text.lastIndexOf(BRACKETED_PASTE_ON);
-  const off = text.lastIndexOf(BRACKETED_PASTE_OFF);
-  return on === off ? previous : on > off;
+  for (const match of text.matchAll(/\x1b\[\?([\d;]+)([hl])/g)) {
+    if (match[1]?.split(";").includes("2004")) previous = match[2] === "h";
+  }
+  return previous;
 }
 
 type CompletionShell = "posix" | "fish" | "powershell";
@@ -392,9 +392,12 @@ export const make = Effect.gen(function* () {
           yield* input.onStartupPrompt;
         }
       });
-      // Restored history can hold a previous shell's line editor state, so only live output counts.
       const wait = Deferred.await(outcome).pipe(Effect.raceFirst(quiet));
-      return { wait, unsubscribe };
+      return {
+        wait,
+        unsubscribe,
+        markReady: Deferred.succeed(outcome, "ready").pipe(Effect.asVoid),
+      };
     },
   );
 
@@ -555,6 +558,8 @@ export const make = Effect.gen(function* () {
         });
       }
       if (port !== undefined) observed?.trackReplacements();
+      // Restored history ends with a mode reset; a live idle shell keeps its line editor enabled.
+      if (readiness && lineEditorReading(opened.history, false)) yield* readiness.markReady;
 
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {

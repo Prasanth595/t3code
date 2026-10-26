@@ -634,7 +634,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
-  Layer.provideMerge(ProjectScriptPorts.layer),
+  Layer.provideMerge(
+    ProjectScriptPorts.layer.pipe(
+      Layer.provide(Layer.mergeAll(RuntimeLayer.layerProjectService, ProjectionStoreV2.layer)),
+      Layer.provide(layerServerSettings),
+    ),
+  ),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),

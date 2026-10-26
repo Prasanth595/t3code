@@ -37,7 +37,7 @@ import * as Schema from "effect/Schema";
 import {
   ProjectScriptPortsInput,
   ProjectScriptPortsResult,
-  ProjectScriptPortUnavailableError,
+  ProjectScriptPortsError,
   ProjectRunScriptInput,
   ProjectRunScriptResult,
   ProjectRunScriptError,
@@ -1287,7 +1287,7 @@ const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
 const WsProjectsGetScriptPortsRpc = Rpc.make(WS_METHODS.projectsGetScriptPorts, {
   payload: ProjectScriptPortsInput,
   success: ProjectScriptPortsResult,
-  error: Schema.Union([ProjectScriptPortUnavailableError, EnvironmentAuthorizationError]),
+  error: Schema.Union([ProjectScriptPortsError, EnvironmentAuthorizationError]),
 });
 
 const WsProjectsRunScriptRpc = Rpc.make(WS_METHODS.projectsRunScript, {
