@@ -39,6 +39,9 @@ export function createSidebarShiftGuard(list: HTMLElement) {
   let tops = readTops(list);
   const movedAt = new WeakMap<Element, number>();
   let lastInputAt = Number.NEGATIVE_INFINITY;
+  // Pointers still down on a dropped press. Only their own release or cancel ends the drop, so
+  // a key or another pointer meanwhile cannot hand that press's click to the row.
+  const heldDrops = new Set<number>();
   let pressDropped = false;
 
   const rowOf = (target: EventTarget | null) => {
@@ -51,31 +54,44 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     event.stopPropagation();
   };
   const onPointerDown = (event: PointerEvent) => {
+    // A new press from the same pointer means its earlier release was missed.
+    heldDrops.delete(event.pointerId);
     const now = performance.now();
     const row = rowOf(event.target);
     const moved = row === null ? undefined : movedAt.get(row);
-    pressDropped = moved !== undefined && now - moved < MOVED_ROW_PRESS_DELAY_MS;
-    if (pressDropped) swallow(event);
-    else lastInputAt = now;
+    if (moved !== undefined && now - moved < MOVED_ROW_PRESS_DELAY_MS) {
+      heldDrops.add(event.pointerId);
+      pressDropped = true;
+      swallow(event);
+      return;
+    }
+    if (heldDrops.size === 0) pressDropped = false;
+    lastInputAt = now;
   };
   const onPointerUp = (event: PointerEvent) => {
-    if (pressDropped) {
+    if (heldDrops.delete(event.pointerId)) {
       if (rowOf(event.target) !== null) swallow(event);
       return;
     }
     lastInputAt = performance.now();
   };
+  const onPointerCancel = (event: PointerEvent) => {
+    heldDrops.delete(event.pointerId);
+  };
   const onKeyDown = (event: KeyboardEvent) => {
-    pressDropped = false;
+    if (heldDrops.size === 0) pressDropped = false;
     if (!editsText(event)) lastInputAt = performance.now();
   };
-  const onPressFollowUp = (event: Event) => {
+  const onPressFollowUp = (event: MouseEvent) => {
+    // Keyboard activation clicks carry no click count; only pointer presses are dropped.
+    if (event.type === "click" && event.detail === 0) return;
     if (pressDropped && rowOf(event.target) !== null) swallow(event);
   };
 
   // Window capture runs before React and dnd-kit see the press.
   view?.addEventListener("pointerdown", onPointerDown, { capture: true });
   view?.addEventListener("pointerup", onPointerUp, { capture: true });
+  view?.addEventListener("pointercancel", onPointerCancel, { capture: true });
   view?.addEventListener("keydown", onKeyDown, { capture: true });
   for (const type of PRESS_FOLLOW_UPS) {
     view?.addEventListener(type, onPressFollowUp, { capture: true });
@@ -97,6 +113,7 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     dispose() {
       view?.removeEventListener("pointerdown", onPointerDown, { capture: true });
       view?.removeEventListener("pointerup", onPointerUp, { capture: true });
+      view?.removeEventListener("pointercancel", onPointerCancel, { capture: true });
       view?.removeEventListener("keydown", onKeyDown, { capture: true });
       for (const type of PRESS_FOLLOW_UPS) {
         view?.removeEventListener(type, onPressFollowUp, { capture: true });

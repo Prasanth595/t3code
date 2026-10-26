@@ -29,6 +29,15 @@ function mountList(container: HTMLElement, names: readonly string[]) {
   };
 }
 
+// userEvent cannot hold the mouse, so `act` runs inside the real press, after the guard saw it.
+function duringPress(act: () => void) {
+  const listener = () => act();
+  window.addEventListener("pointerdown", listener, { capture: true, once: true });
+  return {
+    [Symbol.dispose]: () => window.removeEventListener("pointerdown", listener, { capture: true }),
+  };
+}
+
 describe("sidebar shift guard", () => {
   it("drops a press on a row that slid up on its own, then accepts it after the delay", async () => {
     await using screen = await render(null);
@@ -97,5 +106,53 @@ describe("sidebar shift guard", () => {
     list.guard.update();
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual([]);
+  });
+
+  it("keeps a held press dropped until its release, whatever happens before", async () => {
+    await using screen = await render(null);
+    using list = mountList(screen.container, ["A", "B", "C"]);
+    using _clock = fakeTimers();
+
+    list.remove("A");
+    list.guard.update();
+    using _hold = duringPress(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+      const other = { bubbles: true, pointerId: 9 };
+      screen.container.dispatchEvent(new PointerEvent("pointerdown", other));
+      screen.container.dispatchEvent(new PointerEvent("pointerup", other));
+      vi.advanceTimersByTime(1_000);
+    });
+    await userEvent.click(list.button("B"));
+    expect(list.pressed).toEqual([]);
+  });
+
+  it("lets keyboard activation through while a dropped press is held", async () => {
+    await using screen = await render(null);
+    using list = mountList(screen.container, ["A", "B", "C"]);
+    using _clock = fakeTimers();
+
+    list.remove("A");
+    list.guard.update();
+    list
+      .button("B")
+      .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9 }));
+    list.button("C").focus();
+    await userEvent.keyboard("{Enter}");
+    expect(list.pressed).toEqual(["C"]);
+  });
+
+  it("ends a dropped press the browser cancels", async () => {
+    await using screen = await render(null);
+    using list = mountList(screen.container, ["A", "B", "C"]);
+    using _clock = fakeTimers();
+
+    list.remove("A");
+    list.guard.update();
+    const touch = { bubbles: true, pointerId: 9, pointerType: "touch" };
+    list.button("B").dispatchEvent(new PointerEvent("pointerdown", touch));
+    list.button("B").dispatchEvent(new PointerEvent("pointercancel", touch));
+    vi.advanceTimersByTime(500);
+    await userEvent.click(list.button("B"));
+    expect(list.pressed).toEqual(["B"]);
   });
 });
