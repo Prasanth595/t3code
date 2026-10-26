@@ -118,7 +118,7 @@ export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 
 export function isAttachmentOnlyBootstrapText(text: string): boolean {
-  return text.trim() === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+  return text.trim().replace(/^Ultrathink:\n/, "") === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
 }
 
 export function isImageReferencesOnly(text: string): boolean {

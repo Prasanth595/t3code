@@ -491,8 +491,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               <div
                 className={cn(
                   "mb-2 grid gap-2",
-                  attachmentOnly && regularImages.length + userVideos.length === 1
-                    ? "ms-auto w-[240px] max-w-full grid-cols-1"
+                  attachmentOnly
+                    ? regularImages.length + userVideos.length === 1
+                      ? "ms-auto w-[240px] max-w-full grid-cols-1"
+                      : "ms-auto w-[210px] max-w-full grid-cols-2"
                     : "max-w-[210px] grid-cols-2",
                 )}
               >
@@ -702,7 +704,9 @@ function AttachmentOnlyCaption({
   readonly label: string;
   readonly instruction: string;
 }) {
+  const { findActive } = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
+  const revealRef = findRevealRef(() => setExpanded(true));
   return (
     <div className="text-xs text-muted-foreground">
       <button
@@ -714,7 +718,16 @@ function AttachmentOnlyCaption({
       >
         {expanded ? "Hide" : label}
       </button>
-      {expanded ? <p className="mt-1 leading-relaxed">{instruction}</p> : null}
+      {expanded || findActive ? (
+        <p
+          ref={revealRef}
+          hidden={!expanded}
+          data-thread-find-text="true"
+          className="mt-1 leading-relaxed"
+        >
+          {instruction}
+        </p>
+      ) : null}
     </div>
   );
 }

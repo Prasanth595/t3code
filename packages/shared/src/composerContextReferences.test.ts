@@ -90,6 +90,12 @@ describe("labels and reference links", () => {
     expect(isAttachmentOnlyBootstrapText(`${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} look at this`)).toBe(
       false,
     );
+    expect(isAttachmentOnlyBootstrapText(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`)).toBe(
+      true,
+    );
+    expect(
+      isAttachmentOnlyBootstrapText(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} explain it`),
+    ).toBe(false);
     expect(isAttachmentOnlyBootstrapText("")).toBe(false);
   });
 });

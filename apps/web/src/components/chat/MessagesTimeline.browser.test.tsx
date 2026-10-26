@@ -452,10 +452,15 @@ describe("MessagesTimeline attachment-only messages", () => {
       "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='180'><rect width='240' height='180' fill='%23888'/></svg>",
   };
 
-  it("stands in for the bootstrap prompt with a caption that reveals it on click", async () => {
+  it.each([1, 2])("reveals the bootstrap prompt without moving %i images", async (count) => {
     setup();
     await using screen = await renderTimeline([
-      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { attachments: [photo] }),
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: Array.from({ length: count }, (_, index) => ({
+          ...photo,
+          id: ChatAttachmentId.make(`image-${index}`),
+        })),
+      }),
     ]);
     expect(screen.text()).not.toContain("without additional text");
     expect(screen.container.querySelector("[data-user-message-body]")).toBeNull();
@@ -474,6 +479,24 @@ describe("MessagesTimeline attachment-only messages", () => {
     await click(screen.button("Hide"));
     expect(screen.text()).not.toContain("without additional text");
     expect(screen.buttons("Image only")).toHaveLength(1);
+  });
+
+  it("reveals the instruction when thread find selects it", async () => {
+    setup();
+    await using screen = await renderTimeline(
+      [message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { attachments: [photo] })],
+      {
+        findExpanded: true,
+        findQuery: "without additional text",
+        activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(screen.button("Hide").getAttribute("aria-expanded")).toBe("true"),
+    );
+    const matches = collectThreadFindRanges(screen.container, "without additional text");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.range.getBoundingClientRect().height).toBeGreaterThan(0);
   });
 
   it("labels a message without any image as attachment only", async () => {
