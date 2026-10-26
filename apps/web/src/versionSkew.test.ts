@@ -76,6 +76,16 @@ describe("versionSkew", () => {
     expect(update.description).toContain("t3@0.0.45");
   });
 
+  it("updates a standalone service's executable instead of an npm spec", () => {
+    const update = manualServerUpdate("0.0.45", "vm", { kind: "unknown", systemdUnit: userUnit });
+    expect(update.description).toContain("update the executable");
+    expect(update.description).toContain("0.0.45");
+    expect(update.description).not.toContain("t3@");
+    expect(update.command).toBe(
+      "systemctl --user daemon-reload && systemctl --user restart 't3.service'",
+    );
+  });
+
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

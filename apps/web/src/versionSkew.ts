@@ -133,7 +133,10 @@ export function manualServerUpdate(
       command: `${systemctl} daemon-reload && ${systemctl} restart ${unitName}`,
       label: "Copy restart command",
       title: "Restart command copied",
-      description: `On ${serverLabel}, change only the t3 version in ${unit.name}'s ExecStart to t3@${targetVersion}; keep its existing subcommand and options. Then run the command. Restarting stops running agents.`,
+      description:
+        installation?.kind === "unknown"
+          ? `On ${serverLabel}, update the executable used by ${unit.name} to ${targetVersion}; keep its existing launch configuration. Then run the command. Restarting stops running agents.`
+          : `On ${serverLabel}, change only the t3 version in ${unit.name}'s ExecStart to t3@${targetVersion}; keep its existing subcommand and options. Then run the command. Restarting stops running agents.`,
     };
   }
   return {
