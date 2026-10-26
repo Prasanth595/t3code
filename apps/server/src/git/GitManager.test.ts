@@ -2522,7 +2522,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("applies a V2-native thread's project settings to generated commit text", () =>
+  it.effect("prefers a V2-native thread's project settings over an explicit project", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -2609,6 +2609,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         cwd: repoDir,
         action: "commit",
         threadId,
+        projectId: ProjectId.make("project:other"),
       });
 
       expect(generatedModelSelection).toEqual(projectModel);
