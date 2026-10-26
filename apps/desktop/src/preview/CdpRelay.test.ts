@@ -256,4 +256,44 @@ describe("CDP relay downloads", () => {
     relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
     expect(written).toEqual([]);
   });
+
+  it.each([false, true])(
+    "keeps the previous download event setting (%s) when configuration fails",
+    async (enabled) => {
+      const send = vi
+        .fn(async () => ({}))
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error("Page command rejected"));
+      const written: Array<Record<string, unknown>> = [];
+      const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
+        written.push(JSON.parse(raw)),
+      );
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+      for (const [id, eventsEnabled] of [enabled, !enabled].entries()) {
+        relay.receive(
+          JSON.stringify({
+            id: id + 2,
+            method: "Browser.setDownloadBehavior",
+            params: { behavior: "allowAndName", downloadPath: "/srv/artifacts", eventsEnabled },
+          }),
+        );
+        await settle();
+      }
+      expect(written).toContainEqual({
+        id: 3,
+        error: { code: -32000, message: "Page command rejected" },
+      });
+      written.length = 0;
+      relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
+      relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
+      expect(written).toEqual(
+        enabled
+          ? [
+              { method: "Browser.downloadWillBegin", params: { guid: "g1" } },
+              { method: "Browser.downloadProgress", params: { guid: "g1", state: "completed" } },
+            ]
+          : [],
+      );
+    },
+  );
 });
