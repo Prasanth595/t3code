@@ -9602,8 +9602,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  for (const laterWake of [false, true]) {
-    it.effect(`settles an answered wake while preserving later wake: ${laterWake}`, () =>
+  it.effect.each([false, true])(
+    "settles an answered wake while preserving later wake: %s",
+    (laterWake) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeWakeHarness;
@@ -9705,8 +9706,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
-    );
-  }
+  );
 
   it.effect("keeps a nested subagent's launch in order while the root turn is idle", () =>
     Effect.scoped(
