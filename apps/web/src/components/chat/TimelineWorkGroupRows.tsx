@@ -109,19 +109,20 @@ export const WorkGroupSection = memo(function WorkGroupSection({
 });
 
 function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
   const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
+  const initialText = formatWorkingTimerNow(createdAt, activeThreadEnvironmentId);
 
   useEffect(() => {
     const updateText = () => {
       if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+        textRef.current.textContent = formatWorkingTimerNow(createdAt, activeThreadEnvironmentId);
       }
     };
     updateText();
     const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
-  }, [createdAt]);
+  }, [activeThreadEnvironmentId, createdAt]);
 
   return (
     <span ref={textRef} className="tabular-nums">

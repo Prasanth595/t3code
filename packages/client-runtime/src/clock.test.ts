@@ -1,5 +1,6 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { deadlineStore, secondTick } from "./clock.ts";
+import { deadlineStore, recordServerClock, secondTick, toServerClock } from "./clock.ts";
 
 describe("deadlineStore", () => {
   afterEach(() => {
@@ -136,5 +137,48 @@ describe("secondTick", () => {
     expect(vi.getTimerCount()).toBe(1);
     unsubscribeNext();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("server clock", () => {
+  const HOUR = 3_600_000;
+
+  it("counts from a host clock running ahead, minus only the reply's latency", () => {
+    const environmentId = EnvironmentId.make("ahead");
+    // Stamped at the host's 1h + 1_000 while this clock read about 1_000.
+    recordServerClock(environmentId, {
+      serverTimeMs: HOUR + 1_000,
+      requestedAtMs: 900,
+      receivedAtMs: 1_050,
+    });
+    expect(toServerClock(environmentId, 2_050)).toBe(HOUR + 2_000);
+  });
+
+  it("counts from a host clock running behind, minus only the request's latency", () => {
+    const environmentId = EnvironmentId.make("behind");
+    // Stamped at the host's 1_000 while this clock read about 1h + 1_000.
+    recordServerClock(environmentId, {
+      serverTimeMs: 1_000,
+      requestedAtMs: HOUR + 900,
+      receivedAtMs: HOUR + 1_050,
+    });
+    expect(toServerClock(environmentId, HOUR + 1_900)).toBe(2_000);
+  });
+
+  it("leaves clocks that agree within the round trip unshifted", () => {
+    const environmentId = EnvironmentId.make("synced");
+    recordServerClock(environmentId, {
+      serverTimeMs: 5_000,
+      requestedAtMs: 1_000,
+      receivedAtMs: 9_000,
+    });
+    expect(toServerClock(environmentId, 12_345)).toBe(12_345);
+  });
+
+  it("replaces an environment's reading on reconnect", () => {
+    const environmentId = EnvironmentId.make("reconnected");
+    recordServerClock(environmentId, { serverTimeMs: HOUR, requestedAtMs: 0, receivedAtMs: 0 });
+    recordServerClock(environmentId, { serverTimeMs: 0, requestedAtMs: 0, receivedAtMs: 0 });
+    expect(toServerClock(environmentId, 500)).toBe(500);
   });
 });

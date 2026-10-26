@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -32,6 +33,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "./session.ts";
+import { toServerClock } from "../clock.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
 import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
 
@@ -422,6 +424,36 @@ describe("RpcSessionFactory", () => {
             config: { keybindings: [{ command: "terminal.toggle", shortcut }] },
           },
         });
+      }),
+    ),
+  );
+
+  it.effect("reads the host clock from the first config snapshot only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hourAheadConfig = { ...SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" };
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket, encodeServerConfig(hourAheadConfig));
+        yield* Fiber.join(ready);
+        expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+        // A later snapshot, such as late editor discovery, repeats the old stamp.
+        yield* TestClock.adjust("1 second");
+        const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
+        yield* session.subscribeServerConfig({}).pipe(
+          Stream.runForEach((event) => Queue.offer(observed, event)),
+          Effect.forkChild,
+        );
+        yield* Queue.take(observed);
+        yield* publishConfigEvents(socket, [
+          { version: 1, type: "snapshot", config: hourAheadConfig },
+        ]);
+        yield* Queue.take(observed);
+        expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
       }),
     ),
   );
