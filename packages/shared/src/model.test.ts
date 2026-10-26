@@ -10,7 +10,11 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  modelIdentitiesEqual,
+  modelSelectionChainsEqual,
   modelSelectionsEqual,
+  moveModelSelectionChain,
+  toggleModelSelectionChain,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -71,6 +75,29 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+    expect(modelIdentitiesEqual(left, { ...left, options: [] })).toBe(true);
+    expect(modelIdentitiesEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("edits an ordered model chain by identity", () => {
+    const first = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4");
+    const second = createModelSelection(ProviderInstanceId.make("claude"), "opus-4", [
+      { id: "effort", value: "high" },
+    ]);
+    const withChain = toggleModelSelectionChain(toggleModelSelectionChain([], first), second);
+    expect(modelSelectionChainsEqual(withChain, [first, second])).toBe(true);
+    expect(
+      modelSelectionChainsEqual(moveModelSelectionChain(withChain, 1, -1), [second, first]),
+    ).toBe(true);
+    expect(
+      modelSelectionChainsEqual(
+        toggleModelSelectionChain(withChain, {
+          ...first,
+          options: [{ id: "fastMode", value: true }],
+        }),
+        [second],
+      ),
+    ).toBe(true);
   });
 });
 

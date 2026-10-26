@@ -9,7 +9,7 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ModelSelection } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -31,6 +31,7 @@ import {
   uniformMobileSetting,
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
+import { UsageLimitFallbackChainRows } from "./UsageLimitFallbackChainRows";
 
 export function SettingsThreadsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -90,6 +91,7 @@ function AutoSettleSettingsRows() {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      usageLimitFallbackChain?: readonly ModelSelection[];
     },
   ) => {
     if (
@@ -192,6 +194,13 @@ function AutoSettleSettingsRows() {
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
+      ) : null}
+      {!projectSelected ? (
+        <UsageLimitFallbackChainRows
+          targets={displayTargets}
+          disabled={disabled}
+          onChange={(usageLimitFallbackChain) => writeToAll({ usageLimitFallbackChain })}
+        />
       ) : null}
       <SettingsSection title="Auto-settle">
         <SettingsSwitchRow

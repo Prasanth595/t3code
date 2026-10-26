@@ -102,6 +102,50 @@ function canonicalModelSelectionOptions(
   );
 }
 
+/** Same provider instance and model. Options are a separate choice and do not make a new model. */
+export function modelIdentitiesEqual(left: ModelSelection, right: ModelSelection): boolean {
+  return left.instanceId === right.instanceId && left.model === right.model;
+}
+
+export function modelSelectionChainsEqual(
+  left: ReadonlyArray<ModelSelection>,
+  right: ReadonlyArray<ModelSelection>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((entry, index) => {
+      const other = right[index];
+      return other !== undefined && modelSelectionsEqual(entry, other);
+    })
+  );
+}
+
+/** Appends a model, or removes the existing entry for that same model. */
+export function toggleModelSelectionChain(
+  chain: ReadonlyArray<ModelSelection>,
+  entry: ModelSelection,
+): Array<ModelSelection> {
+  const index = chain.findIndex((candidate) => modelIdentitiesEqual(candidate, entry));
+  if (index < 0) return [...chain, entry];
+  return chain.filter((_, candidateIndex) => candidateIndex !== index);
+}
+
+export function moveModelSelectionChain(
+  chain: ReadonlyArray<ModelSelection>,
+  index: number,
+  direction: -1 | 1,
+): Array<ModelSelection> {
+  const target = index + direction;
+  if (index < 0 || target < 0 || index >= chain.length || target >= chain.length) {
+    return [...chain];
+  }
+  const next = [...chain];
+  const [moved] = next.splice(index, 1);
+  if (moved === undefined) return [...chain];
+  next.splice(target, 0, moved);
+  return next;
+}
+
 export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
   if (left.instanceId !== right.instanceId || left.model !== right.model) {
     return false;

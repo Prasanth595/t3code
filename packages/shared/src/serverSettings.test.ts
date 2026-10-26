@@ -931,9 +931,11 @@ describe("usage limit fallback chain", () => {
   it("keeps a chain entry's options", () => {
     const withOptions = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       usageLimitFallbackChain: [
-        { instanceId: codex, model: "gpt-5", options: { reasoningEffort: "high" } },
+        { instanceId: codex, model: "gpt-5", options: [{ id: "reasoningEffort", value: "high" }] },
       ],
     });
-    expect(withOptions.usageLimitFallbackChain[0]?.options).toEqual({ reasoningEffort: "high" });
+    expect(withOptions.usageLimitFallbackChain[0]?.options).toEqual([
+      { id: "reasoningEffort", value: "high" },
+    ]);
   });
 });

@@ -221,6 +221,13 @@ When the provider reports a reset time, choose **Resume at reset** to schedule a
 continuation. You can cancel it from the thread. Enable **Resume after
 usage limits** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
+**Continue on the next model**, in those same settings, is an ordered list of
+models. When it is not empty and the provider reports a reset time, the thread
+continues immediately on the next model in the list instead of waiting. It
+switches to that model and carries a summary of the conversation. The list
+skips the model that hit the limit and any provider the project has turned off.
+An empty list keeps the wait-for-reset behavior. Providers that stop without a
+reset time stay on manual retry.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
 archiving, or settling it prevents a pending continuation from starting.

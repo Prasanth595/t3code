@@ -1,5 +1,25 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
-import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { SourceControlProviderKind, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { limitRecoveryCommand as limitRecoveryCommandFor } from "./UsageLimitRecoveryWorker.ts";
+
+// The worker reads the failed run's selection to walk a fallback chain. Snapshots do not carry
+// it, so a shell's own selection stands in for the run's.
+type LimitRecoveryThread =
+  | OrchestrationV2ThreadShell
+  | ProjectionStore.ProjectionLimitRecoveryCandidate;
+const limitRecoveryCommand = (
+  thread: LimitRecoveryThread,
+  autoResume: boolean,
+  nowMs: number,
+  snooze = false,
+) =>
+  limitRecoveryCommandFor(
+    "runModelSelection" in thread
+      ? thread
+      : { ...thread, runModelSelection: thread.modelSelection },
+    autoResume,
+    nowMs,
+    snooze,
+  );
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -83,6 +103,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerPlatformTest = Layer.merge(
@@ -6865,3 +6886,144 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+const fallbackSelection = {
+  instanceId: alternateInstanceId,
+  model: "gpt-5.4",
+} satisfies ModelSelection;
+
+const layerLimitFallbackChainTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  ProjectStore.layer,
+  ProjectionStore.layer,
+  EffectOutbox.layer,
+  ThreadCommandExecutor.layer,
+).pipe(
+  Layer.provide(McpSessionRegistryTestkit.layer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  // Merged, not provided: the sweep reads these settings from the test's own context.
+  Layer.provideMerge(
+    ServerSettings.layerTest({
+      providerInstances: { [alternateInstanceId]: { driver: "codex", enabled: true } },
+      usageLimitFallbackChain: [fallbackSelection],
+    }),
+  ),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
+);
+
+it.layer(layerLimitFallbackChainTest)("usage-limit fallback chain", (it) => {
+  it.effect("continues on the next chain entry and hands the thread's context over", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("fallback-chain-thread");
+      const projectId = ProjectId.make("fallback-chain-project");
+      yield* seedProject({
+        projectId,
+        title: "Fallback project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message`),
+        text: "Work on this.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+      });
+      const limitedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      // Far enough out that resuming at the reset cannot be what continues the thread.
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 30 }));
+      yield* events.write({
+        commandId: CommandId.make(`${threadId}:failure`),
+        events: [
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...limitedRun, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: limitedRun.id,
+              nodeId: limitedRun.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt,
+              },
+            },
+          },
+        ],
+      });
+
+      yield* UsageLimitRecoveryWorker.sweep;
+
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      assert.equal(shell.providerInstanceId, alternateInstanceId);
+      assert.deepEqual(shell.modelSelection, fallbackSelection);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(after.runs, 2);
+      const continued = after.runs[1]!;
+      assert.equal(continued.providerInstanceId, alternateInstanceId);
+      assert.equal(continued.status, "starting");
+      const handoff = after.contextHandoffs.find((row) => row.id === continued.contextHandoffId);
+      assert.isDefined(handoff, "the continuation left without the thread's context");
+      assert.equal(handoff!.toProviderThreadId, continued.providerThreadId);
+      assert.equal(handoff!.strategy, "full_thread_summary");
+      assert.deepEqual(handoff!.coveredRunOrdinals, {
+        from: limitedRun.ordinal,
+        to: limitedRun.ordinal,
+      });
+    }),
+  );
+});

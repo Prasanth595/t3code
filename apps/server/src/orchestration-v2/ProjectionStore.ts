@@ -13,6 +13,7 @@ import {
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
+  usageLimitBlockedRun,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -182,7 +183,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+  | "projectId"
+> & {
+  /** The failed run's selection, not the thread's: a fallback must not reuse the model that just hit the limit. */
+  readonly runModelSelection: OrchestrationV2Run["modelSelection"];
+};
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -3861,9 +3866,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly run_id: string;
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
+          readonly run_payload_json: string;
           readonly last_error: string | null;
         }>`
-          SELECT t.payload_json, r.run_id, r.completed_at,
+          SELECT t.payload_json, r.run_id, r.completed_at, r.payload_json AS run_payload_json,
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
@@ -3943,6 +3949,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const candidates: Array<ProjectionLimitRecoveryCandidate> = [];
         for (const row of rows) {
           const thread = yield* decodeThreadPayload(row.payload_json);
+          const run = yield* decodeRunPayload(row.run_payload_json);
           const item = yield* decodeTurnItemPayload(row.failure_payload_json);
           const summary = threadErrorSummary(
             item.type === "error" ? item.failure : null,
@@ -3963,6 +3970,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
+            projectId: thread.projectId,
+            runModelSelection: run.modelSelection,
           });
         }
         return candidates;
@@ -7070,7 +7079,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
+              .map((projection) => ({
+                ...threadShellFromProjection(projection),
+                runModelSelection:
+                  usageLimitBlockedRun(projection.runs, projection.turnItems, null)
+                    ?.modelSelection ?? projection.thread.modelSelection,
+              }))
               .filter(
                 (thread) =>
                   thread.status === "failed" &&

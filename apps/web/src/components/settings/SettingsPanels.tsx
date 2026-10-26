@@ -36,6 +36,7 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { UsageLimitFallbackChainSetting } from "./UsageLimitFallbackChainSetting";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
@@ -459,6 +460,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
       ? ["Snooze until limits reset"]
       : []),
+    ...(settings.usageLimitFallbackChain.length > 0 ? ["Continue on the next model"] : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -617,6 +619,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      usageLimitFallbackChain: DEFAULT_UNIFIED_SETTINGS.usageLimitFallbackChain,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -859,6 +862,19 @@ export function GeneralSettingsPanel() {
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+  const mixedUsageLimitFallbackChain = useScopedSettingsMixed(["usageLimitFallbackChain"]);
+  const fallbackInstanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+      target?.projectId ?? null,
+    ),
+  );
+  const fallbackModelOptionsByInstance = getCustomModelOptionsByInstance(settings, serverProviders);
+  const fallbackModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    fallbackInstanceEntries,
+  );
 
   return (
     <SettingsPageContainer>
@@ -970,6 +986,51 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Snooze until limits reset"
             />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("usage-limit-fallback-chain")}
+          description="When a thread hits a usage limit that reports a reset time, continue immediately on the next model in this list. Order is the fallback order. An empty list waits for the reset."
+          settingKeys={["usageLimitFallbackChain"]}
+          resetAction={
+            settings.usageLimitFallbackChain.length > 0 ? (
+              <SettingResetButton
+                label="fallback models"
+                onClick={() =>
+                  updateSettings({
+                    usageLimitFallbackChain: DEFAULT_UNIFIED_SETTINGS.usageLimitFallbackChain,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            !hasServerTargets ? (
+              <span className="text-sm text-muted-foreground">
+                Connect an environment to choose fallback models.
+              </span>
+            ) : (
+              <UsageLimitFallbackChainSetting
+                chain={settings.usageLimitFallbackChain}
+                mixed={mixedUsageLimitFallbackChain}
+                environmentId={environmentId}
+                instanceEntries={fallbackInstanceEntries}
+                modelOptionsByInstance={fallbackModelOptionsByInstance}
+                getModelDisabledReason={fallbackModelDisabledReason}
+                {...(environmentId
+                  ? {
+                      onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                        void navigate({
+                          to: "/settings/providers",
+                          search: { environmentId, instanceId },
+                        });
+                      },
+                    }
+                  : {})}
+                onChange={(usageLimitFallbackChain) => updateSettings({ usageLimitFallbackChain })}
+              />
+            )
           }
         />
 

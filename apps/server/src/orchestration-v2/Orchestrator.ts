@@ -66,7 +66,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelIdentitiesEqual, modelSelectionsEqual } from "@t3tools/shared/model";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   derivePendingBackgroundWork,
@@ -4985,19 +4985,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
       const now = yield* DateTime.now;
+      // A named selection continues only after the thread already carries a different
+      // model. Naming the limited model still waits for its reset.
+      const fallbackSelection = command.modelSelection;
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
         failure?.class !== "usage_limit" ||
         threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
-        !recovery?.autoResume ||
-        recovery.requestId !== command.usageLimitRecoveryRequestId ||
-        recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
-        Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+        (fallbackSelection !== undefined &&
+        run !== null &&
+        !modelIdentitiesEqual(fallbackSelection, run.modelSelection)
+          ? !modelSelectionsEqual(fallbackSelection, projection.thread.modelSelection)
+          : !recovery?.autoResume ||
+            recovery.requestId !== command.usageLimitRecoveryRequestId ||
+            recovery.runId !== run.id ||
+            recovery.resetAt !== failure.resetAt ||
+            Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+            projection.thread.providerInstanceId !== run.providerInstanceId) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
-        projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         (projection.thread.snoozedUntil != null &&
           DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
