@@ -225,7 +225,7 @@ describe("preview stream accessible view", () => {
     );
     expect(onAccessibility).not.toHaveBeenCalled();
     socket.message(JSON.stringify({ type: "accessibility", document }));
-    socket.message(JSON.stringify({ type: "accessibilityNotice", text: "The page changed." }));
+    socket.message(JSON.stringify({ type: "accessibilityNotice", message: "The page changed." }));
     expect(onAccessibilityNotice).toHaveBeenCalledWith("The page changed.");
     socket.message(JSON.stringify({ type: "accessibility", document: null }));
     expect(onAccessibility).toHaveBeenLastCalledWith(null);

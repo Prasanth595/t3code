@@ -66,7 +66,7 @@ const HOISTED_ROLES = new Set([
 ]);
 /** Duplicates of text their parent already carries. */
 const SKIPPED_ROLES = new Set(["InlineTextBox", "ListMarker", "LineBreak"]);
-export const ACTIVATABLE_ROLES: ReadonlySet<string> = new Set([
+const ACTIVATABLE_ROLES: ReadonlySet<string> = new Set([
   "link",
   "button",
   "checkbox",
@@ -110,7 +110,7 @@ const roleOf = (node: RawAccessibilityNode) => {
 };
 
 /** Editable fields whose attributes must be read before their values may be sent. */
-export const valueFieldIds = (nodes: ReadonlyArray<RawAccessibilityNode>) =>
+const valueFieldIds = (nodes: ReadonlyArray<RawAccessibilityNode>) =>
   nodes.flatMap((node) =>
     !node.ignored && node.backendDOMNodeId !== undefined && EDITABLE_ROLES.has(roleOf(node))
       ? [node.backendDOMNodeId]

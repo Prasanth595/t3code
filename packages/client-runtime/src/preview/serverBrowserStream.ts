@@ -292,6 +292,7 @@ export function createPreviewStreamClient(
         sequence,
         tabId,
         document,
+        message: noticeText,
       } = message as Record<string, unknown>;
       if (type === "accessibility") {
         if (!accessible) return;
@@ -303,8 +304,8 @@ export function createPreviewStreamClient(
         if (Option.isNone(decoded)) return;
         accessibilityShown = true;
         events.onAccessibility?.(decoded.value);
-      } else if (type === "accessibilityNotice" && typeof text === "string") {
-        if (accessible) events.onAccessibilityNotice?.(text);
+      } else if (type === "accessibilityNotice" && typeof noticeText === "string") {
+        if (accessible) events.onAccessibilityNotice?.(noticeText);
       } else if (
         type === "fileChooser" &&
         typeof id === "string" &&

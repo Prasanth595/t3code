@@ -242,7 +242,7 @@ export interface AccessibleDocumentView {
   readonly destroy: () => void;
 }
 
-export const ACCESSIBLE_VIEW_NOT_CONTROLLER = "Take control of the browser to use the page.";
+const ACCESSIBLE_VIEW_NOT_CONTROLLER = "Take control of the browser to use the page.";
 
 const STYLE = `
 .t3-accessible-document { font: inherit; line-height: 1.5; padding: 12px; overflow-wrap: anywhere; }
