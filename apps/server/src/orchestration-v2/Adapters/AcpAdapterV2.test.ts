@@ -2444,7 +2444,10 @@ describe("AcpAdapterV2", () => {
             childProcessSpawner,
             mockAgentPath,
             protocolEvents,
-            environment: () => ({ T3_ACP_OMIT_SESSION_CAPABILITIES: "1" }),
+            environment: () => ({
+              T3_ACP_OMIT_SESSION_CAPABILITIES: "1",
+              T3_ACP_UNIQUE_SESSION_IDS: "1",
+            }),
           }),
         },
         selfInvocation,
@@ -2457,27 +2460,35 @@ describe("AcpAdapterV2", () => {
         cwd: process.cwd(),
       });
       const modelSelection = { instanceId, model: "default" } as const;
+      // The session the thread had before the move, from an earlier agent process.
+      const previousThread = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const previous = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-acp-before-move"),
+            modelSelection,
+            runtimePolicy,
+          });
+          return yield* previous.ensureThread({ threadId, modelSelection, runtimePolicy });
+        }),
+      );
+      const previousSessionId = previousThread.nativeThreadRef?.nativeId;
+      if (previousSessionId === undefined) {
+        return yield* Effect.die("The first ACP session has no session id");
+      }
+      yield* pollProtocolMethods(protocolEvents);
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-no-session-reopen"),
         modelSelection,
         runtimePolicy,
-        initialNativeThreadId: "previous-session",
+        initialNativeThreadId: previousSessionId,
       });
       const replacementThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy,
       });
-      const previousThread: OrchestrationV2ProviderThread = {
-        ...replacementThread,
-        nativeMetadata: null,
-        nativeThreadRef: {
-          driver: ACP_TEST_DRIVER,
-          nativeId: "previous-session",
-          strength: "strong",
-        },
-      };
 
       const startupMethods = yield* pollProtocolMethods(protocolEvents);
       assert.notInclude(startupMethods, "session/load");
@@ -2490,7 +2501,7 @@ describe("AcpAdapterV2", () => {
         .resumeThread({ providerThread: previousThread, modelSelection, runtimePolicy })
         .pipe(Effect.flip);
       assert.equal(resumeError._tag, "ProviderAdapterResumeThreadError");
-      assert.notEqual(replacementThread.nativeThreadRef?.nativeId, "previous-session");
+      assert.notEqual(replacementThread.nativeThreadRef?.nativeId, previousSessionId);
       const now = yield* DateTime.now;
       yield* runtime.startTurn(
         makeTurnInput({

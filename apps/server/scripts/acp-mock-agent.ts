@@ -129,7 +129,13 @@ const permissionRequestCount = Math.max(
   1,
   Number(process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
 );
-const sessionId = "mock-session-1";
+// Real agents mint a new id for every session/new. The fixed id is the default
+// because most tests assert it; set T3_ACP_UNIQUE_SESSION_IDS=1 to get a fresh
+// id per process, as a real agent that cannot reopen sessions would.
+const sessionId =
+  process.env.T3_ACP_UNIQUE_SESSION_IDS === "1"
+    ? `mock-session-${globalThis.crypto.randomUUID()}`
+    : "mock-session-1";
 
 let currentModeId = antigravityProfile ? "default" : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
