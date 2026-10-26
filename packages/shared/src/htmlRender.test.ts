@@ -96,25 +96,75 @@ describe("readHtmlRenderLinkRequest", () => {
 });
 
 describe("readHtmlRenderImageRequest", () => {
-  it("accepts http(s) and inline image URLs in an open-image notification", () => {
-    const image = (params: unknown) => ({
-      jsonrpc: "2.0",
-      method: "t3/notifications/open-image",
-      params,
-    });
+  const image = (params: unknown) => ({
+    jsonrpc: "2.0",
+    method: "t3/notifications/open-image",
+    params,
+  });
+
+  it("accepts http(s) and inline image URLs in a single-image notification", () => {
     expect(
       readHtmlRenderImageRequest(image({ src: "data:image/png;base64,AA", name: " Chart " })),
     ).toEqual({
-      src: "data:image/png;base64,AA",
-      name: "Chart",
+      images: [{ src: "data:image/png;base64,AA", name: "Chart" }],
+      index: 0,
     });
     expect(readHtmlRenderImageRequest(image({ src: "https://example.com/a.png" }))).toEqual({
-      src: "https://example.com/a.png",
-      name: "Image",
+      images: [{ src: "https://example.com/a.png", name: "Image" }],
+      index: 0,
     });
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
+  });
+
+  it("keeps the clicked position in a block of images", () => {
+    const params = {
+      index: 2,
+      images: [
+        { src: "https://example.com/1.png", name: "First" },
+        { src: "https://example.com/2.png", name: "Second" },
+        { src: "https://example.com/3.png", name: "Third" },
+      ],
+    };
+    expect(readHtmlRenderImageRequest(image(params))).toEqual(params);
+  });
+
+  it("opens the first image when the position is missing or out of range", () => {
+    const images = [{ src: "https://example.com/1.png", name: "First" }];
+    expect(readHtmlRenderImageRequest(image({ images }))).toEqual({ images, index: 0 });
+    expect(readHtmlRenderImageRequest(image({ images, index: 4 }))).toEqual({ images, index: 0 });
+    expect(readHtmlRenderImageRequest(image({ images, index: -1 }))).toEqual({ images, index: 0 });
+    expect(readHtmlRenderImageRequest(image({ images, index: 0.5 }))).toEqual({
+      images,
+      index: 0,
+    });
+  });
+
+  it("rejects a block with an empty, oversized, or unsafe entry", () => {
+    expect(readHtmlRenderImageRequest(image({ index: 0, images: [] }))).toBeUndefined();
+    expect(
+      readHtmlRenderImageRequest(image({ index: 0, images: "https://example.com/1.png" })),
+    ).toBeUndefined();
+    expect(
+      readHtmlRenderImageRequest(
+        image({
+          index: 1,
+          images: [
+            { src: "https://example.com/1.png", name: "First" },
+            { src: "javascript:alert(1)", name: "Second" },
+          ],
+        }),
+      ),
+    ).toBeUndefined();
+    const tooMany = Array.from({ length: 25 }, (_, index) => ({
+      src: `https://example.com/${index}.png`,
+      name: `Image ${index}`,
+    }));
+    expect(readHtmlRenderImageRequest(image({ index: 0, images: tooMany }))).toBeUndefined();
+    expect(
+      readHtmlRenderImageRequest(image({ index: 0, images: tooMany.slice(0, 24) }))?.images,
+    ).toHaveLength(24);
   });
 });
 
