@@ -78,6 +78,7 @@ export interface AntigravityAdapterV2Options {
     cwd: string,
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
+  readonly onModelSelected?: (modelId: string) => Effect.Effect<void>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
 }
@@ -176,7 +177,7 @@ export function makeAntigravityAcpAdapterFlavor(
       modelSelection,
     }) {
       const defaultModel = yield* options.defaultModel;
-      return yield* applyAntigravityAcpModelSelection({
+      const selected = yield* applyAntigravityAcpModelSelection({
         runtime,
         models: startResult.sessionSetupResult.models,
         model:
@@ -184,6 +185,10 @@ export function makeAntigravityAcpAdapterFlavor(
         defaultModel,
         mapError: (cause) => cause,
       });
+      if (selected !== undefined && options.onModelSelected) {
+        yield* options.onModelSelected(selected);
+      }
+      return selected;
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     clientFileSystem: {

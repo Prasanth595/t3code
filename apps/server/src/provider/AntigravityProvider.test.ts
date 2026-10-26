@@ -388,6 +388,31 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("defaults to the concrete model a grouped session selected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity143Session,
+        });
+        yield* harness.provider.onModelSelected("claude-sonnet-5-5-low");
+        yield* harness.provider.onConfigOptionsUpdated(
+          antigravity143Session.configOptions.map((option) =>
+            option.id === "model"
+              ? { ...option, currentValue: "claude-sonnet-5-5" }
+              : { ...option, currentValue: "low" },
+          ),
+        );
+        const models = (yield* harness.provider.snapshot.getSnapshot).models;
+        expect(models.filter((model) => model.isDefault).map((model) => model.slug)).toEqual([
+          "claude-sonnet-5-5-low",
+        ]);
+      }),
+    ),
+  );
+
   it.effect("lists models added by config updates to ungrouped sessions", () =>
     Effect.scoped(
       Effect.gen(function* () {

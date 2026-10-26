@@ -338,6 +338,32 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     });
   });
 
+  // Grouped config updates name only the family and thinking level.
+  const onModelSelected = Effect.fn("AntigravityProvider.onModelSelected")(function* (
+    modelId: string,
+  ) {
+    yield* SubscriptionRef.update(metadata, (state) => {
+      const grouped = state.groupedModels;
+      if (
+        state.draft.auth.status !== "authenticated" ||
+        !grouped ||
+        grouped.currentModelId === modelId ||
+        !grouped.availableModels.some((model) => model.modelId === modelId)
+      ) {
+        return state;
+      }
+      const groupedModels = { ...grouped, currentModelId: modelId };
+      return {
+        ...state,
+        groupedModels,
+        draft: {
+          ...state.draft,
+          models: buildAntigravityModelsFromSession({ models: groupedModels }),
+        },
+      };
+    });
+  });
+
   const onAvailableCommands = Effect.fn("AntigravityProvider.onAvailableCommands")(function* (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd?: string,
@@ -433,6 +459,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     snapshot: { ...managed, getSnapshot },
     onSessionStarted,
     onConfigOptionsUpdated,
+    onModelSelected,
     onAvailableCommands,
     onSignedOut: clearAccountMetadata(),
     onAuthRequired: clearAccountMetadata(),

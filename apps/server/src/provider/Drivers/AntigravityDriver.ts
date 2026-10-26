@@ -428,6 +428,7 @@ export const AntigravityDriver: ProviderDriver<
           ? provider.onAvailableCommands(event.availableCommands)
           : Effect.void;
       },
+      onModelSelected: provider.onModelSelected,
       continuationRequests,
       nativeLogging: (threadId) =>
         makeNativeLogger({
