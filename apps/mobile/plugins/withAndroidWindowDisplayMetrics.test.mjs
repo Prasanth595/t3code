@@ -60,25 +60,19 @@ describe("withAndroidWindowDisplayMetrics", () => {
     const result = await prebuildMainActivity(template);
 
     expect(methodBody(result, "setContentView")).toMatch(
-      /^super\.setContentView\(view\)\s+bindWindowDisplayMetrics\(\)$/,
+      /^super\.setContentView\(view\)\s+DisplayMetricsHolder\.initDisplayMetrics\(this\)$/,
     );
     expect(methodBody(result, "onConfigurationChanged")).toMatch(
-      /^super\.onConfigurationChanged\(newConfig\)\s+bindWindowDisplayMetrics\(\)\s+applyTabletOrientation\(\)$/,
+      /^super\.onConfigurationChanged\(newConfig\)\s+DisplayMetricsHolder\.initDisplayMetrics\(this\)\s+applyTabletOrientation\(\)$/,
     );
     const onCreate = methodBody(result, "onCreate");
     expect(onCreate).toContain("applyTabletOrientation()");
-    expect(onCreate).not.toContain("bindWindowDisplayMetrics()");
+    expect(onCreate).not.toContain("DisplayMetricsHolder.initDisplayMetrics(this)");
     expect(methodBody(result, "applyTabletOrientation")).toMatch(
       /requestedOrientation = if \(resources\.configuration\.smallestScreenWidthDp >= 600\) \{\s+ActivityInfo\.SCREEN_ORIENTATION_FULL_USER\s+\} else \{\s+ActivityInfo\.SCREEN_ORIENTATION_PORTRAIT\s+\}/,
     );
 
-    const binding = methodBody(result, "bindWindowDisplayMetrics");
-    expect(binding).toContain("val windowMetrics = resources.displayMetrics");
-    expect(binding).toMatch(
-      /metrics\.setTo\(windowMetrics\)\s+windowManager\.defaultDisplay\.getRealMetrics\(metrics\)\s+metrics\.scaledDensity = windowMetrics\.scaledDensity\s+DisplayMetricsHolder\.setScreenDisplayMetrics\(metrics\)/,
-    );
     expect(result).toContain("import android.view.View");
-    expect(result).toContain("import android.util.DisplayMetrics");
     expect(result).toContain("import com.facebook.react.uimanager.DisplayMetricsHolder");
     expect(result.match(/^import android\.content\.res\.Configuration$/gm)).toHaveLength(1);
   });
@@ -87,7 +81,9 @@ describe("withAndroidWindowDisplayMetrics", () => {
     const once = await prebuildMainActivity(template);
     const twice = await prebuildMainActivity(once);
 
-    expect(methodBody(once, "setContentView")).toContain("bindWindowDisplayMetrics()");
+    expect(methodBody(once, "setContentView")).toContain(
+      "DisplayMetricsHolder.initDisplayMetrics(this)",
+    );
     expect(twice).toBe(once);
   });
 });

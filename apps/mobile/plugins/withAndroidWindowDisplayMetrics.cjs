@@ -5,22 +5,10 @@ const { withMainActivity } = require("expo/config-plugins");
 // onCreate, resetting those metrics; ReactHost resets them on configuration
 // changes too. Rebind after both, before text is measured.
 const DISPLAY_METRICS_METHODS = `
-  // Keep deprecated APIs to match React Native screen metrics on Android 24+.
-  // Physical display metrics omit the configured font scale.
-  @Suppress("DEPRECATION")
-  private fun bindWindowDisplayMetrics() {
-    val windowMetrics = resources.displayMetrics
-    val metrics = DisplayMetrics()
-    metrics.setTo(windowMetrics)
-    windowManager.defaultDisplay.getRealMetrics(metrics)
-    metrics.scaledDensity = windowMetrics.scaledDensity
-    DisplayMetricsHolder.setScreenDisplayMetrics(metrics)
-  }
-
   // Expo constructs the root view after onCreate; its constructor resets metrics.
   override fun setContentView(view: View?) {
     super.setContentView(view)
-    bindWindowDisplayMetrics()
+    DisplayMetricsHolder.initDisplayMetrics(this)
   }
 `;
 
@@ -53,11 +41,10 @@ module.exports = function withAndroidWindowDisplayMetrics(config) {
     if (nextConfig.modResults.language !== "kt") {
       throw new Error("withAndroidWindowDisplayMetrics: MainActivity must be Kotlin.");
     }
-    if (contents.includes("bindWindowDisplayMetrics")) {
+    if (contents.includes("DisplayMetricsHolder.initDisplayMetrics(this)")) {
       return nextConfig;
     }
 
-    contents = addImport(contents, "import android.util.DisplayMetrics");
     contents = addImport(contents, "import android.view.View");
     contents = addImport(contents, "import com.facebook.react.uimanager.DisplayMetricsHolder");
     contents = insertAfter(
@@ -76,7 +63,7 @@ module.exports = function withAndroidWindowDisplayMetrics(config) {
         insertAfter(
           contents.slice(overrideStart),
           "super.onConfigurationChanged(newConfig)",
-          "\n    bindWindowDisplayMetrics()",
+          "\n    DisplayMetricsHolder.initDisplayMetrics(this)",
           "the super call in the onConfigurationChanged override",
         );
     } else {
@@ -87,7 +74,7 @@ module.exports = function withAndroidWindowDisplayMetrics(config) {
         `
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
-    bindWindowDisplayMetrics()
+    DisplayMetricsHolder.initDisplayMetrics(this)
   }
 `,
         "the MainActivity class declaration",
