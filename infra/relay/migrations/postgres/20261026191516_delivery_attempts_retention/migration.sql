@@ -1,0 +1,1 @@
+CREATE INDEX "idx_relay_delivery_attempts_created_at" ON "relay_delivery_attempts" ("created_at");

@@ -188,6 +188,7 @@ export const relayDeliveryAttempts = pgTable(
       table.createdAt,
     ),
     uniqueIndex("idx_relay_delivery_attempts_source_job").on(table.sourceJobId),
+    index("idx_relay_delivery_attempts_created_at").on(table.createdAt),
   ],
 );
 
