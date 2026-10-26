@@ -462,7 +462,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   // Aborted when this thread's body unmounts, so async work started for it
   // stops touching a list or composer that now shows another thread.
-  const [threadScope] = useState(() => new AbortController());
+  // Aborted when the screen hides or unmounts; a hidden Activity pane keeps its state but re-runs
+  // effects when shown, so each show arms a fresh scope.
+  const threadScope = useRef(new AbortController());
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   // The composer animates its height and reports a layout every frame. The feed follows those
   // frames on the UI thread through onComposerLayout; this is only an estimate, so committing
@@ -998,15 +1000,16 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     setEndFollowEnabled(enabled);
   };
   // A jump this thread never reached lets go when it closes.
-  useEffect(
-    () => () => {
-      threadScope.abort();
+  useEffect(() => {
+    if (threadScope.current.signal.aborted) threadScope.current = new AbortController();
+    const scope = threadScope.current;
+    return () => {
+      scope.abort();
       if (overlayRepinTimerRef.current !== null) clearTimeout(overlayRepinTimerRef.current);
       if (composerHeightSettle.current !== null) clearTimeout(composerHeightSettle.current);
       finishThreadMessageJump(selectedThreadKey);
-    },
-    [threadScope, selectedThreadKey],
-  );
+    };
+  }, [selectedThreadKey]);
   const handleToggleUserInputCollapsed = () => {
     if (activeUserInputRequestId === null) {
       return;
@@ -1084,6 +1087,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
   ) => {
+    const scope = threadScope.current.signal;
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
@@ -1094,11 +1098,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     const declineBeforeDispatch =
       approvalsToDecline.length > 0 && props.activePendingUserInput === null
         ? async (text: string, hasAttachmentsOrContext: boolean) => {
-            if (
-              threadScope.signal.aborted ||
-              stillSendable?.() === false ||
-              props.respondingApprovalId !== null
-            )
+            if (scope.aborted || stillSendable?.() === false || props.respondingApprovalId !== null)
               return false;
             const feedbackTarget = approvalsToDecline[0];
             if (feedbackTarget?.supportsFeedback) {
@@ -1116,7 +1116,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
             return (
               props.respondingApprovalId === null &&
               (await declinePendingApprovals(approvalsToDecline, props.onRespondToApproval)) &&
-              !threadScope.signal.aborted &&
+              !scope.aborted &&
               // A draft edited or pasted into during the decline isn't what the user sent.
               stillSendable?.() !== false &&
               // An approval that arrived during the decline would block the redirect; the draft
@@ -1129,7 +1129,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
           }
         : undefined;
     const messageId = await props.onSendMessage(followUp, declineBeforeDispatch);
-    if (messageId === null || threadScope.signal.aborted) {
+    if (messageId === null || scope.aborted) {
       return messageId;
     }
 
@@ -1150,17 +1150,17 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     // the queue by the next frame, once the new anchor has rendered.
     if (nextAnchorMessageId === messageId && contentPresentationKind === "ready") {
       requestAnimationFrame(() => {
-        if (threadScope.signal.aborted) return;
+        if (scope.aborted) return;
         // Wait for the keyboard to finish dismissing: scrollMessageToEnd freezes
         // keyboard-driven inset updates, and a close event swallowed by that
         // freeze leaves a phantom bottom inset.
         void KeyboardController.dismiss()
           .then(() => {
-            if (threadScope.signal.aborted) return;
+            if (scope.aborted) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
           })
           .catch(() => {
-            if (!threadScope.signal.aborted) freeze.set(false);
+            if (!scope.aborted) freeze.set(false);
           });
       });
     }
@@ -1168,6 +1168,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   };
 
   const handleEditPendingMessage = async (message: QueuedThreadMessage) => {
+    const scope = threadScope.current.signal;
     const edited = await settlePromise(() => editPendingThreadMessage(message));
     if (AsyncResult.isFailure(edited)) {
       const error = squashAtomCommandFailure(edited);
@@ -1179,7 +1180,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
     if (
       edited.value &&
-      !threadScope.signal.aborted &&
+      !scope.aborted &&
       selectedThreadKey === scopedThreadKey(message.environmentId, message.threadId)
     ) {
       composerEditorRef.current?.focus();
