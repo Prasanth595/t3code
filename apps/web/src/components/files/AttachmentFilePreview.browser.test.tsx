@@ -2334,19 +2334,19 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
-it("navigates, searches, zooms, and selects mixed-height PDF pages", async () => {
+function planningPdf(
+  titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
+  firstHeight = 140,
+) {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>",
+    `<< /Type /Pages /Count ${titles.length} /Kids [${titles.map((_, index) => `${3 + index * 2} 0 R`).join(" ")}] >>`,
   ];
-  for (const [index, title] of [
-    "Quarterly outlook",
-    "Delivery milestones",
-    "Budget and risks",
-  ].entries()) {
+  const font = 3 + titles.length * 2;
+  for (const [index, title] of titles.entries()) {
     const text = `/GS1 gs BT /F1 24 Tf 30 ${index === 0 ? 70 : 700} Td ${index === 0 ? "(Quarter) Tj /F2 24 Tf (ly outlook) Tj" : `(${title}) Tj`} ET`;
     objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${index === 0 ? 140 : 792}] /Rotate ${index === 2 ? 90 : 0} /Resources << /Font << /F1 9 0 R /F2 10 0 R >> /ExtGState << /GS1 << /TR << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 2 >> >> >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${index === 0 ? firstHeight : 792}] /Rotate ${index === 2 ? 90 : 0} /Resources << /Font << /F1 ${font} 0 R /F2 ${font + 1} 0 R >> /ExtGState << /GS1 << /TR << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 2 >> >> >> >> /Contents ${4 + index * 2} 0 R >>`,
       `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
     );
   }
@@ -2359,11 +2359,76 @@ it("navigates, searches, zooms, and selects mixed-height PDF pages", async () =>
     source += `${index + 1} 0 obj\n${object}\nendobj\n`;
   }
   const xref = source.length;
-  source += `xref\n0 11\n0000000000 65535 f \n${offsets
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
     .slice(1)
     .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
-    .join("")}trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  const file = new Blob([source], { type: "application/pdf" });
+    .join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([source], { type: "application/pdf" });
+}
+
+it("keeps the PDF page after reloads and clamps it when the document gets shorter", async () => {
+  const { BrowserDocumentFrame } = await import("./BrowserDocumentFrame");
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
+  using urls = (() => {
+    const original = URL.createObjectURL(planningPdf());
+    const updated = URL.createObjectURL(
+      planningPdf(["Quarterly outlook", "Delivery milestones", "Updated budget"], 500),
+    );
+    const shorter = URL.createObjectURL(planningPdf(["Quarterly outlook", "Updated milestones"]));
+    const single = URL.createObjectURL(planningPdf(["Quarterly outlook"]));
+    return {
+      original,
+      updated,
+      shorter,
+      single,
+      [Symbol.dispose]: () => [original, updated, shorter, single].forEach(URL.revokeObjectURL),
+    };
+  })();
+  const preview = (src: string, revision: string, documentId = "planning") => (
+    <div style={{ display: "flex", height: 600, width: 320 }}>
+      <BrowserDocumentFrame
+        src={src}
+        title="Planning PDF"
+        pdf
+        documentKey={revision}
+        documentId={documentId}
+      />
+    </div>
+  );
+  await using screen = await render(preview(urls.original, "one"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
+    timeout: 15_000,
+  });
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+  await screen.rerender(preview(urls.updated, "two"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("3 / 3 pages");
+    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
+      "Updated budget",
+    );
+  });
+  await screen.rerender(preview(urls.shorter, "three"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("2 / 2 pages");
+    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
+      "Updated milestones",
+    );
+  });
+  await screen.rerender(preview(urls.single, "four"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 1 pages"));
+  await screen.rerender(preview(urls.original, "five"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  await screen.rerender(preview(urls.original, "one", "another-document"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+});
+
+it("navigates, searches, zooms, and selects mixed-height PDF pages", async () => {
+  const file = planningPdf();
   const { default: PdfViewer } = await import("./PdfViewer");
   const url = URL.createObjectURL(file);
   try {

@@ -73,7 +73,33 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-function PdfDocument(props: { src: string; title: string }) {
+/**
+ * documentKey includes the file's revision and remounts the viewer when it changes.
+ * A stable documentId keeps this component mounted to track the current page number across reloads.
+ */
+function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+  const [page, setPage] = useState(0);
+  return (
+    <PdfDocumentRevision
+      key={props.documentKey}
+      src={props.src}
+      title={props.title}
+      initialPage={page}
+      onPageChange={setPage}
+    />
+  );
+}
+
+/**
+ * File URLs expire and are refreshed even when the PDF hasn't changed.
+ * Keep the initial URL so those refreshes don't reload the viewer.
+ */
+function PdfDocumentRevision(props: {
+  src: string;
+  title: string;
+  initialPage: number;
+  onPageChange: (page: number) => void;
+}) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
@@ -91,7 +117,12 @@ function PdfDocument(props: { src: string; title: string }) {
     />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
-      <PdfViewer src={src} title={props.title} />
+      <PdfViewer
+        src={src}
+        title={props.title}
+        initialPage={props.initialPage}
+        onPageChange={props.onPageChange}
+      />
     </Suspense>
   );
 }
@@ -108,10 +139,17 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
+  /** Resource identity without its revision, so PDF reloads can retain the page. */
+  readonly documentId?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <PdfDocument key={key} src={props.src} title={props.title} />
+    <PdfDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}

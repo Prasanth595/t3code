@@ -116,7 +116,12 @@ function PdfPage(props: {
   );
 }
 
-export default function PdfViewer(props: { src: string; title: string }) {
+export default function PdfViewer(props: {
+  src: string;
+  title: string;
+  initialPage?: number;
+  onPageChange?: (page: number) => void;
+}) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -133,6 +138,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const [initialPage] = useState(props.initialPage ?? 0);
   // oxlint-disable-next-line t3code/react-effect-budget -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
     const controller = new AbortController();
@@ -156,9 +162,20 @@ export default function PdfViewer(props: { src: string; title: string }) {
         if (document.numPages > MAX_PAGES)
           throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
+        const sizes = await Promise.all(
+          Array.from({ length: Math.min(initialPage, document.numPages) }, async (_, index) => {
+            const size = (await document.getPage(index + 1)).getViewport({ scale: 1 });
+            return size.height / size.width;
+          }),
+        );
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
-        setRatios(Array.from({ length: document.numPages }, () => first.height / first.width));
+        setRatios(
+          Array.from(
+            { length: document.numPages },
+            (_, index) => sizes[index] ?? first.height / first.width,
+          ),
+        );
         setPdf(document);
       })
       .catch((cause: unknown) => {
@@ -172,7 +189,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision]);
+  }, [props.src, revision, initialPage]);
   // oxlint-disable-next-line t3code/react-effect-budget -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
@@ -189,10 +206,12 @@ export default function PdfViewer(props: { src: string; title: string }) {
     for (const ratio of ratios) result.push(result[result.length - 1]! + width * ratio + 16);
     return result;
   })();
-  const current = Math.max(
-    0,
-    ratios.findIndex((_, index) => offsets[index + 1]! > scrollTop + 17),
-  );
+  const pageAtOffset = (top: number) =>
+    Math.max(
+      0,
+      ratios.findIndex((_, index) => offsets[index + 1]! > top + 17),
+    );
+  const current = pageAtOffset(scrollTop);
   const visible = ratios.flatMap((ratio, index) =>
     offsets[index + 1]! >= scrollTop - viewport.height &&
     offsets[index]! <= scrollTop + viewport.height * 2
@@ -209,6 +228,14 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const jumpToPage = useEffectEvent((index: number) => {
     scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
   });
+  const { onPageChange } = props;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Restore the saved PDF page after the loaded document's page layout commits.
+  useLayoutEffect(() => {
+    if (!pdf) return;
+    const page = Math.min(initialPage, pdf.numPages - 1);
+    jumpToPage(page);
+    onPageChange?.(page);
+  }, [pdf, initialPage, onPageChange]);
   const showPage = (index: number) => {
     scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
   };
@@ -371,7 +398,11 @@ export default function PdfViewer(props: { src: string; title: string }) {
         aria-label={props.title}
         tabIndex={0}
         className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto bg-muted/40"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={(event) => {
+          const top = event.currentTarget.scrollTop;
+          setScrollTop(top);
+          props.onPageChange?.(pageAtOffset(top));
+        }}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "f") {
             event.preventDefault();
