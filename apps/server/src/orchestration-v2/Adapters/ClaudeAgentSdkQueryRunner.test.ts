@@ -187,6 +187,7 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
         assert.equal(call.options?.resume, FORK_SESSION_ID);
         assert.isUndefined(call.options?.mcpServers);
       }
+      assert.deepEqual(secondRegistration.mock.calls, [[resumedMcpQueryInput.options.mcpServers]]);
       const message = {
         type: "user",
         message: { role: "user", content: "Continue where you left off." },
