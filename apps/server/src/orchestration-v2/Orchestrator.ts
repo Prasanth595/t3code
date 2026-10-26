@@ -3319,8 +3319,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.mark-unread": {
-          // The rewind would otherwise put an already-dismissed wake back ahead of the visit.
-          // Settlement keeps its timer base through lastSnoozeWakeAt, as for a timer wake.
+          // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
             thread.snoozedUntil != null &&
             DateTime.toEpochMillis(thread.snoozedUntil) <= DateTime.toEpochMillis(now);
