@@ -61,9 +61,11 @@ For a returned run result, exit 1 means it failed or stopped; exit 2 means it
 needs an answer in the app. Command, transport and result-retrieval errors also
 fail the command, so exit 1 alone does not prove the run failed. Inspect stderr
 and any JSON status, IDs, reply and error; reconcile an unknown outcome before
-retrying. IDs are printed after the wait finishes, so a disconnected wait can
-leave no receipt. Without `--wait`, acceptance returns promptly and results can
-be read later; it does not create an automatic completion callback.
+retrying. Text-mode `start --wait` prints the thread ID to stderr before waiting;
+text-mode `send --wait` prints no IDs. With `--json`, `threadId` and `runId` are
+printed only in the final result, so a disconnected JSON wait can leave no run
+ID or final result. Without `--wait`, acceptance returns promptly and results
+can be read later; it does not create an automatic completion callback.
 
 ## Start a requested conversation
 
