@@ -11,8 +11,13 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
+export const environmentSessionStatesAtom = environmentAtomList(
+  "web-environment-session-states",
+  environmentSession.sessionStateAtom,
+);
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
@@ -28,7 +33,7 @@ export function useEnvironmentScope(
   return sessionHasScope(result, scope);
 }
 
-function sessionHasScope(
+export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
@@ -36,21 +41,25 @@ function sessionHasScope(
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
+const environmentsWithScopeAtom = Atom.family((key: string) => {
+  const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
+  const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
+  const statesAtom = environmentSessionStatesAtom(idsKey);
+  return Atom.make((get) => {
+    const states = get(statesAtom);
+    return new Set(ids.filter((_, index) => sessionHasScope(states[index]!, scope)));
+  }).pipe(Atom.withLabel(`web-environments-with-scope:${key}`));
+});
+
 export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   scope: AuthEnvironmentScope,
 ): ReadonlySet<EnvironmentId> {
-  const permitted = Atom.make((get) => {
-    const ids = new Set<EnvironmentId>();
-    for (const { environmentId } of environments) {
-      const result = get(environmentSession.sessionStateAtom(environmentId));
-      if (sessionHasScope(result, scope)) {
-        ids.add(environmentId);
-      }
-    }
-    return ids;
-  });
-  return useAtomValue(permitted);
+  return useAtomValue(
+    environmentsWithScopeAtom(
+      `${scope}\n${environmentIdsKey(environments.map(({ environmentId }) => environmentId))}`,
+    ),
+  );
 }
 
 export function readEnvironmentScope(
@@ -81,10 +90,7 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
   );
 }
 
-/**
- * `data` stays populated across SWR revalidations; `isPending` is only
- * meaningful before the first resolve.
- */
+/** data survives SWR revalidation; isPending applies only before first resolve. */
 export function useEnvironmentSessionState(environmentId: EnvironmentId) {
   const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
   return {

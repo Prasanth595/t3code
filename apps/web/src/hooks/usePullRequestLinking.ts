@@ -1,4 +1,3 @@
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type {
   EnvironmentId,
   ScopedThreadRef,
@@ -17,14 +16,17 @@ import {
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
+import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import {
-  findProjectForChangeRequest,
-  matchesLinkedPullRequestUrl,
-  parseChangeRequestUrl,
+  sourceControlClients,
   type ChangeRequestLink,
-} from "~/lib/openPullRequestLink";
-import { useProjects, useServerConfigs } from "~/state/entities";
+} from "@t3tools/client-runtime/source-control-clients";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useProjects } from "~/state/entities";
+import { environmentServerConfigsAtom } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -38,19 +40,27 @@ export function canLinkChangeRequest(
   return findProjectForChangeRequest(projects, parsed) !== undefined;
 }
 
+// A primitive mode prevents unchanged status pushes from re-rendering every link.
+const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) =>
+    threadPullRequestLinkMode(
+      environmentId === null
+        ? undefined
+        : get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
+    ),
+  ).pipe(Atom.withLabel("pull-request-link-mode")),
+);
+
 export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
-  const configs = useServerConfigs();
   const projects = useProjects();
-  const capabilities =
-    environmentId == null ? undefined : configs.get(environmentId)?.environment.capabilities;
-  const mode = threadPullRequestLinkMode(capabilities);
+  const mode = useAtomValue(linkModeAtom(environmentId ?? null));
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const canLink = (url: string) => {
-    const parsed = parseChangeRequestUrl(url);
-    return parsed !== null && canLinkChangeRequest(mode, environmentProjects, parsed);
+    const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
+    return parsed !== undefined && canLinkChangeRequest(mode, environmentProjects, parsed);
   };
   const isLinked = (
     thread: {
@@ -63,28 +73,33 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
     if (mode !== "multiple")
       return (
         thread.linkedPullRequest != null &&
-        matchesLinkedPullRequestUrl(thread.linkedPullRequest, url)
+        sourceControlClients.isSameChangeRequest(thread.linkedPullRequest.url, url)
       );
-    const parsed = parseChangeRequestUrl(url);
+    const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
     return (
-      parsed !== null &&
+      parsed !== undefined &&
       visibleThreadPullRequests(thread.pullRequests ?? []).some((entry) =>
         threadPullRequestKeysEqual(entry, parsed),
       )
     );
   };
   const changeLink = async (threadRef: ScopedThreadRef, url: string, linked: boolean) => {
-    const parsed = parseChangeRequestUrl(url);
-    if (parsed === null || threadRef.environmentId !== environmentId || (linked && !canLink(url)))
+    const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
+    if (
+      parsed === undefined ||
+      threadRef.environmentId !== environmentId ||
+      (linked && !canLink(url))
+    )
       throw new Error("The pull request is not available in this environment.");
     const legacyProject = findProjectForChangeRequest(environmentProjects, parsed);
     const mutation = planThreadPullRequestMutation({
-      capabilities,
+      capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)
+        ?.environment.capabilities,
       threadId: threadRef.threadId,
       reference: { ...parsed, url },
       legacyProjectId: legacyProject?.id ?? null,
       legacyRepository:
-        sourceControlRepositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
+        sourceControlClients.repositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
       linked,
     });
     if (mutation === null)

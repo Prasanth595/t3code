@@ -9,6 +9,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -55,8 +56,17 @@ export function useEnvironments() {
   };
 }
 
+/** Provider statuses change on every push, so they live apart from the presentations. */
+export function useEnvironmentProviders() {
+  return useAtomValue(environmentPresentations.providersByEnvironmentAtom);
+}
+
 export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
+}
+
+export function readPrimaryEnvironmentId(): EnvironmentId | null {
+  return appAtomRegistry.get(primaryEnvironmentIdAtom);
 }
 
 export function useEnvironment(

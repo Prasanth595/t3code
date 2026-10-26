@@ -14,12 +14,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
-import {
-  mergeEnvironmentSettings,
-  persistClientSettingsPatch,
-  useClientSettings,
-  useMigrateModelPreferences,
-} from "../../hooks/useSettings";
+import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -35,19 +30,11 @@ import {
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
-// Returns the merged object alone so the selector, often inline, cannot widen its cache key.
-function useScopedMergedSettings(): UnifiedSettings {
-  const { target } = useSettingsScope();
-  const clientSettings = useClientSettings();
-  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
-  return mergeEnvironmentSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, clientSettings);
-}
-
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  const settings = useScopedMergedSettings();
-  return selector ? selector(settings) : (settings as T);
+  const { target } = useSettingsScope();
+  return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
