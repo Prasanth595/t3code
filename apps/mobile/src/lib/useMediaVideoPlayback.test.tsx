@@ -108,7 +108,13 @@ vi.mock("../components/FilePreviewGallery", () => ({
 }));
 vi.mock("../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
-vi.mock("../features/threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImageView: () => null }));
+vi.mock("../features/threads/ThreadMarkdownImage", async () => {
+  const { createContext } = await import("react");
+  return {
+    ThreadMarkdownImageView: () => null,
+    MarkdownImageAssetScopeContext: createContext<string | undefined>(undefined),
+  };
+});
 
 import {
   ThreadMarkdownVideo,
