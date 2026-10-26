@@ -577,6 +577,8 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+  /** Set while Working with an async question the user can answer now. */
+  questionDotClass?: string;
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -596,6 +598,7 @@ type ThreadStatusInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "hasPendingQuestion"
   | "pendingSubagentRequest"
   | "pendingGuestMessageCount"
   | "interactionMode"
@@ -1059,6 +1062,8 @@ export function resolveWorkingStartedAt(
   return resolveThreadWorkingStartedAt(thread);
 }
 
+const AWAITING_INPUT_DOT_CLASS = "bg-indigo-500 dark:bg-indigo-300/90";
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
@@ -1077,7 +1082,7 @@ export function resolveThreadStatusPill(input: {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      dotClass: AWAITING_INPUT_DOT_CLASS,
       pulse: false,
     };
   }
@@ -1100,6 +1105,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
+      ...(thread.hasPendingQuestion === true ? { questionDotClass: AWAITING_INPUT_DOT_CLASS } : {}),
     };
   }
 

@@ -708,6 +708,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                       : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const pendingQuestionMarker =
+    status === "working" && thread.hasPendingQuestion === true
+      ? { className: "text-indigo-600 dark:text-indigo-300" }
+      : null;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -948,7 +952,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel:
+      topStatus && pendingQuestionMarker
+        ? `${topStatus.label}, question waiting`
+        : (topStatus?.label ?? null),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1376,6 +1383,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             <span aria-hidden>
                               <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
                             </span>
+                          ) : null}
+                          {pendingQuestionMarker ? (
+                            <MessageCircleQuestionIcon
+                              aria-hidden
+                              className={cn("size-4 shrink-0", pendingQuestionMarker.className)}
+                            />
                           ) : null}
                         </span>
                       )

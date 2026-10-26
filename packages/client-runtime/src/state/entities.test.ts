@@ -53,6 +53,36 @@ describe("V2 client presentation", () => {
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 
+  it("flags an async question as answerable while the run keeps Working", () => {
+    const runId = RunId.make("run-async-question-indicator");
+    const asking = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running",
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-async-question-indicator"),
+        kind: "user_input",
+        createdAt: v2ThreadShell.updatedAt,
+        blocking: false,
+      },
+    } as const;
+    const shell = presentThreadShell(environmentId, asking);
+    expect(isThreadWorking(shell)).toBe(true);
+    expect(shell.hasPendingQuestion).toBe(true);
+
+    const answered = presentThreadShell(environmentId, { ...asking, pendingRuntimeRequest: null });
+    expect(isThreadWorking(answered)).toBe(true);
+    expect(answered.hasPendingQuestion).toBe(false);
+
+    const completed = presentThreadShell(environmentId, {
+      ...asking,
+      activeRunId: null,
+      status: "completed",
+    });
+    expect(completed.hasPendingQuestion).toBe(false);
+  });
+
   it("keeps blocking and legacy questions out of Working", () => {
     for (const capability of [{ blocking: true }, {}]) {
       const shell = presentThreadShell(environmentId, {

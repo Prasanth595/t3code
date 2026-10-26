@@ -1079,6 +1079,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
               ) : null}
             </Text>
+            {status === "working" && thread.hasPendingQuestion === true ? (
+              <SymbolView
+                name="questionmark.bubble"
+                size={13}
+                tintColorClassName={
+                  selected
+                    ? selectedThreadRowColors.iconTintClassName
+                    : "accent-adaptive-indigo-600-300"
+                }
+                type="monochrome"
+                weight="semibold"
+              />
+            ) : null}
           </View>
         ) : (
           <Text
@@ -1251,6 +1264,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
+  const rowAccessibilityLabel = [
+    thread.title,
+    status === "working" && thread.hasPendingQuestion === true ? "question waiting" : null,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <RowPressable
@@ -1259,9 +1280,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
@@ -1292,9 +1311,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}

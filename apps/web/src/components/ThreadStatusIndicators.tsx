@@ -814,6 +814,12 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const label = status.questionDotClass ? `${status.label} · Question waiting` : status.label;
+  // Overlaps the status dot's corner so it adds no width to the row.
+  const questionDot = (position: string) =>
+    status.questionDotClass ? (
+      <span className={`absolute size-1.5 rounded-full ${position} ${status.questionDotClass}`} />
+    ) : null;
   if (compact) {
     return (
       <Tooltip>
@@ -821,8 +827,8 @@ export function ThreadStatusLabel({
           render={
             <span
               role="img"
-              aria-label={status.label}
-              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+              aria-label={label}
+              className={`relative inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
             />
           }
         >
@@ -831,8 +837,9 @@ export function ThreadStatusLabel({
               status.pulse ? "motion-safe:animate-status-pulse" : ""
             }`}
           />
+          {questionDot("top-0 right-0")}
         </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
+        <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -843,19 +850,22 @@ export function ThreadStatusLabel({
         render={
           <span
             role="img"
-            aria-label={status.label}
+            aria-label={label}
             className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
           />
         }
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "motion-safe:animate-status-pulse" : ""
-          }`}
-        />
+        <span className="relative size-1.5 shrink-0">
+          <span
+            className={`block size-1.5 rounded-full ${status.dotClass} ${
+              status.pulse ? "motion-safe:animate-status-pulse" : ""
+            }`}
+          />
+          {questionDot("-top-0.5 -right-1")}
+        </span>
         <span className="hidden md:inline">{status.label}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }

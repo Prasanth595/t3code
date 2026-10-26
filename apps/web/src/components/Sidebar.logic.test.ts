@@ -454,6 +454,15 @@ describe("resolveThreadStatusPill", () => {
     });
   });
 
+  it("marks an async question on the Working pill until the run stops", () => {
+    const asking = { ...baseThread, hasPendingQuestion: true };
+    expect(resolveThreadStatusPill({ thread: asking })).toMatchObject({
+      label: "Working",
+      questionDotClass: expect.any(String),
+    });
+    expect(resolveThreadStatusPill({ thread: baseThread })).not.toHaveProperty("questionDotClass");
+  });
+
   it("shows waiting for an idle thread with pending background tasks", () => {
     expect(
       resolveThreadStatusPill({
