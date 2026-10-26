@@ -1261,19 +1261,14 @@ export function createThreadOutboxDelivery(): {
       if (dispatchStep.step === "restore") {
         const attachmentError = dispatchStep.reason;
         beginDispatchingQueuedMessage(messageId);
-        void confirmThreadOutboxMessageQueued(nextQueuedMessage)
-          .then((queued) => {
-            if (!queued || appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId]) {
-              return true;
-            }
-            return restoreQueuedMessage(nextQueuedMessage, attachmentError);
-          })
-          .then((restored) => {
-            if (!restored) {
-              scheduleRetry(messageId);
-            }
-          })
-          .finally(() => finishDispatchingQueuedMessage(messageId));
+        settle(
+          messageId,
+          confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) =>
+            !queued || appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId]
+              ? true
+              : restoreQueuedMessage(nextQueuedMessage, attachmentError),
+          ),
+        );
         return;
       }
       const creationProjectCwd =
