@@ -522,10 +522,20 @@ describe("serverSettings helpers", () => {
       },
     });
 
-    expect(applyServerSettingsPatch(current, patch).projectSettingsOverrides[projectId]).toEqual({
+    const updated = applyServerSettingsPatch(current, patch);
+    expect(updated.projectSettingsOverrides[projectId]).toEqual({
       defaultAutoPull: false,
       addedByNewerServer: 3,
     });
+    const reset = applyServerSettingsPatch(updated, {
+      projectSettingsOverrides: { [projectId]: {} },
+    });
+    expect(reset.projectSettingsOverrides[projectId]).toEqual({ addedByNewerServer: 3 });
+    expect(
+      applyServerSettingsPatch(reset, {
+        projectSettingsOverrides: { [projectId]: null },
+      }).projectSettingsOverrides[projectId],
+    ).toBeUndefined();
   });
 
   it("clears a project's providerInstances override when a patch entry sends an empty map", () => {
