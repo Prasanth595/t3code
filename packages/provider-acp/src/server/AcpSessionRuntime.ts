@@ -2185,9 +2185,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             acp.agent.resumeSession(resumePayload),
           );
         } else {
+          // Report the request that cannot be made, so a caller that falls back
+          // to a fresh session when a stored session will not reopen does the
+          // same for an agent that can never reopen one.
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32601,
             errorMessage: "ACP agent does not advertise session/load or session/resume support",
+            method: options.resumeMethod === "resume" ? "session/resume" : "session/load",
           });
         }
       } else {

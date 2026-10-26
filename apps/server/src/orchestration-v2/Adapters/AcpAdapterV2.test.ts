@@ -2425,6 +2425,93 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("starts a fresh session when the ACP agent cannot reopen a stored session", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-no-session-reopen");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: () => ({ T3_ACP_OMIT_SESSION_CAPABILITIES: "1" }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-no-session-reopen");
+      // A thread that moved to another project reopens its session in the new folder.
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-no-session-reopen"),
+        modelSelection,
+        runtimePolicy,
+        initialNativeThreadId: "previous-session",
+      });
+      const replacementThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const previousThread: OrchestrationV2ProviderThread = {
+        ...replacementThread,
+        nativeMetadata: null,
+        nativeThreadRef: {
+          driver: ACP_TEST_DRIVER,
+          nativeId: "previous-session",
+          strength: "strong",
+        },
+      };
+
+      const startupMethods = yield* pollProtocolMethods(protocolEvents);
+      assert.notInclude(startupMethods, "session/load");
+      assert.notInclude(startupMethods, "session/resume");
+      assert.equal(startupMethods.filter((method) => method === "session/new").length, 1);
+
+      // The turn start service treats this as a failed resume and moves the
+      // thread's history into the fresh session with a handoff.
+      const resumeError = yield* runtime
+        .resumeThread({ providerThread: previousThread, modelSelection, runtimePolicy })
+        .pipe(Effect.flip);
+      assert.equal(resumeError._tag, "ProviderAdapterResumeThreadError");
+      assert.notEqual(replacementThread.nativeThreadRef?.nativeId, "previous-session");
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy }),
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+        }),
+      );
+      const terminal = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.type, "turn.terminal");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("replaces an unexpectedly terminated ACP runtime before the next turn", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

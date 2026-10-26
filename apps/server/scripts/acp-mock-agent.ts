@@ -82,6 +82,8 @@ const exitAfterRunningCommandLaunch = process.env.T3_ACP_EXIT_AFTER_RUNNING_COMM
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+// Advertise no session capabilities, so the agent can neither load nor resume.
+const omitSessionCapabilities = process.env.T3_ACP_OMIT_SESSION_CAPABILITIES === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
@@ -578,11 +580,15 @@ const program = Effect.gen(function* () {
         info: { name: "t3-acp-mock-agent", version: "0.0.0" },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
-          session: {
-            ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
-            ...(supportsV2Management ? { delete: {} } : {}),
-            ...(supportsAcpMcp ? { mcp: { acp: {} } } : {}),
-          },
+          ...(omitSessionCapabilities
+            ? {}
+            : {
+                session: {
+                  ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
+                  ...(supportsV2Management ? { delete: {} } : {}),
+                  ...(supportsAcpMcp ? { mcp: { acp: {} } } : {}),
+                },
+              }),
           ...(supportsV2Management ? { providers: {} } : {}),
         },
         ...(initializeAuthMethodId
