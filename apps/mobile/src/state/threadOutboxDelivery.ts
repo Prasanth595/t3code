@@ -1074,8 +1074,30 @@ export function createThreadOutboxDelivery(): {
     return outcome === "removed";
   };
 
+  // A pass writes atoms the pass reads (family mounts, the dispatch slot), and the registry
+  // notifies subscribers synchronously, so drain() can be called from inside a pass. That call
+  // only asks for another pass; a nested pass would decide from inputs the outer one is still
+  // acting on and could start a second delivery.
+  let draining = false;
+  let drainRequested = false;
   function drain(): void {
     if (disposed) return;
+    if (draining) {
+      drainRequested = true;
+      return;
+    }
+    draining = true;
+    try {
+      do {
+        drainRequested = false;
+        drainPass();
+      } while (drainRequested && !disposed);
+    } finally {
+      draining = false;
+    }
+  }
+
+  function drainPass(): void {
     const {
       dispatchingQueuedMessageId,
       editingQueuedMessageIds,

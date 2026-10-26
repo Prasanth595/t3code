@@ -25,6 +25,9 @@ const state = vi.hoisted(() => ({
   interaction: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
+  modelUnavailable: vi.fn(() => false),
+  familyMount: vi.fn(() => () => {}),
+  threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -37,6 +40,7 @@ const state = vi.hoisted(() => ({
     session: null,
   },
   config: {
+    shellThreadFamilies: false,
     providers: [{ instanceId: "codex", driver: "codex" }],
     environment: { capabilities: {} },
   },
@@ -81,7 +85,8 @@ vi.mock("./server", async () => {
   };
 });
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/reactivity");
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {
       startTurn: state.start,
@@ -89,12 +94,17 @@ vi.mock("./threads", async () => {
       setRuntimeMode: state.runtime,
       setInteractionMode: state.interaction,
     },
-    environmentThreadShells: { threadShellsAtom: Atom.make([state.thread]) },
+    environmentThreadShells: { threadShellsAtom: state.threadShells },
+    threadFamilies: {
+      mount: state.familyMount,
+      familyAtom: () => Atom.make(AsyncResult.success({})),
+      refresh: vi.fn(),
+    },
     environmentThreadDetails: { threadAtom: () => Atom.make(null) },
   };
 });
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
-vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: () => false }));
+vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
 vi.mock("./thread-outbox", async () => {
@@ -149,7 +159,7 @@ vi.mock("./use-composer-drafts", async () => {
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
-import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
+import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
@@ -198,8 +208,13 @@ beforeEach(() => {
   setOperateGrant("primary", true);
   setOperateGrant("secondary", false);
   state.draftText = "Keep this draft separate";
+  state.config.shellThreadFamilies = false;
+  state.modelUnavailable.mockReset().mockReturnValue(false);
+  state.familyMount.mockReset().mockReturnValue(() => {});
+  appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
+  appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
   for (const command of [
     state.start,
     state.metadata,
@@ -323,17 +338,49 @@ describe("queued task operation access", () => {
     expect(remaining()).toEqual([]);
   });
 
-  it("backs off instead of redelivering at once when a delivery throws", async () => {
+  it("backs off instead of redelivering at once when a delivery hits a defect", async () => {
     setOperateGrant("secondary", true);
     const queued = message();
     await state.manager.enqueue(queued);
-    state.start.mockImplementationOnce(() => {
-      throw new Error("Unexpected adapter defect");
+    // Awaited steps catch their own failures, so a defect in the delivery's own code is what
+    // rejects a delivery.
+    state.modelUnavailable.mockImplementationOnce(() => {
+      throw new TypeError("Cannot read properties of undefined");
     });
     await runDrain();
-    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.modelUnavailable).toHaveBeenCalledOnce();
+    expect(state.prepare).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
     expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
     expect(remaining()).toEqual([queued]);
+  });
+
+  it("starts one delivery when mounting a thread family changes the rows mid-pass", async () => {
+    setOperateGrant("secondary", true);
+    state.config.shellThreadFamilies = true;
+    const subAgentThread = { ...state.thread, id: "sub-agent" };
+    // A cached family merges its rows into the shell list as soon as it is mounted.
+    state.familyMount.mockImplementationOnce(() => {
+      appAtomRegistry.set(state.threadShells, [state.thread, subAgentThread]);
+      return () => {};
+    });
+    const queued = message({ threadId: ThreadId.make("sub-agent") });
+    startDelivery();
+    appAtomRegistry.set(editingQueuedMessageIdsAtom, { [queued.messageId]: true });
+    await state.manager.enqueue(queued);
+    using confirm = vi.spyOn(state.manager, "confirmQueued");
+    const delivered = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+      if (id === null) delivered.resolve();
+    });
+    // Ending the edit wakes the drain through a registry notification, the path on which the
+    // mount's synchronous row change notifies the drain again mid-pass.
+    appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
+    expect(state.familyMount).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledOnce();
+    await delivered.promise.finally(release);
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
   });
 
   it("stops the remaining settings and turn commands when an earlier update loses access", async () => {
