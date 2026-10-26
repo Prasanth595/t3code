@@ -216,6 +216,10 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "eslint/no-unsafe-optional-chaining": "error",
+      "eslint/no-unneeded-ternary": "error",
+      "unicorn/no-useless-fallback-in-spread": "error",
+      "unicorn/require-module-specifiers": "error",
       "unicorn/no-array-sort": "off",
       "unicorn/consistent-function-scoping": "off",
       "oxc/no-map-spread": "off",
