@@ -1,9 +1,5 @@
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import type { ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 const checkout = vi.hoisted(() => ({
@@ -59,60 +55,32 @@ vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } })
 import { GitBranchesSheet } from "./GitBranchesSheet";
 
 it("recognizes both the main checkout and a linked worktree as this thread's checkout", () => {
-  const directory = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "branch-occupancy-")),
-  );
-  const git = (...args: string[]) =>
-    NodeChildProcess.execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
-      cwd: directory,
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-  try {
-    git("init", "--initial-branch=main");
-    git(
-      "-c",
-      "user.name=Test",
-      "-c",
-      "user.email=test@example.com",
-      "commit",
-      "--allow-empty",
-      "-m",
-      "initial",
-    );
-    const linked = NodePath.join(directory, "linked");
-    git("worktree", "add", "-b", "feature/linked", linked);
-    git("branch", "feature/available");
-    checkout.projectRoot = directory;
-    checkout.branches = git(
-      "for-each-ref",
-      "--format=%(refname:short)%00%(worktreepath)",
-      "refs/heads",
-    )
-      .trimEnd()
-      .split("\n")
-      .map((line) => {
-        const [name = "", worktreePath] = line.split("\0");
-        return { name, worktreePath: worktreePath || null };
-      });
-
-    const rows = () => {
-      const html = renderToStaticMarkup(
+  const directory = "/repo";
+  const linked = "/repo-linked";
+  checkout.projectRoot = directory;
+  checkout.branches = [
+    { name: "feature/available", worktreePath: null },
+    { name: "feature/linked", worktreePath: linked },
+    { name: "main", worktreePath: directory },
+  ];
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const rows = () => {
+    act(() => {
+      root.render(
         <GitBranchesSheet
-          route={{
-            params: { environmentId: "environment-1", threadId: "thread-1" },
-          }}
+          route={{ params: { environmentId: "environment-1", threadId: "thread-1" } }}
         />,
       );
-      return [
-        ...html.matchAll(/<button([^>]*)><span>(.*?)<\/span><span>(.*?)<\/span><\/button>/g),
-      ].map(([, attributes, name, subtitle]) => ({
-        name,
-        subtitle,
-        disabled: attributes?.includes("disabled"),
-      }));
-    };
-
+    });
+    return [...container.querySelectorAll("button")].map((button) => ({
+      name: button.querySelectorAll("span")[0]?.textContent,
+      subtitle: button.querySelectorAll("span")[1]?.textContent,
+      disabled: button.disabled,
+    }));
+  };
+  try {
     checkout.worktreePath = null;
     expect(rows()).toEqual([
       { name: "feature/available", subtitle: "Local branch", disabled: false },
@@ -127,6 +95,6 @@ it("recognizes both the main checkout and a linked worktree as this thread's che
       { name: "main", subtitle: "Checked out in another worktree", disabled: true },
     ]);
   } finally {
-    NodeFS.rmSync(directory, { recursive: true, force: true });
+    act(() => root.unmount());
   }
 });
