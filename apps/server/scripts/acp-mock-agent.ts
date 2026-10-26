@@ -133,9 +133,7 @@ const permissionRequestCount = Math.max(
 // because most tests assert it; set T3_ACP_UNIQUE_SESSION_IDS=1 to get a fresh
 // id per process, as a real agent that cannot reopen sessions would.
 const sessionId =
-  process.env.T3_ACP_UNIQUE_SESSION_IDS === "1"
-    ? `mock-session-${process.pid}-${Date.now()}`
-    : "mock-session-1";
+  process.env.T3_ACP_UNIQUE_SESSION_IDS === "1" ? `mock-session-${process.pid}` : "mock-session-1";
 
 let currentModeId = antigravityProfile ? "default" : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
