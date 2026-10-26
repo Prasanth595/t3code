@@ -999,7 +999,7 @@ describe("a second handoff into the same composer", () => {
 
   it("changes nothing when the same handoff lands twice", () => {
     const handoff = {
-      prompt: "Fix the review finding attached to this message.\nThe pull request is #42.",
+      prompt: "Fix the review finding attached to this message.  \nThe pull request is #42.",
       reviewComments: [chip("pull-request-finding:t1")],
     };
     const once = appendHandoff({ prompt: "", reviewComments: [] }, handoff);

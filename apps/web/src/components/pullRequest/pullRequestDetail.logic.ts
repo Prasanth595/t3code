@@ -830,7 +830,7 @@ export function appendHandoff(
     .replace(/[ \t]+$/gmu, "")
     .trim();
   const added = incoming.prompt.trim();
-  const isRepeat = `\n\n${present}\n\n`.includes(`\n\n${added}\n\n`);
+  const isRepeat = `\n\n${present}\n\n`.includes(`\n\n${added.replace(/[ \t]+$/gmu, "")}\n\n`);
   const kept = existing.prompt.trimEnd();
   const incomingById = new Map(
     (incoming.reviewComments ?? []).map((comment) => [comment.id, comment]),
