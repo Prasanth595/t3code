@@ -3882,6 +3882,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
               encodeJson({
                 data: {
                   repository: {
+                    autoMergeAllowed: true,
                     mergeCommitAllowed: true,
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
@@ -3906,6 +3907,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
               encodeJson({
                 data: {
                   repository: {
+                    autoMergeAllowed: true,
                     mergeCommitAllowed: true,
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
@@ -3939,6 +3941,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(access).toEqual({
+        autoMergeAllowed: true,
         mergeCapabilities: { merge: true, squash: false, rebase: true },
         canWrite: false,
         canDeleteBranch: false,

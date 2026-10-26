@@ -7,6 +7,8 @@ import * as Redacted from "effect/Redacted";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import { HttpClient } from "effect/http";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
@@ -23,6 +25,11 @@ const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"
       Layer.mergeAll(
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         TestSourceControlHost.layer(),
+        Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unexpected HTTP request")),
+        ),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),

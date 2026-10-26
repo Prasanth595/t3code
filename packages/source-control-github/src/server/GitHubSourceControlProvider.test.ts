@@ -587,13 +587,11 @@ describe("GitHubSourceControlProvider writes", () => {
               return restResponse({ number: 1 }, 201);
             }
             current = "after";
-            return yield* Effect.fail(
-              new GitHubRequestPolicy.GitHubApiResponseError({
-                host: input.host,
-                operation: "getViewer",
-                status: 403,
-              }),
-            );
+            return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+              host: input.host,
+              operation: "getViewer",
+              status: 403,
+            });
           }),
       },
       graphql: () =>
@@ -811,13 +809,11 @@ describe("GitHub App repository ownership", () => {
             });
             if (input.path === "user") {
               token = `${token}-renewed`;
-              return yield* Effect.fail(
-                new GitHubRequestPolicy.GitHubApiResponseError({
-                  host: input.host,
-                  operation: "getViewer",
-                  status: 403,
-                }),
-              );
+              return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+                host: input.host,
+                operation: "getViewer",
+                status: 403,
+              });
             }
             if (input.path.startsWith("installation/repositories"))
               return restResponse({

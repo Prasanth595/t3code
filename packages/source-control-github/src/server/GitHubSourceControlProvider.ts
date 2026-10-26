@@ -1,8 +1,4 @@
-import {
-  GitHubHost,
-  SourceControlProviderKind,
-  type SourceControlProviderAuth,
-} from "@t3tools/contracts";
+import { SourceControlProviderKind, type SourceControlProviderAuth } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -67,7 +63,10 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import {
+  readSourceControlHostSettings,
+  SourceControlHostName,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
 import {
@@ -210,7 +209,7 @@ export const discovery = {
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
 
-const isGitHubHost = Schema.is(GitHubHost);
+const isGitHubHost = Schema.is(SourceControlHostName);
 
 // `gh auth status` may not know environment tokens; check the API.
 export const makeDiscovery = Effect.gen(function* () {
@@ -1121,8 +1120,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
     ),
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
+    getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
+      function* (input) {
         const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
         const selected = parseGitHubRepositorySelector(input.repository, "");
         const host =
@@ -1148,13 +1147,16 @@ export const make = Effect.gen(function* () {
             return repositoryCloneUrls(yield* readRepository(locator));
           }),
         );
-      }).pipe(
-        Effect.mapError(
-          providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
+          ),
         ),
-      ),
-    createRepository: (input) =>
-      Effect.gen(function* () {
+    ),
+    createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
+      function* (input) {
         const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
         const locator = parseGitHubRepositorySelector(input.repository, defaultHost);
         const host = locator?.host ?? defaultHost;
@@ -1230,11 +1232,14 @@ export const make = Effect.gen(function* () {
             return repositoryCloneUrls(decoded.success);
           }),
         );
-      }).pipe(
-        Effect.mapError(
-          providerError("createRepository", input.cwd, { repository: input.repository }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("createRepository", input.cwd, { repository: input.repository }),
+          ),
         ),
-      ),
+    ),
     getDefaultBranch: Effect.fn("GitHubSourceControlProvider.getDefaultBranch")(
       function* (input) {
         const locator = yield* resolveRepository({

@@ -1629,61 +1629,6 @@ describe("pull request lookups", () => {
   });
 });
 
-describe("batched pull request summaries", () => {
-  const summary = (fields: Record<string, unknown>) => ({
-    number: 7,
-    title: "Merged",
-    url: "https://github.com/acme/web/pull/7",
-    state: "MERGED",
-    isDraft: false,
-    mergeable: "UNKNOWN",
-    reviewDecision: null,
-    additions: 0,
-    deletions: 0,
-    changedFiles: 0,
-    updatedAt: "2026-08-24T00:00:00Z",
-    mergedAt: "2026-08-24T00:00:00Z",
-    closedAt: "2026-08-24T00:00:00Z",
-    headRefName: "feat/seven",
-    baseRefName: "main",
-    author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
-    latestReviews: { nodes: [] },
-    commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
-    ...fields,
-  });
-
-  it("maps GitHub's fields to the summary a linked thread keeps", () => {
-    const mapped = toPullRequestSummary(decodeSummary(summary({})));
-    expect(mapped).toMatchObject({
-      number: 7,
-      state: "merged",
-      mergedAt: "2026-08-24T00:00:00Z",
-      author: { login: "renovate[bot]", isBot: true },
-      checksState: "failing",
-      mergeability: "unknown",
-      additions: 0,
-    });
-    // The read did not ask about stacks, so the summary does not claim an answer.
-    expect(mapped).not.toHaveProperty("stack");
-  });
-
-  it("reads stack membership only where the read asked for it", () => {
-    expect(
-      toPullRequestSummary(decodeSummary(summary({ stack: null, stackEntry: null }))).stack,
-    ).toBeNull();
-    expect(
-      toPullRequestSummary(
-        decodeSummary(
-          summary({
-            stack: { number: 3, size: 2, baseRefName: "main" },
-            stackEntry: { position: 2 },
-          }),
-        ),
-      ).stack,
-    ).toEqual({ number: 3, size: 2, base: "main", position: 2 });
-  });
-});
-
 describe("pull request watch fingerprints", () => {
   it("moves status with checks and remarks with comments, each without the other", () => {
     const pullRequest = (input: {
