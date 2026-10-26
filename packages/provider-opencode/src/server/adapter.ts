@@ -2634,13 +2634,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   : [threads.get(event.properties.sessionID)].filter(
                       (state): state is OpenCodeThreadState => state !== undefined,
                     );
-              const message = openCodeErrorMessage(event);
+              const failure = makeProviderFailure({
+                message: openCodeErrorMessage(event),
+                code: event.properties.error?.name ?? null,
+                class: "provider_error",
+              });
               if (
                 !isMessageAbortedError(event) &&
                 (event.properties.sessionID === undefined ||
                   states.some((state) => state.parentSubagent === null))
               ) {
-                yield* updateProviderSession("error", message);
+                yield* updateProviderSession("error", failure.message);
               }
               for (const state of states) {
                 if (state.activeTurn !== null) {
@@ -2649,11 +2653,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     state.activeTurn,
                     terminalStatusForError(event, state.activeTurn),
                     {
-                      failure: makeProviderFailure({
-                        message,
-                        code: event.properties.error?.name ?? null,
-                        class: "provider_error",
-                      }),
+                      failure,
                       threadDisposition:
                         event.properties.sessionID === undefined ? "broken" : "reusable",
                     },
