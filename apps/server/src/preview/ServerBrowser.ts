@@ -1375,6 +1375,8 @@ const make = Effect.gen(function* () {
       Effect.catch((cause) =>
         Effect.logWarning("failed to save reported browser profiles", { cause }),
       ),
+      // A disconnect after rename must not leave the saved-content cache stale.
+      Effect.uninterruptible,
     );
   }, saveProfilesLock.withPermits(1));
 

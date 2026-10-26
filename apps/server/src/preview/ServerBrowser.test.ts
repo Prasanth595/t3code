@@ -15,6 +15,7 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1351,5 +1352,56 @@ it.live("warns at startup about a saved profile catalog it cannot read or decode
     expect(yield* startupWarnings("unreadable")).toEqual([
       expect.stringContaining("failed to read saved browser profiles"),
     ]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.live("an interrupted profile save cannot leave the unchanged-report cache stale", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const cleanupStarted = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    let pauseCleanup = false;
+    const gatedFs = FileSystem.FileSystem.of({
+      ...fs,
+      remove: (target, options) =>
+        fs.remove(target, options).pipe(
+          Effect.tap(() => {
+            if (!pauseCleanup) return Effect.void;
+            pauseCleanup = false;
+            return Deferred.succeed(cleanupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCleanup)),
+            );
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const original = {
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" as const }],
+        defaultProfileId: "profile-work",
+      };
+      yield* browser.reportProfiles(original);
+      pauseCleanup = true;
+      const saving = yield* browser
+        .reportProfiles({ ...original, defaultProfileId: "default" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(cleanupStarted);
+      saving.interruptUnsafe();
+      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Fiber.await(saving);
+      yield* browser.reportProfiles(original);
+      const saved = yield* fs.readFileString(
+        path.join(stateDir, "server-browser", "reported-profiles.json"),
+      );
+      expect(JSON.parse(saved)).toMatchObject(original);
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(ServerBrowser.layer).pipe(
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gatedFs)),
+        ),
+      ),
+    );
   }).pipe(Effect.provide(dependencies)),
 );
