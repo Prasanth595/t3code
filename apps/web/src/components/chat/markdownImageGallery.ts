@@ -32,7 +32,7 @@ export function markdownImageGallery(
       resolveExternalWebLinkHost(href) !== null ? resolveProtocolRelativeMediaUrl(href) : null;
     const reference = mediaUrlReference(href);
     const asset = registered.actionsSource?.asset ?? selected.actionsSource?.asset;
-    const linkedMedia = sourceControlClients.mediaUrl(href);
+    const linkedMedia = linkedSource ? sourceControlClients.mediaUrl(linkedSource) : null;
     const environmentId = location?.environmentId ?? asset?.environmentId;
     const cwd =
       location?.cwd ??

@@ -1499,6 +1499,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (imageSource._tag === "WorkspaceFile" && threadRef) {
       return (
         <ChatMarkdownAssetImage
+          mediaLocation={
+            sourceControlMedia && cwd ? { environmentId: threadRef.environmentId, cwd } : undefined
+          }
           environmentId={threadRef.environmentId}
           resource={{
             _tag: "media-file",
