@@ -15,6 +15,8 @@ import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
+import { toastManager } from "../ui/toast";
+import type { CitedHistory } from "./citationProcedure";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found",
@@ -234,6 +236,46 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+describe("MessagesTimeline citations", () => {
+  it("waits for cited history to load before giving up on a response outside the window", async () => {
+    using toast = vi.spyOn(toastManager, "add");
+    const props = baseProps();
+    const citationRequest = {
+      key: "activation-1",
+      citation: {
+        version: 1,
+        environmentId: ENVIRONMENT_ID,
+        threadId: ThreadId.make("thread-cited"),
+        messageId: MessageId.make("cited"),
+        text: "the cited answer",
+        start: 0,
+        end: 16,
+        prefix: "",
+        suffix: "",
+      },
+    } satisfies NonNullable<TimelineProps["citationRequest"]>;
+    const recent = message("A recent question", {}, "recent");
+    const timeline = (entries: Entry[], citationHistory: CitedHistory) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        citationRequest={citationRequest}
+        citationHistory={citationHistory}
+      />
+    );
+    await using screen = await renderElement(timeline([recent], { _tag: "loading" }));
+    await expect.element(screen.getByText("A recent question")).toBeVisible();
+
+    await screen.rerender(
+      timeline([message("the cited answer", { role: "assistant" }, "cited"), recent], {
+        _tag: "found",
+      }),
+    );
+    await expect.element(screen.getByText("the cited answer")).toBeVisible();
+    expect(toast).not.toHaveBeenCalled();
   });
 });
 
