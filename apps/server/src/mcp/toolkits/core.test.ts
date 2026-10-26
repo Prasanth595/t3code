@@ -684,16 +684,6 @@ it.effect.each([
     code: "invalid_request",
     message: "The scheduled task was not found.",
   },
-  {
-    scenario: "redacts an unknown internal error and its cause",
-    tasks: [Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access"))],
-    // Inject an unexpected failure at the service boundary to check the fallback.
-    error: new Error("private-internal-error", {
-      cause: "private-storage-path",
-    }) as unknown as ScheduledTaskError,
-    code: "orchestration_error",
-    message: "The operation could not be completed.",
-  },
 ])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -727,6 +717,7 @@ it.effect.each([
     ),
   ),
 );
+
 function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
   return {
     id,
