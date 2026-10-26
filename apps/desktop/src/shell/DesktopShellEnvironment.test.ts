@@ -1,30 +1,29 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The process fixture runs real shell commands with isolated config files.
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
-import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
-
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NetService from "@t3tools/shared/Net";
-import { SshCommandError } from "@t3tools/ssh/errors";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
+import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
 
 vi.mock("node:os", { spy: true });
 
@@ -109,9 +108,7 @@ function runShellEnvironment(input: {
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     const prepared = yield* shellEnvironment.installIntoProcess;
-    if (prepared || input.platform === "win32") {
-      assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
-    }
+    assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
     if (input.exercise) yield* input.exercise(shellEnvironment);
     return prepared;
   }).pipe(
