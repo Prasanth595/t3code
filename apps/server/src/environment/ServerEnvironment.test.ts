@@ -122,6 +122,32 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       }
     }),
   );
+  it.effect("marks a desktop backend without the update control fd as a secondary", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const config = yield* makeServerConfig(baseDir);
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      for (const desktopTelemetryControlFd of [5, undefined]) {
+        const descriptor = yield* Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(
+                ServerConfig.layer({ ...config, mode: "desktop", desktopTelemetryControlFd }),
+              ),
+            ),
+          ),
+        );
+        const primary = desktopTelemetryControlFd !== undefined;
+        expect(descriptor.capabilities.desktopAppUpdate).toBe(primary ? true : undefined);
+        expect(descriptor.capabilities.desktopSecondaryBackend).toBe(primary ? undefined : true);
+      }
+    }),
+  );
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },

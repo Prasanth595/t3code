@@ -61,6 +61,7 @@ export interface SkippedMachine {
 }
 
 /** Skip current and app-hosted servers; the latter update with the app and would relaunch mid-run.
+ * Desktop secondaries such as WSL update with their own app, so they are omitted, not skipped.
  * Desktop-managed servers use their own feed. */
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
@@ -70,7 +71,9 @@ export function collectServerUpdateTargets(
   const skipped: SkippedMachine[] = [];
   for (const machine of machines) {
     const config = machine.serverConfig;
-    if (machine.hostedByThisApp) continue;
+    if (machine.hostedByThisApp || config?.environment.capabilities.desktopSecondaryBackend) {
+      continue;
+    }
     if (
       config !== null &&
       resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null

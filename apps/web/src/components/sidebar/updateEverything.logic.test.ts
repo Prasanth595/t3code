@@ -1,4 +1,8 @@
-import { EnvironmentId, type ServerSelfUpdateCapability } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ServerConfig,
+  type ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -39,6 +43,31 @@ function machine(
   };
 }
 
+function withCapabilities(
+  base: UpdateEverythingMachine,
+  capabilities: Partial<ServerConfig["environment"]["capabilities"]>,
+): UpdateEverythingMachine {
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        capabilities: { ...base.serverConfig!.environment.capabilities, ...capabilities },
+      },
+    },
+  };
+}
+
+const secondary = (id: string, overrides: Partial<UpdateEverythingMachine> = {}) =>
+  withCapabilities(machine(id, "0.0.40", "desktop-managed", overrides), {
+    desktopAppUpdate: false,
+    desktopSecondaryBackend: true,
+  });
+
+const oldDesktop = (id: string) =>
+  withCapabilities(machine(id, "0.0.40", "desktop-managed"), { desktopAppUpdate: false });
+
 describe("collectServerUpdateTargets", () => {
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
@@ -47,6 +76,9 @@ describe("collectServerUpdateTargets", () => {
         machine("service", "0.0.40", "boot-service"),
         machine("nightly-service", "0.0.49-nightly.20261001.3", "boot-service"),
         machine("other-desktop", "0.0.49-nightly.20261001.3", "desktop-managed"),
+        secondary("other-wsl"),
+        secondary("offline-wsl", { connected: false }),
+        oldDesktop("old-desktop"),
         machine("offline", "0.0.40", "boot-service", { connected: false }),
         machine("never-connected", "0.0.40", "boot-service", { serverConfig: null }),
         machine("no-scope", "0.0.40", "boot-service", { canMaintain: false }),
@@ -71,6 +103,7 @@ describe("collectServerUpdateTargets", () => {
     ]);
     expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
       ["nightly-service", "on the nightly channel"],
+      ["old-desktop", "needs a newer desktop app"],
       ["offline", "not connected"],
       ["never-connected", "not connected"],
       ["no-scope", "no permission"],
