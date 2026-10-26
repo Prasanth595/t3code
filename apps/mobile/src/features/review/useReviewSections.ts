@@ -27,8 +27,7 @@ const NO_GIT_SECTIONS_ATOM = Atom.make<ReadonlyArray<ReviewDiffPreviewSource>>([
   Atom.keepAlive,
   Atom.withLabel("mobile:review:git-sections:null"),
 );
-const NO_TURN_DIFFS = Object.freeze({});
-const NO_TURN_DIFFS_ATOM = Atom.make<Readonly<Record<number, string>>>(NO_TURN_DIFFS).pipe(
+const NO_TURN_DIFFS_ATOM = Atom.make<Readonly<Record<number, string>>>({}).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:review:turn-diffs:null"),
 );
@@ -87,7 +86,6 @@ export function useReviewSections(input: {
     gitSections:
       canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
-    loadingTurnIds: NO_TURN_DIFFS,
     loadingGitSections: fileAccess.isPending || diffPreview.isPending,
   });
   const selectedSectionId = resolveReviewSelectedSectionId(

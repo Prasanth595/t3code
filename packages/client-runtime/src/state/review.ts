@@ -43,6 +43,7 @@ export function createReviewEnvironmentAtoms<R, E>(
     const target = JSON.parse(key) as Parameters<typeof diffPreview>[0];
     return Atom.make((get) => {
       // A failed refresh keeps the last revision, so an error does not refresh every patch.
+      // Reading the preview here keeps its query mounted while any of its patches is read.
       return Option.match(AsyncResult.value(get(diffPreview(target))), {
         onNone: () => null,
         onSome: (preview) => DateTime.formatIso(preview.generatedAt),
