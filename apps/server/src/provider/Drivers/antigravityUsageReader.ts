@@ -10,6 +10,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import {
+  antigravityUsageModelFromId,
+  findAntigravityUsageModel,
+} from "./antigravityUsageModels.ts";
+
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
 
@@ -77,34 +82,10 @@ const timestamp = (value: Fields) => {
   return seconds > 0 ? seconds * 1000 + Math.floor(numberAt(value, 2) / 1_000_000) : null;
 };
 
-const MODEL_IDS: Record<number, string> = {
-  246: "gemini-2.5-pro",
-  312: "gemini-2.5-flash",
-  313: "gemini-2.5-flash-thinking",
-  329: "gemini-2.5-flash-thinking",
-  330: "gemini-2.5-flash-lite",
-  281: "claude-sonnet-4",
-  282: "claude-sonnet-4",
-  290: "claude-opus-4",
-  291: "claude-opus-4",
-  333: "claude-sonnet-4-5",
-  334: "claude-sonnet-4-5",
-  340: "claude-haiku-4-5",
-  341: "claude-haiku-4-5",
-  1026: "claude-opus-4-6",
-  1035: "claude-sonnet-4-6",
-  1016: "gemini-3.1-pro",
-  1036: "gemini-3.1-pro",
-  1037: "gemini-3.1-pro",
-  1018: "gemini-3-flash-preview",
-  1084: "gemini-3-flash-preview",
-  1047: "gemini-3-flash-preview",
-};
-
 // ACP slugs append the thinking level, which shares the base model's price.
 function withRateModel(record: UsageRecord): UsageRecord {
-  const rateModel = record.model.replace(/-(?:low|medium|high)$/, "");
-  return rateModel === record.model ? record : { ...record, rateModel };
+  const rateModel = findAntigravityUsageModel(record.model)?.rateModel;
+  return rateModel === undefined || rateModel === record.model ? record : { ...record, rateModel };
 }
 
 function modelName(name: string, id: number): string {
@@ -115,12 +96,12 @@ function modelName(name: string, id: number): string {
       .replaceAll(" ", "-");
     if (normalized.startsWith("claude-")) {
       return normalized
-        .replace(/^claude-(4(?:\.\d+)?)-(sonnet|opus|haiku)/, "claude-$2-$1")
+        .replace(/^claude-((?:4|5)(?:\.\d+)?)-(sonnet|opus|haiku)/, "claude-$2-$1")
         .replaceAll(".", "-");
     }
     return normalized;
   }
-  return MODEL_IDS[id] ?? (id > 0 ? `antigravity-model-${id}` : "");
+  return antigravityUsageModelFromId(id) ?? (id > 0 ? `antigravity-model-${id}` : "");
 }
 
 interface Metadata {
@@ -300,7 +281,7 @@ function usageCandidates(
           sessionId,
           timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
           model:
-            MODEL_IDS[numberAt(usage, 1)] ||
+            antigravityUsageModelFromId(numberAt(usage, 1)) ||
             entry.model ||
             (source === "step" ? generationModels.get(idx) : "") ||
             modelName("", numberAt(usage, 1)) ||
