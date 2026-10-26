@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - the marker holds wall-clock epoch seconds the script compares with its own `date`.
 // @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

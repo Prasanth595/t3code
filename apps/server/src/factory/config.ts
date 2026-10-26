@@ -66,6 +66,9 @@ export const DEFAULT_FEEDBACK_SECONDS = 600;
  */
 const DEFAULT_KEEP_VERSIONS = 3;
 export const DEFAULT_MIN_FREE_GIB = 10;
+
+/** Minutes a waiting autodeploy build may hold claims back; see {@link MachineConfig.deployWaitMinutes}. */
+export const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
 export const DEFAULT_MAX_LOAD_PER_CORE = 1;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
@@ -161,6 +164,12 @@ export interface MachineConfig {
    * start. 0 turns the check off.
    */
   readonly maxLoadPerCore: number;
+  /**
+   * The minutes a build autodeploy has waiting may hold claims back before it installs with runs
+   * in progress. autodeploy.sh reads the key itself with its own copy of the default: change both
+   * together.
+   */
+  readonly deployWaitMinutes: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -438,6 +447,7 @@ const MACHINE_KEYS = [
   "keep_versions",
   "min_free_gib",
   "max_load_per_core",
+  "deploy_wait_minutes",
 ] as const;
 
 /**
@@ -493,6 +503,13 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MAX_LOAD_PER_CORE,
     0,
   );
+  const deployWaitMinutes = c.optionalUint(
+    root,
+    "",
+    "deploy_wait_minutes",
+    DEFAULT_DEPLOY_WAIT_MINUTES,
+    1,
+  );
   checkUnknownKeys(c, root);
 
   if (
@@ -504,7 +521,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     notify === undefined ||
     keepVersions === undefined ||
     minFreeGib === undefined ||
-    maxLoadPerCore === undefined
+    maxLoadPerCore === undefined ||
+    deployWaitMinutes === undefined
   ) {
     return undefined;
   }
@@ -517,6 +535,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     notify,
     minFreeGib,
     maxLoadPerCore,
+    deployWaitMinutes,
   };
 };
 

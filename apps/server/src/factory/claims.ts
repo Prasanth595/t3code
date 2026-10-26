@@ -13,6 +13,9 @@ import { formatTs, parseTs } from "./ledger/time.ts";
 /** The file in the data dir that holds claims back by hand. */
 export const PAUSE_FILE = "claims-paused";
 
+/** The file in the data dir that autodeploy.sh writes while a build waits to be installed. */
+export const DEPLOY_PENDING_FILE = "deploy-pending";
+
 /** Claims held back by a person, as the data dir has it. */
 export interface HandPause {
   /**
@@ -67,6 +70,56 @@ const unopenedPause = (path: string): HandPause | null => {
     return { sinceMs: 0 };
   }
   return stat.isFile() ? { sinceMs: Math.floor(stat.mtimeMs) } : null;
+};
+
+/** A build autodeploy has waiting, as the data dir has it. */
+export interface PendingDeploy {
+  /** When the first build left waiting was found, in Unix epoch milliseconds. */
+  readonly sinceMs: number;
+  /** The newest build waiting, as a hex sha; null when the file does not name one. */
+  readonly commit: string | null;
+}
+
+/**
+ * The build autodeploy.sh has waiting: `deploy-pending` in the data dir holds `<epoch seconds>
+ * <sha>` while origin/main has a commit that is not installed, and the script removes it when
+ * nothing is pending. The pass claims nothing while it is there, so the runs in progress can end
+ * and the build can be installed. A missing file, symlink or FIFO is nothing pending. A first
+ * word that is not whole seconds falls back to the file's mtime; a file that exists but cannot be
+ * opened is still pending since its mtime.
+ */
+export const loadPendingDeploy = (dataDir: string): PendingDeploy | null => {
+  const path = NodePath.join(dataDir, DEPLOY_PENDING_FILE);
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(
+      path,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    const code = errnoCode(error);
+    if (code === "ENOENT" || code === "ELOOP") return null;
+    const unopened = unopenedPause(path);
+    return unopened === null ? null : { sinceMs: unopened.sinceMs, commit: null };
+  }
+  try {
+    const stat = NodeFS.fstatSync(fd);
+    if (!stat.isFile()) return null;
+    let words: Array<string> = [];
+    try {
+      words = NodeFS.readFileSync(fd, "utf8").trim().split(/\s+/);
+    } catch {
+      words = [];
+    }
+    const since = words[0] ?? "";
+    const sha = words[1] ?? "";
+    return {
+      sinceMs: /^[0-9]+$/.test(since) ? Number(since) * 1000 : Math.floor(stat.mtimeMs),
+      commit: /^[0-9a-f]{7,40}$/.test(sha) ? sha : null,
+    };
+  } finally {
+    NodeFS.closeSync(fd);
+  }
 };
 
 /** What {@link pauseClaims} found. */

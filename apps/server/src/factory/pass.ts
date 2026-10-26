@@ -8,7 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
-import type { HandPause } from "./claims.ts";
+import type { HandPause, PendingDeploy } from "./claims.ts";
 import {
   ambiguousMessage,
   ambiguousRepos,
@@ -256,6 +256,8 @@ export interface PassWorld {
   ) => Effect.Effect<void, LedgerError>;
   /** The claims pause a person made, when there is one. */
   readonly handPause: () => HandPause | null;
+  /** The build autodeploy has waiting for the runs in progress to end, when there is one. */
+  readonly pendingDeploy: () => PendingDeploy | null;
   /**
    * The free space of the fuller of the volumes that hold the sessions' worktrees and the gate's
    * checkouts; not read when `min_free_gib` is 0.
@@ -487,6 +489,8 @@ class Pass {
   lowDisk = false;
   /** The load is above `max_load_per_core`: nothing is claimed. */
   highLoad = false;
+  /** A build autodeploy has waiting: nothing is claimed until it is installed. */
+  draining = false;
   readonly startedMs: number;
   private logFailed = false;
   private readonly world: PassWorld;
@@ -669,6 +673,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   const repos = yield* loadRepos(world, watched, pass);
   pass.lowDisk = yield* lowDisk(world, machine, pass);
   pass.highLoad = yield* highLoad(world, machine, pass);
+  pass.draining = yield* drainingForDeploy(world, machine, pass);
   yield* brokenWorktrees(world, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
@@ -816,6 +821,51 @@ const highLoad = Effect.fn("Pass.highLoad")(function* (
     `high load: ${loadAboveLimit(over)} (${over.cores} cores x max_load_per_core ${machine.maxLoadPerCore}); no issue is claimed and a second gate waits until it drops`,
   );
   yield* pass.record({ event: "claim_skipped", data: { reason: "high-load" } });
+  return true;
+});
+
+/** The machine's attention item while a build has waited past `deploy_wait_minutes`. */
+const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
+
+/**
+ * Whether autodeploy has a build waiting. It installs only when no run is in progress, which a
+ * steady queue never allows, so the pass claims nothing until the runs end and the build is
+ * installed: one line and one `claim_skipped` event a pass. Once the build has waited past
+ * `deploy_wait_minutes` autodeploy installs it with runs in progress, which resume on the new
+ * build, and an attention item says so until the marker is gone. Relaunches of claimed runs are
+ * not held back.
+ */
+const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
+  world: PassWorld,
+  machine: MachineConfig,
+  pass: Pass,
+) {
+  const clear = world.attention.clear((item) => item.id === DEPLOY_WAITING_ITEM_ID);
+  const pending = world.pendingDeploy();
+  if (pending === null) {
+    yield* clear;
+    return false;
+  }
+  const waited = Math.max(0, world.nowMs() - pending.sinceMs);
+  const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
+  pass.line(
+    `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
+  );
+  yield* pass.record({ event: "claim_skipped", data: { reason: "deploy-pending" } });
+  if (waited < machine.deployWaitMinutes * 60_000) {
+    yield* clear;
+    return true;
+  }
+  pass.report.attention += 1;
+  yield* world.attention.raise({
+    id: DEPLOY_WAITING_ITEM_ID,
+    kind: "attention",
+    repo: null,
+    issue: null,
+    run: null,
+    // No figures: an open item is not raised again, so they would go stale.
+    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick and the runs resume on the new build`,
+  });
   return true;
 });
 
@@ -1928,6 +1978,8 @@ const claim = Effect.fn("Pass.claim")(function* (
   if (pass.lowDisk) return;
   // Said once by `highLoad`: a run claimed now would gate on a machine too busy to pass it.
   if (pass.highLoad) return;
+  // Said once by `drainingForDeploy`: a build is waiting for the runs in progress to end.
+  if (pass.draining) return;
   const paused = world.handPause();
   // Ready issues that were not tried because the limit was reached. Every repo is still
   // listed, so the count is the whole machine's.

@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 
 import * as AttentionService from "./attention.ts";
 import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./attention.ts";
-import { loadHandPause } from "./claims.ts";
+import { loadHandPause, loadPendingDeploy } from "./claims.ts";
 import {
   DEFAULT_POLL_SECONDS,
   formatConfigError,
@@ -704,6 +704,7 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
+    pendingDeploy: () => loadPendingDeploy(dataDir),
     threadsOnBrokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(Effect.mapError(asPassError("t3"))),
     sessionRuns: () =>
