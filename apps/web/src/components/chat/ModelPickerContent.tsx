@@ -49,6 +49,7 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import {
+  useClientSettings,
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
 } from "~/hooks/useSettings";
@@ -190,10 +191,12 @@ function modelJumpLabelsByKey(
 function ModelPickerProviderNotices({
   setupEntries,
   updateRequiredNotices,
+  emptyLabel,
   onRequestClose,
   onOpenProviderSetup,
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
+  emptyLabel: string;
   updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
@@ -221,7 +224,7 @@ function ModelPickerProviderNotices({
           ))}
         </div>
       ) : (
-        <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
+        <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
       {updateRequiredNotices.map(({ instanceId, notice }) => (
         <p
@@ -584,6 +587,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
+  // Inside one provider's tab the provider line repeats the selected rail icon on every row.
+  const redesign = useClientSettings((s) => s.redesignEnabled);
+  const rowsMixProviders = !redesign || isSearching || selectedInstanceId === "favorites";
   const lockedDisabledInstanceIds = (() => {
     if (!isLocked) {
       return undefined;
@@ -949,7 +955,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       className="group w-full cursor-pointer"
                     >
                       <div className="min-w-0 flex-1 text-left">
-                        <div className="text-xs font-medium leading-snug">Legacy models</div>
+                        <div className="text-xs font-medium leading-snug redesign:text-sm redesign:font-normal">
+                          Legacy models
+                        </div>
                         <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
                           {legacySection.legacyModels.length} models
                         </div>
@@ -989,8 +997,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         ? selectedModelKeySet.has(modelKey)
                         : modelKey === activeModelKey
                     }
-                    showSelection={selectedModelKeys !== undefined}
-                    showProvider
+                    showSelection={selectedModelKeys !== undefined || redesign}
+                    showProvider={rowsMixProviders || Boolean(model.subProvider)}
                     preferShortName={!isLocked}
                     useTriggerLabel={false}
                     showNewBadge={model.badge === "new"}
@@ -1005,6 +1013,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             <ModelPickerProviderNotices
               setupEntries={providerSetupEntries}
               updateRequiredNotices={updateRequiredNotices}
+              emptyLabel={
+                selectedInstanceId === "favorites" && !isSearching
+                  ? "No favorites yet"
+                  : "No models found"
+              }
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}
             />

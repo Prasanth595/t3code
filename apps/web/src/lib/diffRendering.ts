@@ -275,13 +275,13 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
 export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
   switch (fileDiff.type) {
     case "new":
-      return "text-[var(--diffs-addition-base)]";
+      return "text-[var(--diffs-addition-base)] redesign:text-muted-foreground/80";
     case "deleted":
-      return "text-[var(--diffs-deletion-base)]";
+      return "text-[var(--diffs-deletion-base)] redesign:text-muted-foreground/80";
     case "change":
     case "rename-pure":
     case "rename-changed":
-      return "text-[var(--diffs-modified-base)]";
+      return "text-[var(--diffs-modified-base)] redesign:text-muted-foreground/80";
     default:
       return "text-muted-foreground/80";
   }
@@ -349,5 +349,25 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 
   background-color: var(--diffs-bg) !important;
   color: var(--code-foreground) !important;
+}
+
+/* The library's change-icon colors are tuned for dark canvases; light mode takes the app's darker tokens. */
+[data-change-icon="new"] {
+  color: var(
+    --diff-added-icon,
+    light-dark(var(--diff-addition-foreground), var(--diffs-addition-base))
+  ) !important;
+}
+[data-change-icon="deleted"] {
+  color: light-dark(var(--diff-deletion-foreground), var(--diffs-deletion-base)) !important;
+}
+/* The page sets --diff-modified-icon under the New design: a muted T3 blue, so the common case stays quiet. */
+[data-change-icon="change"],
+[data-change-icon="rename-pure"],
+[data-change-icon="rename-changed"] {
+  color: var(
+    --diff-modified-icon,
+    light-dark(var(--info-foreground), var(--diffs-modified-base))
+  ) !important;
 }
 `;
