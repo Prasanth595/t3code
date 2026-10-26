@@ -127,16 +127,15 @@ function PullRequestMonitorRow(props: { readonly link: ThreadPullRequestLink }) 
   // The snapshot arrives from the host after the link, so the row must stay tappable without it.
   const snapshot = link.snapshot;
   const status = snapshot ? pullRequestStatus(snapshot) : null;
-  const checks =
-    snapshot?.state === "open" && snapshot.checksState
-      ? pullRequestChecksStatus(snapshot.checksState)
-      : null;
+  const checksState = snapshot?.state === "open" ? snapshot.checksState : undefined;
+  const checks = checksState ? pullRequestChecksStatus(checksState) : null;
+  const checksLabel = checksState ? CHECKS_LABELS[checksState] : undefined;
   const title = snapshot?.title ?? `Pull request #${link.number}`;
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`Watching pull request ${link.number}, ${title}${status ? `, ${status.label}` : ""}${snapshot?.checksState && checks ? `, ${CHECKS_LABELS[snapshot.checksState]}` : ""}`}
-      accessibilityHint="Opens this pull request on GitHub"
+      accessibilityLabel={`Watching pull request ${link.number}, ${title}${status ? `, ${status.label}` : ""}${checksLabel ? `, ${checksLabel}` : ""}`}
+      accessibilityHint="Opens this pull request externally"
       onPress={() => {
         void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
           if (!opened) Dialog.alert("Unable to open PR", "The pull request could not be opened.");
@@ -162,12 +161,10 @@ function PullRequestMonitorRow(props: { readonly link: ThreadPullRequestLink }) 
             <Text className="text-xs text-foreground-muted">
               {status ? `Watching · ${status.label}` : "Watching"}
             </Text>
-            {checks && snapshot?.checksState ? (
+            {checks ? (
               <View className="flex-row items-center gap-1">
                 <SymbolView name={checks.icon} size={12} tintColorClassName={checks.tint} />
-                <Text className="text-xs text-foreground-muted">
-                  {CHECKS_LABELS[snapshot.checksState]}
-                </Text>
+                <Text className="text-xs text-foreground-muted">{checksLabel}</Text>
               </View>
             ) : null}
           </View>
