@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -150,6 +150,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
   interface ReleaseHarness {
     readonly store: ServerSecretStore.ServerSecretStore["Service"];
     readonly applyConfigCalls: Array<unknown>;
+    readonly recoveryCalls?: Array<unknown>;
+    readonly crypto?: Crypto.Crypto;
     readonly requests: Array<HttpClientRequest.HttpClientRequest>;
     readonly onRequest?: (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<void>;
     readonly respond?: () => Response;
@@ -177,6 +179,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provide(CloudLink.layer),
+        Effect.updateService(Crypto.Crypto, (crypto) => harness.crypto ?? crypto),
         Effect.provideService(
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
@@ -214,7 +217,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
                     } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntimeStatus);
               }),
             recoveryRequests: Stream.empty,
-            requestRecovery: () => Effect.void,
+            requestRecovery: (config) =>
+              Effect.sync(() => {
+                harness.recoveryCalls?.push(config);
+              }),
             tunnelConnected: Stream.empty,
             inspectConnector: Effect.succeed(null),
             readinessChanged: Stream.empty,
@@ -1084,6 +1090,169 @@ describe("releaseManagedTunnelOnShutdown", () => {
             },
             endpointRuntime: nextConfig,
           }),
+      }),
+    );
+  });
+
+  it.effect("does not revoke a skewed host when response delay hides its clock error", () =>
+    Effect.gen(function* () {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "old-token",
+        tunnelId: "old-tunnel",
+      };
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "credential"],
+      ]);
+      const sent = yield* Deferred.make<void>();
+      const response = yield* Deferred.make<Response>();
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      yield* Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        const pending = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(sent);
+        yield* TestClock.adjust("75 seconds");
+        yield* Deferred.succeed(
+          response,
+          Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "delayed-skew",
+            },
+            { status: 401, headers: { date: "Thu, 01 Jan 1970 00:02:10 GMT" } },
+          ),
+        );
+        const error = yield* Fiber.join(pending);
+        expect(CloudLink.shouldRetryCloudLink(error)).toBe(true);
+        expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+        expect(requests.map((request) => request.method)).toEqual(["POST", "HEAD"]);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls: [],
+          requests,
+          onRequest: (request) =>
+            request.method === "POST" ? Deferred.succeed(sent, undefined) : Effect.void,
+          respondEffect: Effect.suspend(() =>
+            requests.at(-1)?.method === "HEAD"
+              ? Effect.succeed(
+                  new Response(null, { headers: { date: "Thu, 01 Jan 1970 00:03:25 GMT" } }),
+                )
+              : Deferred.await(response),
+          ),
+        }),
+      );
+    }),
+  );
+
+  it.effect("retries a proof if clock correction happens during signing", () =>
+    Effect.gen(function* () {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "old-token",
+        tunnelId: "old-tunnel",
+      };
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "credential"],
+      ]);
+      const crypto = yield* Crypto.Crypto.pipe(Effect.provide(NodeServices.layer));
+      const clock = yield* Clock.Clock;
+      let wallOffset = -420_000;
+      const wallMillis = () => clock.currentTimeMillisUnsafe() + wallOffset;
+      const hostClock = {
+        ...clock,
+        currentTimeMillisUnsafe: wallMillis,
+        currentTimeMillis: Effect.sync(wallMillis),
+        currentTimeNanosUnsafe: () => BigInt(wallMillis()) * 1_000_000n,
+        currentTimeNanos: Effect.sync(() => BigInt(wallMillis()) * 1_000_000n),
+      };
+      yield* TestClock.setTime(420_000);
+      yield* Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+        expect(CloudLink.shouldRetryCloudLink(error)).toBe(true);
+        expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          crypto: {
+            ...crypto,
+            randomUUIDv4: () =>
+              crypto.randomUUIDv4().pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    wallOffset = 0;
+                  }),
+                ),
+              ),
+          },
+          applyConfigCalls: [],
+          requests: [],
+          respond: () =>
+            Response.json(
+              {
+                _tag: "RelayAuthInvalidError",
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId: "signing-correction",
+              },
+              { status: 401, headers: { date: "Thu, 01 Jan 1970 00:07:00 GMT" } },
+            ),
+        }),
+        Effect.provideService(Clock.Clock, hostClock),
+      );
+    }),
+  );
+
+  it.effect("queues recovery when web or mobile registration exhausts clock-skew retries", () => {
+    const { store, values } = makeMemorySecretStore();
+    const config = {
+      providerKind: "cloudflare_tunnel" as const,
+      connectorToken: "token",
+      tunnelId: "tunnel",
+    };
+    const recoveryCalls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(
+        link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "credential",
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
+          endpointRuntime: config,
+        }),
+      );
+      expect(CloudLink.shouldRetryCloudLink(error)).toBe(true);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      expect(recoveryCalls).toEqual([config]);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        recoveryCalls,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "web-clock",
+            },
+            { status: 401, headers: { date: "Thu, 01 Jan 1970 00:03:00 GMT" } },
+          ),
       }),
     );
   });

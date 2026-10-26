@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import { probeRelayClock } from "./relayClock.ts";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
@@ -88,14 +89,13 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   response: HttpClientResponse.HttpClientResponse,
   requestDurationMillis = 0,
   requestStartedAtMillis?: number,
+  measuredClockSkewSeconds?: number,
 ) {
   if (response.status >= 200 && response.status < 300) return response;
   const nowMillis = yield* Clock.currentTimeMillis;
-  const clockSkewSeconds = clockSkewFromDateHeader(
-    response.headers.date,
-    nowMillis,
-    requestDurationMillis,
-  );
+  const clockSkewSeconds =
+    measuredClockSkewSeconds ??
+    clockSkewFromDateHeader(response.headers.date, nowMillis, requestDurationMillis);
   const decoded = yield* HttpClientResponse.schemaBodyJson(RelayProtectedError)(response).pipe(
     Effect.option,
   );
@@ -177,11 +177,54 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   });
 });
 
-export const filterRelayClient = (client: HttpClient.HttpClient) =>
+export interface RelayRequestTiming {
+  readonly startedAtMillis: number;
+  readonly startedAtNanos: bigint;
+}
+
+export const filterRelayClient = (client: HttpClient.HttpClient, timing?: RelayRequestTiming) =>
   HttpClient.transformResponse(client, (response) =>
     Effect.gen(function* () {
-      const startedAtMillis = yield* Clock.currentTimeMillis;
+      const startedAtMillis = timing?.startedAtMillis ?? (yield* Clock.currentTimeMillis);
       const [duration, result] = yield* response.pipe(Effect.timed);
-      return yield* filterRelayResponse(result, Duration.toMillis(duration), startedAtMillis);
+      const elapsedMillis =
+        timing === undefined
+          ? Duration.toMillis(duration)
+          : Number((yield* Clock.monotonicTimeNanos) - timing.startedAtNanos) / 1_000_000;
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        (result.status === 400 || result.status === 401) &&
+        Math.abs(now - startedAtMillis - elapsedMillis) > 60_000
+      ) {
+        return yield* new RelayRequestError({
+          rejection: "unavailable",
+          description:
+            "The host clock changed during the T3 Connect proof request. T3 Connect will retry with a fresh proof.",
+        });
+      }
+      let measuredClockSkewSeconds: number | undefined;
+      if (
+        (result.status === 400 || result.status === 401) &&
+        clockSkewFromDateHeader(result.headers.date, now, elapsedMillis) === null &&
+        clockSkewFromDateHeader(result.headers.date, startedAtMillis) !== null
+      ) {
+        const measurement = yield* probeRelayClock(new URL(result.request.url).origin).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+        if (measurement === null) {
+          return yield* new RelayRequestError({
+            rejection: "unavailable",
+            description:
+              "Could not confirm the host clock after a delayed T3 Connect refusal. T3 Connect will retry.",
+          });
+        }
+        measuredClockSkewSeconds = measurement.clockSkewSeconds ?? undefined;
+      }
+      return yield* filterRelayResponse(
+        result,
+        elapsedMillis,
+        startedAtMillis,
+        measuredClockSkewSeconds,
+      );
     }),
   );

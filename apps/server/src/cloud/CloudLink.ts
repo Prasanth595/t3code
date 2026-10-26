@@ -43,6 +43,7 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -103,8 +104,10 @@ import { relayUrlConfig } from "./publicConfig.ts";
 import { checkRelayClock } from "./relayClock.ts";
 import {
   filterRelayClient,
+  isRelayClockSkewError,
   relayRequestError,
   type RelayRequestError,
+  type RelayRequestTiming,
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
 import {
@@ -860,11 +863,17 @@ const make = Effect.gen(function* () {
     readonly payload: unknown;
     readonly schema: Schema.Decoder<A>;
     readonly timeout?: Duration.Input;
+    readonly timing?: RelayRequestTiming;
   }) =>
     HttpClientRequest.post(input.url).pipe(
       HttpClientRequest.bearerToken(input.token),
       HttpClientRequest.bodyJson(input.payload),
-      Effect.flatMap(relayHttpClient.execute),
+      Effect.flatMap((request) =>
+        (input.timing === undefined
+          ? relayHttpClient
+          : filterRelayClient(httpClient, input.timing)
+        ).execute(request),
+      ),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
       Effect.timeout(input.timeout ?? "10 seconds"),
       Effect.mapError(relayRequestError),
@@ -968,6 +977,7 @@ const make = Effect.gen(function* () {
     const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
     const configuredIssuer = yield* secrets.get(RELAY_ISSUER_SECRET);
     const now = yield* DateTime.now;
+    const startedAtNanos = yield* Clock.monotonicTimeNanos;
     const issuedAt = Math.floor(now.epochMilliseconds / 1_000);
     const claims = {
       iss: `t3-env:${input.environmentId}`,
@@ -991,7 +1001,7 @@ const make = Effect.gen(function* () {
           }
         : { ...claims, action: "recover" as const, origin: input.origin };
 
-    return yield* signRelayJwt({
+    const proof = yield* signRelayJwt({
       privateKey: keyPair.privateKey,
       typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
       payload,
@@ -1000,6 +1010,8 @@ const make = Effect.gen(function* () {
         (cause) => new CloudLinkInternalError({ operation: "sign-recovery-proof", cause }),
       ),
     );
+
+    return { proof, timing: { startedAtMillis: now.epochMilliseconds, startedAtNanos } };
   });
 
   // Check the credential under the same lock as connector startup so an old
@@ -1062,7 +1074,7 @@ const make = Effect.gen(function* () {
     const environmentId = yield* environment.getEnvironmentId;
     const relayUrlValue = bytesToString(relayUrl.value);
     const cloudUserIdValue = bytesToString(cloudUserId.value);
-    const proof = yield* makeManagedTunnelRecoveryProof({
+    const { proof, timing } = yield* makeManagedTunnelRecoveryProof({
       action: "register",
       environmentId,
       cloudUserId: cloudUserIdValue,
@@ -1074,6 +1086,7 @@ const make = Effect.gen(function* () {
     const registered = yield* relayClientRequest({
       url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
       token: credential,
+      timing,
       payload: {
         cloudUserId: cloudUserIdValue,
         tunnelId: config.tunnelId,
@@ -1163,7 +1176,7 @@ const make = Effect.gen(function* () {
     const relayUrlValue = bytesToString(relayUrl.value);
     const cloudUserIdValue = bytesToString(cloudUserId.value);
     const origin = parsedOrigin.origin;
-    const proof = yield* makeManagedTunnelRecoveryProof({
+    const { proof, timing } = yield* makeManagedTunnelRecoveryProof({
       action: "recover",
       environmentId,
       cloudUserId: cloudUserIdValue,
@@ -1172,6 +1185,7 @@ const make = Effect.gen(function* () {
     });
     const credential = bytesToString(environmentCredential.value);
     const recovered = yield* relayClientRequest({
+      timing,
       url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
       token: credential,
       payload: {
@@ -1234,6 +1248,7 @@ const make = Effect.gen(function* () {
         if (typeof address === "string" || !("port" in address)) {
           return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
         }
+        const endpointConfig = payload.endpointRuntime;
         const registration = yield* registerManagedTunnelRecovery(
           `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
         ).pipe(
@@ -1242,6 +1257,11 @@ const make = Effect.gen(function* () {
             while: (error) =>
               shouldRetryCloudLink(error) && error._tag !== "CloudLinkEndpointUnavailableError",
           }),
+          Effect.tapError((error) =>
+            isRelayClockSkewError(error)
+              ? endpointRuntime.requestRecovery(endpointConfig)
+              : Effect.void,
+          ),
         );
         if (registration.status === "superseded") {
           return yield* new CloudLinkTunnelSupersededError({});
