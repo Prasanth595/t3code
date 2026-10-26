@@ -242,8 +242,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
-  // oxlint-disable-next-line react/refs -- The getter runs only when a scheduled jump fires, after commit.
-  const [lineScroll] = useState(() => createSourceLineScroll(() => listRef.current));
+  const [lineScroll] = useState(createSourceLineScroll);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
@@ -254,7 +253,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     if (targetIndex === null) {
       return;
     }
-    lineScroll.scrollToLine(targetIndex);
+    lineScroll.scrollToLine(listRef.current, targetIndex);
     return lineScroll.cancel;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
   }, [lineScroll, props.path, targetIndex]);

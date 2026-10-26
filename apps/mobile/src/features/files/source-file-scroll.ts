@@ -9,7 +9,8 @@ const MAX_RETRIES = 5;
 
 // Wrapped rows have no getItemLayout. VirtualizedList fails a jump past its highest measured
 // row and silently estimates an unmeasured row below it, so re-aim until the budget runs out.
-export function createSourceLineScroll(getList: () => SourceLineList | null) {
+export function createSourceLineScroll() {
+  let list: SourceLineList | null = null;
   let target: number | null = null;
   let retries = 0;
   let cancelPending: (() => void) | null = null;
@@ -32,7 +33,6 @@ export function createSourceLineScroll(getList: () => SourceLineList | null) {
 
   const attempt = () => {
     cancelPending = null;
-    const list = getList();
     if (target === null || !list || target >= (list.props.data?.length ?? 0)) {
       target = null;
       return;
@@ -43,8 +43,9 @@ export function createSourceLineScroll(getList: () => SourceLineList | null) {
   };
 
   return {
-    scrollToLine(index: number) {
+    scrollToLine(nextList: SourceLineList | null, index: number) {
       cancel();
+      list = nextList;
       if (!Number.isInteger(index) || index < 0) return;
       target = index;
       retries = 0;
@@ -56,7 +57,6 @@ export function createSourceLineScroll(getList: () => SourceLineList | null) {
       averageItemLength: number;
       highestMeasuredFrameIndex: number;
     }) {
-      const list = getList();
       if (info.index !== target || !list) return;
       list.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
       retry();

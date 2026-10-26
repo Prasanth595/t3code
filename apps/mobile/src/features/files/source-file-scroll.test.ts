@@ -62,9 +62,10 @@ function setup({
     scrollToIndex,
     scrollToOffset,
   };
-  const scroll = createSourceLineScroll(() => list);
+  const scroll = createSourceLineScroll();
   return {
     scroll,
+    list,
     state,
     offsetOf,
     scrollToIndex,
@@ -79,7 +80,7 @@ function setup({
 it("lands on an already measured line", () => {
   using t = setup();
 
-  t.scroll.scrollToLine(40);
+  t.scroll.scrollToLine(t.list, 40);
   vi.runAllTimers();
 
   expect(t.state.offset).toBe(t.offsetOf(40));
@@ -90,7 +91,7 @@ it("lands on an already measured line", () => {
 it("jumps near an unmeasured wrapped line, then lands on it once rows measure", () => {
   using t = setup({ rowHeight: (index) => (index >= 80 ? ROW_HEIGHT * 3 : ROW_HEIGHT) });
 
-  t.scroll.scrollToLine(899);
+  t.scroll.scrollToLine(t.list, 899);
   expect(() => vi.advanceTimersToNextTimer()).not.toThrow();
   expect(t.state.offset).toBeGreaterThan(0);
 
@@ -110,7 +111,7 @@ it("jumps near an unmeasured wrapped line, then lands on it once rows measure", 
 it("stops retrying when the target never measures", () => {
   using t = setup({ rowHeight: (index) => (index === 899 ? ROW_HEIGHT * 400 : ROW_HEIGHT) });
 
-  t.scroll.scrollToLine(899);
+  t.scroll.scrollToLine(t.list, 899);
   expect(() => vi.runAllTimers()).not.toThrow();
 
   expect(t.scrollToIndex.mock.calls.length).toBeLessThanOrEqual(10);
@@ -120,7 +121,7 @@ it("stops retrying when the target never measures", () => {
 it("ignores a line outside the document", () => {
   using t = setup({ lineCount: 12 });
 
-  expect(() => t.scroll.scrollToLine(899)).not.toThrow();
+  expect(() => t.scroll.scrollToLine(t.list, 899)).not.toThrow();
   vi.runAllTimers();
   expect(t.scrollToIndex).not.toHaveBeenCalled();
   expect(t.scrollToOffset).not.toHaveBeenCalled();
@@ -129,13 +130,13 @@ it("ignores a line outside the document", () => {
 it("drops a pending jump when the document shrinks or the jump is cancelled", () => {
   using t = setup();
 
-  t.scroll.scrollToLine(899);
+  t.scroll.scrollToLine(t.list, 899);
   vi.advanceTimersToNextTimer();
   t.state.lineCount = 12;
   expect(() => vi.runAllTimers()).not.toThrow();
 
   t.state.lineCount = 1_203;
-  t.scroll.scrollToLine(899);
+  t.scroll.scrollToLine(t.list, 899);
   vi.advanceTimersToNextTimer();
   const calls = t.scrollToIndex.mock.calls.length;
   t.scroll.cancel();
@@ -147,7 +148,7 @@ it("drops a pending jump when the document shrinks or the jump is cancelled", ()
 it("a drag before the first frame cancels the jump", () => {
   using t = setup();
 
-  t.scroll.scrollToLine(40);
+  t.scroll.scrollToLine(t.list, 40);
   t.scroll.cancel();
   vi.runAllTimers();
 
