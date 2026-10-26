@@ -1083,6 +1083,7 @@ export const layer: Layer.Layer<
           if (
             prospectiveUsageState.modelContextWindow !== undefined &&
             prospectivePlan.status === "ready" &&
+            prospectivePlan.selected.omittedItemIds.length === 0 &&
             !(yield* (
               session.hasPendingBackgroundWork ??
                 session.hasPendingBackgroundWorkForThread?.(loadedProviderThread) ??

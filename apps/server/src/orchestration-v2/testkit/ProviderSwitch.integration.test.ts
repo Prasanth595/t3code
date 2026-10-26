@@ -422,6 +422,7 @@ describe("orchestration v2 provider switching", () => {
     "prior-images-reasoning-change-overflow-reused-native",
     "prior-images-reasoning-change-overflow-oversized-native",
     "reasoning-change-overflow-prospective-payload-native",
+    "prior-images-reasoning-change-overflow-prospective-payload-trimmed-native",
     "turn-usage-model-change-overflow-unknown-window-native",
     "prior-images-reasoning-change-overflow-compact-native",
     "prior-images-reasoning-change-replacement-small-native",
@@ -503,7 +504,9 @@ describe("orchestration v2 provider switching", () => {
                           ? 32_000
                           : 64_000
                         : scenario.includes("prospective-payload")
-                          ? 16_935
+                          ? scenario.includes("trimmed")
+                            ? 19_000
+                            : 16_935
                           : 258_400,
                     },
                   },
