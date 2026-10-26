@@ -1370,37 +1370,49 @@ export const layerWithOptions = (
               }
             }
           }).pipe(
-            Effect.onError(() =>
-              attachedTo === undefined
-                ? Effect.void
-                : removeThreadAttachment({ ...input, runtime: attachedTo }).pipe(
-                    Effect.andThen(
-                      Effect.suspend(() => {
-                        dropReservation();
-                        // Other live processes hold reused MCP credentials; revocation would break their clients.
-                        if (preparedForCleanup?.issued !== true) return Effect.void;
-                        const mcpCredentialId = preparedForCleanup.mcpCredentialId;
-                        const attachedRuntime = attachedTo;
-                        return Ref.get(sessions).pipe(
-                          Effect.flatMap((current) =>
-                            (mcpCredentialId !== undefined &&
-                              isMcpCredentialReserved(input.threadId, mcpCredentialId)) ||
-                            Array.from(current.values()).some(
-                              (other) =>
-                                other.runtime !== attachedRuntime &&
-                                (other.attachedThreadIds.has(input.threadId) ||
-                                  (mcpCredentialId !== undefined &&
-                                    other.mcpCredentialIdByThread.get(input.threadId) ===
-                                      mcpCredentialId)),
-                            )
-                              ? Effect.void
-                              : clearMcpSession(input.threadId, mcpCredentialId),
-                          ),
-                        );
+            Effect.onError(() => {
+              // A reclaim (thread already attached, credential rotated) has
+              // attachedTo === undefined but still issued a credential that must
+              // be cleaned up on failure. Only skip when nothing was prepared.
+              const isReclaim = attachedTo === undefined && preparedForCleanup !== undefined;
+              if (attachedTo === undefined && !isReclaim) return Effect.void;
+              const removeAttachment =
+                attachedTo === undefined
+                  ? Effect.void
+                  : removeThreadAttachment({ ...input, runtime: attachedTo });
+              return removeAttachment.pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    dropReservation();
+                    // Other live processes hold reused MCP credentials; revocation would break their clients.
+                    if (preparedForCleanup?.issued !== true) return Effect.void;
+                    const mcpCredentialId = preparedForCleanup.mcpCredentialId;
+                    // For a reclaim, exclude the session being reused (not torn
+                    // down) from the holder check, mirroring new attachments.
+                    return Ref.get(sessions).pipe(
+                      Effect.flatMap((current) => {
+                        const attachedRuntime =
+                          attachedTo ?? current.get(sessionKey(input.providerSessionId))?.runtime;
+                        const held =
+                          (mcpCredentialId !== undefined &&
+                            isMcpCredentialReserved(input.threadId, mcpCredentialId)) ||
+                          Array.from(current.values()).some(
+                            (other) =>
+                              other.runtime !== attachedRuntime &&
+                              (other.attachedThreadIds.has(input.threadId) ||
+                                (mcpCredentialId !== undefined &&
+                                  other.mcpCredentialIdByThread.get(input.threadId) ===
+                                    mcpCredentialId)),
+                          );
+                        return held
+                          ? Effect.void
+                          : clearMcpSession(input.threadId, mcpCredentialId);
                       }),
-                    ),
-                  ),
-            ),
+                    );
+                  }),
+                ),
+              );
+            }),
           );
           return threadAttachment
             .withLock(threadAttachmentKey(input), attach)
