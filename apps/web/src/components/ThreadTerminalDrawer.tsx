@@ -89,7 +89,12 @@ import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
-import { consumePendingTerminalFocus, registerTerminalFocusTarget } from "../lib/terminalFocus";
+import {
+  consumePendingTerminalFocus,
+  focusTerminal,
+  focusTerminalViewport,
+  registerTerminalFocusTarget,
+} from "../lib/terminalFocus";
 import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -1119,19 +1124,19 @@ function TerminalSessionViewport({
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
-    // Focus lands on the mount until the surface exists or is shown; the
-    // surface takes it over from there.
-    const focus = () => {
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return false;
-      mount.focus({ preventScroll: true });
-      terminalRef.current?.focus();
-      return mount.contains(document.activeElement);
-    };
+    const focus = () =>
+      focusTerminalViewport({
+        mount,
+        surface: terminalRef.current,
+        canOperate: readEnvironmentScope(environmentId, AuthTerminalOperateScope),
+        visible: visibleRef.current,
+      });
     // Once per viewport: a re-attached ref (a fresh callback identity) must not
-    // pull focus back on every render of a chatty terminal.
+    // pull focus back on every render of a chatty terminal. As a request, it
+    // waits for the grant or for the viewport to show when it cannot focus yet.
     if (autoFocus && !autoFocusedRef.current) {
       autoFocusedRef.current = true;
-      focus();
+      focusTerminal(threadRef, terminalId);
     }
     const unregister = registerTerminalFocusTarget({
       threadRef,

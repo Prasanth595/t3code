@@ -161,3 +161,22 @@ export function registerTerminalFocusTarget(target: TerminalFocusTarget): () => 
     focusTargets.delete(target);
   };
 }
+
+/**
+ * A viewport's `focus` for its target. Focus lands on the mount until the
+ * surface exists, and the surface takes it over from there.
+ */
+export function focusTerminalViewport(input: {
+  readonly mount: HTMLElement;
+  readonly surface: { focus(): void } | null;
+  readonly canOperate: boolean;
+  readonly visible: boolean;
+}): boolean {
+  // A hidden drawer is clipped, not display:none: the mount would take focus
+  // while the surface refuses it, and the request would be spent on a wrapper
+  // that ignores typing.
+  if (!input.canOperate || !input.visible) return false;
+  input.mount.focus({ preventScroll: true });
+  input.surface?.focus();
+  return input.mount.contains(document.activeElement);
+}
