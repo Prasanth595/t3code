@@ -183,6 +183,8 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
       source={{ uri: environmentEndpointUrl(httpBaseUrl, "/factory") }}
       originWhitelist={["*"]}
       sharedCookiesEnabled
+      // The Settings header floats over content on iOS; inset the page under it like the picker.
+      contentInsetAdjustmentBehavior="automatic"
       injectedJavaScriptBeforeContentLoaded={FACTORY_BEFORE_CONTENT_LOADED_SCRIPT}
       onMessage={(event) => void onMessage(event)}
       onShouldStartLoadWithRequest={(request) => {
