@@ -173,6 +173,7 @@ describe("BrowserSession", () => {
         "clipboard-sanitized-write",
         "geolocation",
         "fullscreen",
+        "pointerLock",
       ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
