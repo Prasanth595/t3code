@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { CircleAlertIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
-import { type ComponentProps, useRef } from "react";
+import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
   type ComposerFileAttachment,
@@ -79,16 +79,22 @@ function SnapShotAttachmentFrame({
   readonly arrival?: boolean | undefined;
   readonly animateArrival?: boolean | undefined;
 }) {
+  const frameRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || (!animationId && !arrival)) return;
+    frame.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (!animationId) return;
+
+    return scheduleSnapShotAnimationDestination(animationId, () =>
+      setSnapShotAnimationDestination(animationId, frame, animationSource),
+    );
+  }, [animationId, animationSource, arrival]);
+
   return (
     <div
-      ref={(frame) => {
-        if (!frame || (!animationId && !arrival)) return;
-        frame.scrollIntoView({ block: "nearest", inline: "nearest" });
-        if (!animationId) return;
-        return scheduleSnapShotAnimationDestination(animationId, () =>
-          setSnapShotAnimationDestination(animationId, frame, animationSource),
-        );
-      }}
+      ref={frameRef}
       className={cn(
         animateArrival &&
           !animationId &&

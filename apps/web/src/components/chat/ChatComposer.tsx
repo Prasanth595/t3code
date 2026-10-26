@@ -2278,7 +2278,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isStashMenuOpen,
     setIsStashMenuOpen,
     stashPulseKey,
-    stashShortcutScopeRef,
     restoreStashEntryStable,
     deleteStashEntryStable,
     toggleStashMenuStable,
@@ -3478,7 +3477,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
-      <ComposerBanner.Dock ref={stashShortcutScopeRef}>
+      <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack
             key={activeThreadId}

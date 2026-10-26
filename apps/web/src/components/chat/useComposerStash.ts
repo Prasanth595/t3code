@@ -51,7 +51,15 @@ import { registerCommands } from "../../shortcuts/dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { toastManager } from "../ui/toast";
 import type { useComposerTriggerState } from "./useComposerTriggerState";
-import { type Dispatch, type RefObject, type SetStateAction, use, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+  use,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
@@ -657,53 +665,45 @@ export function useComposerStash(input: {
     if (stashMenuClosesOn.prompt !== prompt || composerMenuOpen) setIsStashMenuOpen(false);
   }
 
-  // pendingUserInputs, activePendingProgress and projectSelectionRequired are derived in
-  // ChatView with no store the handler could read at event time, so the ref closure captures
-  // them as booleans and re-registers only when one flips. Everything else is read when the
-  // key arrives: keybindings and modelPickerOpen by the dispatcher, the rest from their stores.
-  const hasPendingUserInput = pendingUserInputs.length > 0;
-  const stashBlocked = projectSelectionRequired || activePendingProgress !== null;
+  // Read at event time, so the scope registers once per mounted composer instead of
+  // re-registering (and reshuffling capture-scope priority) whenever a guard flips.
+  const handleStashShortcut = useStableCallback((event: KeyboardEvent) => {
+    // Always claim the shortcut so the browser save dialog never opens,
+    // even when the composer is in a state that can't stash.
+    event.preventDefault();
+    event.stopPropagation();
+    if (isCommandPaletteOpen() || isRevertingCheckpoint()) return;
+    if (pendingUserInputs.length > 0) {
+      setIsStashMenuOpen((open) => !open);
+      return;
+    }
+    if (projectSelectionRequired || activePendingProgress !== null) return;
+    void stashCurrentPromptStable();
+  });
   // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save
   // dialog even when a focused widget (the model picker search) stops the key.
   const backgroundThread = use(BackgroundThreadContext);
-  const stashShortcutScopeRef = (node: HTMLElement | null) => {
-    if (!node || backgroundThread) return;
+  const readShortcutContext = useStableCallback(() => ({
+    terminalOpen: Boolean(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        routeThreadRef,
+      ).terminalOpen,
+    ),
+  }));
+  useEffect(() => {
+    if (backgroundThread) return;
     return registerCommands(
-      {
-        "composer.stash": (event) => {
-          // Always claim the shortcut so the browser save dialog never opens,
-          // even when the composer is in a state that can't stash.
-          event.preventDefault();
-          event.stopPropagation();
-          if (isCommandPaletteOpen() || isRevertingCheckpoint()) return;
-          if (hasPendingUserInput) {
-            setIsStashMenuOpen((open) => !open);
-            return;
-          }
-          if (stashBlocked) return;
-          void stashCurrentPromptStable();
-        },
-      },
-      {
-        capture: true,
-        context: () => ({
-          terminalOpen: Boolean(
-            selectThreadTerminalUiState(
-              useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-              routeThreadRef,
-            ).terminalOpen,
-          ),
-        }),
-      },
+      { "composer.stash": handleStashShortcut },
+      { capture: true, context: readShortcutContext },
     );
-  };
+  }, [backgroundThread, handleStashShortcut, readShortcutContext]);
 
   return {
     stashQueue,
     isStashMenuOpen,
     setIsStashMenuOpen,
     stashPulseKey,
-    stashShortcutScopeRef,
     restoreStashEntryStable,
     deleteStashEntryStable,
     toggleStashMenuStable,

@@ -14,8 +14,10 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
   useState,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
   useRef,
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -52,7 +54,6 @@ import {
 } from "~/hooks/useSettings";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
-import { observeResize } from "~/lib/observeResize";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
@@ -258,6 +259,7 @@ function ModelPickerList({
   const [contentSize, setContentSize] = useState(
     () => itemKeys.length * MODEL_LIST_ESTIMATED_ITEM_SIZE,
   );
+  useLayoutEffect(() => listRef.current?.getState().listen("totalSize", setContentSize), [listRef]);
   const updateScrollFades = () => {
     const scrollElement = listRef.current?.getScrollableNode();
     if (!(scrollElement instanceof HTMLElement)) {
@@ -276,20 +278,19 @@ function ModelPickerList({
     setShowTopScrollFade(false);
     setShowBottomScrollFade(itemKeys.length > 5);
   }
-  const attachList = (list: LegendListRef | null) => {
-    listRef.current = list;
-    if (!list) return;
-    const stopListening = list.getState().listen("totalSize", setContentSize);
-    // A new list re-measures its fades once its content has laid out.
-    const scrollElement = list.getScrollableNode();
-    const content = scrollElement instanceof HTMLElement ? scrollElement.firstElementChild : null;
-    const stopObserving = content ? observeResize(content, updateScrollFades) : undefined;
+  const measureScrollFades = useEffectEvent(updateScrollFades);
+  useLayoutEffect(() => {
+    let nestedFrame = 0;
+    const frame = window.requestAnimationFrame(() => {
+      measureScrollFades();
+      nestedFrame = window.requestAnimationFrame(() => measureScrollFades());
+    });
     return () => {
-      stopListening();
-      stopObserving?.();
-      listRef.current = null;
+      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(nestedFrame);
     };
-  };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new list re-measures its scroll fades once it has laid out.
+  }, [itemListKey]);
 
   return (
     <div
@@ -300,7 +301,7 @@ function ModelPickerList({
     >
       <ComboboxListVirtualized>
         <LegendList<string>
-          ref={attachList}
+          ref={listRef}
           data={itemKeys}
           extraData={extraData}
           keyExtractor={(modelKey) => modelKey}
@@ -323,6 +324,19 @@ function ModelPickerList({
       </ComboboxListVirtualized>
     </div>
   );
+}
+
+// Capture gives picker shortcuts priority over the composer.
+function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
+  const handleKeyDown = useEffectEvent(onKeyDown);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => handleKeyDown(event);
+    window.addEventListener("keydown", listener, true);
+    return () => {
+      window.removeEventListener("keydown", listener, true);
+    };
+  }, []);
+  return null;
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
@@ -723,10 +737,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedModelKeySet,
   };
 
-  // Capture phase on the picker (focus lives in its search input), so model and provider
-  // shortcuts win over the picker's own controls and the composer's window-level shortcuts.
-  const onPickerKeyDownCapture = (reactEvent: ReactKeyboardEvent<HTMLDivElement>) => {
-    const event = reactEvent.nativeEvent;
+  const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
     if (event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
       return;
     }
@@ -736,8 +747,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       context: modelJumpShortcutContext,
     });
     if (command === "modelPicker.previousProvider" || command === "modelPicker.nextProvider") {
-      reactEvent.preventDefault();
-      reactEvent.stopPropagation();
+      event.preventDefault();
+      event.stopPropagation();
       const next = adjacentModelPickerProvider({
         entries: sidebarInstanceEntries,
         selectedInstanceId,
@@ -757,8 +768,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (jumpIndex === null) {
       return;
     }
-    reactEvent.preventDefault();
-    reactEvent.stopPropagation();
+    event.preventDefault();
+    event.stopPropagation();
 
     const targetModelKey = modelJumpModelKeys[jumpIndex];
     if (!targetModelKey) {
@@ -778,9 +789,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   return (
     <TooltipProvider delay={0}>
+      <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
-        onKeyDownCapture={onPickerKeyDownCapture}
         className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
         style={isSearching ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
