@@ -252,7 +252,7 @@ export const layer = (input: { readonly stateDir: string }) =>
     RelayClientLedger,
     Effect.gen(function* () {
       const ledger = yield* make(input);
-      yield* ledger.reapOrphans.pipe(Effect.forkScoped);
+      yield* ledger.reapOrphans;
       return RelayClientLedger.of({ track: ledger.track });
     }),
   );

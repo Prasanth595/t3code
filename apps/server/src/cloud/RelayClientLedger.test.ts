@@ -7,6 +7,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -103,8 +105,31 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
       yield* recordFromDeadServer(stateDir, orphan);
       expect(yield* fs.readDirectory(path.join(stateDir, "relay-clients"))).toHaveLength(1);
 
-      const restarted = yield* RelayClientLedger.make({ stateDir });
-      yield* restarted.reapOrphans;
+      const cleaning = yield* Deferred.make<void>();
+      const releaseCleanup = yield* Deferred.make<void>();
+      const exposed = yield* Deferred.make<void>();
+      const entryPath = path.join(stateDir, "relay-clients", `${orphan.pid}.json`);
+      const remove = fs.remove.bind(fs);
+      using _remove = vi
+        .spyOn(fs, "remove")
+        .mockImplementation((file, options) =>
+          file === entryPath
+            ? Deferred.succeed(cleaning, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCleanup)),
+                Effect.andThen(remove(file, options)),
+              )
+            : remove(file, options),
+        );
+      const build = yield* Layer.build(RelayClientLedger.layer({ stateDir })).pipe(
+        Effect.tap(() => Deferred.succeed(exposed, undefined)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(cleaning);
+      const exposedBeforeCleanup = yield* Deferred.isDone(exposed);
+      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Fiber.join(build);
+
+      expect(exposedBeforeCleanup).toBe(false);
 
       expect(yield* orphan.exited).toBe("SIGTERM");
       expect(processExists(orphan.pid)).toBe(false);
