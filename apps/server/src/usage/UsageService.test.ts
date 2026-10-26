@@ -1149,6 +1149,69 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("counts archived Codex sessions through moves and persisted or cold restarts", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const archived = NodePath.join(home, "codex", "archived_sessions");
+      const rollout = (id: string, output: number) =>
+        [
+          { type: "session_meta", payload: { id } },
+          { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+          {
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
+            },
+          },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") + "\n";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.mkdir(archived, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(archived, "archived.jsonl"), rollout("archived", 23));
+      });
+      const verify = (summary: UsageSummary, output: number, sessions: number) => {
+        assert.strictEqual(totalOutputTokens(summary), output);
+        assert.strictEqual(
+          summary.sources.reduce((sum, source) => sum + source.distinctSessions, 0),
+          sessions,
+        );
+      };
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        verify(yield* service.readSummary(WINDOW), 23, 1);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(sessions, "active.jsonl"), rollout("active", 17)),
+        );
+        verify(yield* service.readSummary(WINDOW), 40, 2);
+        yield* Effect.promise(() =>
+          NodeFSP.copyFile(
+            NodePath.join(sessions, "active.jsonl"),
+            NodePath.join(archived, "active.jsonl"),
+          ),
+        );
+        verify(yield* service.readSummary(WINDOW), 40, 2);
+        yield* Effect.promise(() => NodeFSP.rm(sessions, { recursive: true }));
+        verify(yield* service.readSummary(WINDOW), 40, 2);
+        yield* service.awaitPersisted;
+        verify(yield* (yield* UsageService.make).readSummary(WINDOW), 40, 2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-archives", home, settings })),
+      );
+      yield* Effect.gen(function* () {
+        verify(yield* (yield* UsageService.make).readSummary(WINDOW), 40, 2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-archives-cold", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads shared managed default and disabled extra account history once", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
