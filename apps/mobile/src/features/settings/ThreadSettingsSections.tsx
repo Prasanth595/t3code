@@ -52,14 +52,19 @@ export function AutoSettleSettingsRows(props: {
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
 
-  const syncEnvironments = selectedTargets.filter(supportsSharedSettingsSync);
+  const projectMembers = projectSelected
+    ? (selectedProject?.members.map((member) => member.project) ?? [])
+    : null;
   const displayTargets = resolveMobileSettingsTargets(
-    syncEnvironments,
-    projectSelected ? (selectedProject?.members.map((member) => member.project) ?? []) : null,
+    selectedTargets.filter(supportsSharedSettingsSync),
+    projectMembers,
   );
+  // The page saves to all its targets, so any read-only one blocks the save.
   const canWriteSettings =
     displayTargets.length > 0 &&
-    displayTargets.every((target) => writableEnvironments.has(target.environment.environmentId));
+    resolveMobileSettingsTargets(selectedTargets, projectMembers).every((target) =>
+      writableEnvironments.has(target.environment.environmentId),
+    );
   const reference = displayTargets[0] ?? null;
   const referenceSettings = reference?.settings ?? null;
 
