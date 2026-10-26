@@ -89,6 +89,7 @@ import {
   makeAcpClientPolicyGrants,
   unknownRecord,
 } from "./clientPolicy.ts";
+import { planMarkdownFromExitPlanToolCall } from "./planProjection.ts";
 import {
   makeAcpClientTerminals,
   resolveEmbeddedTerminalContent,
@@ -3406,6 +3407,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const exitPlanMarkdown = planMarkdownFromExitPlanToolCall(normalized);
+          if (exitPlanMarkdown !== undefined) {
+            yield* captureProposedPlan({ planMarkdown: exitPlanMarkdown });
+          }
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
