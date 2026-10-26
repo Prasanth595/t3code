@@ -2364,6 +2364,9 @@ it("navigates, searches, zooms, and selects mixed-height PDF pages", async () =>
   const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
   using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
   const url = URL.createObjectURL(file);
+  const editedUrl = URL.createObjectURL(
+    new Blob([source.replace("Budget and risks", "Costs and risks!")], { type: "application/pdf" }),
+  );
   const preview = (mutation: string) => (
     <div style={{ display: "flex", height: 600, width: 320 }}>
       <WorkspaceBrowserPreview
@@ -2466,8 +2469,24 @@ it("navigates, searches, zooms, and selects mixed-height PDF pages", async () =>
     });
     await screen.rerender(preview("third"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${url}#legacy`,
+      expiresAt: 0,
+      waiting: true,
+    });
+    await screen.rerender(preview("fourth"));
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${editedUrl}#legacy`,
+      expiresAt: 0,
+    });
+    await screen.rerender(preview("fourth"));
+    await screen.getByRole("searchbox", { name: "Find in PDF" }).fill("Costs and risks!");
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
   } finally {
     URL.revokeObjectURL(url);
+    URL.revokeObjectURL(editedUrl);
   }
 });
 it("mounts a bounded set of saved notebook outputs as the reader scrolls", async () => {
