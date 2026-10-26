@@ -65,13 +65,8 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   };
 });
 
-// Codex trusts the reserved `openai-bundled` marketplace, which carries Computer Use and
-// Browser, only when its configured source is literally
-// `$CODEX_HOME/.tmp/bundled-marketplaces/openai-bundled`. The Codex desktop app writes that
-// source into the shared config.toml using the shared home's path, so a shadow home silently
-// drops every bundled plugin. The shadow's `.tmp` links to the shared one, so naming the same
-// directory through the shadow home passes the check. Codex ignores the override unless
-// config.toml already declares the marketplace with `source_type = "local"`.
+// Codex accepts bundled plugins only from this path under CODEX_HOME. The shared
+// config names the original home, so shadow homes must override it through their .tmp link.
 const BUNDLED_MARKETPLACE = "openai-bundled";
 
 const quoteCliArg = (value: string) => `"${value.replace(/["\\$`]/g, "\\$&")}"`;
