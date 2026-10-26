@@ -6,6 +6,7 @@ import { formatHourShort, formatTokens, makeWindow } from "./usageFormat.ts";
 describe("formatTokens", () => {
   it("promotes units when three-significant-figure rounding reaches the next unit", () => {
     expect(formatTokens(999.6)).toBe("1K");
+    expect(formatTokens(999_500)).toBe("1M");
     expect(formatTokens(999_600)).toBe("1M");
     expect(formatTokens(999_600_000)).toBe("1B");
     expect(formatTokens(999_600_000_000)).toBe("1T");
