@@ -556,6 +556,20 @@ export function getDefaultReviewSectionId(
   return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
 }
 
+/**
+ * The store holds only the user's pick. While that section is missing (still loading, or the
+ * working tree went clean) the default shows, and the pick returns once the section does: the
+ * thread-feed entry relies on this, as it selects a section before the sections have loaded.
+ */
+export function resolveReviewSelectedSectionId(
+  sections: ReadonlyArray<ReviewSectionItem>,
+  storedSectionId: string | null,
+): string | null {
+  return storedSectionId !== null && sections.some((section) => section.id === storedSectionId)
+    ? storedSectionId
+    : getDefaultReviewSectionId(sections);
+}
+
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
