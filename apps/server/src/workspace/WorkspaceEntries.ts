@@ -329,9 +329,7 @@ export const make = Effect.gen(function* () {
                 !path.isAbsolute(relativeChild)
               );
             };
-            // The real folders the requested path passes through, root first. A folder link
-            // back to any of them would nest the same entries under ever-longer paths, which
-            // "Expand all folders" would follow without end.
+            // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
             let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
             const loadVisitedFolders = () =>
               (visitedFolders ??= Promise.all(
@@ -342,9 +340,6 @@ export const make = Effect.gen(function* () {
                     NodeFSP.realpath(path.join(normalizedCwd, ...segments.slice(0, index + 1))),
                   ),
               ).then((folders) => [root, ...folders]));
-            // A symlink is listed as what it points to. One that dangles, resolves outside the
-            // workspace or into `.git`, or leads back to a folder on this path could not be
-            // browsed sensibly, so it stays hidden.
             const resolveSymlinkKind = async (
               name: string,
             ): Promise<ProjectEntry["kind"] | undefined> => {
@@ -366,8 +361,7 @@ export const make = Effect.gen(function* () {
                 ? undefined
                 : "directory";
             };
-            // A pnpm `node_modules` holds a link per package. Resolving them in batches keeps
-            // a large folder from queueing thousands of calls ahead of other filesystem work.
+            // Bound filesystem work for directories such as pnpm node_modules.
             const kinds: Array<ProjectEntry["kind"] | undefined> = [];
             for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
               kinds.push(
