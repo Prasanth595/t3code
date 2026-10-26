@@ -90,6 +90,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
+    failOnce?: boolean;
     stateAfterStop?: string;
     linger: string;
     enabled: boolean;
@@ -115,6 +116,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       invocations.push(input);
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
+      if (failed && control.failOnce) {
+        control.failCommand = undefined;
+        control.failOnce = false;
+      }
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -887,6 +892,36 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           exitCode: 1,
         });
         expect(ran).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "restores launchd after a failed drain probe only when a final probe confirms removal",
+    () =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness("darwin");
+        const plan = yield* service.install();
+        const polls = yield* Queue.unbounded<void>();
+        control.drainPolls = 1;
+        control.onDrainPoll = Effect.sync(() => {
+          control.failCommand = "launchctl print gui/501/com.t3tools.t3code.service";
+          control.failOnce = true;
+        }).pipe(Effect.andThen(Queue.offer(polls, undefined)), Effect.asVoid);
+        commands.length = 0;
+
+        const maintenance = yield* service
+          .withStopped(Effect.sync(() => commands.push("repair")))
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(polls);
+        yield* TestClock.adjust("1 second");
+
+        expect(yield* Fiber.join(maintenance)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "waiting for the launch agent to stop",
+        });
+        expect(commands).not.toContain("repair");
+        expect(commands.at(-2)).toBe("launchctl print gui/501/com.t3tools.t3code.service");
+        expect(commands.at(-1)).toBe(`launchctl bootstrap gui/501 ${plan.unitPath}`);
       }),
   );
 

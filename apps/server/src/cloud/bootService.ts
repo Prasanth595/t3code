@@ -510,7 +510,7 @@ export class BootService extends Context.Service<
     readonly restart: Effect.Effect<"restarted" | "queued" | "skipped", BootServiceError>;
     /**
      * Runs the operation with this home's service stopped; other homes are left alone.
-     * Restores a previously enabled or loaded service even if stopping failed.
+     * Restores a previously enabled or loaded service; launchd requires confirmed removal.
      * The operation's failure takes precedence over a restart failure.
      */
     readonly withStopped: <A, E, R>(
@@ -959,13 +959,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ).pipe(Effect.exit),
       (stopped): Effect.Effect<A, E | BootServiceError, R> =>
         Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
-      (stopped, exit) => {
-        if (!restore || (manager.kind === "launchd" && Exit.isFailure(stopped))) return Effect.void;
-        // Start only: `activate` would also enable a unit the user disabled.
-        // When the operation itself failed, its error is the one worth reporting.
-        const start = runSteps(manager.restart);
-        return Exit.isFailure(exit) ? Effect.ignore(start) : start;
-      },
+      (stopped, exit) =>
+        Effect.gen(function* () {
+          if (!restore) return;
+          if (manager.kind === "launchd" && Exit.isFailure(stopped)) {
+            const result = yield* probe("launchctl", [
+              "print",
+              `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`,
+            ]);
+            if (Option.isNone(result) || ![112, 113].includes(Number(result.value.code))) return;
+          }
+          // Start only: `activate` would also enable a unit the user disabled.
+          // When the operation itself failed, its error is the one worth reporting.
+          const start = runSteps(manager.restart);
+          return yield* Exit.isFailure(exit) ? Effect.ignore(start) : start;
+        }),
     );
   });
 
