@@ -31,6 +31,8 @@ export interface QueuedRunEdit {
   readonly originalText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
+  /** Removing a server attachment changes the message even when the draft looks untouched. */
+  readonly removedExistingAttachment?: true;
 }
 
 const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEdit>({
@@ -41,6 +43,21 @@ const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEdit>({
 export { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
 
 export const getQueuedRunEdit = queuedRunEdits.get;
+
+/**
+ * The draft a sheet opened for `requestedKey` should edit now: a queued edit's
+ * draft only while that edit is still open, else the thread's own draft.
+ */
+export function activeComposerDraftKey(
+  threadKey: string,
+  requestedKey: string,
+  edit: QueuedRunEdit | null,
+): string {
+  if (requestedKey === threadKey) return threadKey;
+  return edit !== null && queuedEditDraftKey(threadKey, edit.runId) === requestedKey
+    ? requestedKey
+    : threadKey;
+}
 
 export function useQueuedRunEdit(threadKey: string | null): QueuedRunEdit | null {
   const edits = useAtomValue(queuedRunEdits.atom);
@@ -59,14 +76,19 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   const recovery = resolveQueuedEditExit({
     editChanged:
       (editDraft.text.trim().length > 0 || editDraft.attachments.length > 0) &&
-      (editDraft.text !== edit.originalText || editDraft.attachments.length > 0),
+      (editDraft.text !== edit.originalText ||
+        editDraft.attachments.length > 0 ||
+        edit.removedExistingAttachment === true),
     threadDraftEmpty: threadDraft.text.trim().length === 0 && threadDraft.attachments.length === 0,
   });
   if (recovery === "kept") {
-    void mergeComposerDraftContent(threadKey, {
+    // The merge publishes the draft before writing it, so a failed write only delays persistence to the next one.
+    mergeComposerDraftContent(threadKey, {
       text: editDraft.text,
       attachments: editDraft.attachments,
       ...(editDraft.context ? { context: editDraft.context } : {}),
+    }).catch((error: unknown) => {
+      console.warn("[queued-run-edit] could not persist the recovered edit", error);
     });
   }
   clearComposerDraft(editDraftKey, { deferAttachmentCleanup: recovery === "kept" });
@@ -101,6 +123,7 @@ export function beginQueuedRunEdit(
 export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {
   queuedRunEdits.update(threadKey, (edit) => ({
     ...edit,
+    removedExistingAttachment: true,
     existingAttachments: edit.existingAttachments.filter(
       (attachment) => attachment.id !== attachmentId,
     ),

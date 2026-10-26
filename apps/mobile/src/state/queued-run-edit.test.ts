@@ -11,9 +11,11 @@ import {
 
 import { appAtomRegistry } from "./atom-registry";
 import {
+  activeComposerDraftKey,
   beginQueuedRunEdit,
   getQueuedRunEdit,
   queuedEditDraftKey,
+  removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
   type QueuedRunEdit,
 } from "./queued-run-edit";
@@ -109,5 +111,36 @@ describe("beginQueuedRunEdit", () => {
     expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
       "That message already started, so the edit was discarded.",
     );
+  });
+
+  it("treats a removed server attachment as a change when the run starts", () => {
+    const threadKey = "env-exit:thread-removed";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    setComposerDraftText(threadKey, "other work");
+    beginQueuedRunEdit(threadKey, edit([image("kept")]), runs);
+    removeQueuedRunEditAttachment(threadKey, "kept");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
+  });
+});
+
+describe("activeComposerDraftKey", () => {
+  const threadKey = "env:thread";
+  const editKey = queuedEditDraftKey(threadKey, RunId.make("run-1"));
+
+  it("keeps a queued edit's draft while that edit is open", () => {
+    expect(activeComposerDraftKey(threadKey, editKey, edit([]))).toBe(editKey);
+  });
+
+  it("falls back to the thread's draft once the edit has ended", () => {
+    expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
   });
 });

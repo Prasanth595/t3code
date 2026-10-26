@@ -87,6 +87,7 @@ import {
   useComposerDraftSettings,
 } from "../../state/use-composer-drafts";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
+import { activeComposerDraftKey, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { updateThreadDraftModelSelection } from "../../state/use-thread-composer-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
@@ -1501,7 +1502,10 @@ export function ExistingThreadSettingsRouteScreen({
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
   const draftSettings = useComposerDraftSettings(threadKey);
-  const prompt = useComposerDraft(route.params.draftKey).text;
+  const queuedRunEdit = useQueuedRunEdit(threadKey);
+  // A queued edit can end while the sheet is open; the prompt then belongs to the thread's draft.
+  const draftKey = activeComposerDraftKey(threadKey, route.params.draftKey, queuedRunEdit);
+  const prompt = useComposerDraft(draftKey).text;
 
   if (!selectedThread) {
     return <View className="flex-1 bg-sheet" />;
@@ -1539,7 +1543,7 @@ export function ExistingThreadSettingsRouteScreen({
       providerGroups={groupByProvider(modelOptions)}
       selectedModel={modelSelection}
       prompt={prompt}
-      onPromptChange={(text) => setComposerDraftText(route.params.draftKey, text)}
+      onPromptChange={(text) => setComposerDraftText(draftKey, text)}
       reportedModelSelection={reportedModelSelection}
       onSelectModel={(option) => updateModelSelection(withRememberedModelOptions(option.selection))}
       restoreSelection={withRememberedModelOptions}

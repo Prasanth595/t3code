@@ -16,10 +16,18 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
   const directory = new Directory(Paths.cache, PREVIEW_CACHE_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
   const file = new File(directory, `${id}.${extension}`);
-  if (!file.exists) {
-    file.create();
-    await file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
+  if (file.exists) return file.uri;
+  // Write beside the cache entry and move it in, so a failed or interrupted write is never reused.
+  const partial = new File(directory, `${id}.${extension}.partial`);
+  if (partial.exists) partial.delete();
+  partial.create();
+  try {
+    await partial.write(dataUrl.slice(comma + 1), { encoding: "base64" });
+  } catch (error) {
+    partial.delete();
+    throw error;
   }
+  await partial.move(file);
   return file.uri;
 }
 
