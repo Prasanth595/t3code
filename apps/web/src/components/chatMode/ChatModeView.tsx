@@ -1,16 +1,29 @@
 import type { LegendListRef } from "@legendapp/list/react";
-import type { ChatReplyError } from "@t3tools/client-runtime/chat";
+import {
+  chatAttachmentProblem,
+  chatAttachmentUrl,
+  type ChatReplyError,
+} from "@t3tools/client-runtime/chat";
+import {
+  SAAS_CHAT_DOCUMENT_EXTENSIONS,
+  SAAS_CHAT_IMAGE_TYPES,
+  type SaasChatAttachment,
+} from "@t3tools/contracts/saas";
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import type { SaasChatConversation } from "@t3tools/contracts/saas";
 import { useNavigate } from "@tanstack/react-router";
+import { FileTextIcon, PlusIcon, XIcon } from "lucide-react";
 import { createRef, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   hasAgenticAccess,
   miraChatHistory,
+  uploadMiraAttachment,
   useMiraAccess,
   useMiraChatHistory,
+  useMiraRelayUrl,
 } from "~/cloud/miraChat";
+import { toastManager } from "../ui/toast";
 import { isElectron } from "~/env";
 import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEntries";
 import { useTheme } from "~/hooks/useTheme";
@@ -36,14 +49,30 @@ const NO_TURN_ITEMS: ReadonlyArray<never> = [];
 const ignore = () => {};
 const ignoreImage = (_preview: ExpandedImagePreview) => {};
 
+// The timeline renders message markdown; stored files show as links to their relay copy.
+const attachmentLinks = (
+  attachments: ReadonlyArray<SaasChatAttachment> | undefined,
+  relayUrl: string | null,
+) =>
+  (attachments ?? [])
+    .map((file) =>
+      relayUrl === null
+        ? `📎 ${file.name}`
+        : `${file.kind === "image" ? "🖼️" : "📎"} [${file.name}](${chatAttachmentUrl(relayUrl, file.id)})`,
+    )
+    .join("\n");
+
 const toTimelineMessages = (
   chat: SaasChatConversation | undefined,
   streaming: { readonly chatId: string; readonly text: string } | null,
+  relayUrl: string | null,
 ): ReadonlyArray<ChatMessage> => {
   const messages: Array<ChatMessage> = (chat?.messages ?? []).map((message) => ({
     id: MessageId.make(message.id),
     role: message.role,
-    text: message.content,
+    text: [attachmentLinks(message.attachments, relayUrl), message.content]
+      .filter((part) => part !== "")
+      .join("\n\n"),
     runId: null,
     streaming: false,
     createdAt: message.createdAt,
@@ -77,14 +106,17 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
     if (missing) void navigate({ to: "/ask", replace: true });
   }, [missing, navigate]);
 
-  const send = async (text: string) => {
-    await miraChatHistory.send(chat?.id ?? null, text, (sentChatId) => {
-      if (sentChatId === chatId) return;
-      void navigate({
-        to: "/ask/$chatId",
-        params: { chatId: sentChatId },
-        replace: chatId === null,
-      });
+  const send = async (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => {
+    await miraChatHistory.send(chat?.id ?? null, text, {
+      attachments,
+      onStarted: (sentChatId) => {
+        if (sentChatId === chatId) return;
+        void navigate({
+          to: "/ask/$chatId",
+          params: { chatId: sentChatId },
+          replace: chatId === null,
+        });
+      },
     });
   };
 
@@ -137,7 +169,8 @@ function ChatTimeline({
   const threadKey = `mira-chat-${chat.id}`;
   const listRef = useRef<LegendListRef | null>(null);
   const { resolvedTheme } = useTheme();
-  const messages = toTimelineMessages(chat, streaming);
+  const relayUrl = useMiraRelayUrl();
+  const messages = toTimelineMessages(chat, streaming, relayUrl);
   const entries = useIncrementalTimelineEntries(threadKey, {
     visibleTurnItems: NO_TURN_ITEMS,
     optimisticMessages: messages,
@@ -243,21 +276,64 @@ function ChatReplyErrorNotice({
   );
 }
 
-// The thread composer's surface and send button, without attachments or model controls.
+interface PendingFile {
+  readonly id: string;
+  readonly name: string;
+  readonly attachment: SaasChatAttachment | null;
+}
+
+const ACCEPTED_FILES = [
+  ...SAAS_CHAT_IMAGE_TYPES,
+  ...SAAS_CHAT_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`),
+].join(",");
+
+// The thread composer's surface, attach and send buttons, without model controls.
 function ChatModeComposer({
   busy,
   onSend,
 }: {
   readonly busy: boolean;
-  readonly onSend: (text: string) => Promise<void>;
+  readonly onSend: (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => Promise<void>;
 }) {
   const [text, setText] = useState("");
-  const canSend = !busy && text.trim() !== "";
+  const [files, setFiles] = useState<ReadonlyArray<PendingFile>>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const uploading = files.some((file) => file.attachment === null);
+  const ready = files.flatMap((file) => (file.attachment === null ? [] : [file.attachment]));
+  const canSend = !busy && !uploading && (text.trim() !== "" || ready.length > 0);
   const submit = () => {
     if (!canSend) return;
     const trimmed = text.trim();
     setText("");
-    void onSend(trimmed);
+    setFiles([]);
+    void onSend(trimmed, ready);
+  };
+  const addFiles = (picked: FileList | null) => {
+    for (const file of picked ?? []) {
+      const problem = chatAttachmentProblem({
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+      });
+      if (problem !== null) {
+        toastManager.add({ type: "error", title: problem });
+        continue;
+      }
+      const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`;
+      setFiles((current) => [...current, { id, name: file.name, attachment: null }]);
+      void uploadMiraAttachment(file).then((result) => {
+        if (result.ok) {
+          setFiles((current) =>
+            current.map((item) =>
+              item.id === id ? { ...item, attachment: result.attachment } : item,
+            ),
+          );
+        } else {
+          setFiles((current) => current.filter((item) => item.id !== id));
+          toastManager.add({ type: "error", title: result.message });
+        }
+      });
+    }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Same as the app composer: Enter sends, Shift+Enter adds a line, IME composition is left alone.
@@ -277,18 +353,69 @@ function ChatModeComposer({
         <ComposerSurface.Host>
           <ComposerSurface.Main>
             <div data-chat-composer-surface="true" className="rounded-2xl">
+              {files.length > 0 ? (
+                <div className="flex flex-wrap gap-2 px-3 pt-3 sm:px-4">
+                  {files.map((file) => (
+                    <span
+                      key={file.id}
+                      className="inline-flex max-w-60 items-center gap-1.5 rounded-lg bg-muted px-2 py-1 text-xs"
+                    >
+                      {file.attachment === null ? (
+                        <Spinner size="sm" aria-hidden="true" />
+                      ) : (
+                        <FileTextIcon aria-hidden className="size-3.5 shrink-0" />
+                      )}
+                      <span className="truncate">{file.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${file.name}`}
+                        className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          setFiles((current) => current.filter((item) => item.id !== file.id))
+                        }
+                      >
+                        <XIcon aria-hidden className="size-3.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
                 <textarea
                   aria-label="Message"
-                  placeholder="Ask Mira anything"
+                  placeholder="Ask anything..."
                   autoFocus
                   value={text}
                   onChange={(event) => setText(event.target.value)}
                   onKeyDown={onKeyDown}
+                  onPaste={(event) => {
+                    if (event.clipboardData.files.length === 0) return;
+                    event.preventDefault();
+                    addFiles(event.clipboardData.files);
+                  }}
                   className="-m-1 block max-h-52 min-h-12 w-[calc(100%+0.5rem)] resize-none bg-transparent p-1 font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) leading-relaxed text-foreground outline-none field-sizing-content placeholder:text-placeholder"
                 />
               </div>
-              <div className="flex min-w-0 items-center justify-end gap-2 px-3 pb-3 sm:px-4 sm:pb-4">
+              <div className="flex min-w-0 items-center justify-between gap-2 px-3 pb-3 sm:px-4 sm:pb-4">
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  hidden
+                  accept={ACCEPTED_FILES}
+                  onChange={(event) => {
+                    addFiles(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label="Add photos and files"
+                  className="flex size-8 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <PlusIcon aria-hidden className="size-4" />
+                </button>
                 <button
                   type="submit"
                   aria-label="Send message"
