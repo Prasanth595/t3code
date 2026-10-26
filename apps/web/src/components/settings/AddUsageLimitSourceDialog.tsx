@@ -64,6 +64,7 @@ export function AddUsageLimitSourceDialog({
           url: trimmedUrl,
           managementKey: managementKey.trim(),
           enabled: true,
+          hiddenAccounts: [],
         },
       },
     });

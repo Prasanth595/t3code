@@ -299,6 +299,24 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("decodes a hub saved without hiddenAccounts to an empty list", () =>
+    Effect.gen(function* () {
+      const sourceId = UsageLimitSourceId.make("hub");
+      const decoded = yield* decodeServerSettings({
+        usageLimitSources: {
+          [sourceId]: {
+            kind: "cliproxy",
+            url: "https://hub.example.test",
+            managementKey: "quota-secret",
+            enabled: true,
+          },
+        },
+      });
+
+      assert.deepEqual(decoded.usageLimitSources[sourceId]?.hiddenAccounts, []);
+    }),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -521,6 +539,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             url: "https://hub.example.test",
             managementKey: "",
             enabled: true,
+            hiddenAccounts: [],
           },
         };
         const saved = yield* serverSettings.updateSettings({
@@ -1185,6 +1204,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               url: "https://hub.example.test",
               managementKey: "quota-secret",
               enabled: true,
+              hiddenAccounts: [],
             },
           },
           easDeviceHosts: [
