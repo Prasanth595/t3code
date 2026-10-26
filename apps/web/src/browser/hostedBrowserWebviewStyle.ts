@@ -51,10 +51,8 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   }
 
   if (renderingActive || serverDriven) {
-    // Electron stops compositing a guest that is fully outside the window, even
-    // when background throttling is disabled. Keep capture-active guests inside
-    // the viewport but behind the app. Server-driven tabs also need to paint
-    // before a remote viewer connects: its handshake waits for the first capture.
+    // Electron stops compositing offscreen guests; keep capture-active guests inside the viewport behind the app.
+    // Server-driven guests must paint before the remote handshake's first capture.
     return {
       left: 0,
       top: 0,
