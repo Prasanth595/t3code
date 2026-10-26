@@ -983,20 +983,14 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // The caller judged the allocation as it was when listed. A write since
-      // then, such as a recovery registration, may have made its tunnel
-      // recoverable again, so the next sweep decides with fresh data.
+      // Recovery may become usable after the reaper lists the allocation.
       if (
         input.expectedGeneration !== undefined &&
         input.expectedGeneration !== allocation.generation
       ) {
         return false;
       }
-      // A starting host registers recovery while cloudflared is still
-      // connecting, so Cloudflare keeps reporting the tunnel's old inactivity.
-      // A registration after the cutoff means the host is coming back to it.
-      // A relink that replaced the environment key keeps the old timestamp,
-      // but that registration can no longer recover the tunnel.
+      // Cloudflare reports old inactivity while a registered host is reconnecting.
       if (
         input.expectedInactiveBefore !== undefined &&
         input.expectedRecoveryEnabled !== false &&

@@ -194,14 +194,8 @@ const make = Effect.gen(function* () {
           ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
           cause,
         });
-      // The reaper may have listed this allocation while its recovery key did
-      // not match the link, and then releases it without the recent
-      // registration guard. A link proven by that key makes recovery usable
-      // again, so it moves the generation the release was pinned to. Both
-      // writes commit together, and the bump waits on the allocation row lock
-      // a claimed release holds while it deletes the tunnel. The link is
-      // written first to keep enableRecovery's order: its EXISTS locks the
-      // link row before its UPDATE locks the allocation row.
+      // Restoring the recovery key invalidates a stale reaper claim atomically.
+      // Lock the link before the allocation, matching enableRecovery.
       const writeLink = Effect.gen(function* () {
         yield* db
           .insert(relayEnvironmentLinks)

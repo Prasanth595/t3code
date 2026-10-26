@@ -47,11 +47,6 @@ describe("EnvironmentLinks", () => {
     );
   });
 
-  // The reaper can list an allocation while its recovery key differs from the
-  // link and release it later at that generation. A link that restores the key
-  // must move the generation before it commits, or the release deletes the
-  // tunnel the relink just provisioned. The link write comes first, matching
-  // enableRecovery's link-then-allocation lock order so the two cannot deadlock.
   it.effect("moves the allocation generation when a link restores its recovery key", () => {
     const events: Array<string> = [];
     const allocationUpdates: Array<{
