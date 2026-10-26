@@ -1868,6 +1868,7 @@ const assertPlainStart = (dataDir: string, t3: ReturnType<typeof fakeSessions>) 
   const request = t3.launchRequests.at(-1)!;
   assert.strictEqual(request.baseRef, "main");
   assert.strictEqual(request.startFromOrigin, false);
+  assert.strictEqual(request.pullRequestUrl, undefined);
   assert.strictEqual(request.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
   const line = launchLineOf(dataDir);
   assert.strictEqual((line.data as { resumed_from: unknown }).resumed_from, null);
@@ -2330,6 +2331,7 @@ describe("start: the resume after a time limit", () => {
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.baseRef, "main");
       assert.strictEqual(request.startFromOrigin, false);
+      assert.strictEqual(request.pullRequestUrl, undefined);
     }),
   );
 });
