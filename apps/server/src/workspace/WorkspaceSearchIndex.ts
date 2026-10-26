@@ -12,10 +12,12 @@ import type {
   SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -36,6 +38,7 @@ const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
+const WORKSPACE_INDEX_RECOVERY_INTERVAL_MS = 5 * 60_000;
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 
@@ -372,6 +375,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   );
 
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
+  const refreshPermit = yield* Semaphore.make(1);
+  let refreshedAt = yield* Clock.currentTimeMillis;
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -379,6 +384,17 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
     execute: () => Result<A>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
+    // Watchers can lose events; repair hot indexes occasionally, rather than after every turn.
+    yield* Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      if (now - refreshedAt < WORKSPACE_INDEX_RECOVERY_INTERVAL_MS) return;
+      refreshedAt = now;
+      yield* refresh().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Periodic workspace index recovery failed", { cwd, cause }),
+        ),
+      );
+    }).pipe(refreshPermit.withPermits(1));
     const result = yield* Effect.try({
       try: execute,
       catch: (cause) =>
@@ -429,6 +445,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     );
+    refreshedAt = yield* Clock.currentTimeMillis;
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
