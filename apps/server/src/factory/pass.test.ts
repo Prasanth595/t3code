@@ -2628,7 +2628,9 @@ describe("draining for a deploy", () => {
       fake.pending = {
         sinceMs: T0 - 3 * 60 * 60_000,
         commit: SHA,
-        writtenMs: T0 - PENDING_STALE_MS - 60_000,
+        // Literal ages, not the constant: autodeploy.sh's pending_stale_minutes is 30 too, and a
+        // test written against the constant would follow it anywhere.
+        writtenMs: T0 - 31 * 60_000,
       };
       fake.pushStart(`${REPO}#1`, started(1));
       const { lines } = yield* pass(fake, [REPO], 5);
@@ -2649,7 +2651,8 @@ describe("draining for a deploy", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.ready[REPO] = [1];
-      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: SHA, writtenMs: T0 - PENDING_STALE_MS };
+      assert.equal(PENDING_STALE_MS, 30 * 60_000);
+      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: SHA, writtenMs: T0 - 30 * 60_000 };
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), []);
       assert.deepEqual(drainLines(lines), [drainLine("10m")]);
