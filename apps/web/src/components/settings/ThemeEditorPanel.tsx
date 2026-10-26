@@ -1037,11 +1037,10 @@ export function ThemeEditorPanel({
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
     event.preventDefault();
-    // Convert bottom-right parking to explicit position before resizing so the top-left corner stays fixed.
-    if (position === null) {
-      const next = clampPanelPosition(readWindowViewport(), rect.x, rect.y, rect.width);
-      setPosition({ ...next, width: rect.width });
-    }
+    // Resize from where the panel is drawn, so a position clamped after the window shrank, or bottom-right
+    // parking, can't make the top-left corner slide.
+    const next = clampPanelPosition(readWindowViewport(), rect.x, rect.y, rect.width);
+    setPosition({ ...next, width: rect.width });
     resizeStartRef.current = {
       pointerX: event.clientX,
       pointerY: event.clientY,
