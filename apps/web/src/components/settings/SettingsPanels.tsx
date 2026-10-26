@@ -974,7 +974,7 @@ export function GeneralSettingsPanel() {
           settingKeys={["idleCompaction", "compactIdleThreads"]}
           mixed={idleCompaction.mixed}
           {...searchableSetting("compact-idle-threads")}
-          description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
+          description="When to compact an idle Claude thread over 200,000 tokens, or suggest compaction when you return. Each Claude provider can override this."
           resetAction={
             globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
               <SettingResetButton
@@ -1008,8 +1008,11 @@ export function GeneralSettingsPanel() {
                     hideIndicator
                     key={mode.value}
                     value={mode.value}
-                    // A server from before modes has only the on/off switch, so it cannot store "Never".
-                    disabled={mode.value === "off" && !idleCompaction.neverAvailable}
+                    // A boolean-only server cannot store Suggest or Never.
+                    disabled={
+                      (mode.value === "suggestOnReturn" || mode.value === "off") &&
+                      !idleCompaction.modesAvailable
+                    }
                   >
                     {mode.label}
                   </SelectItem>

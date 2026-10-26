@@ -351,7 +351,7 @@ function translateLegacyProjectOverridePatch(
 
 /**
  * A client from before `idleCompaction` patches the old boolean switch. Turning
- * it off keeps "Never" rather than reverting to the default.
+ * it off preserves an existing non-background mode rather than reverting it.
  */
 function patchedIdleCompaction(
   current: ServerSettings,
@@ -362,7 +362,8 @@ function patchedIdleCompaction(
   if (legacy === undefined) return globalIdleCompaction(current);
   if (typeof legacy === "string") return legacy;
   if (legacy) return "beforeCacheExpires";
-  return globalIdleCompaction(current) === "off" ? "off" : "onReturn";
+  const mode = globalIdleCompaction(current);
+  return mode === "beforeCacheExpires" ? "onReturn" : mode;
 }
 
 export function applyServerSettingsPatch(

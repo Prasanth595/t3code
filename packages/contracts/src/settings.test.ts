@@ -139,6 +139,32 @@ describe("custom model settings", () => {
 });
 
 describe("resolveIdleCompaction", () => {
+  it("inherits Suggest globally and allows independent instance overrides", () => {
+    expect(decodeServerSettingsPatch({ idleCompaction: "suggestOnReturn" })).toEqual({
+      idleCompaction: "suggestOnReturn",
+    });
+    const settings = decodeServerSettings({
+      idleCompaction: "suggestOnReturn",
+      providerInstances: {
+        claude_auto: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
+      },
+    });
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe(
+      "suggestOnReturn",
+    );
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_auto"))).toBe(
+      "onReturn",
+    );
+    const override = decodeServerSettings({
+      providerInstances: {
+        claude_suggest: { driver: "claudeAgent", config: { idleCompaction: "suggestOnReturn" } },
+      },
+    });
+    expect(resolveIdleCompaction(override, ProviderInstanceId.make("claude_suggest"))).toBe(
+      "suggestOnReturn",
+    );
+  });
+
   it("lets a Claude instance override the global default", () => {
     const settings = decodeServerSettings({
       idleCompaction: "off",
@@ -160,11 +186,14 @@ describe("resolveIdleCompaction", () => {
     );
     expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: "off" }))).toBe("off");
     expect(globalIdleCompaction(decodeServerSettings({}))).toBe("onReturn");
+    expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: false }))).toBe(
+      "onReturn",
+    );
   });
 
   it("keeps the legacy switch a boolean, as shipped clients decode it", () => {
     const encode = Schema.encodeSync(Schema.toCodecJson(ServerSettings));
-    for (const mode of ["onReturn", "beforeCacheExpires", "off"] as const) {
+    for (const mode of ["onReturn", "suggestOnReturn", "beforeCacheExpires", "off"] as const) {
       const encoded = encode(withIdleCompaction(DEFAULT_SERVER_SETTINGS, mode)) as {
         readonly compactIdleThreads: unknown;
         readonly idleCompaction: unknown;
@@ -175,6 +204,12 @@ describe("resolveIdleCompaction", () => {
   });
 
   it("patches the field the server reads", () => {
+    expect(
+      idleCompactionPatch(
+        { ...DEFAULT_SERVER_SETTINGS, idleCompaction: "onReturn" },
+        "suggestOnReturn",
+      ),
+    ).toEqual({ idleCompaction: "suggestOnReturn" });
     expect(
       idleCompactionPatch({ compactIdleThreads: false, idleCompaction: "onReturn" }, "off"),
     ).toEqual({

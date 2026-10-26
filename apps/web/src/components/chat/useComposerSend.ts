@@ -203,6 +203,7 @@ interface ComposerSendInput {
   readonly panelAnimationsActive: boolean;
   readonly panelAnimationDurationMs: number;
   readonly keepFullHistory: boolean;
+  readonly defaultKeepFullHistory: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly showPlanFollowUpPrompt: boolean;
   readonly usageLimitsKey: string | null;
@@ -228,7 +229,7 @@ interface ComposerSendInput {
     SetStateAction<Record<string, ReadonlyArray<CodexFeedbackSubmission>>>
   >;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
-  readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
+  readonly setKeepFullHistory: (keep: boolean) => void;
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
@@ -290,6 +291,7 @@ export function useComposerSend(input: ComposerSendInput) {
     panelAnimationsActive,
     panelAnimationDurationMs,
     keepFullHistory,
+    defaultKeepFullHistory,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
@@ -1310,7 +1312,7 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        setKeepFullHistory(routeThreadKey, false);
+        setKeepFullHistory(defaultKeepFullHistory);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);

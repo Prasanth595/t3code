@@ -143,14 +143,14 @@ export function scopedSettingsAreMixed(
 
 /**
  * Servers store the idle compaction mode differently by version, so selected
- * environments are compared by the mode each resolves to, and "Never" is offered
- * only when every one of them can store it.
+ * environments are compared by the mode each resolves to. Choices beyond the
+ * legacy switch are offered only when every server can store modes.
  */
 export function scopedIdleCompaction(targets: readonly Pick<ScopedSettingsTarget, "settings">[]) {
   const modes = targets.map((candidate) => globalIdleCompaction(candidate.settings));
   return {
     mixed: modes.some((mode) => mode !== modes[0]),
-    neverAvailable: targets.every((candidate) => readsIdleCompactionModes(candidate.settings)),
+    modesAvailable: targets.every((candidate) => readsIdleCompactionModes(candidate.settings)),
   };
 }
 

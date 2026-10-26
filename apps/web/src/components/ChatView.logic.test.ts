@@ -1103,6 +1103,11 @@ describe("planComposerTurn", () => {
 
   it("queues behind a compaction of a stale session, except for /compact itself", () => {
     const stale = { ...base, resumeCompactionTokens: 120_000 };
+    expect(planComposerTurn({ ...stale, keepFullHistory: true })).toMatchObject({
+      compactBeforeSend: false,
+      turnDispatchMode: "auto",
+      shouldQueueBehindActiveRun: false,
+    });
     for (const messageText of ["hello", "/compactfoo"]) {
       expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
         compactBeforeSend: true,

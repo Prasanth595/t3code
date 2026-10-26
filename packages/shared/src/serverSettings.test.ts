@@ -56,6 +56,16 @@ describe("serverSettings helpers", () => {
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
     expect([off.idleCompaction, off.compactIdleThreads]).toEqual(["off", false]);
+    const suggest = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      idleCompaction: "suggestOnReturn",
+    });
+    expect([suggest.idleCompaction, suggest.compactIdleThreads]).toEqual([
+      "suggestOnReturn",
+      false,
+    ]);
+    expect(applyServerSettingsPatch(suggest, { compactIdleThreads: false }).idleCompaction).toBe(
+      "suggestOnReturn",
+    );
     // Turning the old switch off keeps "Never" instead of reverting to the default.
     const stillOff = applyServerSettingsPatch(off, { compactIdleThreads: false });
     expect(stillOff.idleCompaction).toBe("off");

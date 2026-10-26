@@ -193,7 +193,7 @@ describe("scoped settings writes", () => {
     ]);
   });
 
-  it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
+  it("compares idle compaction by mode, and offers additional modes only where every server stores them", () => {
     const fixed = {
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
@@ -205,8 +205,14 @@ describe("scoped settings writes", () => {
       settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "onReturn" as const },
     };
     const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
-    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
-    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, modesAvailable: true });
+    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, modesAvailable: false });
+    const suggest = { settings: { ...fixed.settings, idleCompaction: "suggestOnReturn" as const } };
+    expect(scopedIdleCompaction([suggest, suggest])).toEqual({
+      mixed: false,
+      modesAvailable: true,
+    });
+    expect(scopedIdleCompaction([suggest, legacy])).toEqual({ mixed: true, modesAvailable: false });
     expect(
       scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
         .mixed,
@@ -226,6 +232,20 @@ describe("scoped settings writes", () => {
       { idleCompaction: "beforeCacheExpires" },
       { compactIdleThreads: "beforeCacheExpires" },
       { compactIdleThreads: true },
+    ]);
+  });
+
+  it("sends Suggest using the mode field read by each selected server", () => {
+    const targets = [
+      environment("Fixed", { settings: { compactIdleThreads: false, idleCompaction: "onReturn" } }),
+      environment("Modes", { settings: { compactIdleThreads: "onReturn" } }),
+    ];
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+      idleCompaction: "suggestOnReturn",
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { idleCompaction: "suggestOnReturn" },
+      { compactIdleThreads: "suggestOnReturn" },
     ]);
   });
 
