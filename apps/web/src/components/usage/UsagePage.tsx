@@ -42,7 +42,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useSettleWindow, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -113,6 +113,12 @@ function isUsageMetric(value: string | null | undefined): value is UsageMetric {
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
+
+const NOT_LOADING = {
+  partial: false,
+  everyProvider: false,
+  providers: new Set<UsageProviderKind>(),
+};
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
 
@@ -634,7 +640,13 @@ function UsageOverview({
 }) {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
-  const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
+  const reported = usageLoading(
+    showingKept,
+    selectedEnvironments,
+    refreshingUsage,
+    hiddenProviders,
+  );
+  const loading = useSettleWindow(reported.partial) ? reported : NOT_LOADING;
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
@@ -1227,7 +1239,7 @@ function ProviderMark({
 }
 
 function figureClass(loading: boolean) {
-  return cn("transition-opacity", loading && "opacity-40 delay-300");
+  return cn("transition-opacity", loading && "opacity-40");
 }
 
 function Metric({
@@ -1273,7 +1285,7 @@ function UsageCoverageNotice({
   }
 
   return (
-    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground contain-inline-size">
+    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground wrap-break-word">
       {failed.map((environment) => (
         <span key={environment.label}>
           {environment.label}: {environment.error}
@@ -1343,7 +1355,7 @@ function UsageEnvironmentFilter({
           )}
         </span>
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" className="w-72">
         <MenuCheckboxItem
           checked={allSelected}
           closeOnClick={false}

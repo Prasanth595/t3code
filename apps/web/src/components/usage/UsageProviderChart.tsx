@@ -431,8 +431,7 @@ export function UsageProviderChart({
   );
 
   const toY = (value: number) => valueToY(value, scale.max);
-  const seriesClassName = (loading: boolean) =>
-    cn("transition-opacity", loading && "opacity-40 delay-300");
+  const seriesClassName = (loading: boolean) => cn("transition-opacity", loading && "opacity-40");
   const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);

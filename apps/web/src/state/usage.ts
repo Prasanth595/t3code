@@ -109,7 +109,7 @@ export function mergeAnsweredUsage(
 
 const SETTLE_WINDOW_MS = 300;
 
-function useHeldFor(active: boolean, key: string) {
+export function useSettleWindow(active: boolean, key = "") {
   const [elapsedKey, setElapsedKey] = useState<string | null>(null);
   if (!active && elapsedKey !== null) setElapsedKey(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- the settle window is wall-clock time
@@ -218,7 +218,7 @@ export function useUsage(
   const isPending = answeredCount === 0 && stillReporting > 0;
   const selectionKey =
     selectedEnvironmentIds === null ? "all" : [...selectedEnvironmentIds].toSorted().join(",");
-  const isWaitingLong = useHeldFor(stillReporting > 0, `${windowKey}|${selectionKey}`);
+  const isWaitingLong = useSettleWindow(stillReporting > 0, `${windowKey}|${selectionKey}`);
   const settled = answeredCount > 0 && (stillReporting === 0 || isWaitingLong);
 
   const [lastAnswered, setLastAnswered] = useState<
