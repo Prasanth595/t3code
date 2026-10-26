@@ -105,6 +105,7 @@ function DragHandle(props: {
   latest.current = props;
   const gesture = useMemo(
     () =>
+      // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
       Gesture.Pan()
         .enabled(!props.disabled)
         .minDistance(0)
@@ -114,7 +115,7 @@ function DragHandle(props: {
         .onUpdate((event) => latest.current.onMove(event.translationY))
         .onEnd((event) => latest.current.onMove(event.translationY))
         .onFinalize((_, success) => latest.current.onEnd(!success)),
-    [props.disabled],
+    [props.disabled, latest],
   );
   return (
     <GestureDetector gesture={gesture}>
