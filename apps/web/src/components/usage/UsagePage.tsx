@@ -535,9 +535,7 @@ export function UsagePage() {
                 }
               />
             ) : shown === null ? (
-              isWaitingLong ? (
-                <UsageSkeleton />
-              ) : null
+              <UsageSkeleton />
             ) : !canReadDiagnostics ? (
               <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
                 {selectedEnvironments.map((environment) => (
