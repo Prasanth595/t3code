@@ -946,8 +946,8 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const source = yield* sharedSource(home, key);
   // The session's host downloads the client itself; uploading a 166 MB APK through a
   // gateway from here takes minutes and can outlast the remote install timeout.
-  const fetched = source
-    ? yield* command(
+  const downloadOnDevice = source
+    ? command(
         node,
         [
           agentDevice,
@@ -968,13 +968,16 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
           ),
         ),
       )
-    : false;
+    : Effect.succeed(false);
+  const fetched = yield* downloadOnDevice;
   const artifact = fetched
     ? { source: "remote" as const, buildMs: 0 }
     : yield* Effect.gen(function* () {
         const local = yield* resolveArtifact(home, platform, deviceAbi, current).pipe(
           Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
         );
+        // A build just shared the client, so the device can fetch it now too.
+        if (local.source === "build" && (yield* downloadOnDevice)) return local;
         yield* Console.error(`Installing into agent-device session ${session}...`);
         yield* command(
           node,
