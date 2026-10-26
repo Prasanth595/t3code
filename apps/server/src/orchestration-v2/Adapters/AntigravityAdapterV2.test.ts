@@ -129,19 +129,35 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 session open", () => {
-  it.effect("marks a session that waits for Google sign-in as needing sign-in", () =>
+  it.effect.each([
+    {
+      name: "browser sign-in",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+        cause: undefined,
+      }),
+      requiresSignIn: true,
+    },
+    {
+      name: "ACP authentication required",
+      cause: EffectAcpErrors.AcpRequestError.authRequired(),
+      requiresSignIn: true,
+    },
+    {
+      name: "transport failure",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: "Connection closed",
+        cause: undefined,
+      }),
+      requiresSignIn: undefined,
+    },
+  ] as const)("classifies $name during session open", ({ cause, requiresSignIn }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: () =>
-          Effect.fail(
-            new EffectAcpErrors.AcpTransportError({
-              detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
-              cause: undefined,
-            }),
-          ),
+        makeRuntime: () => Effect.fail(cause),
         withProcess: (_stop, task) => task,
         defaultModel: Effect.succeed(undefined),
       });
@@ -160,7 +176,10 @@ describe("AntigravityAdapterV2 session open", () => {
         .pipe(Effect.flip);
 
       assert.equal(error._tag, "ProviderAdapterOpenSessionError");
-      assert.isTrue(error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn);
+      assert.equal(
+        error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
+        requiresSignIn,
+      );
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
