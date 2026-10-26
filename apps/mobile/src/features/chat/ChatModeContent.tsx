@@ -3,17 +3,23 @@ import type { SaasChatConversation, SaasChatMessage } from "@t3tools/contracts/s
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Linking, Platform, ScrollView, type ScrollViewInstance, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import Animated, { FadeIn, FadeInUp } from "react-native-reanimated";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { FadeIn, FadeInUp, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolveClassNames } from "uniwind";
 
 import { ComposerActionButton } from "../../components/ComposerToolbar";
-import { AppText, AppTextInput } from "../../components/ui/AppText";
+import { ComposerEditor } from "../../components/ComposerEditor";
+import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { CopyTextButton } from "../threads/CopyTextButton";
-import { ComposerSurface, THREAD_COMPOSER_BOTTOM_GUTTER } from "../threads/ThreadComposer";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import {
+  ComposerSurface,
+  THREAD_COMPOSER_BOTTOM_GUTTER,
+  useCompactComposerEditor,
+} from "../threads/ThreadComposer";
 import { useMarkdownStyles } from "../threads/ThreadFeed";
 import { miraChatHistory, openMiraUpgrade, useMiraChatHistory } from "./miraChat";
 
@@ -38,13 +44,19 @@ export function ChatModeContent(props: {
   const busy = history.streaming !== null;
   const error = history.error !== null && history.error.chatId === chat?.id ? history.error : null;
 
-  const send = async (text: string) => {
-    const chatId = await miraChatHistory.send(chat?.id ?? null, text);
-    if (chatId !== props.chatId) props.onChatStarted(chatId);
+  const send = (text: string) => {
+    void miraChatHistory.send(chat?.id ?? null, text, (chatId) => {
+      if (chatId !== props.chatId) props.onChatStarted(chatId);
+    });
   };
+  // Like the thread screen: the composer rides the keyboard and drops its bottom inset there.
+  const keyboard = useReanimatedKeyboardAnimation();
+  const keyboardStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(0, -keyboard.height.value - insets.bottom * keyboard.progress.value),
+  }));
 
   return (
-    <KeyboardAvoidingView behavior="padding" className="flex-1 bg-screen">
+    <Animated.View className="flex-1 bg-screen" style={keyboardStyle}>
       {chat === undefined ? (
         <View className="flex-1 items-center justify-center gap-2 px-8">
           <AppText className="text-center text-2xl font-t3-bold">What can I help with?</AppText>
@@ -68,7 +80,7 @@ export function ChatModeContent(props: {
         </View>
       ) : null}
       <ChatComposer busy={busy} bottomInset={insets.bottom} onSend={send} />
-    </KeyboardAvoidingView>
+    </Animated.View>
   );
 }
 
@@ -84,6 +96,8 @@ function ChatMessages(props: {
       contentContainerClassName="px-4 pt-3 pb-4"
       keyboardDismissMode="interactive"
       onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+      // The keyboard shrinks the list; keep the latest message in view, as threads do.
+      onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
     >
       {props.chat.messages.map((message) => (
         <ChatMessageRow key={message.id} message={message} />
@@ -191,19 +205,22 @@ function ChatErrorNotice(props: {
   );
 }
 
-// The thread composer's pill and send button, without attachments or model controls.
+// The thread composer's pill, editor and send button, without attachments or model controls.
 function ChatComposer(props: {
   readonly busy: boolean;
   readonly bottomInset: number;
-  readonly onSend: (text: string) => Promise<void>;
+  readonly onSend: (text: string) => void;
 }) {
+  const bodyText = useScaledTextRole("body");
+  const { color: foregroundColor } = useResolveClassNames("text-foreground");
   const [text, setText] = useState("");
+  const editor = useCompactComposerEditor(bodyText, text);
   const canSend = !props.busy && text.trim() !== "";
   const submit = () => {
     if (!canSend) return;
     const trimmed = text.trim();
     setText("");
-    void props.onSend(trimmed);
+    props.onSend(trimmed);
   };
   return (
     <View
@@ -219,22 +236,42 @@ function ChatComposer(props: {
           paddingVertical: 2,
         }}
       >
-        <View className="flex-row items-end py-[5px] pr-[7px] pl-4">
-          <AppTextInput
-            accessibilityLabel="Message"
-            placeholder="Ask Mira anything"
-            multiline
-            value={text}
-            onChangeText={setText}
-            className="max-h-36 min-h-[34px] flex-1 py-1.5 text-base"
-          />
-          <ComposerActionButton
-            accessibilityLabel="Send"
-            icon="arrow.up"
-            variant="primary"
-            disabled={!canSend}
-            onPress={submit}
-          />
+        <View onLayout={editor.onRowLayout}>
+          <View className="flex-row items-end pl-2">
+            <Animated.View
+              className="min-w-0 flex-1"
+              onLayout={editor.onEditorLayout}
+              style={[
+                { minWidth: editor.isExpanded ? 0 : "40%" },
+                editor.containerStyle,
+                editor.isExpanded ? { flex: 0, width: 0 } : undefined,
+              ]}
+            />
+            <View
+              className="min-w-0 shrink flex-row items-center"
+              style={editor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined}
+            >
+              <ComposerActionButton
+                accessibilityLabel="Send"
+                icon="arrow.up"
+                variant="primary"
+                disabled={!canSend}
+                onPress={submit}
+              />
+            </View>
+          </View>
+          <Animated.View style={editor.editorStyle}>
+            <ComposerEditor
+              multiline
+              value={text}
+              onChangeText={setText}
+              placeholder="Ask Mira anything"
+              submitTitle="Send"
+              onSubmit={submit}
+              {...editor.editorProps}
+              textStyle={{ ...bodyText, color: foregroundColor }}
+            />
+          </Animated.View>
         </View>
       </ComposerSurface>
     </View>

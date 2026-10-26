@@ -78,14 +78,14 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
   }, [missing, navigate]);
 
   const send = async (text: string) => {
-    const sentChatId = await miraChatHistory.send(chat?.id ?? null, text);
-    if (sentChatId !== chatId) {
+    await miraChatHistory.send(chat?.id ?? null, text, (sentChatId) => {
+      if (sentChatId === chatId) return;
       void navigate({
         to: "/ask/$chatId",
         params: { chatId: sentChatId },
         replace: chatId === null,
       });
-    }
+    });
   };
 
   const busy = history.streaming !== null;

@@ -214,8 +214,15 @@ export class ChatHistory {
     this.commit();
   }
 
-  /** Sends a message, starting a new chat when `chatId` is null. Resolves to the chat's id. */
-  async send(chatId: string | null, text: string): Promise<string> {
+  /**
+   * Sends a message, starting a new chat when `chatId` is null. `onStarted` gets the chat's id as
+   * soon as the question is saved, before the reply streams; the promise resolves with it too.
+   */
+  async send(
+    chatId: string | null,
+    text: string,
+    onStarted?: (chatId: string) => void,
+  ): Promise<string> {
     await this.load();
     const content = text.trim();
     const now = this.now();
@@ -237,6 +244,7 @@ export class ChatHistory {
         };
     this.write(chat);
     this.publish({ streaming: { chatId: chat.id, text: "" }, error: null });
+    onStarted?.(chat.id);
 
     const result = await this.options.requestReply(
       {

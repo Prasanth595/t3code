@@ -153,6 +153,21 @@ describe("ChatHistory", () => {
     }
   });
 
+  it("hands out a new chat's id before its reply streams", async () => {
+    const started: Array<string> = [];
+    let startedBeforeReply = false;
+    const history = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async () => {
+        startedBeforeReply = started.length === 1;
+        return { ok: true, text: "Hi" };
+      },
+    });
+    const chatId = await history.send(null, "Hello", (id) => started.push(id));
+    expect(startedBeforeReply).toBe(true);
+    expect(started).toEqual([chatId]);
+  });
+
   it("titles empty and long first messages", () => {
     expect(chatTitle("   ")).toBe("New chat");
     expect(chatTitle("x".repeat(100))).toHaveLength(60);
