@@ -41,8 +41,9 @@ const loadDesktopCliCommandState = Effect.fn("loadDesktopCliCommandState")(funct
 });
 
 export const desktopCliCommandStateAtom = Atom.make(loadDesktopCliCommandState()).pipe(
-  Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
+  // Keep the loaded state, but let the SWR wrapper revalidate when Settings remounts.
   Atom.keepAlive,
+  Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
   Atom.withLabel("desktop:cli-command:load"),
 );
 

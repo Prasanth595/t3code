@@ -4,6 +4,7 @@ import { userEvent } from "vite-plus/test/browser";
 import type { ReactNode } from "react";
 
 import { act, render } from "../../../test/render";
+import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { ThemeColorField } from "./ThemeColorPicker";
 
 const HUE = "Accent color hue";
@@ -80,5 +81,45 @@ describe("theme color field", () => {
 
     await echo("#ffffff");
     expect(slider(HUE).getAttribute("aria-valuenow")).toBe("10");
+  });
+});
+
+async function renderAccentPicker(value: string) {
+  const onCommit = vi.fn();
+  const picker = (current: string) => (
+    <ProviderAccentColorPicker displayName="Codex" value={current} onCommit={onCommit} />
+  );
+  const screen = await renderPicker(picker(value));
+  await open("Change accent color for Codex");
+  return Object.assign(screen, {
+    onCommit,
+    echo: (current: string) => screen.rerender(picker(current)),
+  });
+}
+
+describe("provider accent color picker", () => {
+  it("commits a drag that is still in progress when the popover closes", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await act(async () => {
+      pointer(HUE, "pointerdown", 0.5);
+      pointer(HUE, "pointermove", 0.5);
+    });
+    expect(screen.onCommit).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.onCommit).toHaveBeenCalledTimes(1);
+    expect(screen.onCommit.mock.calls[0]?.[0]).not.toBe("#ff0000");
+  });
+
+  it("shows the saved color again when it is reverted outside the picker", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00ff00");
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#00ff00");
+    await screen.echo("#00ff00");
+    await screen.echo("#ff0000");
+
+    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(255, 0, 0)");
   });
 });

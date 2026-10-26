@@ -91,11 +91,16 @@ function ProviderCustomColorPicker(props: {
   readonly onPreview: (value: string) => void;
   readonly onCommit: (value: string) => void;
   readonly onClear: () => void;
+  readonly onClose: () => void;
 }) {
   const normalized = normalizeProviderAccentColor(props.value);
 
   return (
-    <Popover>
+    <Popover
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
       <PopoverTrigger
         render={
           <Button
@@ -153,14 +158,18 @@ export function ProviderAccentColorPicker(props: {
   const value = props.value ?? "";
   // The draft shows a dragged or just-committed color only while `value` is
   // still the one it was picked against, so the persisted value (or any outside
-  // change) takes over as soon as it lands.
-  const [draft, setDraft] = useState<{ readonly color: string; readonly base: string } | null>(
-    null,
-  );
+  // change) takes over as soon as it lands. `previewing` marks a drag that has
+  // not been committed yet, which closing the popover commits.
+  const [draft, setDraft] = useState<{
+    readonly color: string;
+    readonly base: string;
+    readonly previewing: boolean;
+  } | null>(null);
+  if (draft !== null && draft.base !== value) setDraft(null);
   const shownValue = draft !== null && draft.base === value ? draft.color : value;
   const commit = (color: string) => {
     const normalized = normalizeProviderAccentColor(color) ?? "";
-    setDraft({ color: normalized, base: value });
+    setDraft({ color: normalized, base: value, previewing: false });
     if (normalized !== value) onCommit(normalized);
   };
 
@@ -169,10 +178,17 @@ export function ProviderAccentColorPicker(props: {
       displayName={displayName}
       value={normalizeProviderAccentColor(shownValue)}
       onPreview={(color) =>
-        setDraft({ color: normalizeProviderAccentColor(color) ?? "", base: value })
+        setDraft({
+          color: normalizeProviderAccentColor(color) ?? "",
+          base: value,
+          previewing: true,
+        })
       }
       onCommit={commit}
       onClear={() => commit("")}
+      onClose={() => {
+        if (draft?.previewing && draft.base === value) commit(draft.color);
+      }}
     />
   );
 
