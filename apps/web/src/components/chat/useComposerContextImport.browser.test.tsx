@@ -151,7 +151,13 @@ it.each([
   });
   if (edit !== "cached") expect(pendingDraftWork.has(target)).toBe(true);
   await act(() => {
-    if (edit !== "annotation" && edit !== "retain" && edit !== "cached" && edit !== "question") {
+    if (
+      edit !== "annotation" &&
+      edit !== "retain" &&
+      edit !== "cached" &&
+      edit !== "question" &&
+      edit !== "switch"
+    ) {
       promptRef.current = "Keep this edit";
       store.setPrompt(target, promptRef.current);
     }
