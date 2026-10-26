@@ -2,7 +2,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -248,17 +248,13 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
-  useEffect(() => {
+  // Layout effect so a pending jump is cancelled in the commit that swaps the file.
+  useLayoutEffect(() => {
     if (targetIndex === null) {
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      lineScroll.scrollToLine(targetIndex);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      lineScroll.cancel();
-    };
+    lineScroll.scrollToLine(targetIndex);
+    return lineScroll.cancel;
   }, [lineScroll, props.path, targetIndex]);
 
   const renderLine = ({ item, index }: { item: string; index: number }) => (
