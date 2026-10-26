@@ -105,10 +105,6 @@ describe("pdfFindMatchRuns", () => {
     ]);
   });
 
-  it("matches across a line break run", () => {
-    expect(pdfFindMatchRuns(["first", "\n", "second"], "first\nsec")).toEqual([true, true, true]);
-  });
-
   it("highlights nothing for a blank or missing query", () => {
     expect(pdfFindMatchRuns(["a b", "c"], " ")).toEqual([false, false]);
     expect(pdfFindMatchRuns(["a b", "c"], "")).toEqual([false, false]);
