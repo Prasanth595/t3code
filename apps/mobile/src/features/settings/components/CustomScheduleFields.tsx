@@ -33,6 +33,7 @@ export function CustomScheduleFields(props: {
   const [busy, setBusy] = useState(false);
   // Edits and unmount bump the version so a late preview cannot overwrite them.
   const version = useRef(0);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Invalidate in-flight previews when the editor unmounts.
   useEffect(
     () => () => {
       version.current += 1;
