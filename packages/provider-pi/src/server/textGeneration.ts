@@ -50,9 +50,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
       if (modelSelection.model !== "default") {
-        // `customModels` accepts arbitrary strings, so an unusable slug is
-        // rejected rather than skipped: running Pi's default model here would
-        // report success for a model the caller never asked for.
+        // Reject unusable custom slugs; silently using Pi's default would misreport the requested model.
         const parsed = parsePiModelSlug(modelSelection.model);
         if (parsed === null) {
           return yield* new TextGenerationError({
@@ -60,11 +58,24 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             detail: `Pi model '${modelSelection.model}' must use provider/model format.`,
           });
         }
-        yield* connection.request({
-          type: "set_model",
-          provider: parsed.provider,
-          modelId: parsed.modelId,
-        });
+        yield* connection
+          .request({ type: "set_model", provider: parsed.provider, modelId: parsed.modelId })
+          .pipe(
+            // Model discovery loads extensions that this background helper disables.
+            Effect.mapError((error) =>
+              error._tag === "PiRpcError" && error.operation === "set_model"
+                ? new TextGenerationError({
+                    operation,
+                    detail:
+                      `Pi rejected model '${modelSelection.model}': ${error.detail ?? "unknown error"}. ` +
+                      "If the model comes from a Pi extension or package, text generation cannot use it " +
+                      "because it runs Pi with --no-extensions. Pick a built-in Pi model or one defined " +
+                      "in Pi's models.json.",
+                    cause: error,
+                  })
+                : error,
+            ),
+          );
       }
 
       yield* connection.request({ type: "prompt", message: prompt });

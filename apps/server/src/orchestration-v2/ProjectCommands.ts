@@ -101,10 +101,7 @@ export interface ProjectCommandState {
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-/**
- * The caller reads `state` under the project's lock and commits the planned
- * event.
- */
+/** Read state and commit the planned event under the project lock. */
 export function planProjectCommand(input: {
   readonly command: ProjectCommand;
   readonly state: ProjectCommandState;

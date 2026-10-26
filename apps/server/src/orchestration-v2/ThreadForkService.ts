@@ -6,6 +6,7 @@ import {
   OrchestrationV2ContextTransfer,
   OrchestrationV2CreationSource,
   OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ThreadId,
@@ -30,9 +31,7 @@ export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>
   },
 ) {}
 
-/**
- * `waiting` is provider-finished with checkpoint capture still pending.
- */
+/** waiting means provider-finished with checkpoint capture pending. */
 export function isForkableSourceRunStatus(status: OrchestrationV2Run["status"]): boolean {
   return (
     status === "completed" ||
@@ -54,6 +53,7 @@ export interface ThreadForkServiceV2Shape {
     readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly sourceRun: OrchestrationV2Run;
     readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
+    readonly sourceTokenUsage?: OrchestrationV2ProviderTurnTokenUsage | undefined;
     readonly canonicalSourcePoint: OrchestrationV2ContextSourcePoint;
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
@@ -108,7 +108,11 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        // A guest link belongs to the thread it was made for.
+        guestShare: null,
         lastVisitedAt: null,
+        // A fork is a new thread; it does not inherit how often the source was opened.
+        opens: null,
         deletedAt: null,
       };
       const transfer: OrchestrationV2ContextTransfer = {
@@ -119,6 +123,12 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         sourcePoint: input.canonicalSourcePoint,
         basePoint: null,
         sourceProviderInstanceId: input.sourceRun.providerInstanceId,
+        // Only native forks retain this context; portable handoffs rebuild it.
+        sourceTokenUsage:
+          (input.sourceRun.status === "completed" || input.sourceRun.status === "waiting") &&
+          input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
+            ? input.sourceTokenUsage
+            : undefined,
         targetProviderInstanceId: null,
         targetRunId: null,
         status: "pending",
