@@ -12,8 +12,8 @@ import {
   OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -172,6 +172,14 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
     },
     httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
+}
+
+// Resolves "settled" instead of hanging when the load finishes without sending another request.
+function nextRequestOrSettled(requests: Queue.Queue<number>, load: Fiber.Fiber<unknown, unknown>) {
+  return Effect.raceFirst(
+    Queue.take(requests).pipe(Effect.as("sent" as const)),
+    Fiber.await(load).pipe(Effect.as("settled" as const)),
+  );
 }
 
 type HttpInput = ReturnType<typeof makeHarness>["input"];
@@ -526,58 +534,64 @@ describe("authenticated environment HTTP requests", () => {
   );
 
   it.effect(
-    "waits longer for session permissions each time the environment is too slow to answer",
+    "waits longer for session permissions after the environment is too slow to answer",
     () =>
       Effect.gen(function* () {
-        const firstRequestSent = yield* Deferred.make<void>();
-        const retrySent = yield* Deferred.make<void>();
-        let answerRetry: (response: Response) => void = () => {};
-        const harness = makeHarness((requestNumber) => {
-          Deferred.doneUnsafe(requestNumber === 1 ? firstRequestSent : retrySent, Effect.void);
-          return new Promise<Response>((resolve) => {
-            if (requestNumber > 1) answerRetry = resolve;
-          });
+        const requests = yield* Queue.unbounded<number>();
+        let answer: () => void = () => {};
+        const answered = new Promise<void>((resolve) => {
+          answer = resolve;
         });
-        const session = yield* fetchEnvironmentSessionState({
+        const harness = makeHarness((requestNumber) => {
+          Queue.offerUnsafe(requests, requestNumber);
+          return requestNumber === 1
+            ? new Promise<Response>(() => {})
+            : answered.then(() => Response.json(SESSION));
+        });
+        const load = yield* fetchEnvironmentSessionState({
           prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
           signer: Option.none(),
           timeoutMs: 1_000,
         }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
 
-        yield* Deferred.await(firstRequestSent);
+        yield* Queue.take(requests);
         yield* TestClock.adjust("1 second");
-        yield* Deferred.await(retrySent);
+        expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
         yield* TestClock.adjust("1500 millis");
-        answerRetry(Response.json(SESSION));
+        answer();
 
-        expect(yield* Fiber.join(session)).toEqual(SESSION);
+        expect(yield* Fiber.await(load)).toStrictEqual(Exit.succeed(SESSION));
         expect(harness.calls).toHaveLength(2);
       }),
   );
 
-  it.effect("gives up on session permissions once the longest wait also times out", () =>
+  it.effect("gives up on session permissions once a 60 second wait also times out", () =>
     Effect.gen(function* () {
-      const requestSent = yield* Queue.unbounded<number>();
+      const requests = yield* Queue.unbounded<number>();
       const harness = makeHarness((requestNumber) => {
-        Queue.offerUnsafe(requestSent, requestNumber);
+        Queue.offerUnsafe(requests, requestNumber);
         return new Promise<Response>(() => {});
       });
-      const session = yield* fetchEnvironmentSessionState({
+      const load = yield* fetchEnvironmentSessionState({
         prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
         signer: Option.none(),
         timeoutMs: 15_000,
-      }).pipe(
-        Effect.provide(harness.httpLayer),
-        Effect.flip,
-        Effect.forkChild({ startImmediately: true }),
-      );
+      }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
 
-      for (const waitMs of [15_000, 30_000, 60_000]) {
-        yield* Queue.take(requestSent);
-        yield* TestClock.adjust(waitMs);
-      }
+      yield* Queue.take(requests);
+      yield* TestClock.adjust("15 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(load);
 
-      expect((yield* Fiber.join(session))._tag).toBe("RemoteEnvironmentAuthTimeoutError");
+      expect(exit).toMatchObject({
+        _tag: "Failure",
+        cause: {
+          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: 60_000 } }],
+        },
+      });
       expect(harness.calls).toHaveLength(3);
     }),
   );
