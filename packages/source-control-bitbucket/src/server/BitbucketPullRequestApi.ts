@@ -328,11 +328,7 @@ function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-/**
- * Bitbucket compares `updated_on` to the microsecond, but the cursor's instant was cut to the
- * millisecond. Asking up to the end of that millisecond keeps the rows that share it in reach;
- * the ones already sent are excluded by ID.
- */
+// Bitbucket keeps microseconds; include the cursor's whole millisecond before excluding seen IDs.
 function updatedBeforeFilter(updatedBefore: string): string {
   return Option.match(DateTime.make(updatedBefore), {
     onNone: () => `updated_on <= ${updatedBefore}`,
@@ -559,7 +555,7 @@ export const make = Effect.gen(function* () {
     listPullRequests: (input) =>
       withRepository(input.repository, (path) => {
         const search = input.query?.trim() ?? "";
-        // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
+        // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
           ...(input.author === undefined ? [] : [authorFilter(input.author)]),
