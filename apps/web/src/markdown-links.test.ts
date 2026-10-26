@@ -57,6 +57,21 @@ describe("relative links inside a rendered host file", () => {
 });
 
 describe("resolveInlineCodeFileLinkMeta", () => {
+  it.each(["src/main.ts:49-74", "/work/src/main.ts:49-74"])(
+    "resolves %s without treating the range as part of the filename",
+    (source) => {
+      expect(resolveInlineCodeFileLinkMeta(source, "/work")).toMatchObject({
+        filePath: "/work/src/main.ts",
+        targetPath: "/work/src/main.ts:49-74",
+        displayPath: "work/src/main.ts:49-74",
+        workspaceRelativePath: "src/main.ts",
+        basename: "main.ts",
+        line: 49,
+        endLine: 74,
+      });
+    },
+  );
+
   it("links bare filenames only when a line suffix marks them as file references", () => {
     expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/julius/project")).toMatchObject({
       targetPath: "/Users/julius/project/script.ts:10",
@@ -92,6 +107,25 @@ describe("resolveInlineCodeFileLinkMeta", () => {
 
 describe("chat file chip paths", () => {
   const cwd = String.raw`C:\Users\alice\project`;
+
+  it.each([null, "src/main.ts"])(
+    "opens a range at its start and copies the full range (%s)",
+    async (match) => {
+      const meta = resolveMarkdownFileLinkMeta("main.ts:49-74", "/work");
+      if (!meta) throw new Error("Expected a file link");
+      const host = await resolveMarkdownFileHostPath({
+        meta,
+        cwd: "/work",
+        findWorkspaceMatch: async () => match,
+      });
+      const path = match ?? "main.ts";
+      expect(markdownFileEditorTarget(meta, host)).toBe(`/work/${path}:49`);
+      expect(markdownFileCopyPaths(meta, host, "/work")).toEqual({
+        fullPath: `/work/${path}:49-74`,
+        relativePath: `${path}:49-74`,
+      });
+    },
+  );
 
   it("opens and copies the indexed file for a bare filename, preserving its line and column", async () => {
     const meta = resolveMarkdownFileLinkMeta("user.ts:261:7", cwd);

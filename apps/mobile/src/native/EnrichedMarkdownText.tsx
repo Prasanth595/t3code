@@ -1,3 +1,4 @@
+import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
@@ -27,7 +28,6 @@ import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
-  ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
@@ -160,24 +160,23 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: markdownForNativeRendering(props.markdown),
         fileHrefs: new Set<string>(),
       };
     }
-    const content = markdownWithInlineFileLinks(
-      markdownWithHtml(props.markdown),
-      ENRICHED_INLINE_FILE_LINK_REGEX,
-    );
+    const content = markdownWithInlineFileLinks(markdownWithHtml(props.markdown));
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
   }, [props.markdown, fileEmbedLabel]);
-  const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
+  const [parsedLinks, setParsedLinks] = useState<ReadonlyArray<MarkdownLinkOccurrence>>([]);
   const onLinksChange = useCallback((links: MarkdownLinkOccurrence[]) => {
-    const urls = [...new Set(links.map((link) => link.url))];
-    setParsedLinkUrls((previous) =>
-      previous.length === urls.length && previous.every((url, index) => url === urls[index])
+    setParsedLinks((previous) =>
+      previous.length === links.length &&
+      previous.every(
+        (link, index) => link.url === links[index]?.url && link.label === links[index]?.label,
+      )
         ? previous
-        : urls,
+        : links,
     );
   }, []);
   const skillRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
@@ -190,6 +189,19 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : "",
     [markdown, skillRegex],
   );
+  const parsedLinkUrls = useMemo(
+    () => [...new Set(parsedLinks.map((link) => link.url))],
+    [parsedLinks],
+  );
+  const authoredLabelUrls = useMemo(
+    () =>
+      new Set(
+        parsedLinks
+          .filter((link) => !isMarkdownFileLinkLabel(link.label, link.url))
+          .map((link) => link.url),
+      ),
+    [parsedLinks],
+  );
   const linkUrls = useMemo(
     () =>
       skillLinkKey
@@ -197,7 +209,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : parsedLinkUrls,
     [parsedLinkUrls, skillLinkKey],
   );
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    authoredLabelUrls,
+  );
   const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;

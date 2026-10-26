@@ -3,7 +3,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
-import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
+import { inlineCodeFilePathCandidate, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import {
   markdownForNativeRendering,
   markdownWithInlineFileLinks,
@@ -11,8 +11,7 @@ import {
   markdownWithHtml,
 } from "./markdownDocument";
 
-const rewrite = (markdown: string) =>
-  markdownWithInlineFileLinks(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+const rewrite = (markdown: string) => markdownWithInlineFileLinks(markdown);
 
 describe("inline code that names a file", () => {
   it.each([
@@ -58,13 +57,8 @@ describe("inline code that names a file", () => {
       const document = fixture.replaceAll("\n", ending);
       for (let length = 0; length <= document.length; length++) {
         const prefix = document.slice(0, length);
-        const expected = previousTableBreaks(
-          previousFileLinks(markdownWithHtml(prefix), ENRICHED_INLINE_FILE_LINK_REGEX),
-        );
-        expect(
-          markdownForNativeRendering(prefix, ENRICHED_INLINE_FILE_LINK_REGEX),
-          JSON.stringify(prefix),
-        ).toBe(expected);
+        const expected = previousTableBreaks(previousFileLinks(markdownWithHtml(prefix)));
+        expect(markdownForNativeRendering(prefix), JSON.stringify(prefix)).toBe(expected);
       }
     }
   });
@@ -73,6 +67,18 @@ describe("inline code that names a file", () => {
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );
+  });
+
+  it.each([
+    "src/main.ts:49-74",
+    "main.ts:49-74",
+    "/repo/src/main.ts:49-74",
+    "/work/src/main.ts:49-74",
+    "Makefile:49-74",
+  ])("links %s while leaving fenced ranges literal", (path) => {
+    expect(rewrite("See `" + path + "`.")).toBe(`See [${path}](<${path}>).`);
+    const fence = "```\n" + path + "\n```";
+    expect(rewrite(fence)).toBe(fence);
   });
 
   it("keeps commands, identifiers and URLs as code", () => {
@@ -102,8 +108,12 @@ const parser = unified().use(remarkParse).use(remarkGfm);
 type MarkdownNode = Root | RootContent;
 const INLINE_CODE_SPAN = /`+([^`\r\n]+)`+/g;
 
-function previousFileLinks(markdown: string, fileLink: RegExp): string {
-  if (![...markdown.matchAll(INLINE_CODE_SPAN)].some(([, code]) => fileLink.test(code!.trim())))
+function previousFileLinks(markdown: string): string {
+  if (
+    ![...markdown.matchAll(INLINE_CODE_SPAN)].some(
+      ([, code]) => parseMarkdownFileLink(inlineCodeFilePathCandidate(code!.trim()) ?? "") !== null,
+    )
+  )
     return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
   const visit = (node: MarkdownNode) => {
@@ -114,7 +124,7 @@ function previousFileLinks(markdown: string, fileLink: RegExp): string {
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink.test(node.value) &&
+        parseMarkdownFileLink(inlineCodeFilePathCandidate(node.value) ?? "") !== null &&
         !/[<>]/.test(node.value)
       )
         edits.push({

@@ -12,6 +12,11 @@ describe("isMarkdownFileLinkLabel", () => {
   // regression: #15509 descriptive labels are not mistaken for the linked file name
   it.each([
     ["validates the input", "/repo/src/example.ts:12", false],
+    ["example.ts", "/repo/src/example.ts:49-74", true],
+    ["example.ts:49-74", "/repo/src/example.ts:49-74", true],
+    ["example.ts:49", "/repo/src/example.ts:49-74", false],
+    ["example.ts:49-75", "/repo/src/example.ts:49-74", false],
+    ["example.ts:49-74", "/repo/src/example.ts:49", false],
     ["example.ts:12", "/repo/src/example.ts:12", true],
     ["example.ts:99", "/repo/src/example.ts:12", false],
   ])("classifies %s for %s", (label, href, expected) => {
@@ -23,6 +28,9 @@ describe("inlineCodeFilePathCandidate", () => {
   // regression: #13909 model ids in inline code do not become file chips
   it.each([
     ["src\\main.ts", "src/main.ts"],
+    ["localhost:49-74", null],
+    ["example.com:49-74", null],
+    ["z-ai/glm-5.3:49-74", null],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],

@@ -70,6 +70,15 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
 });
 
+it("searches range chip labels while retaining a separately authored line label", () => {
+  expect(
+    assistantSegments(
+      "`src/main.ts:49-74` and [example.ts:49](src/example.ts:49-74)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["main.ts · L49-74 and example.ts:49 example.ts · L49-74"]);
+});
+
 it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
   expect(assistantSegments("```text\n/tmp/file.ts:42\n```")).toEqual(["/tmp/file.ts:42\n"]);
   expect(

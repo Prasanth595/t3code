@@ -27,9 +27,11 @@ export function markdownFileEditorTarget(
   meta: MarkdownFileLinkMeta,
   hostPath: MarkdownFileHostPath,
 ) {
-  return hostPath.matched
-    ? formatFilePathPosition({ ...meta, path: hostPath.absolutePath })
-    : meta.targetPath;
+  return formatFilePathPosition({
+    path: hostPath.absolutePath,
+    ...(meta.line !== undefined ? { line: meta.line } : {}),
+    ...(meta.column !== undefined ? { column: meta.column } : {}),
+  });
 }
 
 export function markdownFileCopyPaths(
@@ -37,7 +39,9 @@ export function markdownFileCopyPaths(
   hostPath: MarkdownFileHostPath,
   cwd: string | undefined,
 ) {
-  const fullPath = markdownFileEditorTarget(meta, hostPath);
+  const fullPath = hostPath.matched
+    ? formatFilePathPosition({ ...meta, path: hostPath.absolutePath })
+    : meta.targetPath;
   return {
     fullPath,
     relativePath: formatFilePathPosition({

@@ -22,18 +22,29 @@ it("copies native paths from a relative file chip in a Windows workspace", () =>
 describe("resolveFileChipTarget", () => {
   it("resolves a workspace-relative link to both paths", () => {
     expect(resolveFileChipTarget("src/app.ts:12", "/repo")).toEqual({
-      fullPath: "/repo/src/app.ts",
-      relativePath: "src/app.ts",
+      fullPath: "/repo/src/app.ts:12",
+      relativePath: "src/app.ts:12",
+    });
+  });
+
+  it("keeps ranges in copied paths while using the bare path for downloads", () => {
+    const target = resolveFileChipTarget("docs/report.pdf:49-74", "/repo")!;
+    expect(target).toEqual({
+      fullPath: "/repo/docs/report.pdf:49-74",
+      relativePath: "docs/report.pdf:49-74",
+    });
+    expect(fileChipShareSource(target, ThreadId.make("thread-1"))).toMatchObject({
+      resource: { path: "/repo/docs/report.pdf" },
     });
   });
 
   it("resolves home links for navigation and menu actions", () => {
     expect(resolveFileChipTarget("~/.agents/AGENTS.md:314", "/home/maria/repo")).toEqual({
-      fullPath: "/home/maria/.agents/AGENTS.md",
+      fullPath: "/home/maria/.agents/AGENTS.md:314",
     });
     expect(resolveFileChipTarget("~/repo/src/main.ts:12", "/home/maria/repo")).toEqual({
-      fullPath: "/home/maria/repo/src/main.ts",
-      relativePath: "src/main.ts",
+      fullPath: "/home/maria/repo/src/main.ts:12",
+      relativePath: "src/main.ts:12",
     });
     expect(resolveFileChipTarget("~/.agents/AGENTS.md", "C:\\Users\\maria\\repo")).toEqual({
       fullPath: "C:\\Users\\maria\\.agents\\AGENTS.md",

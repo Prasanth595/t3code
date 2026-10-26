@@ -3,6 +3,18 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("preserves the range in file presentation", () => {
+    expect(resolveMarkdownLinkPresentation("src/main.ts:49-74")).toMatchObject({
+      kind: "file",
+      href: "src/main.ts:49-74",
+      path: "src/main.ts",
+      label: "main.ts · L49-74",
+      icon: "typescript",
+      line: 49,
+      endLine: 74,
+    });
+  });
+
   it("opens relative directory links as workspace paths", () => {
     expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
       kind: "file",
