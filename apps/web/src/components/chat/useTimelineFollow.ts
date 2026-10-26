@@ -318,6 +318,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
           if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
             return;
           if (event.deltaY > 0) {
+            cancelPositionRestoreRef.current?.();
             timelineScrollIntentRef.current = "toward-end";
             if (isAtEndRef.current) {
               composer.current?.restoreAfterTimelineReachedEnd();
