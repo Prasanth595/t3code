@@ -15,15 +15,10 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
-const toasts = vi.hoisted(() => ({ add: vi.fn() }));
-vi.mock(import("../ui/toast"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, toastManager: { ...actual.toastManager, add: toasts.add } as never };
-});
-
 import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -151,7 +146,7 @@ it("tells the user when an option click moves their typed answer into the hidden
   const environmentId = EnvironmentId.make("displaced-environment");
   const draftTarget = { environmentId, threadId: threadRef.threadId };
   const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
-  toasts.add.mockClear();
+  using toast = vi.spyOn(toastManager, "add");
   await using _screen = await render(
     <PendingRequestsProbe
       environmentId={environmentId}
@@ -160,23 +155,27 @@ it("tells the user when an option click moves their typed answer into the hidden
   );
 
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
-  expect(toasts.add).not.toHaveBeenCalled();
+  expect(toast).not.toHaveBeenCalled();
 
   await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(draftPrompt()).toBe("first try");
-  expect(toasts.add).toHaveBeenCalledTimes(1);
-  expect(toasts.add).toHaveBeenCalledWith(
-    expect.objectContaining({ data: { threadRef: draftTarget } }),
+  expect(toast).toHaveBeenCalledTimes(1);
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "info",
+      title: "Your typed text was set aside",
+      description: "It will be back in the composer once the question is answered.",
+      data: { threadRef: draftTarget },
+    }),
   );
 
-  // Typing again replaces the option as the answer; the moved text stays put and is not announced twice.
   await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "second try"));
   expect(draftPrompt()).toBe("first try");
   expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
     customAnswer: "second try",
   });
-  expect(toasts.add).toHaveBeenCalledTimes(1);
+  expect(toast).toHaveBeenCalledTimes(1);
 });
 
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {

@@ -49,6 +49,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { toastManager } from "../ui/toast";
+
 import type { ChatComposerHandle } from "./ChatComposer";
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
@@ -402,7 +403,6 @@ export function usePendingThreadRequests(input: {
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      // The question owns the box, so the draft (thread or queued edit) is out of sight until it resolves.
       toastManager.add({
         type: "info",
         title: "Your typed text was set aside",
