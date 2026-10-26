@@ -155,13 +155,13 @@ const CHANGE_LABELS: Record<FileDiffMetadata["type"], string> = {
   "rename-changed": "Renamed",
 };
 
-// The viewer colours its header icons like this; modified has no app token, so it uses the viewer's default.
+// Matches the viewer header icons; the pierre themes render modified as #009fff in both schemes.
 const CHANGE_ICON_CLASS_NAMES: Record<FileDiffMetadata["type"], string> = {
   new: "text-diff-addition",
-  change: "text-[light-dark(#009fff,#69b1ff)]",
+  change: "text-[#009fff]",
   deleted: "text-diff-deletion",
-  "rename-pure": "text-[light-dark(#009fff,#69b1ff)]",
-  "rename-changed": "text-[light-dark(#009fff,#69b1ff)]",
+  "rename-pure": "text-[#009fff]",
+  "rename-changed": "text-[#009fff]",
 };
 
 // The viewer's sprite lives in its shadow roots, so `<use href>` cannot reach it from here.
