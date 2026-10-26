@@ -1293,6 +1293,8 @@ html.dark[data-redesign] {
   /* On black a gray mix stays as bright as the blue, so dim with transparency instead. */
   --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 65%, transparent);
   --diff-added-icon: var(--success-foreground);
+  /* Matches the dithered deletion bar, so an all-new file is not a solid stripe. */
+  --diff-addition-bar-opacity: 0.5;
 }
 
 /* Blue-orange already spends blue on additions. */
@@ -1303,6 +1305,13 @@ html[data-redesign][data-diff-color-scheme="blue-orange"] {
 
 html.dark[data-redesign][data-diff-color-scheme="blue-orange"] {
   --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+
+/* New design: settings sections at /80 read dimmer than the descriptions they lead to. */
+[data-redesign]
+  [data-settings-nav]
+  [data-sidebar="menu-button"]:not([data-active="true"], :hover, :active) {
+  color: var(--sidebar-muted-foreground);
 }
 
 /* New design: sections in the provider detail pane sit flat in its card instead of nesting
@@ -1520,6 +1529,21 @@ html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigg
   color: color-mix(in oklab, var(--contrast-toolbar-foreground) 55%, var(--toolbar-background));
 }
 
+/* New design: an open panel's ghost accent matches hover and barely shows on black.
+   Closed panels read muted; open ones take full strength on a fill hover can't fake. */
+html[data-redesign]
+  :is([data-panel-layout-controls], [data-workspace-titlebar-controls])
+  :is([data-slot="toggle"], [data-slot="tooltip-trigger"]):not([data-pressed], :hover, :disabled) {
+  --control-icon-color: var(--muted-foreground);
+  color: var(--muted-foreground);
+}
+
+html[data-redesign]
+  :is([data-panel-layout-controls], [data-workspace-titlebar-controls])
+  :is([data-slot="toggle"], [data-slot="tooltip-trigger"])[data-pressed] {
+  background-color: color-mix(in srgb, var(--contrast-toolbar-foreground) 16%, transparent);
+}
+
 html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
 html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
@@ -1735,10 +1759,10 @@ body {
   padding: 0;
 }
 
-/* New design: sidebar row metadata sits a step below read titles (75% white). */
+/* New design: sidebar row metadata sits a step below read titles (65% white). */
 [data-redesign] [data-app-sidebar] {
   @variant dark {
-    --secondary-label: #8f8f8f;
+    --secondary-label: #737373;
   }
 }
 
@@ -2152,6 +2176,11 @@ code {
 
 .chat-markdown strong {
   font-weight: 600;
+}
+
+/* New design: prose sits a step under full white, so bold labels and headings carry the scan. */
+[data-redesign] .chat-markdown :is(strong, h1, h2, h3, h4, h5, h6) {
+  color: var(--foreground);
 }
 
 .chat-markdown pre {
