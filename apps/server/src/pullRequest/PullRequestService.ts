@@ -319,6 +319,7 @@ export interface SupportedProject {
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
   readonly repository: string;
+  /** The host the repository lives on. Several GitHub accounts can share one host. */
   readonly host: string;
   /** Unlike Azure repository names, remotes are unique across an organization. */
   readonly remote: string;
@@ -343,11 +344,17 @@ interface RepositoryBatch {
 }
 
 interface ListCursor extends ProviderListCursor {
+  /** The account that issued this continuation, when the provider can identify it. */
+  readonly accountId?: string;
+  /**
+   * The rows already handed over at exactly `updatedBefore`. The next read asks for that instant
+   * inclusively, so these are what keeps it from sending them a second time.
+   */
   readonly seenAt: ReadonlyArray<number>;
 }
 
 const LIST_CURSOR_PATTERN =
-  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?(?:\|([\w.:~+-]{1,128}))?$/;
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{1,9})\|(\d{1,9}(?:,\d{1,9})*)?(?:\|([\w.:~+-]{0,128})(?:\|([a-zA-Z0-9_-]{1,64}))?)?$/;
 
 function parseListCursor(raw: string): ListCursor | null {
   const match = LIST_CURSOR_PATTERN.exec(raw);
@@ -357,7 +364,8 @@ function parseListCursor(raw: string): ListCursor | null {
     updatedBefore: match[1]!,
     delivered: Number(match[2]),
     seenAt: seenAt === undefined ? [] : seenAt.split(",").map(Number),
-    ...(match[4] === undefined ? {} : { resumeAfter: match[4] }),
+    ...(!match[4] ? {} : { resumeAfter: match[4] }),
+    ...(match[5] === undefined ? {} : { accountId: match[5] }),
   };
 }
 
@@ -373,11 +381,12 @@ function nextListCursor(
   /** A provider may consume malformed offset-paged rows that never appear in `delivered`. */
   cursorAdvance = delivered.length,
   resumeAfter?: string,
+  accountId = previous?.accountId,
 ): string | null {
   if (fetched.length === 0) return null;
   // Use all fetched rows: a slice containing only duplicates must still advance to older rows.
   const oldest = fetched.reduce((left, right) => (right.updatedAt < left.updatedAt ? right : left));
-  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance, resumeAfter);
+  return listCursorAt(previous, oldest.updatedAt, fetched, cursorAdvance, resumeAfter, accountId);
 }
 
 function listCursorAt(
@@ -386,12 +395,14 @@ function listCursorAt(
   fetched: ReadonlyArray<ProviderChangeRequest>,
   deliveredCount: number,
   resumeAfter?: string,
+  accountId = previous?.accountId,
 ): string {
   const seenAt = new Set([
     ...(previous?.updatedBefore === boundary ? previous.seenAt : []),
     ...fetched.filter((item) => item.updatedAt === boundary).map((item) => item.number),
   ]);
   const cursor = `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
+  if (accountId !== undefined) return `${cursor}|${resumeAfter ?? ""}|${accountId}`;
   return resumeAfter === undefined ? cursor : `${cursor}|${resumeAfter}`;
 }
 
@@ -825,6 +836,7 @@ export const make = Effect.gen(function* () {
 
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+    options?: { readonly includeCheckouts: boolean },
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     (filter.projectId === undefined
       ? projects.listShells(
@@ -893,7 +905,11 @@ export const make = Effect.gen(function* () {
           const repositoryKey =
             api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
           const key = listCursorKey(host, repositoryKey ?? repository);
-          if (seen.has(key)) continue;
+          if (
+            seen.has(key) &&
+            (options?.includeCheckouts !== true || api?.withVerifiedCredential === undefined)
+          )
+            continue;
           seen.add(key);
           if (api === null) {
             const counted = unimplemented.get(host);
@@ -1065,6 +1081,10 @@ export const make = Effect.gen(function* () {
     readonly kind: SourceControlProviderKind;
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
+    readonly account?: {
+      readonly id: string;
+      readonly fingerprint: string;
+    };
   };
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
@@ -1107,7 +1127,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const resolveViewers = (
+  const resolveHostViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
     options?: { readonly allowPaused: boolean },
@@ -1150,7 +1170,124 @@ export const make = Effect.gen(function* () {
       { concurrency: REPOSITORY_CONCURRENCY },
     );
 
-  // Only the host can filter checks; listed rows have no check state.
+  /** GitHub identifies the account in each checkout; other providers keep their host lookup. */
+  const resolveViewers = Effect.fn("PullRequestService.resolveViewers")(function* (
+    projects: ReadonlyArray<SupportedProject>,
+    viewerRoots: WorkspaceProjects["viewerRoots"],
+    options?: { readonly allowPaused: boolean },
+  ) {
+    const hostProjects = projects.filter(
+      (project) => project.api.withVerifiedCredential === undefined,
+    );
+    const hosts = yield* resolveHostViewers(hostProjects, viewerRoots, options);
+    const hostPairs = hostProjects.map(
+      (project) =>
+        [project.project.id, hosts.find((candidate) => candidate.host === project.host)!] as const,
+    );
+    const accountPairs = yield* Effect.forEach(
+      projects.filter((project) => project.api.withVerifiedCredential !== undefined),
+      (project) =>
+        project.api.withVerifiedCredential!(
+          {
+            cwd: project.project.workspaceRoot,
+            host: project.host,
+            allowReserve: options?.allowPaused === true,
+          },
+          (identity) =>
+            Effect.succeed<ResolvedViewer>({
+              host: project.host,
+              kind: project.api.kind,
+              viewer: identity.viewer,
+              error: null,
+              account: { id: identity.accountId, fingerprint: identity.credentialFingerprint },
+            }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.succeed<ResolvedViewer>({
+              host: project.host,
+              kind: project.api.kind,
+              viewer: null,
+              error,
+            }),
+          ),
+          Effect.map((result) => [project.project.id, result] as const),
+        ),
+      { concurrency: REPOSITORY_CONCURRENCY },
+    );
+    return new Map([...hostPairs, ...accountPairs]);
+  });
+
+  /** Recheck and pin the selected account around the inbox's own backoff and provider read. */
+  const withInboxAccount = <A, E, R>(
+    project: SupportedProject,
+    viewer: ResolvedViewer | undefined,
+    read: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | PullRequestProviderError, R> => {
+    const account = viewer?.account;
+    const verify = project.api.withVerifiedCredential;
+    if (account === undefined || verify === undefined) return read;
+    return verify(
+      { cwd: project.project.workspaceRoot, host: project.host, allowReserve: false },
+      (identity): Effect.Effect<A, E | PullRequestProviderError, R> =>
+        identity.credentialFingerprint === account.fingerprint
+          ? read
+          : Effect.fail(
+              new PullRequestProviderError({
+                provider: project.api.kind,
+                operation: "list",
+                reason: "failed",
+                detail: "The repository's GitHub account changed. Refresh the inbox and retry.",
+              }),
+            ),
+    );
+  };
+
+  const inboxAccountKey = (project: SupportedProject, viewer: ResolvedViewer | undefined) =>
+    JSON.stringify([project.host, viewer?.account?.fingerprint ?? ""]);
+
+  /** One readable checkout per repository keeps PR rows and continuation keys unique. */
+  const selectInboxProjects = Effect.fn("PullRequestService.selectInboxProjects")(function* (
+    projects: ReadonlyArray<SupportedProject>,
+    viewerRoots: WorkspaceProjects["viewerRoots"],
+  ) {
+    const hostViewers = yield* resolveViewers(
+      projects.filter((project) => project.api.withVerifiedCredential === undefined),
+      viewerRoots,
+    );
+    const groups = new Map<string, Array<SupportedProject>>();
+    for (const project of projects) {
+      const held = groups.get(project.cursorKey);
+      if (held === undefined) groups.set(project.cursorKey, [project]);
+      else held.push(project);
+    }
+    return yield* Effect.forEach(
+      groups.values(),
+      (group) => {
+        const first = group[0]!;
+        if (first.api.withVerifiedCredential === undefined)
+          return Effect.succeed({ project: first, viewer: hostViewers.get(first.project.id)! });
+        return Effect.gen(function* () {
+          let fallback:
+            | { readonly project: SupportedProject; readonly viewer: ResolvedViewer }
+            | undefined;
+          for (const project of group) {
+            const viewers = yield* resolveViewers([project], viewerRoots);
+            const viewer = viewers.get(project.project.id)!;
+            const result = { project, viewer };
+            fallback ??= result;
+            if (viewer.error === null) return result;
+          }
+          return fallback!;
+        });
+      },
+      { concurrency: REPOSITORY_CONCURRENCY },
+    );
+  });
+
+  /**
+   * `checks` is absent because no listed row carries its check state: that one filter is
+   * the host's alone, and a row nobody narrowed stays rather than being guessed at.
+   */
   const matchesRowFilters = (
     item: ProviderChangeRequest,
     filters: PullRequestListFilters | undefined,
@@ -1202,6 +1339,7 @@ export const make = Effect.gen(function* () {
       createdAt: input.item.createdAt,
       updatedAt: input.item.updatedAt,
       observedAt: input.observedAt,
+      ...(input.viewer.trim() === "" ? {} : { viewer: input.viewer }),
       ...(input.item.checksState === undefined || input.item.checksState === null
         ? {}
         : { checksState: input.item.checksState }),
@@ -1219,23 +1357,42 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listUncached",
   )(function* (input) {
     const involvement = input.involvement ?? "all";
+    // Refused whole rather than per repository: a cursor is only ever a value this service
+    // issued, so one that does not read as one means the page is sending something it made up,
+    // and reading part of the listing under that assumption would quietly lose rows.
     const continuation = yield* decodeCursors(input.cursors);
-    const { supported: projects, unimplemented, viewerRoots } = yield* listWorkspaceProjects(input);
+    const {
+      supported: checkouts,
+      unimplemented,
+      viewerRoots,
+    } = yield* listWorkspaceProjects(input, { includeCheckouts: true });
+    const selectedProjects = yield* selectInboxProjects(checkouts, viewerRoots);
+    const projects = selectedProjects.map(({ project }) => project);
+    const viewerResults = new Map(
+      selectedProjects.map(({ project, viewer }) => [project.project.id, viewer]),
+    );
     const projectCounts = new Map<string, number>();
     for (const { host } of projects) {
       projectCounts.set(host, (projectCounts.get(host) ?? 0) + 1);
     }
 
-    const viewerResults = yield* resolveViewers(projects, viewerRoots);
     const viewers: Record<string, string> = {};
-    for (const result of viewerResults) {
-      if (result.viewer !== null) viewers[result.host] = result.viewer;
+    for (const result of viewerResults.values()) {
+      if (result.viewer !== null && viewers[result.host] === undefined)
+        viewers[result.host] = result.viewer;
     }
 
+    // One summary per host, which is what the viewer lookup already answers for: two GitHub
+    // hosts sign in separately, so collapsing them by kind would report one as the other.
     const providers: ReadonlyArray<PullRequestProviderSummary> = [
-      ...viewerResults.map((result) => {
-        const capabilities = projects.find((project) => project.host === result.host)?.api
-          .capabilities;
+      ...[...projectCounts.keys()].map((host) => {
+        const onHost = projects.filter((project) => project.host === host);
+        const results = onHost.flatMap((project) => {
+          const result = viewerResults.get(project.project.id);
+          return result === undefined ? [] : [result];
+        });
+        const result = results.find((candidate) => candidate.viewer !== null) ?? results[0]!;
+        const capabilities = onHost[0]?.api.capabilities;
         return {
           host: result.host,
           kind: result.kind,
@@ -1257,24 +1414,45 @@ export const make = Effect.gen(function* () {
       })),
     ];
 
+    // A continued listing reads only the repositories it was asked to carry on with: every
+    // other one is already on the page, and reading it again is the whole cost this is here to
+    // avoid. The host summaries above stay over the whole workspace, because the switcher they
+    // fill is about the workspace rather than about this slice.
     const selected =
       continuation === null
         ? projects
         : projects.filter(({ cursorKey }) => continuation.has(cursorKey));
-    const readable = selected.filter(({ host }) => viewers[host] !== undefined);
+    for (const project of selected) {
+      const previousAccount = continuation?.get(project.cursorKey)?.accountId;
+      const account = viewerResults.get(project.project.id)?.account;
+      if (previousAccount !== undefined && account !== undefined && previousAccount !== account.id)
+        return yield* new PullRequestOperationError({
+          operation: "list",
+          detail: "The repository's GitHub account changed. Refresh the inbox to continue.",
+        });
+    }
+    const readable = selected.filter(
+      (project) => viewerResults.get(project.project.id)?.viewer != null,
+    );
+    // A host that could not be read still has projects, and they are absent from the list.
+    // Reporting them keeps "N repositories were unavailable" honest instead of dropping them.
     const unreadable = selected
-      .filter(({ host }) => viewers[host] === undefined)
-      .map(({ project, repository }) => ({
-        projectId: project.id,
-        projectTitle: project.title,
-        message: `${repository} could not be read.`,
+      .filter((project) => viewerResults.get(project.project.id)?.viewer == null)
+      .map((candidate) => ({
+        projectId: candidate.project.id,
+        projectTitle: candidate.project.title,
+        message:
+          candidate.api.withVerifiedCredential === undefined
+            ? `${candidate.repository} could not be read.`
+            : (viewerResults.get(candidate.project.id)?.error?.detail ??
+              `${candidate.repository} could not be read.`),
       }));
     if (readable.length === 0) {
-      const errors = viewerResults.flatMap((result) =>
-        result.error === null || !selected.some(({ host }) => host === result.host)
-          ? []
-          : [result.error],
-      );
+      // Report only selected repositories; prefer an unusable host so the error names its fix.
+      const errors = selected.flatMap((project) => {
+        const error = viewerResults.get(project.project.id)?.error;
+        return error == null ? [] : [error];
+      });
       const blocking = errors.find(isProviderUnusable) ?? errors[0];
       if (blocking) {
         return yield* toPullRequestError("list")(blocking);
@@ -1293,16 +1471,18 @@ export const make = Effect.gen(function* () {
     const limit = input.limit ?? DEFAULT_REPOSITORY_LIST_LIMIT;
     const cursorOf = (project: SupportedProject): ListCursor | undefined =>
       continuation?.get(project.cursorKey);
-
     const readSlice = (
       project: SupportedProject,
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
       {
-        const viewer = viewers[project.host]!;
+        const identity = viewerResults.get(project.project.id)!;
+        const viewer = identity.viewer!;
         const key = project.cursorKey;
-        return project.api
-          .listChangeRequests({
+        return withInboxAccount(
+          project,
+          identity,
+          project.api.listChangeRequests({
             cwd: project.project.workspaceRoot,
             repository: project.repository,
             host: project.host,
@@ -1322,54 +1502,55 @@ export const make = Effect.gen(function* () {
                     resumeAfter: cursor.resumeAfter,
                   },
                 }),
-          })
-          .pipe(
-            observeRead,
-            Effect.map(({ value: page, observedAt }): RepositoryBatch => {
-              // The boundary instant was asked for inclusively, so the rows already sent at it
-              // come back with the slice. Dropping them here rather than asking for strictly
-              // older is what keeps their neighbours at the same instant from being skipped.
-              const items =
-                cursor === undefined
-                  ? page.items
-                  : page.items.filter(
-                      (item) =>
-                        item.updatedAt !== cursor.updatedBefore ||
-                        !cursor.seenAt.includes(item.number),
-                    );
-              return {
-                key,
-                entries: items
-                  .filter((item) => matchesRowFilters(item, input.filters, viewer))
-                  .map((item) => toEntry({ project, item, viewer, observedAt })),
-                errors: [],
-                truncated: page.truncated,
-                nextCursor:
-                  page.continues && page.truncated
-                    ? nextListCursor(
-                        cursor,
-                        page.items,
-                        items,
-                        page.cursorAdvance,
-                        page.resumeAfter,
-                      )
-                    : null,
-              };
-            }),
-            Effect.orElseSucceed((): RepositoryBatch => ({
+          }),
+        ).pipe(
+          observeRead,
+          Effect.map(({ value: page, observedAt }): RepositoryBatch => {
+            // The boundary instant was asked for inclusively, so the rows already sent at it
+            // come back with the slice. Dropping them here rather than asking for strictly
+            // older is what keeps their neighbours at the same instant from being skipped.
+            const items =
+              cursor === undefined
+                ? page.items
+                : page.items.filter(
+                    (item) =>
+                      item.updatedAt !== cursor.updatedBefore ||
+                      !cursor.seenAt.includes(item.number),
+                  );
+            return {
               key,
-              entries: [],
-              errors: [
-                {
-                  projectId: project.project.id,
-                  projectTitle: project.project.title,
-                  message: `${project.repository} could not be read.`,
-                },
-              ],
-              truncated: false,
-              nextCursor: null,
-            })),
-          );
+              entries: items
+                .filter((item) => matchesRowFilters(item, input.filters, viewer))
+                .map((item) => toEntry({ project, item, viewer, observedAt })),
+              errors: [],
+              truncated: page.truncated,
+              nextCursor:
+                page.continues && page.truncated
+                  ? nextListCursor(
+                      cursor,
+                      page.items,
+                      items,
+                      page.cursorAdvance,
+                      page.resumeAfter,
+                      identity.account?.id,
+                    )
+                  : null,
+            };
+          }),
+          Effect.orElseSucceed((): RepositoryBatch => ({
+            key,
+            entries: [],
+            errors: [
+              {
+                projectId: project.project.id,
+                projectTitle: project.project.title,
+                message: `${project.repository} could not be read.`,
+              },
+            ],
+            truncated: false,
+            nextCursor: null,
+          })),
+        );
       }
     };
 
@@ -1407,22 +1588,27 @@ export const make = Effect.gen(function* () {
       const separately = () =>
         Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
       if (readAcross === undefined) return separately();
-      const viewer = viewers[first.host]!;
+      const identity = viewerResults.get(first.project.id)!;
+      const viewer = identity.viewer!;
       const cursor = cursorOf(first);
-      return readAcross({
-        cwd: first.project.workspaceRoot,
-        host: first.host,
-        repositories: chunk.map((project) => project.repository),
-        state: input.state,
-        involvement,
-        viewer,
-        limit,
-        query: input.query,
-        filters: input.filters,
-        ...(cursor === undefined
-          ? {}
-          : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
-      }).pipe(
+      return withInboxAccount(
+        first,
+        identity,
+        readAcross({
+          cwd: first.project.workspaceRoot,
+          host: first.host,
+          repositories: chunk.map((project) => project.repository),
+          state: input.state,
+          involvement,
+          viewer,
+          limit,
+          query: input.query,
+          filters: input.filters,
+          ...(cursor === undefined
+            ? {}
+            : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
+        }),
+      ).pipe(
         observeRead,
         Effect.flatMap(({ value: page, observedAt }) => {
           const rows = new Map<string, Array<ProviderChangeRequest>>();
@@ -1464,7 +1650,14 @@ export const make = Effect.gen(function* () {
                 truncated: page.truncated,
                 nextCursor:
                   page.truncated && boundary !== null
-                    ? listCursorAt(cursorHere, boundary, fetched, items.length)
+                    ? listCursorAt(
+                        cursorHere,
+                        boundary,
+                        fetched,
+                        items.length,
+                        undefined,
+                        identity.account?.id,
+                      )
                     : null,
               });
             },
@@ -1475,6 +1668,9 @@ export const make = Effect.gen(function* () {
       );
     };
 
+    // A host with a search across repositories is asked once for all of them; everyone else is
+    // asked once each. Repositories standing at different points of the same listing are
+    // different questions, so they are grouped by the boundary they carry on from.
     const together = new Map<string, Array<SupportedProject>>();
     const separate: Array<SupportedProject> = [];
     for (const project of readable) {
@@ -1482,7 +1678,7 @@ export const make = Effect.gen(function* () {
         separate.push(project);
         continue;
       }
-      const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+      const key = `${inboxAccountKey(project, viewerResults.get(project.project.id))}\n${cursorOf(project)?.updatedBefore ?? ""}`;
       const group = together.get(key);
       if (group === undefined) together.set(key, [project]);
       else group.push(project);
@@ -1514,13 +1710,18 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * Who this project's host says the reader is. Shared with the listing's own lookup — the same
+   * ten-minute answer per host — so a page that has already listed anything pays nothing for it,
+   * and a host that cannot say leaves it null rather than failing the read it decorates.
+   */
   const viewerOf = (project: SupportedProject): Effect.Effect<string | null> =>
     routingCredential.pipe(
       Effect.flatMap((credential) =>
         credential !== null
           ? Effect.succeed(credential.viewer)
           : resolveViewers([project], new Map()).pipe(
-              Effect.map(([resolved]) => resolved?.viewer ?? null),
+              Effect.map((resolved) => resolved.get(project.project.id)?.viewer ?? null),
             ),
       ),
     );
@@ -1904,7 +2105,8 @@ export const make = Effect.gen(function* () {
     operation: string,
   ): Effect.Effect<string | null, PullRequestError> =>
     resolveViewers([project], new Map(), { allowPaused: true }).pipe(
-      Effect.flatMap(([resolved]) => {
+      Effect.flatMap((results) => {
+        const resolved = results.get(project.project.id);
         const error = resolved?.error ?? null;
         return error === null
           ? Effect.succeed(resolved?.viewer ?? null)
@@ -2544,7 +2746,7 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listStatsUncached",
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
-    const { supported } = yield* listWorkspaceProjects({});
+    const { supported } = yield* listWorkspaceProjects({}, { includeCheckouts: true });
     const byProject = new Map(supported.map((project) => [project.project.id, project]));
     const wanted = new Map<
       string,
@@ -2552,6 +2754,8 @@ export const make = Effect.gen(function* () {
     >();
     for (const ref of input.refs) {
       const project = byProject.get(ref.projectId);
+      // The repository travels through the client, so it is checked against the project's own
+      // remote rather than being handed to a provider verbatim.
       if (
         project === undefined ||
         project.api.listChangeRequestStats === undefined ||
@@ -2561,50 +2765,61 @@ export const make = Effect.gen(function* () {
       }
       wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
     }
-    const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
+    const viewers = yield* resolveViewers(
+      [...new Set([...wanted.values()].map(({ project }) => project))].filter(
+        (project) => project.api.withVerifiedCredential !== undefined,
+      ),
+      new Map(),
+    );
+    const byAccount = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
-      const held = byHost.get(entry.project.host);
-      if (held === undefined) byHost.set(entry.project.host, [entry]);
+      const identity = viewers.get(entry.project.project.id);
+      if (identity?.error != null) continue;
+      const key = inboxAccountKey(entry.project, identity);
+      const held = byAccount.get(key);
+      if (held === undefined) byAccount.set(key, [entry]);
       else held.push(entry);
     }
     const stats = yield* Effect.forEach(
-      [...byHost.values()],
+      [...byAccount.values()],
       (entries) => {
         const first = entries[0]!;
         const readStats = first.project.api.listChangeRequestStats;
         if (readStats === undefined) return Effect.succeed<ReadonlyArray<PullRequestDiffStat>>([]);
-        const projectsByRepository = new Map(
-          entries.map((entry) => [
-            `${entry.project.repository.toLowerCase()} ${entry.number}`,
-            entry.project,
-          ]),
-        );
-        return readStats({
-          cwd: first.project.project.workspaceRoot,
-          host: first.project.host,
-          changeRequests: entries.map((entry) => ({
-            repository: entry.project.repository,
-            number: entry.number,
-          })),
-        }).pipe(
+        const references = new Map<string, Array<(typeof entries)[number]>>();
+        for (const entry of entries) {
+          const key = `${entry.project.repository.toLowerCase()} ${entry.number}`;
+          const held = references.get(key);
+          if (held === undefined) references.set(key, [entry]);
+          else held.push(entry);
+        }
+        return withInboxAccount(
+          first.project,
+          viewers.get(first.project.project.id),
+          readStats({
+            cwd: first.project.project.workspaceRoot,
+            host: first.project.host,
+            changeRequests: [...references.values()].map(([entry]) => ({
+              repository: entry!.project.repository,
+              number: entry!.number,
+            })),
+          }),
+        ).pipe(
           Effect.map((read) =>
-            read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> => {
-              const project = projectsByRepository.get(
-                `${stat.repository.toLowerCase()} ${stat.number}`,
-              );
-              return project === undefined
-                ? []
-                : [
-                    {
-                      projectId: project.project.id,
-                      repository: project.repository,
-                      number: stat.number,
-                      additions: stat.additions,
-                      deletions: stat.deletions,
-                    },
-                  ];
-            }),
+            read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> =>
+              (references.get(`${stat.repository.toLowerCase()} ${stat.number}`) ?? []).map(
+                ({ project }) => ({
+                  projectId: project.project.id,
+                  repository: project.repository,
+                  number: stat.number,
+                  additions: stat.additions,
+                  deletions: stat.deletions,
+                }),
+              ),
+            ),
           ),
+          // A row without its counts is a row the page already draws without them, so a host
+          // that could not answer costs the numbers rather than the answer.
           Effect.orElseSucceed((): ReadonlyArray<PullRequestDiffStat> => []),
         );
       },

@@ -15,6 +15,8 @@ import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 export interface SourceControlMediaRequest {
+  /** Checkout whose selected account serves this media, when available. */
+  readonly cwd?: string;
   /** A `fetchUrl` this host's definition returned from `mediaUrl`. */
   readonly url: string;
   /** Request headers to forward, such as `range`. */

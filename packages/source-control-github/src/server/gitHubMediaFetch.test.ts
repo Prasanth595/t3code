@@ -16,6 +16,7 @@ describe("GitHubMediaFetch", () => {
       const request = {
         url: "https://raw.githubusercontent.com/owner/repo/main/shot.png",
         headers: {},
+        cwd: "/repo",
       };
       expect((yield* fetchMedia(request))?.status).toBe(404);
       expect((yield* fetchMedia(request))?.status).toBe(200);
@@ -26,14 +27,17 @@ describe("GitHubMediaFetch", () => {
       Effect.provide(
         Layer.mock(GitHubCredentials.GitHubCredentials)({
           get: (host) =>
-            ++lookups === 1
-              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-              : Effect.succeed({
-                  host,
-                  token: Redacted.make("signed-in"),
-                  source: "gh" as const,
-                  fingerprint: "fingerprint",
-                }),
+            Effect.gen(function* () {
+              expect(yield* GitHubCredentials.RepositoryDirectory).toBe("/repo");
+              return yield* ++lookups === 1
+                ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+                : Effect.succeed({
+                    host,
+                    token: Redacted.make("signed-in"),
+                    source: "gh" as const,
+                    fingerprint: "fingerprint",
+                  });
+            }),
         }),
       ),
       Effect.provideService(

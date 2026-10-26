@@ -40,7 +40,9 @@ export const make = Effect.gen(function* () {
   );
 
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
-    const bearer = yield* token;
+    const bearer = yield* token.pipe(
+      Effect.provideService(GitHubCredentials.RepositoryDirectory, request.cwd ?? null),
+    );
     let target = request.url;
     for (let hop = 0; ; hop += 1) {
       const authorization =

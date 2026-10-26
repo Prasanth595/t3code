@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { ChildProcessSpawner } from "effect/process";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -16,13 +17,28 @@ const unknownContext = (baseUrl: string) => ({
   remoteUrl: "git@code.example.test:team/project.git",
 });
 
-// The default host dies on any command, so refinement never reaches `gh`.
-const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"]) =>
+const makeDiscovery = (
+  credential: GitHubRest.GitHubRest["Service"]["credential"],
+  hostname = "code.example.test",
+) =>
   GitHubSourceControlProvider.makeDiscovery.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
-        TestSourceControlHost.layer(),
+        TestSourceControlHost.layer({
+          process: {
+            run: ({ command }) => {
+              assert.strictEqual(command, "ssh");
+              return Effect.succeed({
+                stdout: `hostname ${hostname}\n`,
+                stderr: "",
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              });
+            },
+          },
+        }),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
@@ -76,4 +92,25 @@ it.effect("asks for no credential when the identity resolver left the base URL e
     );
     assert.deepStrictEqual(hosts, []);
   }),
+);
+
+it.effect.each(["github-work", "github.com-work", "review-alias"])(
+  "discovers SSH alias %s on github.com before looking up credentials",
+  (alias) =>
+    Effect.gen(function* () {
+      const discovery = yield* makeDiscovery(
+        () => Effect.die("A known GitHub alias needs no credential probe"),
+        "github.com",
+      );
+      if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+      const provider = yield* discovery.refineUnknownRemote({
+        cwd: "/repo",
+        context: {
+          ...unknownContext(`https://${alias}`),
+          remoteUrl: `git@${alias}:team/project.git`,
+        },
+      });
+      assert.strictEqual(provider?.kind, "github");
+      assert.strictEqual(provider?.baseUrl, "https://github.com");
+    }),
 );

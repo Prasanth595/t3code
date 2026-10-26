@@ -8,6 +8,8 @@ import {
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
+const decodeListResult = Schema.decodeSync(PullRequestListResult);
+
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
 const LIST_RESULT: PullRequestListResult = {
@@ -60,6 +62,18 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
+  it("round-trips per-entry accounts while accepting older host-only results", () => {
+    const result = {
+      ...LIST_RESULT,
+      entries: [
+        { ...LIST_RESULT.entries[0]!, viewer: "work-user" },
+        { ...LIST_RESULT.entries[0]!, number: 2, viewer: "personal-user" },
+      ],
+    };
+    const codec = Schema.toCodecJson(PullRequestListResult);
+    expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toStrictEqual(result);
+    expect(decodeListResult(LIST_RESULT).entries[0]?.viewer).toBeUndefined();
+  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema

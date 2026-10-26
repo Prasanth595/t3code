@@ -316,6 +316,9 @@ export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
 export const PullRequestListEntry = Schema.Struct({
   stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
+  /**
+   * The host below which `repository` is addressed. Accounts on that host are selected per checkout.
+   */
   host: TrimmedNonEmptyString,
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
@@ -335,6 +338,8 @@ export const PullRequestListEntry = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   observedAt: Schema.optional(Schema.Finite),
+  /** The checkout's signed-in login. Older servers only provide the host-wide viewer map. */
+  viewer: Schema.optional(TrimmedNonEmptyString),
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
   reviewDecision: Schema.optional(PullRequestReviewDecision),
@@ -342,6 +347,13 @@ export const PullRequestListEntry = Schema.Struct({
 });
 export type PullRequestListEntry = typeof PullRequestListEntry.Type;
 
+/**
+ * Where each repository a listing already reached carries on from, keyed "<host> <repository>".
+ * A repository uses its first readable checkout's account within a listing.
+ *
+ * Each value is opaque: only the provider that issued one knows what it means, and the page hands
+ * back exactly what it was given rather than composing one.
+ */
 export const PullRequestListCursors = Schema.Record(
   TrimmedNonEmptyString,
   TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
@@ -380,7 +392,10 @@ export const PullRequestListProjectError = Schema.Struct({
 export type PullRequestListProjectError = typeof PullRequestListProjectError.Type;
 
 export const PullRequestListResult = Schema.Struct({
-  /** Unreadable hosts are absent; JSON codecs reject optional record values. */
+  /**
+   * A fallback signed-in login per host for older list entries. An entry's own viewer takes
+   * precedence when present. Hosts with no readable account are absent.
+   */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),
   /** Re-sort after appending: one repository's older slice may outrank another's existing rows. */
