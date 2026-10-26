@@ -1005,6 +1005,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         finding,
       }),
     );
@@ -1020,6 +1022,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         reviewThreads: detail.reviewThreads,
         comments: detail.comments,
         checks: checksStale ? [] : detail.checks,

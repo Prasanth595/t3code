@@ -858,6 +858,8 @@ export function buildFixFindingsHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   readonly comments: ReadonlyArray<PullRequestComment>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
@@ -936,7 +938,10 @@ export function buildFixFindingsHandoff(input: {
           ]
         : []),
     ].join("\n"),
-    reviewComments: includedThreads.map((thread) => reviewThreadContext(thread, input.number)),
+    reviewComments: [
+      pullRequestContextComment(input, []),
+      ...includedThreads.map((thread) => reviewThreadContext(thread, input.number)),
+    ],
   };
 }
 
@@ -962,6 +967,8 @@ export function buildFixFindingHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
   readonly finding: PullRequestFinding;
 }): FixFindingsHandoff {
   const preamble = handoffPreamble(input);
@@ -971,7 +978,10 @@ export function buildFixFindingHandoff(input: {
         "Fix the review finding attached to this message. It is attached on the line it was written against.",
         ...preamble,
       ].join("\n"),
-      reviewComments: [reviewThreadContext(input.finding.thread, input.number)],
+      reviewComments: [
+        pullRequestContextComment(input, []),
+        reviewThreadContext(input.finding.thread, input.number),
+      ],
     };
   }
   if (input.finding.kind === "comment") {
@@ -984,7 +994,7 @@ export function buildFixFindingHandoff(input: {
         ...preamble,
         `> ${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`,
       ].join("\n"),
-      reviewComments: [],
+      reviewComments: [pullRequestContextComment(input, [])],
     };
   }
   const check = input.finding.check;
@@ -994,7 +1004,7 @@ export function buildFixFindingHandoff(input: {
       ...preamble,
       `> ${boundedField(check.description ? `${check.name}: ${check.description}` : check.name)}`,
     ].join("\n"),
-    reviewComments: [],
+    reviewComments: [pullRequestContextComment(input, [])],
   };
 }
 

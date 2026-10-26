@@ -20,6 +20,7 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
+  buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
@@ -587,6 +588,8 @@ describe("fix findings handoff", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
     comments: [] as ReadonlyArray<PullRequestComment>,
     commentsTruncated: false,
   };
@@ -629,6 +632,7 @@ describe("fix findings handoff", () => {
       checks: [],
     });
     expect(handoff.reviewComments).toEqual([
+      expect.objectContaining({ pullRequest: expect.objectContaining({ url: base.url }) }),
       expect.objectContaining({
         filePath: "apps/web/src/page.tsx",
         rangeLabel: "L12",
@@ -647,8 +651,8 @@ describe("fix findings handoff", () => {
       reviewThreads: [thread("x".repeat(5_000))],
       checks: [],
     });
-    expect(handoff.reviewComments[0]?.text).toHaveLength(1_000);
-    expect(handoff.reviewComments[0]?.text.endsWith("...")).toBe(true);
+    expect(handoff.reviewComments[1]?.text).toHaveLength(1_000);
+    expect(handoff.reviewComments[1]?.text.endsWith("...")).toBe(true);
   });
 
   it("keeps the newest threads and the failing checks when it has to cut", () => {
@@ -660,7 +664,7 @@ describe("fix findings handoff", () => {
       checks: [failingCheck],
     });
     const texts = handoff.reviewComments.map((comment) => comment.text);
-    expect(texts).toHaveLength(19);
+    expect(texts).toHaveLength(20);
     expect(texts.at(-1)).toBe("reviewer: finding 24");
     expect(texts).not.toContain("reviewer: finding 0");
     expect(handoff.prompt).toContain("typecheck");
@@ -689,6 +693,8 @@ describe("findings that cannot be attached", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
     reviewThreads: [] as ReadonlyArray<PullRequestReviewThread>,
     checks: [] as ReadonlyArray<PullRequestCheck>,
     commentsTruncated: false,
@@ -708,7 +714,9 @@ describe("findings that cannot be attached", () => {
   it("carries a review submitted with words but no line, which has nothing to attach to", () => {
     const handoff = buildFixFindingsHandoff({ ...base, comments: [review] });
 
-    expect(handoff.reviewComments).toEqual([]);
+    expect(handoff.reviewComments).toEqual([
+      expect.objectContaining({ pullRequest: expect.objectContaining({ url: base.url }) }),
+    ]);
     expect(handoff.prompt).toContain("revert the middleware change");
     expect(handoff.prompt).not.toContain("No unresolved review findings");
   });
@@ -739,7 +747,7 @@ describe("findings that cannot be attached", () => {
       comments: [{ ...review, id: attachedId, kind: "review-comment", body: "rename the helper" }],
     });
 
-    expect(handoff.reviewComments).toHaveLength(1);
+    expect(handoff.reviewComments).toHaveLength(2);
     expect(handoff.prompt).not.toContain("rename the helper");
   });
 });
@@ -751,6 +759,8 @@ describe("one finding handed over on its own", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
   };
 
   const reviewThread: PullRequestReviewThread = {
@@ -770,6 +780,50 @@ describe("one finding handed over on its own", () => {
       },
     ],
   };
+
+  it("replaces an earlier ask instruction when fixing one or all findings", () => {
+    const metadata = { ...base, state: "open" as const, isDraft: false };
+    const ask = buildAskAboutPullRequestHandoff(metadata);
+    for (const fix of [
+      buildFixFindingHandoff({ ...metadata, finding: { kind: "thread", thread: reviewThread } }),
+      buildFixFindingHandoff({
+        ...metadata,
+        finding: {
+          kind: "check",
+          check: { name: "lint", status: "failure", description: null, url: null },
+        },
+      }),
+      buildFixFindingHandoff({
+        ...metadata,
+        finding: {
+          kind: "comment",
+          comment: {
+            id: "review",
+            kind: "review",
+            reviewState: null,
+            author: null,
+            body: "fix it",
+            createdAt: "2026-07-03T00:00:00Z",
+            url: null,
+            path: null,
+          },
+        },
+      }),
+      buildFixFindingsHandoff({
+        ...metadata,
+        reviewThreads: [reviewThread],
+        comments: [],
+        checks: [],
+        commentsTruncated: false,
+      }),
+    ]) {
+      const next = appendHandoff(ask, fix);
+      const contexts = next.reviewComments.filter((comment) => comment.pullRequest !== undefined);
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]?.text).not.toContain("Do not change any code");
+      expect(contexts[0]?.pullRequest).toEqual(metadata);
+    }
+  });
 
   it("marks the pull request's own words as untrusted whatever the finding is", () => {
     for (const handoff of [
@@ -1026,6 +1080,8 @@ describe("a second handoff into the same composer", () => {
         number,
         title: "Add the pull requests page",
         url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+        state: "open",
+        isDraft: false,
         headBranch: `feat/${number}`,
         baseBranch: "main",
         reviewThreads: [],
