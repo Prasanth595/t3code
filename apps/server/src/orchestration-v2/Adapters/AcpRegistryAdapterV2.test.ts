@@ -1069,6 +1069,31 @@ describe("AcpRegistryAdapterV2", () => {
       );
       const saved = yield* openCursor({ instanceId, model: "composer-2[fast=true]" });
       assert.equal(saved?.currentModelId, "composer-2");
+      assert.deepInclude(
+        saved?.configOptions.find((option) => option.id === "fast"),
+        { currentValue: "true" },
+      );
+      const preset = yield* openCursor({ instanceId, model: "gpt-5.4[effort=high,fast=false]" });
+      assert.deepInclude(
+        preset?.configOptions.find((option) => option.id === "reasoning"),
+        { currentValue: "high" },
+      );
+      const legacy = yield* openCursor({
+        instanceId,
+        model: "gpt-5.4[effort=high,context=1m,fast=true]",
+        options: [{ id: "reasoning", value: "extra-high" }],
+      });
+      assert.equal(legacy?.currentModelId, "gpt-5.4");
+      for (const [id, value] of [
+        ["reasoning", "extra-high"],
+        ["context", "1m"],
+        ["fast", "true"],
+      ]) {
+        assert.deepInclude(
+          legacy?.configOptions.find((option) => option.id === id),
+          { currentValue: value },
+        );
+      }
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

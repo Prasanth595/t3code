@@ -1,3 +1,4 @@
+import type { ModelSelection } from "@t3tools/contracts";
 import type { AcpRegistrySettings } from "../settings.ts";
 
 // Without this flag Cursor lists one fixed preset per model, such as
@@ -14,7 +15,20 @@ export function isCursorAcpAgent(settings: AcpRegistrySettings): boolean {
   );
 }
 
-// Threads saved before the flag keep a preset id; open its plain model instead.
-export function cursorBaseModelId(model: string): string {
-  return model.replace(/\[[^\]]*\]$/, "");
+// Preserve preset values when opening threads saved before parameterized negotiation.
+export function normalizeCursorModelSelection(selection: ModelSelection): ModelSelection {
+  const preset = /^(.*)\[([^\]]*)\]$/.exec(selection.model);
+  if (preset === null) return selection;
+  const explicit = selection.options ?? [];
+  const options = preset[2]!.split(",").flatMap((entry) => {
+    const [key, value] = entry.split("=");
+    const id = key === "effort" ? "reasoning" : key;
+    return id !== undefined &&
+      ["reasoning", "context", "fast"].includes(id) &&
+      value &&
+      !explicit.some((option) => option.id === id)
+      ? [{ id, value }]
+      : [];
+  });
+  return { ...selection, model: preset[1]!, options: [...options, ...explicit] };
 }
