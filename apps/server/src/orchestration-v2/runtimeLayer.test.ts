@@ -37,6 +37,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -6968,7 +6969,32 @@ describe("subagent lifecycle", () => {
         .pipe(Effect.map(Option.getOrThrow));
     const archived = (id: ThreadId) =>
       store.getThread(id).pipe(Effect.map((thread) => thread.archivedAt !== null));
-    return { threads, store, outbox, worker, now, set, command, cascadeEffect, archived };
+    const runPendingCascade = Effect.fnUntraced(function* (commandId: string) {
+      const effect = Option.getOrThrow(
+        yield* outbox.get(`effect:${commandId}:subagent-threads.cascade`),
+      );
+      assert.equal(effect.status, "pending");
+      if (effect.request.type !== "subagent-threads.cascade") throw new Error("Expected cascade");
+      yield* threads.cascadeSubagentLifecycle({
+        commandId: effect.commandId,
+        threadId: effect.threadId,
+        operation: effect.request.operation,
+        sourceSequence: effect.request.sourceSequence,
+        ancestorThreadId: effect.request.ancestorThreadId,
+      });
+    });
+    return {
+      threads,
+      store,
+      outbox,
+      worker,
+      now,
+      set,
+      command,
+      cascadeEffect,
+      archived,
+      runPendingCascade,
+    };
   });
 
   it.effect(
@@ -7051,7 +7077,7 @@ describe("subagent lifecycle", () => {
           });
         }
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        assert.isAbove((yield* maintenance.compactEventStore).deletedEventCount, 0);
+        assert.isAbove((yield* maintenance.compactEventStore()).deletedEventCount, 0);
         const sql = yield* SqlClient.SqlClient;
         assert.deepEqual(
           yield* sql`
@@ -7084,21 +7110,7 @@ describe("subagent lifecycle", () => {
     () =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const runPendingCascade = Effect.fnUntraced(function* (commandId: string) {
-          const effect = Option.getOrThrow(
-            yield* f.outbox.get(`effect:${commandId}:subagent-threads.cascade`),
-          );
-          assert.equal(effect.status, "pending");
-          if (effect.request.type !== "subagent-threads.cascade")
-            throw new Error("Expected cascade");
-          yield* f.threads.cascadeSubagentLifecycle({
-            commandId: effect.commandId,
-            threadId: effect.threadId,
-            operation: effect.request.operation,
-            sourceSequence: effect.request.sourceSequence,
-            ancestorThreadId: effect.request.ancestorThreadId,
-          });
-        });
+        const { runPendingCascade } = f;
 
         yield* f.command("archive");
         yield* runPendingCascade("archive:parent");
@@ -7158,6 +7170,52 @@ describe("subagent lifecycle", () => {
         for (const id of [parent, app, native, grandchild]) {
           assert.isFalse(yield* f.archived(id), `${id} restored after superseded undo`);
         }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "continues a newer parent archive through a late ancestor-owned grandchild archive",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const leaf = ThreadId.make("great-grandchild");
+        yield* f.threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create:great-grandchild"),
+          threadId: leaf,
+          projectId: ProjectId.make("project"),
+          title: leaf,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* f.set(leaf, {
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: grandchild,
+            relationshipToParent: "subagent",
+          },
+        });
+        yield* f.command("archive", leaf);
+        yield* f.command("archive");
+        yield* f.runPendingCascade("archive:parent");
+        yield* f.command("unarchive", leaf);
+        yield* f.command("unarchive");
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-final:parent"),
+          threadId: parent,
+        });
+        yield* f.runPendingCascade("archive:parent:subagent:app");
+        yield* f.worker.drain();
+        assert.isTrue(
+          yield* f.archived(leaf),
+          "the final parent archive reaches the great-grandchild",
+        );
       }).pipe(Effect.provide(layerTest)),
   );
 

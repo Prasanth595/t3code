@@ -1238,16 +1238,24 @@ const make = Effect.gen(function* () {
         operation === "delete" ? null : yield* receipts.getLatestLifecycle(input.threadId);
       const { thread } = yield* orchestrator.getThreadRecords(input.threadId, []);
       const limit = yield* DispatchModeLimit;
+      const ancestorThreadId = input.ancestorThreadId ?? input.threadId;
       if (
         (limit !== undefined && exceededDispatchModeLimit(limit, thread) !== undefined) ||
         (operation !== "delete" &&
           (thread.deletedAt !== null ||
             (lifecycle !== null &&
               lifecycle.resultSequence > sourceSequence &&
-              lifecycle.commandId !== input.commandId)))
+              lifecycle.commandId !== input.commandId &&
+              !(yield* CommandReceiptStore.lifecycleOwnedByAncestor(
+                lifecycle,
+                thread,
+                ancestorThreadId,
+                receipts,
+                (id) =>
+                  orchestrator.getThreadRecords(id, []).pipe(Effect.map(({ thread }) => thread)),
+              )))))
       )
         return;
-      const ancestorThreadId = input.ancestorThreadId ?? input.threadId;
       const children = yield* orchestrator.getSubagentChildThreads(input.threadId, {
         includeDeleted: operation === "delete",
       });
@@ -1288,7 +1296,7 @@ const make = Effect.gen(function* () {
         }),
       );
       // Finish healthy siblings before reporting a failure to the durable worker.
-      if (failures[0] !== undefined) return yield* Effect.fail(failures[0]);
+      if (failures[0] !== undefined) return yield* failures[0];
     });
     return threadDispatch.withLock(input.threadId, walk);
   };

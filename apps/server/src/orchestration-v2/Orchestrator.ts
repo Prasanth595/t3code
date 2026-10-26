@@ -98,7 +98,7 @@ import {
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreV2, lifecycleOwnedByAncestor } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import {
@@ -12119,56 +12119,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
-  const lifecycleOwnedByAncestor = Effect.fnUntraced(function* (
-    lifecycle: CommandReceiptV2,
-    thread: OrchestrationV2AppThread,
-    ancestorThreadId: ThreadId,
-  ) {
-    const commandType = lifecycle.commandType;
-    const throughSequence = lifecycle.resultSequence;
-    const visited = new Set<ThreadId>();
-    // Follow retained receipts along actual subagent edges, stopping at an
-    // independent action. An ID suffix alone does not establish ownership.
-    while (thread.id !== ancestorThreadId) {
-      if (visited.has(thread.id)) return false;
-      visited.add(thread.id);
-      const parentId = thread.lineage.parentThreadId;
-      if (parentId === null || thread.lineage.relationshipToParent !== "subagent") return false;
-      const suffix = `:subagent:${thread.id}`;
-      let sourceCommandId: CommandId | undefined;
-      for (let retry = 0; retry < 32; retry++) {
-        const ending = retry === 0 ? suffix : `${suffix}:retry:${retry}`;
-        if (lifecycle.commandId.length > ending.length && lifecycle.commandId.endsWith(ending)) {
-          sourceCommandId = CommandId.make(lifecycle.commandId.slice(0, -ending.length));
-          const derived = `${sourceCommandId}${suffix}`;
-          for (let earlier = 0; earlier < retry; earlier++) {
-            const rejected = yield* commandReceipts.getByCommandId(
-              CommandId.make(earlier === 0 ? derived : `${derived}:retry:${earlier}`),
-            );
-            if (Option.isNone(rejected) || rejected.value.status !== "rejected") return false;
-          }
-          break;
-        }
-      }
-      if (sourceCommandId === undefined) return false;
-      const source = yield* commandReceipts.getByCommandId(sourceCommandId);
-      if (
-        Option.isNone(source) ||
-        source.value.status !== "accepted" ||
-        source.value.threadId !== parentId ||
-        (source.value.commandType !== commandType &&
-          source.value.commandType !== "subagent-threads.cascade") ||
-        source.value.resultSequence > throughSequence
-      )
-        return false;
-      const parent = yield* projectionStore.getThread(parentId);
-      if (parent.projectId !== thread.projectId) return false;
-      lifecycle = source.value;
-      thread = parent;
-    }
-    return lifecycle.commandType === commandType;
-  });
-
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
@@ -12258,9 +12208,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       const owned =
         lifecycle !== null &&
-        (yield* lifecycleOwnedByAncestor(lifecycle, thread, cascade.ancestorThreadId).pipe(
-          mapDispatchError(command),
-        ));
+        (yield* lifecycleOwnedByAncestor(
+          lifecycle,
+          thread,
+          cascade.ancestorThreadId,
+          commandReceipts,
+          projectionStore.getThread,
+        ).pipe(mapDispatchError(command)));
       if (
         thread.deletedAt !== null ||
         (command.type === "thread.archive"
@@ -12785,10 +12739,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
-    getSubagentChildThreads: (threadId, options) =>
-      projectionStore
-        .getSubagentChildThreads(threadId, options)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getSubagentChildThreads: Effect.fn("OrchestratorV2.getSubagentChildThreads")(
+      function (threadId, options) {
+        return projectionStore
+          .getSubagentChildThreads(threadId, options)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore
         .getThreadProjection(threadId)
