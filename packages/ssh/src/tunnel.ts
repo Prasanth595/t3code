@@ -558,12 +558,20 @@ if [ -z "$DEFAULT_SERVER_HOME" ]; then
   printf 'Could not resolve the remote T3 home.\\n' >&2
   exit 1
 fi
+# kill -0 also succeeds for a server that exited but was not reaped yet, so
+# a zombie does not count as running. Without ps to tell, trust kill -0.
+server_running() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
+    *Z*) return 1 ;;
+  esac
+}
 PREVIOUS_SERVER_HOME="$(cat "$SERVER_HOME_FILE" 2>/dev/null || printf '%s' "$HOME/.t3")"
 # A home change must not redirect pairing to another environment while the
 # previously managed server is still running. Leave it for an explicit stop.
 if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ] && [ "$(cat "$MANAGED_FILE" 2>/dev/null || true)" = "managed" ]; then
   PREVIOUS_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-  if [ -n "$PREVIOUS_PID" ] && kill -0 "$PREVIOUS_PID" 2>/dev/null; then
+  if server_running "$PREVIOUS_PID"; then
     printf 'The SSH-managed server still uses %s. Stop it before changing the T3 home to %s.\\n' "$PREVIOUS_SERVER_HOME" "$DEFAULT_SERVER_HOME" >&2
     exit 1
   fi
@@ -604,14 +612,6 @@ wait_for_pid_exit() {
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
-}
-# kill -0 also succeeds for a server that exited but was not reaped yet, so
-# a zombie does not count as running. Without ps to tell, trust kill -0.
-server_running() {
-  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
-  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
-    *Z*) return 1 ;;
-  esac
 }
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then

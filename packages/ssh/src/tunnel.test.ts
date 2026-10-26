@@ -189,6 +189,12 @@ switch (args[1]) {
 }`,
           { mode: 0o700 },
         );
+        yield* fs.writeFileString(
+          path.join(directory, "ps"),
+          '#!/bin/sh\nif [ "$T3_FIXTURE_ZOMBIE" = "1" ]; then printf Z; else exec /bin/ps "$@"; fi\n',
+          { mode: 0o700 },
+        );
+        let zombie = "0";
         let readyPort = "41773";
         const localSsh = ChildProcessSpawner.make((command) => {
           assert.strictEqual(command._tag, "StandardCommand");
@@ -198,7 +204,8 @@ switch (args[1]) {
               ...command.options,
               env: {
                 HOME: directory,
-                PATH: "/usr/bin:/bin",
+                PATH: `${directory}:/usr/bin:/bin`,
+                T3_FIXTURE_ZOMBIE: zombie,
                 T3CODE_HOME: customHome,
                 T3_FIXTURE_READY_PORT: readyPort,
               },
@@ -238,6 +245,10 @@ switch (args[1]) {
           yield* fs.readFileString(path.join(stateDir, "run-t3.sh")),
           "old runner stays intact",
         );
+        zombie = "1";
+        readyPort = "41773";
+        assert.deepEqual(yield* launch, { remotePort: 41773, remoteServerKind: "external" });
+        assert.isTrue(yield* external.isRunning);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
