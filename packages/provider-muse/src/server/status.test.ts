@@ -4,6 +4,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
@@ -135,6 +136,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
   it.effect("publishes normalized machine skills and their availability", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const fixture = {
           skills: [
             {
@@ -188,14 +190,14 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
           },
           {
             name: "git",
-            path: "/home/muse-test/.agents/skills/git/SKILL.md",
+            path: path.join("/home/muse-test", ".agents/skills/git/SKILL.md"),
             scope: "user",
             description: "My Git workflow",
             enabled: true,
           },
           {
             name: "off",
-            path: "/home/muse-test/.muse/skills/off/SKILL.md",
+            path: path.join("/home/muse-test", ".muse/skills/off/SKILL.md"),
             scope: "user",
             enabled: false,
           },
@@ -207,10 +209,11 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
   it.effect("discovers skills for each workspace and reports failed refreshes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-workspace-test-" });
-      const first = `${directory}/first`;
-      const second = `${directory}/second`;
-      const failed = `${directory}/failed`;
+      const first = path.join(directory, "first");
+      const second = path.join(directory, "second");
+      const failed = path.join(directory, "failed");
       for (const cwd of [first, second, failed]) yield* fs.makeDirectory(cwd);
       const fixture = {
         skills: [
@@ -249,7 +252,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(snapshot.skills).toEqual([
           {
             name: "local",
-            path: `${cwd}/.agents/skills/local/SKILL.md`,
+            path: path.join(cwd, ".agents/skills/local/SKILL.md"),
             scope: "project",
             enabled: true,
             userInvocationOnly: true,
