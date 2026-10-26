@@ -226,6 +226,11 @@ export default defineConfig({
       "unicorn/no-array-reverse": "off",
       "react/no-object-type-as-default-prop": "off",
       "react/jsx-no-constructed-context-values": "off",
+      "react/memo-dependencies": "error",
+      "react/purity": "error",
+      "react/refs": "error",
+      "react/exhaustive-effect-dependencies": "error",
+      "react/set-state-in-effect": "error",
       "react/immutability": "error",
       "react/no-array-index-key": "error",
       "react/no-unstable-nested-components": "error",
@@ -579,10 +584,10 @@ export default defineConfig({
           "react/jsx-no-constructed-context-values": "off",
           "react/memo-dependencies": "error",
           "react/preserve-manual-memoization": "error",
-          // oxlint 1.88 treats `new Date()` as impure (oxc#26894) and also flags it inside event
-          // handlers (oxc#27309). The compiler we ship (oxc-transform-react) still compiles
-          // those files, and reactCompilerCoverage.test.ts fails on real bailouts.
-          "react/purity": "warn",
+          // Render-time clock reads use @t3tools/client-runtime/clock or state seeded with the
+          // time; any other read carries a suppression that says why. oxlint also flags time reads
+          // inside event handlers (oxc#27309); those suppressions cite it.
+          "react/purity": "error",
           "react/refs": "error",
           "react/set-state-in-effect": "error",
           "react/set-state-in-render": "error",
