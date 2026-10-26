@@ -10,6 +10,7 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { sourceControlDefinitions } from "../../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
 
@@ -93,6 +95,11 @@ export interface LaunchRequest {
   /** The first message, which starts the first run. */
   readonly message: string;
   readonly model: Model;
+  /**
+   * The pull request the thread continues, linked to the thread at launch. Absent for a plain
+   * start and for a resume from an earlier run that left no pull request.
+   */
+  readonly pullRequestUrl?: string;
 }
 
 /** What `launch` returns. */
@@ -450,6 +457,42 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })),
   );
 
+  /**
+   * Never fails: the thread exists and the launch is recorded either way, so a link that cannot
+   * be made is logged and dropped. The command id derives from the launch's, so a launch sent
+   * again does not link twice.
+   */
+  const linkPullRequest = (launchCommandId: string, threadId: ThreadId, url: string) =>
+    Effect.gen(function* () {
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+      if (parsed === undefined) {
+        return yield* Effect.logWarning("factory could not read the pull request URL to link", {
+          threadId,
+          pullRequestUrl: url,
+        });
+      }
+      const commandId = yield* decodeCommandId(`${launchCommandId}:pull-request-link`);
+      yield* management.dispatch({
+        type: "thread.pull-request.link",
+        commandId,
+        threadId,
+        host: parsed.host,
+        repository: parsed.repository,
+        number: parsed.number,
+        url,
+        source: "agent",
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause as Cause.Cause<never>)
+          : Effect.logWarning("factory could not link the pull request to the launched thread", {
+              threadId,
+              pullRequestUrl: url,
+            }),
+      ),
+    );
+
   const launch: FactorySessions["Service"]["launch"] = Effect.fn("Sessions.launch")(
     function* (request) {
       const commandId = yield* decodeCommandId(request.commandId);
@@ -475,6 +518,9 @@ export const make = Effect.gen(function* () {
         createdBy: "user",
         creationSource: "server",
       });
+      if (request.pullRequestUrl !== undefined) {
+        yield* linkPullRequest(request.commandId, result.threadId, request.pullRequestUrl);
+      }
       return {
         threadId: result.threadId as string,
         worktreePath: result.projection.thread.worktreePath,
