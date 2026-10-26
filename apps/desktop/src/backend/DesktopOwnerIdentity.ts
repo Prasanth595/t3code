@@ -13,13 +13,9 @@ export class DesktopOwnerIdentity extends Context.Service<
   DesktopOwnerIdentity,
   {
     /**
-     * This desktop installation's stable identity for the T3 home. The
-     * desktop hands it to the server it starts, and the server persists it in
-     * its runtime record, so a later launch can tell its own leftover apart
-     * from a server the user started by hand.
-     *
-     * It is not a credential: it only says which desktop installation
-     * started a server.
+     * Stable identity of this desktop installation for the T3 home. The server
+     * persists it, so a later launch can tell its own leftover from a foreign
+     * server. Not a credential.
      */
     readonly ownerId: Effect.Effect<string, PlatformError.PlatformError>;
   }
@@ -28,7 +24,7 @@ export class DesktopOwnerIdentity extends Context.Service<
 const { logWarning: logOwnerIdentityWarning } =
   DesktopObservability.makeComponentLogger("desktop-owner-identity");
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -51,7 +47,7 @@ export const make = Effect.gen(function* () {
             cause.reason._tag === "NotFound"
               ? Effect.succeed(Option.none<string>())
               : Effect.fail(cause),
-          onSuccess: (contents) => Effect.succeed(Option.some(contents)),
+          onSuccess: (contents) => Effect.succeedSome(contents),
         }),
       );
       if (Option.isSome(existing)) {

@@ -41,20 +41,10 @@ const decodeServerRuntimeRecord = Schema.decodeUnknownEffect(
 );
 
 /**
- * How the recorded owner of the T3 home relates to this desktop app.
- *
- * - `none`: nobody owns the home. The desktop may start its own server.
- * - `healthy`: a server is running and answering its environment descriptor.
- *   The desktop must not start a second writer for the same home.
- * - `stranded`: a server this desktop started is still running and holds the
- *   home's ownership lock, but it is not answering. It is the leftover of an
- *   earlier desktop run and can be recovered.
- * - `foreign`: a server owns the home and this desktop cannot prove it
- *   started that server. It is left alone.
- * - `unknown`: the home's ownership record exists but cannot be read, so the
- *   desktop cannot establish who owns the home. It starts nothing and reports
- *   the state, because a record it cannot read is not evidence that the home
- *   is free.
+ * `healthy` answers its descriptor; `stranded` is one this desktop started
+ * that still holds the lock but does not answer; `foreign` cannot be proven
+ * ours and is left alone; `unknown` has an unreadable record, which is not
+ * evidence that the home is free.
  */
 export type DesktopServerOwner =
   | { readonly _tag: "none" }
@@ -107,15 +97,9 @@ const isProcessAlive = (pid: number): boolean => {
 };
 
 /**
- * Whether the recorded pid still belongs to the server that wrote the
- * record. A pid is reused once the process that held it is gone, and the
- * record survives a server that died without clearing it. Recovering a
- * recycled pid would signal an unrelated process, so the process start time
- * is compared with the time the record was written.
- *
- * The comparison mirrors the server's own ownership check: an unreadable
- * start time is treated as "the same process", because that is the safe
- * direction.
+ * A pid is reused once its process is gone, and the record outlives a server
+ * that died uncleanly; an unreadable start time counts as the same process,
+ * which is the safe direction.
  */
 const recordedProcessStillOwns = Effect.fn("desktop.serverOwnership.recordedProcessStillOwns")(
   function* (
@@ -157,7 +141,7 @@ const recordedProcessStillOwns = Effect.fn("desktop.serverOwnership.recordedProc
       // A probe that cannot run is not proof of anything, so the pid is
       // treated as the same process: the desktop never signals a process it
       // cannot identify.
-      Effect.catchCause(() => Effect.succeed(Option.none())),
+      Effect.catchCause(() => Effect.succeedNone),
     );
     if (Option.isNone(output)) {
       // The probe did not answer. Treating the pid as the same process is the
@@ -179,15 +163,7 @@ const recordedProcessStillOwns = Effect.fn("desktop.serverOwnership.recordedProc
   },
 );
 
-/**
- * The outcome of reading the home's ownership record.
- *
- * - `missing`: no server has written a record for this home, so the home is
- *   free.
- * - `unreadable`: a record exists but cannot be read or decoded. The desktop
- *   cannot establish who owns the home.
- * - `read`: the record names the owner.
- */
+/** `missing` means the home is free; `unreadable` means ownership is unknown. */
 /** What the file read produced, before the record is decoded. */
 type RecordContents =
   | { readonly _tag: "missing" }
@@ -274,14 +250,9 @@ const probeEnvironment = Effect.fn("desktop.serverOwnership.probeEnvironment")(f
 const OWNERSHIP_PROBE_ATTEMPTS = 3;
 
 /**
- * Probe the owner more than once before calling it stranded. A server that is
- * busy answering a long request can miss a single probe, and recovering it
- * would interrupt work it was doing.
- *
- * The probes are not spaced out: a server that does not answer costs the
- * request timeout on every attempt, so an unresponsive owner already gets
- * several seconds of grace, while a server that answers gets a prompt
- * verdict.
+ * Probe more than once so a busy server is not called stranded: every
+ * unanswered probe already costs the request timeout, so several seconds pass
+ * before the verdict.
  */
 const probeOwnerUntilAnswered = Effect.fn("desktop.serverOwnership.probeOwnerUntilAnswered")(
   function* (httpClient: HttpClient.HttpClient, origin: string): Effect.fn.Return<boolean> {
@@ -294,7 +265,7 @@ const probeOwnerUntilAnswered = Effect.fn("desktop.serverOwnership.probeOwnerUnt
   },
 );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -349,7 +320,7 @@ export const make = Effect.gen(function* () {
     // Only a server this desktop started may be recovered. A server the user
     // started by hand, or a background service runs, is not ours to signal.
     const ourOwnerId = yield* ownerIdentity.ownerId.pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchCause((cause) =>
         logOwnershipWarning("could not read the desktop owner identity", { cause }).pipe(
           Effect.as(Option.none<string>()),

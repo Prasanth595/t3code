@@ -13,17 +13,8 @@ const RECOVERY_POLL_INTERVAL = Duration.millis(100);
 const RECOVERY_KILL_TIMEOUT = Duration.seconds(5);
 
 /**
- * Recover a stranded server that this desktop app started.
- *
- * The server holds the T3 home's ownership lock for its lifetime, so a
- * leftover from a previous desktop run blocks every later start. It is
- * stopped the same way the desktop stops its own backend: SIGTERM first, so
- * the server can shut down cleanly and release the lock, then SIGKILL if it
- * does not go away.
- *
- * Only a server the desktop has verified as its own stranded leftover is
- * stopped here. A healthy server and a server the desktop cannot prove it
- * started are left alone.
+ * Recover a server this desktop started that still holds the home's lock but
+ * no longer answers: SIGTERM so it releases the lock, SIGKILL if it does not.
  */
 export const recoverStrandedServer = Effect.fn("desktop.serverRecovery.recoverStrandedServer")(
   function* (input: {

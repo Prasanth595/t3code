@@ -4,12 +4,8 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 /**
- * Whether a process group still has members.
- *
- * - `alive`: the group has members, so a member could outlive the leader.
- * - `gone`: the group is empty. Only ESRCH proves this.
- * - `unknown`: the platform has no process groups, or the probe failed in a
- *   way that proves nothing.
+ * `gone` only when the system proves it (ESRCH); `unknown` when the platform
+ * has no process groups, or the probe failed in a way that proves nothing.
  */
 type ProcessGroupState = "alive" | "gone" | "unknown";
 
@@ -58,13 +54,8 @@ export const isProcessTreeAlive = (pid: number): Effect.Effect<boolean> =>
   Effect.sync(() => processTreeIsAlive(pid));
 
 /**
- * Signal a backend's whole process group, falling back to the leader where
- * the platform has no process groups.
- *
- * The desktop starts the backend detached on POSIX, so the backend leads its
- * own process group, and the group is what has to go: a managed descendant
- * that survived the graceful signal would otherwise keep running after the
- * desktop quit.
+ * Signal the backend's whole process group, falling back to the leader where
+ * the platform has no groups: a managed descendant must not outlive a quit.
  */
 export const signalProcessTree = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
   Effect.sync(() => {

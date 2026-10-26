@@ -27,12 +27,8 @@ export type DesktopHomeOwner =
     };
 
 /**
- * Open the desktop for a T3 home that another server already owns.
- *
- * The desktop does not start a second writer for a home that already has one.
- * It stays open: the way out of this state lives in Settings, and quitting
- * would leave the user unable to reach it, because the next launch would
- * find the same owner and stop again.
+ * Stay open for a home another server owns rather than starting a second
+ * writer: the way out lives in Settings, unreachable if the app quits.
  */
 export const openDesktopWithExistingOwner = Effect.fn(
   "desktop.homeOwnership.openDesktopWithExistingOwner",
@@ -54,11 +50,9 @@ export const openDesktopWithExistingOwner = Effect.fn(
 
   const quitting = yield* Ref.get(desktopState.quitting);
   if (!quitting) {
-    // The desktop app stays open, so the control socket it exposes to
-    // `t3 app` has to be listening too. The socket is the desktop's own
-    // control channel in the state directory and does not depend on the
-    // local environment, so it can start without a backend behind it. A
-    // socket that cannot start is worth a warning, not a dead desktop.
+    // The desktop stays open, so the control socket `t3 app` connects to has to
+    // listen too. It does not depend on the backend; a socket that cannot start
+    // is a warning, not a dead desktop.
     yield* appActivation.start.pipe(
       Effect.tap(() => logHomeOwnershipInfo("desktop app control socket ready")),
       Effect.catch((error) =>

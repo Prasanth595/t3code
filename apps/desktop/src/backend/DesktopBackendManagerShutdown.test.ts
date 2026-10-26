@@ -23,11 +23,8 @@ import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 /**
- * The fixtures announce themselves on stdout and record every event in a
- * file. The announcement is the milestone the test waits for, and the file
- * keeps the record of a signal the manager's output drain may not deliver,
- * because the drain is interrupted by the same scope close that stops the
- * backend.
+ * The fixtures announce on stdout, the milestone the test waits for, and log
+ * every event to a file because the scope close interrupts the output drain.
  */
 const FIXTURE_PRELUDE = [
   'import * as NodeFS from "node:fs";',
@@ -134,16 +131,10 @@ const awaitBackendPid = (
 ): Effect.Effect<number, FixtureNotReadyError> =>
   instance.snapshot.pipe(
     Effect.map((snapshot) => snapshot.activePid),
-    Effect.flatMap((pid) =>
-      Option.isSome(pid) ? Effect.succeed(pid.value) : Effect.fail(new FixtureNotReadyError()),
-    ),
+    Effect.flatMap((pid) => Effect.fromOption(pid, () => new FixtureNotReadyError())),
     Effect.retry({ while: () => true }),
     Effect.timeoutOption(FIXTURE_STARTUP_TIMEOUT),
-    Effect.flatMap((result) =>
-      Option.isSome(result)
-        ? Effect.succeed(result.value)
-        : Effect.fail(new FixtureNotReadyError()),
-    ),
+    Effect.flatMap((result) => Effect.fromOption(result, () => new FixtureNotReadyError())),
   );
 
 interface Fixture {
