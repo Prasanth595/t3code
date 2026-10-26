@@ -3,7 +3,7 @@ import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
+import { createRef, Profiler, StrictMode, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
@@ -110,10 +110,10 @@ function message(
   };
 }
 
-async function renderElement(element: ReactElement) {
+async function renderElement(element: ReactElement, options: { router?: false } = {}) {
   const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
-  const screen = await render(element, { container });
+  const screen = await render(element, { container, ...options });
   const buttons = (name: string | RegExp) =>
     [...container.querySelectorAll<HTMLElement>("button, [role=button]")].filter((button) => {
       const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
@@ -239,24 +239,50 @@ describe("MessagesTimeline messages", () => {
   });
 });
 
+const CITATION_REQUEST = {
+  key: "activation-1",
+  citation: {
+    version: 1,
+    environmentId: ENVIRONMENT_ID,
+    threadId: ThreadId.make("thread-cited"),
+    messageId: MessageId.make("cited"),
+    text: "the cited answer",
+    start: 0,
+    end: 16,
+    prefix: "",
+    suffix: "",
+  },
+} satisfies NonNullable<TimelineProps["citationRequest"]>;
+
 describe("MessagesTimeline citations", () => {
+  it("lands a citation present at mount under StrictMode", async () => {
+    await using _screen = await renderElement(
+      <StrictMode>
+        <MessagesTimeline
+          {...baseProps()}
+          timelineEntries={[
+            message("A question", {}, "question"),
+            message("the cited answer", { role: "assistant" }, "cited"),
+          ]}
+          citationRequest={CITATION_REQUEST}
+          citationHistory={{ _tag: "found" }}
+        />
+      </StrictMode>,
+      // The test router mounts route content without StrictMode's effect replay.
+      { router: false },
+    );
+    // StrictMode replays effect cleanups on mount; the activation must survive them.
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-citation-highlighted]")?.textContent).toContain(
+        "the cited answer",
+      ),
+    );
+  });
+
   it("waits for cited history to load before giving up on a response outside the window", async () => {
     using toast = vi.spyOn(toastManager, "add");
     const props = baseProps();
-    const citationRequest = {
-      key: "activation-1",
-      citation: {
-        version: 1,
-        environmentId: ENVIRONMENT_ID,
-        threadId: ThreadId.make("thread-cited"),
-        messageId: MessageId.make("cited"),
-        text: "the cited answer",
-        start: 0,
-        end: 16,
-        prefix: "",
-        suffix: "",
-      },
-    } satisfies NonNullable<TimelineProps["citationRequest"]>;
+    const citationRequest = CITATION_REQUEST;
     const recent = message("A recent question", {}, "recent");
     const timeline = (entries: Entry[], citationHistory: CitedHistory) => (
       <MessagesTimeline

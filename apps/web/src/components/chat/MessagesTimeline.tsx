@@ -574,10 +574,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
   // A cited response folded inside a turn opens its fold once per activation;
-  // the user can fold it again afterwards. Only a citation that can still land
-  // (an assistant message, history not failed) opens anything.
+  // the user can fold it again. Only a citation that can still land opens one.
+  // The marker stops the O(entries) fold lookup once the entry is found, since
+  // the href stays in the URL after the citation settles.
+  const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
+  // Back/Forward can restore an earlier activation key, so the marker clears
+  // between activations and a revisit opens the fold again.
+  if (!citationRequest && citationExpandedFor !== null) setCitationExpandedFor(null);
   const citedEntry =
-    citationRequest && citationHistory._tag !== "failed"
+    citationRequest &&
+    citationExpandedFor !== citationRequest.key &&
+    citationHistory._tag !== "failed"
       ? timelineEntries.find(
           (entry) =>
             entry.kind === "message" &&
@@ -585,26 +592,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
             entry.message.id === citationRequest.citation.messageId,
         )
       : undefined;
-  const citationFoldRunIds = citedEntry
-    ? (findFoldRunIds ??
+  if (citationRequest && citedEntry) {
+    const citedRunId = (
+      findFoldRunIds ??
       timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
         latestRun,
         runningRunId,
         isWorking,
         runlessWorkActive,
-      }))
-    : null;
-  const citedRunId = citedEntry ? citationFoldRunIds?.get(citedEntry.id) : undefined;
-  // Back/Forward can restore an earlier activation key, so the marker clears
-  // between activations and a revisit opens the fold again.
-  const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
-  if (!citationRequest && citationExpandedFor !== null) setCitationExpandedFor(null);
-  if (citedRunId && citationRequest && citationExpandedFor !== citationRequest.key) {
+      })
+    ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
-    setExpandedRunIds((previous) =>
-      previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
-    );
+    if (citedRunId) {
+      setExpandedRunIds((previous) =>
+        previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
+      );
+    }
   }
   const visibleExpandedRunIds =
     !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)

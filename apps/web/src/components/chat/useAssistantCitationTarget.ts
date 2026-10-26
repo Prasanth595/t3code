@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AssistantCitationRequest, AssistantCitationTarget } from "./AssistantCitationSource";
 import type { CitationPhase } from "./citationProcedure";
 
@@ -15,10 +15,12 @@ const CITATION_SCROLL_KEYS = new Set([
 /** One activation of a citation; virtual row remounts and listeners share it. */
 interface CitationNavigation {
   readonly target: AssistantCitationTarget;
-  /** Takes over from the live follow for this activation; the cleanup retires it. */
-  readonly activate: () => () => void;
+  /** Takes over from the live follow for this activation. */
+  readonly activate: () => void;
+  /** Stops this activation for good once another one (or none) replaces it. */
+  readonly retire: () => void;
   /** Listens for user navigation that stops this activation's pending scroll. */
-  readonly attachDismissal: (viewport: HTMLElement) => () => void;
+  readonly attachDismissal: (viewport: HTMLElement | null) => () => void;
 }
 
 interface CitationSettlement {
@@ -70,12 +72,12 @@ export function useAssistantCitationTarget({
     const activate = () => {
       // The follow must yield before the citation row starts scrolling.
       if (!done) onManualNavigation();
-      return () => {
-        activationRef.current.dismissed = true;
-        activationRef.current.cancelScroll?.();
-      };
     };
-    const attachDismissal = (citationViewport: HTMLElement) => {
+    const retire = () => {
+      activationRef.current.dismissed = true;
+      activationRef.current.cancelScroll?.();
+    };
+    const attachDismissal = (citationViewport: HTMLElement | null) => {
       // User navigation stops a pending citation scroll; Escape dismisses it outright.
       const dismiss = (onlyPending: boolean) => {
         const activation = activationRef.current;
@@ -92,7 +94,7 @@ export function useAssistantCitationTarget({
         } else if (
           CITATION_SCROLL_KEYS.has(event.key) &&
           event.target instanceof Node &&
-          citationViewport.contains(event.target)
+          citationViewport?.contains(event.target)
         ) {
           dismiss(true);
         }
@@ -103,25 +105,31 @@ export function useAssistantCitationTarget({
       const onNavigation = () => dismiss(true);
       document.addEventListener("keydown", onKeyDown);
       document.addEventListener("pointerdown", onNavigation, true);
-      citationViewport.addEventListener("wheel", onWheel, { passive: true });
-      citationViewport.addEventListener("touchmove", onNavigation, { passive: true });
+      citationViewport?.addEventListener("wheel", onWheel, { passive: true });
+      citationViewport?.addEventListener("touchmove", onNavigation, { passive: true });
       return () => {
         document.removeEventListener("keydown", onKeyDown);
         document.removeEventListener("pointerdown", onNavigation, true);
-        citationViewport.removeEventListener("wheel", onWheel);
-        citationViewport.removeEventListener("touchmove", onNavigation);
+        citationViewport?.removeEventListener("wheel", onWheel);
+        citationViewport?.removeEventListener("touchmove", onNavigation);
       };
     };
-    return { target, activate, attachDismissal };
+    return { target, activate, retire, attachDismissal };
   }
 
-  useEffect(() => current?.activate(), [current]);
-  // The viewport mounts after the first render and the activation changes with
-  // the route, so the listeners follow both.
+  // Retiring is one-way, so it runs when the activation is replaced rather than
+  // in a cleanup: StrictMode and <Activity> replay cleanups on a live activation.
+  // Unmounting needs no retire; the rows observing it unmount with the list.
+  const activatedRef = useRef<CitationNavigation | null>(null);
   useEffect(() => {
-    if (!current || !viewport) return;
-    return current.attachDismissal(viewport);
-  }, [current, viewport]);
+    if (activatedRef.current === current) return;
+    activatedRef.current?.retire();
+    activatedRef.current = current;
+    current?.activate();
+  }, [current]);
+  // Escape and pointerdown dismiss before the viewport mounts; the viewport
+  // listeners join once it exists.
+  useEffect(() => current?.attachDismissal(viewport), [current, viewport]);
 
   const settled = current !== null && settlement?.target === current.target ? settlement : null;
   const target =
