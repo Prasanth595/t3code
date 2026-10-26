@@ -1,12 +1,67 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as CodexError from "../errors.ts";
-import { appendStderrTail, makeTerminationError, stderrExcerpt } from "./stdio.ts";
+import * as CodexProtocol from "../protocol.ts";
+import {
+  appendStderrTail,
+  makeTerminationError,
+  stderrExcerpt,
+  makeInMemoryStdio,
+  makeStderrTail,
+  makeChildStdio,
+} from "./stdio.ts";
 
 describe("Codex App Server child process termination", () => {
+  it.effect("retains exit diagnostics when stderr stays open after stdout ends", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const captured = yield* Deferred.make<void>();
+      const stderr = Stream.make(new TextEncoder().encode("Error: invalid config\n")).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.succeed(captured, undefined)).pipe(Stream.drain)),
+        Stream.concat(Stream.never),
+      );
+      const tail = yield* makeStderrTail(stderr);
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: makeChildStdio({ stdout: stdio.stdin, stdin: stdio.stdout() }, tail.awaitDrained),
+        terminationError: makeTerminationError(
+          {
+            pid: ChildProcessSpawner.ProcessId(55),
+            exitCode: Deferred.await(exited),
+          },
+          tail.read,
+        ),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+        Effect.forkScoped,
+      );
+      yield* Queue.take(output);
+      yield* Deferred.await(captured);
+      yield* Queue.end(input);
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust("250 millis");
+      const error = yield* Fiber.join(pending);
+      assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
+      assert.equal(
+        error.message,
+        "Codex App Server process exited with code 1: Error: invalid config",
+      );
+    }),
+  );
+
   it.effect("retains the process identifier and exact exit-status cause", () =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");

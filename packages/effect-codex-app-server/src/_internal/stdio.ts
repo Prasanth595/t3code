@@ -1,7 +1,7 @@
 import * as NodeUtil from "node:util";
 
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -14,10 +14,14 @@ import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
 
-export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+export const makeChildStdio = (
+  handle: Pick<ChildProcessSpawner.ChildProcessHandle, "stdin" | "stdout">,
+  stderrDrained: Effect.Effect<void>,
+) =>
   Stdio.make({
     args: Effect.succeed([]),
-    stdin: handle.stdout,
+    // Finish stderr separately from the protocol's exit-status deadline.
+    stdin: handle.stdout.pipe(Stream.onEnd(stderrDrained)),
     stdout: () =>
       Sink.mapInput(handle.stdin, (chunk: string | Uint8Array) =>
         typeof chunk === "string" ? encoder.encode(chunk) : chunk,
@@ -77,20 +81,16 @@ export const makeStderrTail = Effect.fn("makeStderrTail")(function* (
   stderr: ChildProcessSpawner.ChildProcessHandle["stderr"],
 ) {
   const tail = yield* Ref.make("");
-  const drained = yield* Deferred.make<void>();
-  yield* stderr.pipe(
+  const drain = yield* stderr.pipe(
     Stream.decodeText(),
     Stream.runForEach((chunk) => Ref.update(tail, (current) => appendStderrTail(current, chunk))),
     Effect.ignore,
-    Effect.ensuring(Deferred.succeed(drained, undefined)),
     Effect.forkScoped,
   );
-  // The exit status can arrive before the last stderr chunk has been read.
-  return Deferred.await(drained).pipe(
-    Effect.timeout("250 millis"),
-    Effect.ignore,
-    Effect.andThen(Ref.get(tail)),
-  );
+  return {
+    read: Ref.get(tail),
+    awaitDrained: Fiber.join(drain).pipe(Effect.timeout("250 millis"), Effect.ignore),
+  };
 });
 
 type ChildProcessTerminationHandle = Pick<

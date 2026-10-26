@@ -282,5 +282,9 @@ const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
   const stderrTail = yield* makeStderrTail(handle.stderr);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle, stderrTail));
+  return yield* make(
+    makeChildStdio(handle, stderrTail.awaitDrained),
+    options,
+    makeTerminationError(handle, stderrTail.read),
+  );
 });
