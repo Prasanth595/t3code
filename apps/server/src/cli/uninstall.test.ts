@@ -37,19 +37,22 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
 });
 
 it.live.runIf(HostProcess.Platform.defaultValue() === "win32")(
-  "t3 uninstall has cmd.exe remove the runtime directory, spaces in its path included",
+  "t3 uninstall has cmd.exe remove the runtime directory, preserving spaces and literal environment-variable syntax",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-" });
-      const runtimeDir = path.join(root, "t3 home", "runtime");
+      const runtimeDir = path.join(root, "t3 home %COMSPEC% !COMSPEC! & data", "runtime");
       yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
       yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3.exe"), "");
 
       const child = spawnWindowsRemoval(process.env.ComSpec ?? "cmd.exe", runtimeDir);
-      yield* Effect.callback<void>((resume) => {
-        child.once("exit", () => resume(Effect.void));
+      yield* Effect.callback<void, Error>((resume) => {
+        child.once("error", (error) => resume(Effect.fail(error)));
+        child.once("exit", (code) =>
+          resume(code === 0 ? Effect.void : Effect.die(`cmd.exe exited with ${code}`)),
+        );
       });
 
       assert.isFalse(yield* fs.exists(runtimeDir));
