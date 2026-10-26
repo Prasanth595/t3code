@@ -365,6 +365,7 @@ describe("DesktopServerExposure", () => {
     const advertisedUrls = (
       probe: DistroProbe,
       wslPrimary: { readonly distro: string | null } | null = { distro: null },
+      env: Record<string, string | undefined> = {},
     ) =>
       withHarness(
         hostInterfaces,
@@ -378,7 +379,7 @@ describe("DesktopServerExposure", () => {
             (endpoint) => endpoint.httpBaseUrl,
           );
         }),
-        {},
+        env,
         wslSpawner(probe),
       );
 
@@ -427,6 +428,29 @@ describe("DesktopServerExposure", () => {
           }),
           windowsUrls,
         );
+      }),
+    );
+
+    it.effect("preserves an explicit LAN hostname in mirrored mode", () =>
+      Effect.gen(function* () {
+        const urls = yield* advertisedUrls(
+          { hostnameOutput: "192.168.1.20 100.90.1.2", tailscaleOutput: null },
+          { distro: "Ubuntu" },
+          { T3CODE_DESKTOP_LAN_HOST: "desktop.lan" },
+        );
+        assert.include(urls, "http://desktop.lan:4173/");
+      }),
+    );
+
+    it.effect("keeps a direct Tailscale endpoint alongside a custom URL on another port", () =>
+      Effect.gen(function* () {
+        const urls = yield* advertisedUrls(
+          { hostnameOutput: "172.20.1.5 100.64.0.9", tailscaleOutput: "100.64.0.9" },
+          { distro: "Ubuntu" },
+          { T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://100.64.0.9:8443" },
+        );
+        assert.include(urls, "https://100.64.0.9:8443/");
+        assert.include(urls, "http://100.64.0.9:4173/");
       }),
     );
 

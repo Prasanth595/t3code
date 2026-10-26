@@ -218,21 +218,24 @@ const resolveDesktopCoreAdvertisedEndpoints = (
 const selectWslReachableEndpoints = (input: {
   readonly port: number;
   readonly windowsEndpoints: readonly AdvertisedEndpoint[];
+  readonly preserveLanEndpoint: boolean;
   readonly distroAddresses: readonly string[];
   /** The subset of `distroAddresses` the distro's own Tailscale reports. */
   readonly distroTailscaleAddresses: readonly string[];
 }): readonly AdvertisedEndpoint[] => {
   const hostOf = (endpoint: AdvertisedEndpoint) => new URL(endpoint.httpBaseUrl).hostname;
   const isHostAddress = (endpoint: AdvertisedEndpoint) =>
-    endpoint.id.startsWith("desktop-lan:") || endpoint.id.startsWith("tailscale-ip:");
+    (!input.preserveLanEndpoint && endpoint.id.startsWith("desktop-lan:")) ||
+    endpoint.id.startsWith("tailscale-ip:");
 
   const kept = input.windowsEndpoints.filter(
     (endpoint) => !isHostAddress(endpoint) || input.distroAddresses.includes(hostOf(endpoint)),
   );
-  const knownHosts = new Set(kept.map(hostOf));
+  const knownUrls = new Set(kept.map((endpoint) => endpoint.httpBaseUrl));
   const distroTailscale = input.distroTailscaleAddresses
-    .filter((address) => input.distroAddresses.includes(address) && !knownHosts.has(address))
-    .map((address) => createTailscaleIpAdvertisedEndpoint({ address, port: input.port }));
+    .filter((address) => input.distroAddresses.includes(address))
+    .map((address) => createTailscaleIpAdvertisedEndpoint({ address, port: input.port }))
+    .filter((endpoint) => !knownUrls.has(endpoint.httpBaseUrl));
   return [...kept, ...distroTailscale];
 };
 
@@ -647,6 +650,7 @@ export const make = Effect.gen(function* () {
     return selectWslReachableEndpoints({
       port: state.port,
       windowsEndpoints,
+      preserveLanEndpoint: Option.isSome(config.desktopLanHostOverride),
       distroAddresses: distroAddresses.value.addresses,
       distroTailscaleAddresses: distroAddresses.value.tailscale,
     });
