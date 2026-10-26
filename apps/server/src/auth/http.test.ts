@@ -35,6 +35,7 @@ const layerConfig = Layer.effect(
     return {
       ...config,
       mode: "web",
+      bootstrapSessionTtlSeconds: 120,
       devUrl: new URL("http://127.0.0.1:5173"),
       devAuthToken: Redacted.make(DEV_TOKEN),
     } satisfies ServerConfig.ServerConfig["Service"];
@@ -140,6 +141,47 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           );
           expect(pairingResponse.status).toBe(200);
           const pairing = (await pairingResponse.json()) as { credential: string };
+          const oauthPairingResponse = await environmentA.handler(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["orchestration:read"] },
+              { cookie: devCookieHeader },
+            ),
+            requestContext,
+          );
+          expect(oauthPairingResponse.status).toBe(200);
+          const oauthPairing = (await oauthPairingResponse.json()) as { credential: string };
+          const oauthResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: oauthPairing.credential,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+              }),
+            }),
+            requestContext,
+          );
+          expect(oauthResponse.status).toBe(200);
+          const oauth = (await oauthResponse.json()) as {
+            access_token: string;
+            expires_in: number;
+            scope: string;
+          };
+          expect(oauth.expires_in).toBeGreaterThan(0);
+          expect(oauth.expires_in).toBeLessThanOrEqual(120);
+          expect(oauth.scope).toBe("orchestration:read");
+          const denied = await environmentA.handler(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["orchestration:read"] },
+              { authorization: `Bearer ${oauth.access_token}` },
+            ),
+            requestContext,
+          );
+          expect(denied.status).toBe(403);
+
           const restrictedResponse = await environmentA.handler(
             postJson("/api/auth/browser-session", { credential: pairing.credential }),
             requestContext,

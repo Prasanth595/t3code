@@ -270,6 +270,14 @@ A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
 
+For short-lived paired sessions, set `T3CODE_BOOTSTRAP_SESSION_TTL_SECONDS=120`
+on the host before starting its server. This caps newly exchanged pairing sessions
+at two minutes, including browser cookies and OAuth bearer/DPoP sessions. It does
+not change existing sessions or their permissions; a pairing link's own `--ttl`
+controls how long the unused link can be redeemed, not the resulting session.
+Omitting the setting keeps the existing session lifetimes. Values must be whole
+seconds from 1 to 2592000; a cap never extends the existing DPoP lifetime.
+
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link
 to replace the browser's current grant. For mobile or a saved remote environment

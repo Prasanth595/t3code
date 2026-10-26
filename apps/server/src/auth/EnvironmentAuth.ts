@@ -731,6 +731,10 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  const bootstrapSessionTtl =
+    config.bootstrapSessionTtlSeconds === undefined
+      ? undefined
+      : Duration.seconds(config.bootstrapSessionTtlSeconds);
 
   const authenticateToken = (
     token: string,
@@ -900,6 +904,7 @@ export const make = Effect.gen(function* () {
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(bootstrapSessionTtl === undefined ? {} : { ttl: bootstrapSessionTtl }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -980,10 +985,13 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                ...(bootstrapSessionTtl === undefined ? {} : { ttl: bootstrapSessionTtl }),
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      ttl: Duration.seconds(
+                        Math.min(3_600, config.bootstrapSessionTtlSeconds ?? 3_600),
+                      ),
                     }
                   : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",

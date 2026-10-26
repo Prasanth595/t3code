@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -267,6 +269,90 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       expect(verified.sessionId).toBe(bearer.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  );
+
+  it.effect("caps bootstrap bearer and DPoP sessions without widening scopes", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const tokens: Array<string> = [];
+      for (const proofKeyThumbprint of [undefined, "bounded-proof-key"]) {
+        const pairing = yield* serverAuth.issuePairingCredential({
+          scopes: ["orchestration:read"],
+        });
+        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairing.credential,
+          undefined,
+          requestMetadata,
+          proofKeyThumbprint === undefined ? undefined : { proofKeyThumbprint },
+        );
+        expect(exchanged.expires_in).toBe(120);
+        expect(exchanged.scope).toBe("orchestration:read");
+        const session = yield* sessions.verify(exchanged.access_token);
+        expect(session.scopes).toEqual(["orchestration:read"]);
+        tokens.push(exchanged.access_token);
+      }
+      yield* TestClock.adjust(Duration.seconds(120));
+      for (const token of tokens) {
+        const error = yield* sessions.verify(token).pipe(Effect.flip);
+        expect(error._tag).toBe("SessionTokenExpiredError");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.merge(layerEnvironmentAuth({ bootstrapSessionTtlSeconds: 120 }), TestClock.layer()),
+      ),
+    ),
+  );
+
+  it.effect("caps pairing cookie sessions as well as OAuth sessions", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const pairing = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const browser = yield* serverAuth.createBrowserSession(pairing.credential, requestMetadata);
+      expect(browser.response.scopes).toEqual(["orchestration:read"]);
+      yield* TestClock.adjust(Duration.seconds(120));
+      const error = yield* sessions.verify(browser.sessionToken).pipe(Effect.flip);
+      expect(error._tag).toBe("SessionTokenExpiredError");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(layerEnvironmentAuth({ bootstrapSessionTtlSeconds: 120 }), TestClock.layer()),
+      ),
+    ),
+  );
+
+  it.effect("does not lengthen the existing DPoP lifetime with a larger cap", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const pairing = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairing.credential,
+        undefined,
+        requestMetadata,
+        { proofKeyThumbprint: "test-proof-key" },
+      );
+      expect(exchanged.expires_in).toBe(3_600);
+    }).pipe(Effect.provide(layerEnvironmentAuth({ bootstrapSessionTtlSeconds: 7_200 }))),
+  );
+
+  it.effect("keeps a bounded bootstrap session individually revocable", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const pairing = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairing.credential,
+        undefined,
+        requestMetadata,
+      );
+      const session = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(exchanged.access_token),
+      );
+      yield* serverAuth.revokeSession(session.sessionId);
+      const error = yield* serverAuth
+        .authenticateHttpRequest(makeBearerRequest(exchanged.access_token))
+        .pipe(Effect.flip);
+      expect(EnvironmentAuth.isServerAuthCredentialError(error)).toBe(true);
+    }).pipe(Effect.provide(layerEnvironmentAuth({ bootstrapSessionTtlSeconds: 120 }))),
   );
 
   it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>

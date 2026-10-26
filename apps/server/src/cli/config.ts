@@ -128,6 +128,13 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  bootstrapSessionTtlSeconds: Config.schema(
+    Schema.NumberFromString.check(
+      Schema.isInt(),
+      Schema.isBetween({ minimum: 1, maximum: 2_592_000 }),
+    ),
+    "T3CODE_BOOTSTRAP_SESSION_TTL_SECONDS",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
@@ -482,6 +489,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     noBrowser,
     startupPresentation,
     desktopBootstrapToken,
+    ...(env.bootstrapSessionTtlSeconds === undefined
+      ? {}
+      : { bootstrapSessionTtlSeconds: env.bootstrapSessionTtlSeconds }),
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,

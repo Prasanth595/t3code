@@ -738,6 +738,43 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServePort: Option.none<number>(),
   });
 
+  it.effect("loads an optional positive bootstrap session TTL cap", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-bootstrap-ttl-" });
+      for (const seconds of [undefined, "120"]) {
+        const config = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env:
+                    seconds === undefined ? {} : { T3CODE_BOOTSTRAP_SESSION_TTL_SECONDS: seconds },
+                }),
+              ),
+              NetService.layer,
+            ),
+          ),
+        );
+        expect(config.bootstrapSessionTtlSeconds).toBe(seconds === undefined ? undefined : 120);
+      }
+      for (const seconds of ["0", "-1", "1.5", "2592001", "Infinity"]) {
+        const error = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_BOOTSTRAP_SESSION_TTL_SECONDS: seconds } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+          Effect.flip,
+        );
+        expect(String(error)).toContain("T3CODE_BOOTSTRAP_SESSION_TTL_SECONDS");
+      }
+    }),
+  );
+
   it.effect(
     "resolves each signal's endpoint through T3CODE_OTLP_*_URL, an OTEL endpoint, the bootstrap envelope, and persisted Settings, in that order",
     () =>
