@@ -314,6 +314,12 @@ export function AttachmentFilePreview(props: {
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
+      // Each mount signs a new URL, so the URL cannot identify the attachment across visits.
+      documentKey={
+        props.asset && "attachmentId" in props.asset
+          ? `${props.asset.environmentId}:${props.asset.attachmentId}`
+          : undefined
+      }
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />

@@ -17,6 +17,28 @@ import "./pdfViewer.css";
 
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
+const MAX_POSITIONS = 50;
+
+type PdfPosition = {
+  readonly page: number;
+  /** Pixels scrolled past the page's top, measured at `width`. */
+  readonly offset: number;
+  readonly width: number;
+  readonly zoom: number | null;
+  /** Measured page shapes, so offsets above the saved page match the last visit. */
+  readonly ratios: readonly number[];
+};
+
+// Leaving a thread unmounts its preview, so reading positions outlive the viewer.
+// The least recently viewed entries go first, so the map stays bounded in long sessions.
+const positions = new Map<string, PdfPosition>();
+
+function rememberPosition(key: string, position: PdfPosition) {
+  positions.delete(key);
+  positions.set(key, position);
+  const oldest = positions.keys().next();
+  if (positions.size > MAX_POSITIONS && !oldest.done) positions.delete(oldest.value);
+}
 
 function PdfPage(props: {
   document: PDFDocumentProxy;
@@ -116,12 +138,15 @@ function PdfPage(props: {
   );
 }
 
-export default function PdfViewer(props: { src: string; title: string }) {
+/** `positionKey` names the document and revision whose reading position is restored on remount. */
+export default function PdfViewer(props: { src: string; title: string; positionKey?: string }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const [ratios, setRatios] = useState<number[]>([]);
-  const [zoom, setZoom] = useState<number | null>(null);
+  const [ratios, setRatios] = useState<readonly number[]>([]);
+  const [zoom, setZoom] = useState<number | null>(() =>
+    props.positionKey === undefined ? null : (positions.get(props.positionKey)?.zoom ?? null),
+  );
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -133,6 +158,9 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const savedPosition = useEffectEvent(() =>
+    props.positionKey === undefined ? undefined : positions.get(props.positionKey),
+  );
   // oxlint-disable-next-line t3code/react-effect-budget -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
     const controller = new AbortController();
@@ -158,7 +186,12 @@ export default function PdfViewer(props: { src: string; title: string }) {
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
-        setRatios(Array.from({ length: document.numPages }, () => first.height / first.width));
+        const saved = savedPosition();
+        setRatios(
+          saved?.ratios.length === document.numPages
+            ? saved.ratios
+            : Array.from({ length: document.numPages }, () => first.height / first.width),
+        );
         setPdf(document);
       })
       .catch((cause: unknown) => {
@@ -193,6 +226,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
     0,
     ratios.findIndex((_, index) => offsets[index + 1]! > scrollTop + 17),
   );
+  const pageOffset = scrollTop - (offsets[current]! - 16);
   const visible = ratios.flatMap((ratio, index) =>
     offsets[index + 1]! >= scrollTop - viewport.height &&
     offsets[index]! <= scrollTop + viewport.height * 2
@@ -229,6 +263,30 @@ export default function PdfViewer(props: { src: string; title: string }) {
       top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
     });
   });
+  const restorePosition = useEffectEvent(() => {
+    const saved = savedPosition();
+    const node = scroll.current;
+    if (!saved || !node) return;
+    const page = Math.min(saved.page, ratios.length - 1);
+    node.scrollTo({ top: offsets[page]! - 16 + (saved.offset * width) / saved.width });
+    // Sync now so the first painted page count matches the restored scroll.
+    setScrollTop(node.scrollTop);
+  });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Restore the saved reading position once the loaded document has laid out its pages.
+  useLayoutEffect(() => {
+    if (pdf) restorePosition();
+  }, [pdf]);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Record the reading position outside React so a remount can restore it.
+  useEffect(() => {
+    if (pdf && props.positionKey !== undefined)
+      rememberPosition(props.positionKey, {
+        page: current,
+        offset: pageOffset,
+        width,
+        zoom,
+        ratios,
+      });
+  }, [pdf, props.positionKey, current, pageOffset, width, zoom, ratios]);
   // oxlint-disable-next-line t3code/react-effect-budget -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
     if (matches.length) jumpToPage(matches[0]!);

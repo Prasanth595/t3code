@@ -2759,3 +2759,63 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+it("restores a PDF's page and zoom when the viewer remounts", async () => {
+  // A short first page makes later offsets depend on measured page heights.
+  const heights = [140, 792, 792];
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>",
+  ];
+  for (const [index, height] of heights.entries()) {
+    const text = `BT /F1 24 Tf 30 ${height - 60} Td (Page ${index + 1}) Tj ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${height}] /Resources << /Font << /F1 9 0 R >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    );
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  let source = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = source.length;
+  source += `xref\n0 10\n0000000000 65535 f \n${offsets
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const { default: PdfViewer } = await import("./PdfViewer");
+  const url = URL.createObjectURL(new Blob([source], { type: "application/pdf" }));
+  const viewer = (mount: number, positionKey: string) => (
+    <div style={{ display: "flex", height: 600, width: 320 }}>
+      <PdfViewer key={mount} src={url} title="Restored PDF" positionKey={positionKey} />
+    </div>
+  );
+  try {
+    await using screen = await render(viewer(1, "restore-test:a"));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
+      timeout: 15_000,
+    });
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Fit width"));
+    const zoom = screen.container.textContent?.match(/\d+%/)?.[0];
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+
+    await screen.rerender(viewer(2, "restore-test:a"));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"), {
+      timeout: 15_000,
+    });
+    expect(screen.container.textContent).toContain(zoom);
+
+    await screen.rerender(viewer(3, "restore-test:b"));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
+      timeout: 15_000,
+    });
+    expect(screen.container.textContent).toContain("Fit width");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
