@@ -25,6 +25,7 @@ import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
+import { withWorkspaceLease } from "./workspaceLease.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -344,6 +345,7 @@ export const make = Effect.gen(function* () {
       byteLength: 0,
       truncated: false,
       exists: false,
+      supportsConditionalWrite: true,
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
@@ -423,6 +425,7 @@ export const make = Effect.gen(function* () {
             contents: new TextDecoder("utf-8").decode(fileBytes),
             byteLength: stat.size,
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            supportsConditionalWrite: true,
           };
         }),
       (handle) =>
@@ -532,41 +535,59 @@ export const make = Effect.gen(function* () {
     const target = yield* resolveWriteTarget(input);
     const realTargetPath = target.realTargetPath;
 
-    yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
+    return yield* withWorkspaceLease(
+      realTargetPath,
+      Effect.gen(function* () {
+        if (input.expectedContents !== undefined) {
+          const current = yield* readFile({
+            cwd: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: realTargetPath,
-            operationPath: path.dirname(realTargetPath),
-            operation: "make-directory",
-            cause,
-          }),
-      ),
+            allowMissing: true,
+          });
+          if (
+            current.truncated ||
+            (current.exists === false ? null : current.contents) !== input.expectedContents
+          ) {
+            return { relativePath: target.relativePath, conflict: true };
+          }
+        }
+        yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: realTargetPath,
+                operationPath: path.dirname(realTargetPath),
+                operation: "make-directory",
+                cause,
+              }),
+          ),
+        );
+        yield* Effect.tryPromise({
+          // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
+          try: () =>
+            NodeFSP.writeFile(realTargetPath, input.contents, {
+              flag:
+                NodeFS.constants.O_WRONLY |
+                NodeFS.constants.O_CREAT |
+                NodeFS.constants.O_TRUNC |
+                (NodeFS.constants.O_NOFOLLOW ?? 0),
+            }),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: realTargetPath,
+              operationPath: realTargetPath,
+              operation: "write-file",
+              cause,
+            }),
+        });
+        yield* workspaceEntries.refresh(input.cwd);
+        return { relativePath: target.relativePath };
+      }),
     );
-    yield* Effect.tryPromise({
-      // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, input.contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: realTargetPath,
-          operationPath: realTargetPath,
-          operation: "write-file",
-          cause,
-        }),
-    });
-    yield* workspaceEntries.refresh(input.cwd);
-    return { relativePath: target.relativePath };
   });
 
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });

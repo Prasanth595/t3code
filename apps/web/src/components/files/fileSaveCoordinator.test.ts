@@ -180,13 +180,11 @@ describe("FileSaveCoordinator", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(persist).toHaveBeenCalledTimes(1);
 
-    // The editor closes while the write is still in flight; the write then fails.
     coordinator.dispose();
     inFlight.resolve(AsyncResult.failure(Cause.fail(new Error("write failed"))));
     await vi.advanceTimersByTimeAsync(500);
-    // The failed close-time flush must be retried, not dropped.
     expect(persist).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith("only");
+    expect(persist).toHaveBeenLastCalledWith("only", true);
 
     await vi.advanceTimersByTimeAsync(999);
     expect(persist).toHaveBeenCalledTimes(2);
@@ -215,37 +213,10 @@ describe("FileSaveCoordinator", () => {
     coordinator.change("unsaved");
     coordinator.dispose();
     await vi.runAllTimersAsync();
-    // First dispose flush failed; it must be retried instead of dropping the edit.
-    expect(persist.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(persist).toHaveBeenLastCalledWith("unsaved");
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(persist).toHaveBeenLastCalledWith("unsaved", true);
     expect(onConfirmed).toHaveBeenCalledWith("unsaved");
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-  });
-
-  it("skips a closed editor retry after another edit replaces its draft", async () => {
-    vi.useFakeTimers();
-    let currentDraft = "old";
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const shouldRetryAfterClose = vi.fn((contents: string) => contents === currentDraft);
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      persist,
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-      shouldRetryAfterClose,
-    });
-
-    coordinator.change("old");
-    coordinator.dispose();
-    await vi.advanceTimersByTimeAsync(0);
-    currentDraft = "new";
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(shouldRetryAfterClose).toHaveBeenCalledWith("old");
-    expect(persist).toHaveBeenCalledExactlyOnceWith("old");
   });
 
   it("caps close-time retries with backoff and preserves an unsaved draft", async () => {

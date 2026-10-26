@@ -8,6 +8,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
+  getPersistedProjectFileQueryData,
   getUnsavedProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -79,18 +80,42 @@ function createFileSaveSession({
   return {
     change: (contents: string) => coordinatorRef.current?.change(contents),
     setup: () => {
+      let conflict = false;
+      let expectedContents: string | null | undefined;
       const coordinator = new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
         shouldRetryAfterClose: (contents) =>
+          expectedContents !== undefined &&
           getUnsavedProjectFileQueryData(environmentId, cwd, relativePath)?.contents === contents,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents) =>
-          writeFile({
+        persist: async (nextContents, retry) => {
+          if (!retry) {
+            const base = getPersistedProjectFileQueryData(environmentId, cwd, relativePath);
+            expectedContents =
+              base?.supportsConditionalWrite && !base.truncated
+                ? base.exists === false
+                  ? null
+                  : base.contents
+                : undefined;
+          }
+          const result = await writeFile({
             environmentId,
-            input: { cwd, relativePath, contents: nextContents },
-          }),
+            input: {
+              cwd,
+              relativePath,
+              contents: nextContents,
+              ...(retry && expectedContents !== undefined ? { expectedContents } : {}),
+            },
+          });
+          if (result._tag === "Success") {
+            conflict = result.value.conflict === true;
+            if (!conflict && expectedContents !== undefined) expectedContents = nextContents;
+          }
+          return result;
+        },
         onConfirmed: (confirmedContents) =>
+          !conflict &&
           confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents),
       });
       coordinatorRef.current = coordinator;

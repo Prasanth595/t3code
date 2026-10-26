@@ -447,6 +447,8 @@ export const ProjectReadFileResult = Schema.Struct({
   truncated: Schema.Boolean,
   // Omitted by older servers; false only for an absent optional file.
   exists: Schema.optional(Schema.Boolean),
+  /** Older servers omit this and cannot safely retry closed-editor saves. */
+  supportsConditionalWrite: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -511,11 +513,13 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  expectedContents: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
+  conflict: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
