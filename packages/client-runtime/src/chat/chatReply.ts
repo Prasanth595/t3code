@@ -1,6 +1,7 @@
 import {
   SAAS_CHAT_DEVICE_HEADER,
   SaasChatErrorCode,
+  type SaasChatAttachment,
   type SaasChatRole,
 } from "@t3tools/contracts/saas";
 import * as Option from "effect/Option";
@@ -17,8 +18,14 @@ export interface ChatReplyRequest {
   /** Null for someone without an account; the device id then counts their free messages. */
   readonly clerkToken: string | null;
   readonly deviceId: string;
-  readonly messages: ReadonlyArray<{ readonly role: SaasChatRole; readonly content: string }>;
+  readonly messages: ReadonlyArray<{
+    readonly role: SaasChatRole;
+    readonly content: string;
+    readonly attachments?: ReadonlyArray<SaasChatAttachment>;
+  }>;
   readonly onText: (text: string) => void;
+  /** The relay is searching the web before it writes more of the reply. */
+  readonly onSearching?: () => void;
   readonly signal?: AbortSignal;
   /** React Native passes `expo/fetch`, whose responses stream. */
   readonly fetch?: typeof globalThis.fetch;
@@ -27,12 +34,15 @@ export interface ChatReplyRequest {
 const decodeChunk = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      choices: Schema.Array(
-        Schema.Struct({
-          delta: Schema.optionalKey(
-            Schema.Struct({ content: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
-          ),
-        }),
+      mira: Schema.optionalKey(Schema.Struct({ status: Schema.String })),
+      choices: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            delta: Schema.optionalKey(
+              Schema.Struct({ content: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
+            ),
+          }),
+        ),
       ),
     }),
   ),
@@ -48,6 +58,8 @@ const decodeError = Schema.decodeUnknownOption(
 export class ChatSseDecoder {
   private buffer = "";
   text = "";
+  /** Set while the relay searches; cleared when more text arrives. */
+  searching = false;
 
   /** Returns whether the text grew. */
   push(chunk: string): boolean {
@@ -55,8 +67,9 @@ export class ChatSseDecoder {
     const lines = this.buffer.split("\n");
     this.buffer = lines.pop() ?? "";
     const before = this.text.length;
+    const wasSearching = this.searching;
     for (const line of lines) this.readLine(line);
-    return this.text.length !== before;
+    return this.text.length !== before || this.searching !== wasSearching;
   }
 
   finish(): boolean {
@@ -73,7 +86,13 @@ export class ChatSseDecoder {
     if (data === "" || data === "[DONE]") return;
     const chunk = decodeChunk(data);
     if (Option.isNone(chunk)) return;
-    for (const choice of chunk.value.choices) this.text += choice.delta?.content ?? "";
+    if (chunk.value.mira?.status === "searching") this.searching = true;
+    for (const choice of chunk.value.choices ?? []) {
+      const content = choice.delta?.content ?? "";
+      if (content === "") continue;
+      this.text += content;
+      this.searching = false;
+    }
   }
 }
 
@@ -117,7 +136,10 @@ export async function requestChatReply(request: ChatReplyRequest): Promise<ChatR
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (decoder.push(utf8.decode(value, { stream: true }))) request.onText(decoder.text);
+      if (decoder.push(utf8.decode(value, { stream: true }))) {
+        if (decoder.searching) request.onSearching?.();
+        else request.onText(decoder.text);
+      }
     }
     if (decoder.finish()) request.onText(decoder.text);
   } catch {

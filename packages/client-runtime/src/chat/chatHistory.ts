@@ -1,5 +1,6 @@
 import {
   SaasChatConversation,
+  type SaasChatAttachment,
   type SaasChatMessage,
   type SaasChatSummary,
 } from "@t3tools/contracts/saas";
@@ -34,8 +35,12 @@ export interface ChatHistoryState {
   readonly loaded: boolean;
   /** Newest first. */
   readonly chats: ReadonlyArray<SaasChatConversation>;
-  /** The reply streaming in right now, keyed by its chat. */
-  readonly streaming: { readonly chatId: string; readonly text: string } | null;
+  /** The reply streaming in right now, keyed by its chat; `searching` while Mira searches. */
+  readonly streaming: {
+    readonly chatId: string;
+    readonly text: string;
+    readonly searching?: boolean;
+  } | null;
   readonly error: ChatReplyError | null;
 }
 
@@ -221,10 +226,14 @@ export class ChatHistory {
   async send(
     chatId: string | null,
     text: string,
-    onStarted?: (chatId: string) => void,
+    options: {
+      readonly attachments?: ReadonlyArray<SaasChatAttachment>;
+      readonly onStarted?: (chatId: string) => void;
+    } = {},
   ): Promise<string> {
     await this.load();
     const content = text.trim();
+    const attachments = options.attachments ?? [];
     const now = this.now();
     const existing = chatId === null ? undefined : this.find(chatId);
     const userMessage: SaasChatMessage = {
@@ -232,27 +241,37 @@ export class ChatHistory {
       role: "user",
       content,
       createdAt: now,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
     const chat: SaasChatConversation = existing
       ? { ...existing, updatedAt: now, messages: [...existing.messages, userMessage] }
       : {
           id: this.randomId(),
-          title: chatTitle(content),
+          title: chatTitle(content || attachments[0]?.name || ""),
           createdAt: now,
           updatedAt: now,
           messages: [userMessage],
         };
     this.write(chat);
     this.publish({ streaming: { chatId: chat.id, text: "" }, error: null });
-    onStarted?.(chat.id);
+    options.onStarted?.(chat.id);
 
     const result = await this.options.requestReply(
       {
         messages: chat.messages.map((message) => ({
           role: message.role,
           content: message.content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
         })),
         onText: (partial) => this.publish({ streaming: { chatId: chat.id, text: partial } }),
+        onSearching: () =>
+          this.publish({
+            streaming: {
+              chatId: chat.id,
+              text: this.state.streaming?.text ?? "",
+              searching: true,
+            },
+          }),
       },
       this.stored.deviceId,
     );

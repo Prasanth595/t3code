@@ -6,17 +6,20 @@ import {
   MiraAccessStore,
   relayChatHistoryRemote,
   requestChatReply,
+  uploadChatAttachment,
+  type ChatUploadResult,
 } from "@t3tools/client-runtime/chat";
 import { ManagedRelay, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { SaasAccountResponse } from "@t3tools/contracts/saas";
 import * as Effect from "effect/Effect";
 import { getRandomBytes } from "expo-crypto";
 import { fetch as expoFetch } from "expo/fetch";
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Linking } from "react-native";
 
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import type { ChatFileToSend } from "./chatFiles";
 
 export { hasAgenticAccess } from "@t3tools/client-runtime/chat";
 
@@ -83,6 +86,36 @@ export const miraChatHistory = new ChatHistory({
 });
 
 void miraChatHistory.load();
+
+/** Stores a picked photo or document on the relay for the next message. */
+export async function uploadMiraAttachment(file: ChatFileToSend): Promise<ChatUploadResult> {
+  await miraChatHistory.load();
+  const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);
+  return uploadChatAttachment({
+    relayUrl: url,
+    clerkToken,
+    deviceId: miraChatHistory.deviceId,
+    name: file.name,
+    mimeType: file.mimeType,
+    body: file.body(),
+    fetch: expoFetch as unknown as typeof globalThis.fetch,
+  });
+}
+
+let knownRelayUrl: string | null = null;
+
+/** The relay's address, for showing stored photos; null until it is read once. */
+export function useMiraRelayUrl(): string | null {
+  const [url, setUrl] = useState(knownRelayUrl);
+  useEffect(() => {
+    if (url !== null) return;
+    void relayUrl().then((value) => {
+      knownRelayUrl = value;
+      setUrl(value);
+    });
+  }, [url]);
+  return url;
+}
 
 export const miraChatRemote = (accountId: string) =>
   relayChatHistoryRemote({
