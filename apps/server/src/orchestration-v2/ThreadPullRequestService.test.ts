@@ -1,9 +1,11 @@
 import {
+  EventId,
   ProjectId,
   ProviderInstanceId,
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationProjectShell,
+  type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ServerCommand,
@@ -19,14 +21,17 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
@@ -297,5 +302,150 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           }
         }),
       ),
+  );
+
+  it.effect("discovers a branch pull request without reading thread history", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const shell = threadShell("history-free-thread");
+        const thread: OrchestrationV2AppThread = {
+          createdBy: shell.createdBy,
+          creationSource: shell.creationSource,
+          id: shell.id,
+          projectId: shell.projectId,
+          title: shell.title,
+          providerInstanceId: shell.providerInstanceId,
+          modelSelection: shell.modelSelection,
+          runtimeMode: shell.runtimeMode,
+          interactionMode: shell.interactionMode,
+          branch: "feature/discovered",
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: shell.lineage,
+          forkedFrom: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const detected: GitManager.GitBranchPullRequest = {
+          number: 7,
+          title: "Discovered work",
+          url: "https://github.com/acme/project/pull/7",
+          baseRef: "main",
+          headRef: "feature/discovered",
+          state: "open",
+          repositoryKey: "github.com/acme/project",
+          updatedAt: null,
+        };
+        const activation = yield* Deferred.make<void>();
+        const sweepStarted = yield* Deferred.make<void>();
+        const commands: Array<OrchestrationV2ServerCommand> = [];
+        const shellRead = <A, E>(
+          read: (store: ProjectionStore.ProjectionStoreV2["Service"]) => Effect.Effect<A, E>,
+        ) =>
+          Effect.gen(function* () {
+            return yield* read(yield* ProjectionStore.ProjectionStoreV2);
+          }).pipe(Effect.orDie);
+        const dependencies = Layer.mergeAll(
+          ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            getShellSnapshot: (options) =>
+              Deferred.succeed(sweepStarted, undefined).pipe(
+                Effect.andThen(shellRead((store) => store.getShellSnapshot(options))),
+              ),
+            getThreadEventSequence: () => Effect.succeed(0),
+            getThreadShell: (threadId) => shellRead((store) => store.getThreadShell(threadId)),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: () => Effect.succeed(detected),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+        yield* Effect.gen(function* () {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          yield* projections.apply({
+            id: EventId.make(`event:${thread.id}`),
+            type: "thread.created",
+            threadId: thread.id,
+            occurredAt: NOW,
+            payload: thread,
+          });
+          // Any read of run, item, message or provider history now fails.
+          const sql = yield* SqlClient.SqlClient;
+          const historyTables = yield* sql<{ readonly name: string }>`
+            SELECT name FROM sqlite_master
+            WHERE type = 'table'
+              AND name LIKE 'orchestration_v2_projection_%'
+              AND name <> 'orchestration_v2_projection_threads'
+          `;
+          for (const { name } of historyTables) yield* sql.unsafe(`DROP TABLE ${name}`);
+
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Deferred.await(sweepStarted);
+          yield* service.drain;
+        }).pipe(Effect.provide(dependencies));
+
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          type: "thread.pull-request.sync",
+          threadId: thread.id,
+          branchPullRequest: {
+            projectId: project.id,
+            repository: "acme/project",
+            number: 7,
+            url: detected.url,
+          },
+        });
+      }),
+    ),
   );
 });
