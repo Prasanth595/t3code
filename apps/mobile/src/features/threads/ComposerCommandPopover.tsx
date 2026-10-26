@@ -178,6 +178,13 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           </Text>
         </View>
       ) : null}
+      {props.error || props.items.length === 0 ? (
+        <View className="px-3.5 py-2.5">
+          <Text className="text-xs text-foreground-tertiary">
+            {props.error ?? emptyText(props.triggerKind, props.isLoading, props.searchesThreads)}
+          </Text>
+        </View>
+      ) : null}
       {props.items.length > 0 ? (
         <ScrollView
           className="max-h-[180px]"
@@ -194,13 +201,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
             />
           ))}
         </ScrollView>
-      ) : (
-        <View className="px-3.5 py-2.5">
-          <Text className="text-xs text-foreground-tertiary">
-            {props.error ?? emptyText(props.triggerKind, props.isLoading, props.searchesThreads)}
-          </Text>
-        </View>
-      )}
+      ) : null}
     </PopoverSurface>
   );
 });

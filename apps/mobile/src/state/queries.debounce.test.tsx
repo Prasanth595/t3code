@@ -1,10 +1,11 @@
 import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
+  searchError: null as string | null,
   searchEntries: vi.fn(() => null),
 }));
 
@@ -31,7 +32,7 @@ vi.mock("./query", () => ({
       atom === mocks.sessionAtom
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
         : null,
-    error: null,
+    error: atom === mocks.sessionAtom ? null : mocks.searchError,
     isPending: false,
     refresh: () => {},
   }),
@@ -43,13 +44,21 @@ function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   mocks.searchEntries.mockClear();
+  mocks.searchError = null;
   const root = createRoot(document.createElement("div"));
+  let result: ReturnType<typeof useComposerPathSearch>;
   function Probe({ target }: { readonly target: ComposerPathSearchTarget }) {
-    useComposerPathSearch(target);
+    const state = useComposerPathSearch(target);
+    useLayoutEffect(() => {
+      result = state;
+    });
     return null;
   }
 
   return {
+    get result() {
+      return result;
+    },
     render(target: ComposerPathSearchTarget) {
       act(() => root.render(<Probe target={{ ...target }} />));
     },
@@ -80,6 +89,19 @@ it("keeps the original search deadline when rerenders have equivalent targets", 
     environmentId: target.environmentId,
     input: { cwd: target.cwd, query: target.query, limit: 20 },
   });
+});
+
+it("hides a previous search error until the new query finishes debouncing", () => {
+  using harness = setup();
+  mocks.searchError = "File search failed";
+  harness.render(target);
+  expect(harness.result.error).toBe("File search failed");
+
+  harness.render({ ...target, query: "other" });
+  expect(harness.result).toMatchObject({ error: null, isPending: true });
+
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.result).toMatchObject({ error: "File search failed", isPending: false });
 });
 
 it.each([

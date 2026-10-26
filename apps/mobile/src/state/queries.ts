@@ -410,7 +410,7 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return {
     entries: result.data?.entries ?? [],
     error:
-      !hasTarget || fileAccess.isPending
+      !hasTarget || fileAccess.isPending || normalizedTarget.query !== debouncedTarget.query
         ? null
         : canReadFiles
           ? result.error
