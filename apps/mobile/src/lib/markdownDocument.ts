@@ -420,6 +420,14 @@ export function markdownWithBlockImages(markdown: string): string {
       const imageStart = child.position?.start.offset;
       const imageEnd = child.position?.end.offset;
       if (imageStart === undefined || imageEnd === undefined) continue;
+      if (
+        /(?:^|\n)[ \t>]*(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(
+          markdown.slice(start, imageStart),
+        )
+      ) {
+        edits.length = editCount;
+        return;
+      }
       // Each break replaces the spaces, hard break and line prefix it lands on.
       const before = /(?:^|[^ \t])([ \t]*(?:\\?\r?\n[ \t>]*)?)$/.exec(
         markdown.slice(start, imageStart),

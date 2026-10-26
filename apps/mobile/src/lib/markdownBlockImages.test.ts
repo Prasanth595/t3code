@@ -76,6 +76,8 @@ describe("images inside running text", () => {
       "See [![badge](b.svg)](https://example.com) here",
       "`![a](a.png)` in code",
       "||secret ![shot](shot.png) caption||",
+      "Title\n--- ![a](a.png)",
+      "Title\n=== ![a](a.png)",
     ]) {
       expect(markdownWithBlockImages(markdown)).toBe(markdown);
     }
