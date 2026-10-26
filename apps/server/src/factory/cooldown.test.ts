@@ -135,6 +135,28 @@ describe("recordRateLimit", () => {
   });
 });
 
+describe("recordRateLimit after a quiet spell", () => {
+  it("starts a new streak for a hit that comes once the model has gone quiet", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    let now = T0;
+    for (let i = 0; i < 3; i++) {
+      recordRateLimit(cooldowns, "k", null, now, now, null);
+      now = cooldowns.get("k")!.untilMs;
+    }
+    const streak = cooldowns.get("k")!;
+    streak.raised = true;
+    const quiet = streak.untilMs + COOLDOWN_QUIET_MS;
+    // Seen before any pass forgot the model: still a first window, with no item behind it.
+    recordRateLimit(cooldowns, "k", null, quiet, quiet, null);
+    assert.deepStrictEqual(cooldowns.get("k"), {
+      model: null,
+      untilMs: quiet + 5 * MINUTE,
+      windows: 1,
+      raised: false,
+    });
+  });
+});
+
 describe("coolingDown and forgetQuietCooldowns", () => {
   it("is cooling only until the window ends", () => {
     const cooldowns = new Map<string, Cooldown>();
