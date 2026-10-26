@@ -109,9 +109,9 @@ export function mergeAnsweredUsage(
 
 const SETTLE_WINDOW_MS = 300;
 
-export function useSettleWindow(active: boolean, key = "") {
+function useSettleWindow(active: boolean, key: string) {
   const [elapsedKey, setElapsedKey] = useState<string | null>(null);
-  if (!active && elapsedKey !== null) setElapsedKey(null);
+  if (elapsedKey !== null && (!active || elapsedKey !== key)) setElapsedKey(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- the settle window is wall-clock time
   useEffect(() => {
     if (!active) return;

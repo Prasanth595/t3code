@@ -42,7 +42,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { useSettleWindow, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -113,12 +113,6 @@ function isUsageMetric(value: string | null | undefined): value is UsageMetric {
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
-
-const NOT_LOADING = {
-  partial: false,
-  everyProvider: false,
-  providers: new Set<UsageProviderKind>(),
-};
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
 
@@ -643,14 +637,7 @@ function UsageOverview({
 }) {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
-  const reported = usageLoading(
-    showingKept,
-    selectedEnvironments,
-    refreshingUsage,
-    hiddenProviders,
-  );
-  const loadingLasted = useSettleWindow(reported.partial);
-  const loading = loadingLasted || isWaitingLong ? reported : NOT_LOADING;
+  const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
@@ -710,7 +697,13 @@ function UsageOverview({
   ];
 
   return (
-    <div aria-busy={loadingPartial} className="flex flex-col gap-6">
+    <div
+      aria-busy={loadingPartial}
+      className={cn(
+        "flex flex-col gap-6",
+        isWaitingLong ? "[--usage-dim-delay:0ms]" : "[--usage-dim-delay:300ms]",
+      )}
+    >
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
@@ -1243,7 +1236,10 @@ function ProviderMark({
 }
 
 function figureClass(loading: boolean) {
-  return cn("transition-opacity", loading && "opacity-40 starting:opacity-100");
+  return cn(
+    "transition-opacity",
+    loading && "opacity-40 delay-(--usage-dim-delay) starting:opacity-100",
+  );
 }
 
 function Metric({
