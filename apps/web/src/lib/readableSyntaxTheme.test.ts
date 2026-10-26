@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { readableOnLightCode } from "./readableSyntaxTheme";
+import { readableOnLightCode, readableSyntaxColor } from "./readableSyntaxTheme";
 
 function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((start) => {
@@ -26,6 +26,16 @@ describe("readableOnLightCode", () => {
         expect(contrast(readableOnLightCode(color), surface)).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  it("keeps tokens that differed only in lightness apart, in pierre-light's order", () => {
+    // Comments stay lighter than punctuation; operators stay darker than numbers.
+    expect(luminance(readableSyntaxColor("#737373"))).toBeGreaterThan(
+      luminance(readableSyntaxColor("#636363")) + 0.02,
+    );
+    expect(luminance(readableSyntaxColor("#1ca1c7"))).toBeGreaterThan(
+      luminance(readableSyntaxColor("#08c0ef")) + 0.02,
+    );
   });
 
   it("leaves colors that already read unchanged", () => {

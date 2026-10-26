@@ -5,7 +5,7 @@ export const READABLE_LIGHT_THEME_NAME = "t3-light";
 
 const MIN_CONTRAST = 4.5;
 // The darkest light code surface is a changed word on a deleted line (#f8d3d4, luminance
-// 0.695), rounded down for margin.
+// 0.71), rounded down for margin.
 const DARKEST_SURFACE_LUMINANCE = 0.69;
 
 function channelLuminance(channel: number): number {
@@ -36,23 +36,30 @@ export function readableOnLightCode(color: string, minContrast = MIN_CONTRAST): 
 
 type ZedTheme = NonNullable<DiffsTheme["zed"]>;
 
-// Operators share numbers' teal and differ only in lightness, so they go further to stay apart.
-const OPERATOR_SCOPES = new Set(["operator", "keyword.operator"]);
-const OPERATOR_MIN_CONTRAST = 6;
+// Colors that differ from a neighbor only in lightness go further, keeping pierre-light's order:
+// cyan (operators, pseudo-selectors) stays apart from teal numbers, and gray punctuation and
+// parameters stay darker than gray comments.
+const FURTHER_COLORS = new Set(["#08c0ef", "#636363"]);
+const FURTHER_MIN_CONTRAST = 6;
+
+/** The t3-light color for a pierre-light syntax color. */
+export function readableSyntaxColor(color: string): string {
+  return readableOnLightCode(
+    color,
+    FURTHER_COLORS.has(color.toLowerCase()) ? FURTHER_MIN_CONTRAST : MIN_CONTRAST,
+  );
+}
 
 function withReadableSyntax(theme: ZedTheme): ZedTheme {
   const syntax = Object.fromEntries(
-    Object.entries(theme.style.syntax ?? {}).map(([scope, style]) => {
-      const minContrast = OPERATOR_SCOPES.has(scope) ? OPERATOR_MIN_CONTRAST : MIN_CONTRAST;
-      return [
-        scope,
-        typeof style === "string"
-          ? readableOnLightCode(style, minContrast)
-          : style.color
-            ? { ...style, color: readableOnLightCode(style.color, minContrast) }
-            : style,
-      ];
-    }),
+    Object.entries(theme.style.syntax ?? {}).map(([scope, style]) => [
+      scope,
+      typeof style === "string"
+        ? readableSyntaxColor(style)
+        : style.color
+          ? { ...style, color: readableSyntaxColor(style.color) }
+          : style,
+    ]),
   );
   return { ...theme, name: READABLE_LIGHT_THEME_NAME, style: { ...theme.style, syntax } };
 }
