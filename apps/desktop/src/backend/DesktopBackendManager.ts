@@ -556,14 +556,8 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
 
   const beforeKill = options.beforeKill;
   if (beforeKill !== undefined) {
-    // Scope finalizers run in reverse order, so this one runs before the
-    // spawner's kill and while output is still being drained.
-    yield* Effect.addFinalizer(() =>
-      handle.isRunning.pipe(
-        Effect.orElseSucceed(() => true),
-        Effect.flatMap((running) => (running ? beforeKill : Effect.void)),
-      ),
-    );
+    // WSL Linux processes can outlive their launcher; stop them before spawner cleanup.
+    yield* Effect.addFinalizer(() => beforeKill);
   }
 
   const exit = yield* handle.exitCode.pipe(

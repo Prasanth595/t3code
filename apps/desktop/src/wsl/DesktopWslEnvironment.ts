@@ -32,8 +32,7 @@ const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
 const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
-// Quit and update give each backend five seconds to stop. The slack covers the
-// wsl.exe round trip and the poll loop running slower than its count.
+// Leave room for the wsl.exe round trip within the seven-second quit budget.
 const SERVER_STOP_GRACE = Duration.seconds(3);
 const SERVER_STOP_TIMEOUT = Duration.sum(SERVER_STOP_GRACE, Duration.millis(1500));
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
@@ -900,11 +899,11 @@ const stopWslServerImpl = Effect.fn("desktop.wsl.stopServerImpl")(function* (
         return "timed-out";
     }
   }
-  const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
   yield* Effect.logWarning("Could not stop the WSL server process.", {
     distro,
     pid: process.pid,
-    detail: detail || `exit ${result.exitCode}`,
+    exitCode: result.exitCode,
+    transportFailure: result.transportFailure ?? "none",
   });
   return "failed";
 });

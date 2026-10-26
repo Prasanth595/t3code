@@ -549,13 +549,20 @@ describe("DesktopBackendManager", () => {
   it.effect.each([
     {
       stopResult: "exited",
+      launcherRunning: true,
       title: "stops a WSL server by its Linux pid before killing its launcher",
     },
     {
       stopResult: "timed-out",
+      launcherRunning: true,
       title: "still kills the launcher when the WSL server outlives its stop grace",
     },
-  ] as const)("$title", ({ stopResult }) =>
+    {
+      stopResult: "exited",
+      launcherRunning: false,
+      title: "stops the Linux server even when its WSL launcher is already gone",
+    },
+  ] as const)("$title", ({ stopResult, launcherRunning }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const events: Array<string> = [];
@@ -585,7 +592,9 @@ describe("DesktopBackendManager", () => {
                 exitCode: Deferred.await(launcherKilled).pipe(
                   Effect.as(ChildProcessSpawner.ExitCode(1)),
                 ),
-                isRunning: Deferred.isDone(launcherKilled).pipe(Effect.map((done) => !done)),
+                isRunning: Deferred.isDone(launcherKilled).pipe(
+                  Effect.map((done) => launcherRunning && !done),
+                ),
               });
             }),
           ),

@@ -1,13 +1,6 @@
-// Killing wsl.exe does not reach the Linux server: its parent is WSL's /init
-// relay, not wsl.exe. A server that outlives the hangup keeps the T3 home
-// locked, and the replacement the desktop starts next exits as "already
-// running". So the desktop launches the server through a wrapper that reports
-// the Linux pid, and on stop signals that pid itself and waits for it to exit.
-
 export interface WslServerProcess {
   readonly pid: number;
-  // Field 22 of /proc/<pid>/stat. Recorded so a stop never signals a process
-  // that reused the pid after the server exited.
+  // Field 22 of /proc/<pid>/stat distinguishes reused pids.
   readonly startTime: string;
 }
 
