@@ -15,6 +15,10 @@ import {
 import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,6 +41,7 @@ import {
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
+import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
@@ -1316,13 +1321,18 @@ describe("CursorAdapterV2", () => {
         );
         const workspace = path.join(scratch, "workspace");
         const home = path.join(scratch, "home");
+        const loadServers = () =>
+          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
         // Cursor resolves the project root through symlinks, as git does.
         yield* fileSystem.makeDirectory(path.join(workspace, "packages", "app"), {
           recursive: true,
         });
         yield* fileSystem.symlink(workspace, path.join(scratch, "link"));
         const cwd = path.join(scratch, "link", "packages", "app");
-        yield* fileSystem.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+        yield* spawnAndCollect("git", ChildProcess.make("git", ["init", workspace]));
         yield* fileSystem.makeDirectory(path.join(workspace, ".cursor"), { recursive: true });
         yield* fileSystem.makeDirectory(path.join(home, ".cursor"), { recursive: true });
         yield* fileSystem.writeFileString(
@@ -1346,6 +1356,7 @@ describe("CursorAdapterV2", () => {
               docs: {
                 url: "https://docs.example/${workspaceFolderBasename}",
                 headers: { Authorization: "Bearer ${env:DOCS_TOKEN}" },
+                tls: { caBundle: "${userHome}/ca.pem" },
               },
             },
           }),
@@ -1372,7 +1383,12 @@ describe("CursorAdapterV2", () => {
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           settings: yield* decodeCursorSettings({}),
-          environment: { HOME: home, DOCS_TOKEN: "docs-token", MCP_TYPE: "stdio" },
+          environment: {
+            HOME: path.join(scratch, "override"),
+            CURSOR_DATA_DIR: path.join(scratch, "override"),
+            DOCS_TOKEN: "docs-token",
+            MCP_TYPE: "stdio",
+          },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
@@ -1395,15 +1411,23 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
-        yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+        yield* runtime
+          .ensureThread({ threadId, modelSelection, runtimePolicy })
+          .pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
 
         assert.deepEqual(openedWith?.mcpServers, {
           repro: { command: "node", args: [`${workspace}/server.mjs`] },
-          docs: {
-            url: `https://docs.example/${path.basename(workspace)}`,
-            headers: { Authorization: "Bearer docs-token" },
-          },
         });
+        for (const disabledState of ["[", '{"off": true}', '["off",]']) {
+          yield* fileSystem.writeFileString(
+            path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+            disabledState,
+          );
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(loadServers())));
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
