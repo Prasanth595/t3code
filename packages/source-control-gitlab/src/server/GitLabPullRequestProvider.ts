@@ -234,12 +234,22 @@ export const make = Effect.gen(function* () {
 
     listRepositoryLabels: (input) =>
       cli
-        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("listRepositoryLabels"))),
 
     searchRepositoryAuthors: (input) =>
       cli
-        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectUsers({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
     setReviewerRequest: (input) =>

@@ -1,7 +1,6 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { ChildProcessSpawner } from "effect/process";
 
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
@@ -15,6 +14,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
     Effect.gen(function* () {
       const selectedHost = "gitlab.example.test:8443";
       const otherHost = "other.gitlab.example.test";
+      const readHosts: string[] = [];
       const mergedHosts: string[] = [];
       const native = yield* GitLabCli.make.pipe(
         Effect.provide(
@@ -27,6 +27,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
                 const path = input.args[1];
                 const mutation = input.args[0] === "mr" || input.args.includes("POST");
                 if (mutation) mergedHosts.push(host);
+                else readHosts.push(host);
                 const response = mutation
                   ? {}
                   : path?.includes("merge_requests/")
@@ -45,14 +46,14 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
                           start_sha: "b".repeat(40),
                         },
                       }
-                    : { merge_method: "merge", squash_option: "default_off" };
-                return Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout: JSON.stringify(response),
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                });
+                    : path === "user"
+                      ? { username: "reviewer" }
+                      : path?.includes("/labels?") || path?.includes("/users?")
+                        ? []
+                        : { merge_method: "merge", squash_option: "default_off" };
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(JSON.stringify(response)),
+                );
               },
             },
           }),
@@ -71,8 +72,12 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
         number: 7,
       };
       const detail = yield* provider.getChangeRequest(reference);
+      expect(yield* provider.getViewer(reference)).toBe("reviewer");
+      yield* provider.listRepositoryLabels(reference);
+      yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
+      expect(readHosts).toEqual(Array(action === "merge" ? 6 : 5).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
