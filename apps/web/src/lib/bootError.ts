@@ -8,6 +8,8 @@ const REPEAT_FAILURE_MS = 5 * 60_000;
 const MAX_CAUSES = 3;
 const MAX_ERROR_CHARS = 6_000;
 const COPY_BLOCKED = "Copy was blocked. The text is selected so you can copy it manually.";
+const UPDATE_DOWNLOAD_FAILED = "The update download failed. Try Download update again.";
+const UPDATE_INSTALL_FAILED = "The update install failed. Try Restart to update again.";
 
 /** The Windows launcher is a `.cmd` run from PowerShell, which needs `&` to run a quoted path. */
 function launcherCommand(launcherPath: string) {
@@ -61,8 +63,8 @@ function describeOne(value: unknown) {
   if (value instanceof Error) {
     const header = value.message ? `${value.name}: ${value.message}` : value.name;
     // V8 stacks start with the header; Safari and Firefox stacks do not.
-    const stack = value.stack ?? "";
-    return stack.startsWith(value.name) ? stack : [header, stack].filter(Boolean).join("\n");
+    const stack = typeof value.stack === "string" ? value.stack : "";
+    return stack.startsWith(header) ? stack : [header, stack].filter(Boolean).join("\n");
   }
   if (typeof value === "string") return value;
   try {
@@ -72,10 +74,11 @@ function describeOne(value: unknown) {
   }
 }
 
-/** Pairing tokens live in query strings and hashes, and the origin can name a private host. */
-function redact(text: string, origin: string) {
-  const withoutQueries = text.replace(/((?:[a-z][\w+.-]*:)?\/[^\s?#'"()]*)[?#][^\s'"()]*/gi, "$1");
-  return origin && origin !== "null" ? withoutQueries.replaceAll(origin, "") : withoutQueries;
+/** Hosts can name private machines, and pairing tokens live in query strings and hashes. */
+function redact(text: string) {
+  return text
+    .replace(/\b[a-z][\w+.-]*:\/\/[^\s/?#'"()]+/gi, "")
+    .replace(/[?#][^\s'"()]*=[^\s'"()]*?((?::\d+){1,2})?(?=[\s'"()]|$)/g, "$1");
 }
 
 export interface BootErrorEnvironment {
@@ -85,7 +88,6 @@ export interface BootErrorEnvironment {
   readonly platform: string;
   readonly userAgent: string;
   readonly time: string;
-  readonly origin: string;
 }
 
 /** Plain text that is shown and copied as-is, so users see exactly what they share. */
@@ -99,7 +101,7 @@ export function buildErrorReport(error: unknown, environment: BootErrorEnvironme
     parts.push(parts.length === 0 ? text : `Caused by: ${text}`);
     current = current instanceof Error ? current.cause : undefined;
   }
-  let details = redact(parts.join("\n") || "(no error message)", environment.origin);
+  let details = redact(parts.join("\n") || "(no error message)");
   if (details.length > MAX_ERROR_CHARS) {
     details = `${details.slice(0, MAX_ERROR_CHARS)}\n[truncated]`;
   }
@@ -133,7 +135,6 @@ function readEnvironment(bridge: DesktopBridge | undefined): BootErrorEnvironmen
     platform: clientPlatform(bridge),
     userAgent: navigator.userAgent,
     time: new Date().toISOString(),
-    origin: location.origin,
   };
 }
 
@@ -173,28 +174,54 @@ function selectContents(target: HTMLElement) {
   selection?.addRange(range);
 }
 
-/** Clipboard writes fail on plain http; selecting the text keeps copying one keystroke away. */
+function copySelection() {
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
+}
+
+/** Plain http has no Clipboard API, but the legacy copy command still works on a selection. */
 function copyText(target: HTMLElement, onCopied: () => void, onBlocked: (hint: string) => void) {
-  const blocked = () => {
+  const fallback = () => {
     selectContents(target);
+    if (copySelection()) return onCopied();
     onBlocked(
       /Mac|iPhone|iPad/.test(navigator.platform) ? "Press ⌘C to copy" : "Press Ctrl+C to copy",
     );
   };
-  if (!window.isSecureContext) return blocked();
-  navigator.clipboard.writeText(target.textContent ?? "").then(onCopied, blocked);
+  const clipboard = window.isSecureContext ? navigator.clipboard : undefined;
+  if (typeof clipboard?.writeText !== "function") return fallback();
+  clipboard.writeText(target.textContent ?? "").then(onCopied, fallback);
 }
 
-function mountUpdateButton(bridge: DesktopBridge, button: HTMLButtonElement) {
+function mountUpdateButton(
+  bridge: DesktopBridge,
+  button: HTMLButtonElement,
+  note: HTMLParagraphElement,
+  announce: (text: string) => void,
+) {
   let action: ReturnType<typeof updateActionFor> = null;
   const render = (state: DesktopUpdateState) => {
     action = updateActionFor(state);
     button.hidden = action === null;
-    button.disabled = action?.kind === "downloading";
+    // aria-disabled keeps keyboard focus on the button while the download runs.
+    button.setAttribute("aria-disabled", String(action?.kind === "downloading"));
     if (action?.kind === "download") button.textContent = "Download update";
     if (action?.kind === "downloading")
       button.textContent = `Downloading update (${action.percent}%)`;
     if (action?.kind === "install") button.textContent = "Restart to update";
+    const failure =
+      state.errorContext === "download"
+        ? UPDATE_DOWNLOAD_FAILED
+        : state.errorContext === "install"
+          ? UPDATE_INSTALL_FAILED
+          : "";
+    if (failure === note.textContent) return;
+    note.textContent = failure;
+    note.hidden = !failure;
+    if (failure) announce(failure);
   };
   button.addEventListener("click", () => {
     const run =
@@ -203,13 +230,22 @@ function mountUpdateButton(bridge: DesktopBridge, button: HTMLButtonElement) {
         : action?.kind === "download"
           ? bridge.downloadUpdate()
           : undefined;
-    run?.catch((error: unknown) => console.warn("Could not update T3 Code.", error));
+    run?.then(
+      (result) => render(result.state),
+      (error: unknown) => console.warn("Could not update T3 Code.", error),
+    );
   });
+  // A pushed state is newer than the initial read, so the read must not overwrite it.
+  let pushed = false;
   try {
-    bridge.onUpdateState(render);
-    bridge.getUpdateState().then(render, (error: unknown) => {
-      console.warn("Could not read the desktop update state.", error);
+    bridge.onUpdateState((state) => {
+      pushed = true;
+      render(state);
     });
+    bridge.getUpdateState().then(
+      (state) => pushed || render(state),
+      (error: unknown) => console.warn("Could not read the desktop update state.", error),
+    );
   } catch (error) {
     console.warn("Could not read the desktop update state.", error);
   }
@@ -226,6 +262,11 @@ export function showBootError(error: unknown) {
 
   const status = element("span", { className: "boot-error-sr" });
   status.setAttribute("aria-live", "polite");
+  // Clearing first makes screen readers announce a repeated message.
+  const announce = (text: string) => {
+    status.textContent = "";
+    setTimeout(() => (status.textContent = text), 100);
+  };
 
   const message = element("div", {}, [
     element("h1", { textContent: "T3 Code failed to start" }),
@@ -244,7 +285,8 @@ export function showBootError(error: unknown) {
   });
   reload.addEventListener("click", () => window.location.reload());
   const update = element("button", { id: "boot-error-update", type: "button", hidden: true });
-  if (bridge) mountUpdateButton(bridge, update);
+  const updateNote = element("p", { id: "boot-error-update-note", hidden: true });
+  if (bridge) mountUpdateButton(bridge, update, updateNote, announce);
 
   const command = element("code", { textContent: FALLBACK_TRIAGE_COMMAND });
   const copyCommand = element("button", {
@@ -261,32 +303,36 @@ export function showBootError(error: unknown) {
         copyCommand.innerHTML = CHECK_ICON;
         copyCommand.title = "Copied";
         copyCommand.setAttribute("aria-label", "Copied");
-        status.textContent = "Copied to clipboard.";
+        announce("Copied to clipboard.");
       },
       (hint) => {
+        copyCommand.textContent = hint;
         copyCommand.title = hint;
-        status.textContent = COPY_BLOCKED;
+        copyCommand.setAttribute("aria-label", hint);
+        announce(COPY_BLOCKED);
       },
     ),
   );
   void resolveTriageCommand(bridge).then((value) => (command.textContent = value));
 
-  const details = element("pre", {
-    id: "boot-error-details",
-    tabIndex: 0,
-    textContent: buildErrorReport(error, environment),
-  });
+  let report = "(no error message)";
+  try {
+    report = buildErrorReport(error, environment);
+  } catch (reportError) {
+    console.warn("Could not describe the startup error.", reportError);
+  }
+  const details = element("pre", { id: "boot-error-details", tabIndex: 0, textContent: report });
   const copyDetails = element("button", { type: "button", textContent: "Copy error details" });
   copyDetails.addEventListener("click", () =>
     copyText(
       details,
       () => {
         copyDetails.textContent = "Copied";
-        status.textContent = "Copied to clipboard.";
+        announce("Copied to clipboard.");
       },
       (hint) => {
         copyDetails.textContent = hint;
-        status.textContent = COPY_BLOCKED;
+        announce(COPY_BLOCKED);
       },
     ),
   );
@@ -336,6 +382,7 @@ export function showBootError(error: unknown) {
     element("div", { id: "boot-error" }, [
       message,
       element("div", { id: "boot-error-actions" }, [reload, update]),
+      updateNote,
       more,
       status,
     ]),

@@ -65,22 +65,33 @@ const environment: BootErrorEnvironment = {
   platform: "MacIntel",
   userAgent: "Test",
   time: "2026-10-26T00:00:00.000Z",
-  origin: "http://studio.tail1234.ts.net:3773",
 };
 
 describe("buildErrorReport", () => {
-  it("drops tokens and the private origin from URLs in the error", () => {
+  it("drops hosts and tokens from URLs in the error", () => {
     const error = new TypeError(
       "Failed to fetch dynamically imported module: http://studio.tail1234.ts.net:3773/assets/a.js?pair=SECRET#token=SECRET",
-      { cause: new Error("GET /assets/a.js?sig=SECRET failed") },
+      {
+        cause: new Error(
+          "ws://studio.tail1234.ts.net:3773/ws?token=SECRET closed, main-a.js?sig=SECRET",
+        ),
+      },
     );
-    error.stack = `TypeError: ${error.message}\n    at http://studio.tail1234.ts.net:3773/assets/main.js:1:2`;
+    error.stack = `TypeError: ${error.message}\n    at http://studio.tail1234.ts.net:3773/src/main.tsx?t=1:10:5`;
     const report = buildErrorReport(error, environment);
     expect(report).not.toContain("SECRET");
     expect(report).not.toContain("tail1234");
-    expect(report).toContain("module: /assets/a.js\n    at /assets/main.js:1:2");
-    expect(report).toContain("Caused by: Error: GET /assets/a.js failed");
+    expect(report).toContain("module: /assets/a.js\n    at /src/main.tsx:10:5");
+    expect(report).toContain("Caused by: Error: /ws closed, main-a.js");
     expect(report).toContain("Version: 0.1.3-nightly.20261026.3707");
+  });
+
+  it("keeps the message when a Firefox stack frame starts with the error name", () => {
+    const error = new Error("boot failed");
+    error.stack = "ErrorBoundary@/assets/main.js:1:2";
+    expect(buildErrorReport(error, environment)).toMatch(
+      /^Error: boot failed\nErrorBoundary@\/assets\/main.js:1:2\n/,
+    );
   });
 
   it("stops at cause cycles and survives values that are not errors", () => {
