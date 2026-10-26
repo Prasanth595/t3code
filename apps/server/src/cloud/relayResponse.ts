@@ -17,6 +17,8 @@ export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
     rejection: Schema.Literals(["unauthorized", "forbidden", "rejected", "unavailable"]),
     description: Schema.String,
     clockSkewSeconds: Schema.optional(Schema.Number),
+    /** How long the relay asked callers to wait (`Retry-After`) before retrying. */
+    retryAfterMillis: Schema.optionalKey(Schema.Number),
   },
 ) {
   override get message(): string {
@@ -43,6 +45,30 @@ export const shouldRetryRelayRequest = (error: unknown): boolean =>
 /** A relay refusal that came while this machine's clock was too far off to trust. */
 export const isRelayClockSkewError = (error: unknown): error is RelayRequestError =>
   isRelayRequestError(error) && error.clockSkewSeconds !== undefined;
+
+/** The relay answered and asked to be retried later; nothing local is wrong. */
+export const isRelayUnavailable = (error: unknown): boolean =>
+  isRelayRequestError(error) && error.rejection === "unavailable";
+
+// Retry-After is either delay-seconds or an HTTP date (RFC 9110 §10.2.3).
+const MAX_RELAY_RETRY_AFTER_MILLIS = 15 * 60 * 1000;
+function parseRetryAfterMillis(value: string | undefined, nowMillis: number): number | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  const millis = /^\d+$/.test(trimmed) ? Number(trimmed) * 1000 : Date.parse(trimmed) - nowMillis;
+  if (!Number.isFinite(millis) || millis <= 0) return undefined;
+  return Math.min(millis, MAX_RELAY_RETRY_AFTER_MILLIS);
+}
+
+/** The relay's requested wait, found anywhere in a failure's cause chain. */
+export function relayRetryAfterMillis(error: unknown): number | undefined {
+  for (let current = error, depth = 0; depth < 8; depth++) {
+    if (isRelayRequestError(current)) return current.retryAfterMillis;
+    if (typeof current !== "object" || current === null || !("cause" in current)) return undefined;
+    current = current.cause;
+  }
+  return undefined;
+}
 
 function recoveryHint(error: RelayProtectedError): string {
   switch (error._tag) {
@@ -140,7 +166,15 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   ) {
     return yield* refusal("rejected");
   }
-  return yield* new RelayRequestError({ rejection: "unavailable", description });
+  const retryAfterMillis = parseRetryAfterMillis(
+    response.headers["retry-after"],
+    yield* Clock.currentTimeMillis,
+  );
+  return yield* new RelayRequestError({
+    rejection: "unavailable",
+    description,
+    ...(retryAfterMillis === undefined ? {} : { retryAfterMillis }),
+  });
 });
 
 export const filterRelayClient = (client: HttpClient.HttpClient) =>

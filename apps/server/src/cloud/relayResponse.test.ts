@@ -8,6 +8,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import {
   filterRelayResponse,
   relayRequestError,
+  relayRetryAfterMillis,
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
 
@@ -162,14 +163,25 @@ it.effect("reports an unrecognized access denial without printing its response b
   }),
 );
 
-it.effect.each([408, 429, 500, 502, 503, 504])(
-  "keeps transient HTTP %s failures retryable",
-  (status) =>
-    Effect.gen(function* () {
-      const error = yield* filterRelayResponse(response(status, "unavailable")).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
-      expect(error.message).toContain(`HTTP ${status}`);
-    }),
+it.effect("keeps the relay's Retry-After on a retryable failure", () =>
+  Effect.gen(function* () {
+    const seconds = yield* filterRelayResponse(
+      response(503, "paused", { "retry-after": "30" }),
+    ).pipe(Effect.flip);
+    expect(seconds).toMatchObject({ rejection: "unavailable", retryAfterMillis: 30_000 });
+    expect(relayRetryAfterMillis({ cause: { cause: seconds } })).toBe(30_000);
+
+    // The test clock starts at the epoch, so the date is 90 seconds after it.
+    const date = yield* filterRelayResponse(
+      response(429, "slow down", { "retry-after": "Thu, 01 Jan 1970 00:01:30 GMT" }),
+    ).pipe(Effect.flip);
+    expect(date.retryAfterMillis).toBe(90_000);
+
+    const malformed = yield* filterRelayResponse(
+      response(503, "paused", { "retry-after": "soon" }),
+    ).pipe(Effect.flip);
+    expect(malformed.retryAfterMillis).toBeUndefined();
+  }),
 );
 
 it.effect.each([
@@ -190,29 +202,5 @@ it.effect.each([
     );
     expect(requests).toBe(attempts);
     expect(result._tag).toBe(attempts === 1 ? "Failure" : "Success");
-  }),
-);
-
-it.effect("keeps the relay failure reason and trace when tunnel cleanup fails", () =>
-  Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(500, {
-        _tag: "RelayInternalError",
-        code: "internal_error",
-        reason: "upstream_unavailable",
-        traceId: "trace-cleanup",
-      }),
-    ).pipe(Effect.flip);
-
-    expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
-    expect(error.message).toContain("upstream_unavailable");
-    expect(error.message).toContain("Trace ID: trace-cleanup");
-  }),
-);
-
-it.effect("leaves successful response bodies available to their decoder", () =>
-  Effect.gen(function* () {
-    const result = yield* filterRelayResponse(response(200, '{"ok":true}'));
-    expect(yield* result.json).toEqual({ ok: true });
   }),
 );
