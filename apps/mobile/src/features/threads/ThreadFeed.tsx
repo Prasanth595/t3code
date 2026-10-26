@@ -952,7 +952,10 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
   const markdownCodeBg = theme["--color-md-code-bg"];
   // Enriched paints list code blocks over iOS selection (software-mansion/enriched-markdown#1024).
-  const markdownCodeBlockBg = seeThroughThemeColor(markdownCodeBg, theme["--color-screen"]);
+  const markdownCodeBlockBg =
+    Platform.OS === "ios"
+      ? seeThroughThemeColor(markdownCodeBg, theme["--color-screen"])
+      : markdownCodeBg;
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];
   const markdownHrColor = theme["--color-md-hr"];

@@ -319,6 +319,7 @@ export function themeColorWithAlpha(color: string, alpha: number): string {
 
 /** Match the opaque color over its surface while leaving at least half the selection visible. */
 export function seeThroughThemeColor(color: string, surface: string): string {
+  if (color.length !== 7 || surface.length !== 7) return color;
   const target = rgbChannels(color);
   const behind = rgbChannels(surface);
   if (!target || !behind) return color;

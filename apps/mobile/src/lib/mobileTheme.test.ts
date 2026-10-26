@@ -79,6 +79,8 @@ describe("mobile themes", () => {
   });
 
   it("leaves unsupported color formats unchanged", () => {
+    expect(seeThroughThemeColor("#2020200f", "#fcfcfc")).toBe("#2020200f");
+    expect(seeThroughThemeColor("#202020", "#fcfcfc80")).toBe("#202020");
     expect(seeThroughThemeColor("rgba(10, 20, 30, 0.5)", "#ffffff")).toBe("rgba(10, 20, 30, 0.5)");
     expect(seeThroughThemeColor("#123456", "transparent")).toBe("#123456");
   });
