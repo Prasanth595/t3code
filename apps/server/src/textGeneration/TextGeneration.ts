@@ -68,19 +68,19 @@ const resolveInstance = (
  * Callers use this directly instead of `fallbackModelSelection` when the input
  * or the result depends on which model ran.
  */
-export const withModelFallback = <A, R>(
+export const withModelFallback = Effect.fn("TextGeneration.withModelFallback")(function* <A, R>(
   operation: TextGenerationOp,
   primary: ModelSelection,
   fallback: ModelSelection | null | undefined,
   attempt: (modelSelection: ModelSelection) => Effect.Effect<A, TextGenerationError, R>,
-): Effect.Effect<A, TextGenerationError, R> => {
+): Effect.fn.Return<A, TextGenerationError, R> {
   if (
     !fallback ||
     (fallback.instanceId === primary.instanceId && fallback.model === primary.model)
   ) {
-    return attempt(primary);
+    return yield* attempt(primary);
   }
-  return attempt(primary).pipe(
+  return yield* attempt(primary).pipe(
     Effect.catch((primaryError) =>
       Effect.logWarning("Text generation failed, trying the fallback model", {
         operation,
@@ -104,7 +104,7 @@ export const withModelFallback = <A, R>(
       ),
     ),
   );
-};
+});
 
 /** @public */
 export const make = Effect.gen(function* () {
