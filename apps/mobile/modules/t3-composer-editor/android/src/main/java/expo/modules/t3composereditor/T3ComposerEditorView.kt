@@ -274,6 +274,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       Typeface.NORMAL,
       context.assets,
     )
+    applyLineHeight()
     editor.applyPlaceholder()
   }
 
