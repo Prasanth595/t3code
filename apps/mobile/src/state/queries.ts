@@ -376,6 +376,10 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     [target.environmentId, target.cwd, query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
+  const isDebouncing =
+    normalizedTarget.environmentId !== debouncedTarget.environmentId ||
+    normalizedTarget.cwd !== debouncedTarget.cwd ||
+    normalizedTarget.query !== debouncedTarget.query;
   const fileAccessSession = useEnvironmentQuery(
     debouncedTarget.environmentId === null
       ? null
@@ -410,14 +414,12 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return {
     entries: result.data?.entries ?? [],
     error:
-      !hasTarget || fileAccess.isPending || normalizedTarget.query !== debouncedTarget.query
+      !hasTarget || fileAccess.isPending || isDebouncing
         ? null
         : canReadFiles
           ? result.error
           : (fileAccess.error ?? "This connection cannot search host files."),
-    isPending:
-      normalizedTarget.query !== debouncedTarget.query ||
-      (hasTarget && (fileAccess.isPending || result.isPending)),
+    isPending: isDebouncing || (hasTarget && (fileAccess.isPending || result.isPending)),
     refresh: result.refresh,
   };
 }

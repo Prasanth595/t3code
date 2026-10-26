@@ -279,7 +279,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "path" ? trigger.query : null,
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(
+  const threadSearch = useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
@@ -563,7 +563,9 @@ export function useComposerCommandMenu({
     searchesThreads: Boolean(environmentId && trigger?.kind === "path" && trigger.query.trim()),
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "pull-request"
+        ? pullRequestSearch.isPending
+        : pathSearch.isPending || threadSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

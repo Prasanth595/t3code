@@ -91,13 +91,17 @@ it("keeps the original search deadline when rerenders have equivalent targets", 
   });
 });
 
-it("hides a previous search error until the new query finishes debouncing", () => {
+it.each([
+  { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
+  { field: "project directory", changed: { ...target, cwd: "/other" } },
+  { field: "query", changed: { ...target, query: "test" } },
+])("hides the previous error while the $field change debounces", ({ changed }) => {
   using harness = setup();
   mocks.searchError = "File search failed";
   harness.render(target);
   expect(harness.result.error).toBe("File search failed");
 
-  harness.render({ ...target, query: "other" });
+  harness.render(changed);
   expect(harness.result).toMatchObject({ error: null, isPending: true });
 
   act(() => vi.advanceTimersByTime(200));
