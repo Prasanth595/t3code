@@ -9659,13 +9659,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               existing.openedPermissionMode === queryPolicy.permissionMode)
           ) {
             const live = existing;
-            // `setModel` bypasses a custom binary's `--model` rewrite, so send it only for a
-            // new model, or after a failed change (empty identity) left the live model unknown.
+            // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
             yield* (
-              live.selection.queryIdentity !== "" &&
-              live.selection.apiModelId === compiledSelection.apiModelId
-                ? Effect.void
-                : live.query.setModel(compiledSelection.apiModelId)
+              live.selection.queryIdentity === "" ||
+              live.selection.apiModelId !== compiledSelection.apiModelId
+                ? live.query.setModel(compiledSelection.apiModelId)
+                : Effect.void
             ).pipe(
               Effect.andThen(
                 live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
