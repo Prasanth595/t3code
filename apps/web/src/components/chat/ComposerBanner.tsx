@@ -1,6 +1,6 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { ChevronDownIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -77,6 +77,7 @@ const peekBorder: Record<ComposerBannerVariant, string> = {
 function Peek({
   className,
   variant = "default",
+  children,
   ...props
 }: ComponentProps<"button"> & { variant?: ComposerBannerVariant }) {
   return (
@@ -86,7 +87,7 @@ function Peek({
       className={cn(
         surfaceColors,
         neutralOutline,
-        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0",
+        "absolute inset-x-0 bottom-0 z-0 mx-auto flex h-6 w-[96%] cursor-pointer items-center gap-1.5 rounded-t-2xl border border-b-0 px-3 text-muted-foreground text-xs hover:text-foreground [&_svg]:size-3.5 [&_svg]:flex-none",
         "bg-(--chat-composer-attached-surface)/(--glass-opacity) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
         "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
@@ -94,7 +95,10 @@ function Peek({
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      <ChevronUpIcon className="ms-auto" />
+    </button>
   );
 }
 
