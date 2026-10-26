@@ -293,7 +293,7 @@ import {
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import {
-  getProviderStatusBannerKey,
+  getProviderStatusDismissalKey,
   isProviderStatusBannerDismissedForSession,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
@@ -1663,10 +1663,13 @@ export default function ChatView(props: ChatViewProps) {
     null,
     DismissedFallbackWindowSchema,
   );
-  const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
+  const providerStatusDismissalKey = getProviderStatusDismissalKey(
+    providerEnvironmentId,
+    activeProviderStatus,
+  );
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
-    isProviderStatusBannerDismissedForSession(providerStatusBannerKey),
+    isProviderStatusBannerDismissedForSession(providerStatusDismissalKey),
   )
     ? activeProviderStatus
     : null;
@@ -3269,7 +3272,7 @@ export default function ChatView(props: ChatViewProps) {
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
               providerStatus={visibleProviderStatus}
-              providerStatusBannerKey={providerStatusBannerKey}
+              providerStatusDismissalKey={providerStatusDismissalKey}
               setProviderStatusBannerDismissTick={setProviderStatusBannerDismissTick}
               onOpenProviderSetup={openProviderSetupStable}
               threadId={activeThread.id}

@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import {
   dismissProviderStatusBannerForSession,
   getProviderStatusBannerKey,
+  getProviderStatusDismissalKey,
   getProviderStatusMessage,
   isProviderStatusBannerDismissedForSession,
   shouldShowProviderStatusBanner,
@@ -109,25 +110,39 @@ describe("compatibility banners", () => {
 });
 
 describe("banner dismissal", () => {
+  const { compatibilityAdvisory: _advisory, ...healthy } = provider;
+  const failing: ServerProvider = {
+    ...healthy,
+    instanceId: ProviderInstanceId.make("codex-dismissal"),
+    status: "error",
+    message: "Could not start Codex CLI.",
+  };
+
   it("keeps a dismissed status hidden in other views until the status changes", () => {
-    const { compatibilityAdvisory: _advisory, ...healthy } = provider;
-    const failing: ServerProvider = {
-      ...healthy,
-      instanceId: ProviderInstanceId.make("codex-dismissal"),
-      status: "error",
-      message: "Could not start Codex CLI.",
-    };
-    const key = getProviderStatusBannerKey(failing);
+    const key = getProviderStatusDismissalKey("environment-a", failing);
     expect(isProviderStatusBannerDismissedForSession(key)).toBe(false);
 
     dismissProviderStatusBannerForSession(key);
 
-    expect(isProviderStatusBannerDismissedForSession(getProviderStatusBannerKey(failing))).toBe(
-      true,
-    );
-    const changed = { ...failing, message: "Codex CLI exited." };
-    expect(isProviderStatusBannerDismissedForSession(getProviderStatusBannerKey(changed))).toBe(
-      false,
-    );
+    expect(
+      isProviderStatusBannerDismissedForSession(
+        getProviderStatusDismissalKey("environment-a", failing),
+      ),
+    ).toBe(true);
+    expect(
+      isProviderStatusBannerDismissedForSession(
+        getProviderStatusDismissalKey("environment-a", { ...failing, message: "Codex exited." }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a dismissal to the environment it was taken in", () => {
+    dismissProviderStatusBannerForSession(getProviderStatusDismissalKey("environment-c", failing));
+
+    expect(
+      isProviderStatusBannerDismissedForSession(
+        getProviderStatusDismissalKey("environment-d", failing),
+      ),
+    ).toBe(false);
   });
 });
