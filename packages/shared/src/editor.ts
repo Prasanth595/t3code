@@ -34,11 +34,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const platform = yield* HostProcess.Platform;
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
-  // On Linux distro packages ship the editor as `zeditor` precisely because `zed` belongs to ZFS.
-  const commands =
-    platform === "linux" && editor.id === "zed" ? ["zeditor", "zed"] : editor.commands;
-  if (!preferBundle) {
-    for (const command of commands) {
+  const preferZeditor = platform === "linux" && editor.id === "zed";
+  if (!preferBundle && !preferZeditor) {
+    for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
   }
@@ -132,8 +130,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
       if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
     }
-    for (const dir of dirs) {
-      for (const name of commands) candidates.push(path.join(dir, name));
+    if (preferZeditor) {
+      // Linux packages use zeditor because OpenZFS owns the zed command.
+      for (const name of ["zeditor", "zed"]) {
+        candidates.push(name, ...dirs.map((dir) => path.join(dir, name)));
+      }
+    } else {
+      for (const dir of dirs) {
+        for (const name of editor.commands) candidates.push(path.join(dir, name));
+      }
     }
   }
 
