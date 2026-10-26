@@ -371,13 +371,14 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   packageName: string,
 ) {
   // Match the updater's pnpm and server environment, rather than the instance's.
-  const pnpmPath = yield* resolveCommandPath("pnpm");
+  const env = yield* mergeProviderInstanceEnvironment(undefined, yield* HostProcess.Environment);
+  const pnpmPath = yield* resolveCommandPath("pnpm", { env });
   if (!pnpmPath) return null;
   // Silent reporting keeps project package-manager warnings out of the JSON.
   const outdated = yield* runProbe(
     pnpmPath,
     ["outdated", "-g", "--reporter=silent", "--format", "json", packageName],
-    {},
+    env,
     // pnpm outdated exits 1 when updates are available.
     [0, 1],
   );
@@ -391,7 +392,7 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   const listed = yield* runProbe(
     pnpmPath,
     ["ls", "-g", "--reporter=silent", "--depth", "0", "--json", packageName],
-    {},
+    env,
   );
   const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);

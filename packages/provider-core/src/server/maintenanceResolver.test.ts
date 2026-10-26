@@ -725,7 +725,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         writeExecutable(pnpmPath);
         NodeFS.writeFileSync(
           pnpmPath,
-          '#!/bin/sh\n[ "$HOME" = "$T3_MAINTENANCE_HOME" ] && [ -n "$HOME" ] && [ -z "${APPDIR+x}${ELECTRON_RUN_AS_NODE+x}" ] || exit 1\nprintf "11.1.3\\n"\n',
+          [
+            "#!/bin/sh",
+            '[ "$HOME" = "$T3_MAINTENANCE_HOME" ] && [ -n "$HOME" ] && [ -z "${APPDIR+x}${ELECTRON_RUN_AS_NODE+x}" ] || exit 1',
+            'case "$1" in',
+            '  --version) printf "11.1.3\\n" ;;',
+            "  outdated) printf '{}\\n' ;;",
+            '  ls) printf \'[{"dependencies":{"@example/package-tool":{"version":"1.0.0"}}}]\\n\' ;;',
+            "esac",
+            "",
+          ].join("\n"),
         );
         yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
         vi.stubEnv("HOME", tempDir);
@@ -740,6 +749,14 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(inherited.update?.command).toBe(
           "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
         );
+        expect(
+          yield* resolveLatestProviderVersion(inherited).pipe(
+            Effect.provideServiceEffect(
+              ProviderLatestVersions.ProviderLatestVersions,
+              ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+            ),
+          ),
+        ).toBe("1.0.0");
 
         const env = { PATH: binDir };
         const explicit = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
