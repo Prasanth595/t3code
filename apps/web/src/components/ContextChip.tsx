@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const contextChipVariants = cva(
-  "inline-flex h-[1.41em] max-w-full items-center gap-[0.33em] rounded-[0.4em] px-[0.2em] align-middle font-medium text-[0.86em] text-(--context-chip-accent) leading-none [&_svg]:block [&_svg]:size-[1.17em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none [button:enabled&,a&]:hover:bg-(--context-chip-accent)/12 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
+  "inline-flex max-w-full items-center gap-[0.33em] rounded-[0.4em] px-[0.2em] font-medium text-(--context-chip-accent) [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none [button:enabled&,a&]:hover:bg-(--context-chip-accent)/12 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
   {
     defaultVariants: { kind: "neutral" },
     variants: {
@@ -61,7 +61,7 @@ function ContextChip({ className, kind, state, render, ...props }: ContextChipPr
 function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
-      className={cn("block min-w-0 self-center truncate leading-tight", className)}
+      className={cn("-my-[0.25em] block min-w-0 self-baseline truncate py-[0.25em]", className)}
       data-slot="context-chip-label"
       {...props}
     />
@@ -71,7 +71,7 @@ function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">)
 function ContextChipAction({ className, render, ...props }: useRender.ComponentProps<"button">) {
   const defaultProps = {
     className: cn(
-      "ml-[0.17em] inline-flex size-[1.17em] shrink-0 cursor-pointer items-center justify-center rounded-sm text-current transition-colors hover:bg-(--context-chip-accent,var(--color-foreground))/17 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none [&_svg]:size-[0.85em]",
+      "ml-[0.17em] inline-flex size-[1em] shrink-0 cursor-pointer items-center justify-center rounded-sm text-current transition-colors hover:bg-(--context-chip-accent,var(--color-foreground))/17 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none [&_svg]:size-[0.85em]",
       className,
     ),
     "data-slot": "context-chip-action",

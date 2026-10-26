@@ -160,7 +160,7 @@ export function ImageChipButton({
           key={previewUrl}
           src={previewUrl}
           alt=""
-          className="size-[1.17em] shrink-0 rounded-sm object-cover"
+          className="size-[1em] shrink-0 self-center rounded-sm object-cover"
           onError={onPreviewError}
         />
       ) : (

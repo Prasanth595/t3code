@@ -528,20 +528,16 @@ describe("MessagesTimeline attachments", () => {
       });
       expect(screen.button("Pause recording.webm")).toHaveProperty("disabled", false);
       expect(screen.text()).toContain("0:03");
-      const progress = screen.container.querySelector<HTMLElement>("span[aria-hidden]")!;
-      expect(progress.style.width).toBe("0%");
       await act(() => {
         duration.mockReturnValue(10);
         audio.dispatchEvent(new Event("durationchange"));
       });
       expect(screen.text()).toContain("0:03 / 0:10");
-      expect(progress.style.width).toBe("30%");
       await act(() => {
         duration.mockReturnValue(NaN);
         audio.dispatchEvent(new Event("durationchange"));
       });
       expect(screen.text()).not.toContain("/");
-      expect(progress.style.width).toBe("0%");
       expect(screen.button("Pause recording.webm")).toHaveProperty("disabled", false);
       await screen.rerender(preview(true));
       expect(screen.text()).toContain("Unavailable");

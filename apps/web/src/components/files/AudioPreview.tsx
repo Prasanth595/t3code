@@ -111,16 +111,10 @@ function AudioChip(props: AudioPreviewProps) {
     <ContextChip
       kind="file"
       {...(props.failed ? { state: "invalid" as const } : {})}
-      className="relative isolate overflow-hidden"
       title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
     >
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 -z-10 bg-(--context-chip-accent)/17"
-        style={{ width: `${duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0}%` }}
-      />
       <ContextChipAction
-        className="ml-0 [&_svg]:size-[1.17em]"
+        className="ml-0 [&_svg]:size-[1em]"
         aria-label={`${props.failed ? "Audio unavailable. " : ""}${action} ${props.name}`}
         disabled={loading}
         onClick={() => {
@@ -154,7 +148,7 @@ function AudioChip(props: AudioPreviewProps) {
           middleTruncateAttachmentName(props.name)
         )}
       </ContextChipLabel>
-      <span className="shrink-0 text-3xs text-current">
+      <span className="shrink-0 self-baseline text-3xs text-current">
         {props.failed
           ? "Unavailable"
           : loading
