@@ -10,14 +10,14 @@ export const config: VercelConfig = {
   // curl | sh requires plain, uncompressed scripts with no cache across deploys.
   headers: [
     {
-      source: "/install.sh",
+      source: "/(install|fix).sh",
       headers: [
         { key: "Content-Type", value: "text/x-shellscript; charset=utf-8" },
         { key: "Cache-Control", value: "public, max-age=300" },
       ],
     },
     {
-      source: "/install.ps1",
+      source: "/(install|fix).ps1",
       headers: [
         { key: "Content-Type", value: "text/plain; charset=utf-8" },
         { key: "Cache-Control", value: "public, max-age=300" },

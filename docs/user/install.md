@@ -77,6 +77,26 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+### If the desktop app won't start
+
+If T3 Code crashes or shows a blank window after an update, reinstall the newest
+release from a terminal. Your threads and settings stay where they are.
+
+```bash
+curl -fsSL https://t3.codes/fix.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://t3.codes/fix.ps1 | iex
+```
+
+It quits T3 Code, reinstalls the newest release on the channel you already use
+(stable or nightly), and opens it again. It asks only when it can't tell, such
+as when both are installed. Set `T3CODE_CHANNEL=nightly` to switch channels.
+Arch Linux packages update through your AUR helper instead.
+
 ### The `t3` command
 
 The desktop app includes the `t3` command-line tool. To run it from any

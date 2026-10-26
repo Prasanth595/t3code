@@ -472,6 +472,16 @@ available.
   - `electron-updater` reads `latest-mac.yml` on stable and `nightly-mac.yml` on nightly, for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one channel-specific mac manifest before publishing the GitHub Release.
 
+### Recovering from a broken release
+
+A desktop build that crashes before its UI loads cannot install its own update.
+Publish the fixed release first, then point users at `curl -fsSL https://t3.codes/fix.sh | sh`
+(`irm https://t3.codes/fix.ps1 | iex` on Windows). The scripts (`scripts/fix.sh`, `scripts/fix.ps1`)
+run no T3 Code code: they reinstall the newest release on each installed app's channel and
+verify the download against the channel's `latest*.yml` or `nightly*.yml`. The marketing site
+serves them, so changes to them go live with the next nightly. `.github/workflows/fix-scripts.yml`
+exercises them against the two newest stable releases.
+
 ### Windows payload topology and update validation
 
 Windows packages the bundled server and only its runtime-external/native

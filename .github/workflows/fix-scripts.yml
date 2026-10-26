@@ -1,0 +1,97 @@
+# Installs the previous stable desktop release, then runs the fix script and
+# checks it moved the install to the newest one. The scripts only run during
+# incidents, so this keeps them from rotting.
+name: Fix scripts
+
+on:
+  pull_request:
+    paths:
+      - scripts/fix.sh
+      - scripts/fix.ps1
+      - .github/workflows/fix-scripts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS, runner: macos-15, kind: mac }
+          - { name: Linux AppImage, runner: ubuntu-24.04, kind: appimage }
+          - { name: Linux deb, runner: ubuntu-24.04, kind: deb }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve versions
+        run: |
+          echo "NEWEST=$(gh release list -R pingdotgg/t3code --exclude-pre-releases --exclude-drafts -L 2 --json tagName -q '.[0].tagName' | sed 's/^v//')" >> "$GITHUB_ENV"
+          echo "PREVIOUS=$(gh release list -R pingdotgg/t3code --exclude-pre-releases --exclude-drafts -L 2 --json tagName -q '.[1].tagName' | sed 's/^v//')" >> "$GITHUB_ENV"
+
+      - name: Install the previous release
+        run: |
+          if [ "${{ matrix.kind }}" = deb ]; then
+            gh release download "v${PREVIOUS}" -R pingdotgg/t3code -p "T3-Code-${PREVIOUS}-amd64.deb" -D /tmp
+            sudo apt-get install -y "/tmp/T3-Code-${PREVIOUS}-amd64.deb"
+          else
+            T3CODE_VERSION="$PREVIOUS" sh scripts/fix.sh
+          fi
+
+      - name: Fix
+        run: sh scripts/fix.sh
+
+      - name: Check the newest release is installed
+        run: |
+          case "${{ matrix.kind }}" in
+            mac) installed="$(defaults read "/Applications/T3 Code (Beta).app/Contents/Info" CFBundleShortVersionString)" ;;
+            deb) installed="$(dpkg-query -W -f='${Version}' t3code)" ;;
+            appimage)
+              test ! -e "$HOME/Applications/T3-Code-${PREVIOUS}-x86_64.AppImage"
+              test -x "$HOME/Applications/T3-Code-${NEWEST}-x86_64.AppImage"
+              installed="$NEWEST"
+              ;;
+          esac
+          echo "installed=$installed newest=$NEWEST previous=$PREVIOUS"
+          test "$installed" = "$NEWEST"
+
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve versions
+        shell: bash
+        run: |
+          echo "NEWEST=$(gh release list -R pingdotgg/t3code --exclude-pre-releases --exclude-drafts -L 2 --json tagName -q '.[0].tagName' | sed 's/^v//')" >> "$GITHUB_ENV"
+          echo "PREVIOUS=$(gh release list -R pingdotgg/t3code --exclude-pre-releases --exclude-drafts -L 2 --json tagName -q '.[1].tagName' | sed 's/^v//')" >> "$GITHUB_ENV"
+
+      # Windows PowerShell 5.1, the oldest host the script supports.
+      - name: Install the previous release
+        shell: powershell
+        run: |
+          $env:T3CODE_VERSION = $env:PREVIOUS
+          ./scripts/fix.ps1
+
+      - name: Fix
+        shell: powershell
+        run: ./scripts/fix.ps1
+
+      - name: Check the newest release is installed
+        shell: powershell
+        run: |
+          $install = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like "T3 Code*" } | Select-Object -First 1
+          Write-Host "installed=$($install.DisplayVersion) newest=$env:NEWEST previous=$env:PREVIOUS"
+          if ($install.DisplayVersion -ne $env:NEWEST) { exit 1 }
