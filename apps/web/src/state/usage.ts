@@ -215,8 +215,10 @@ export function useUsage(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
-  const selectionKey =
-    selectedEnvironmentIds === null ? "all" : [...selectedEnvironmentIds].toSorted().join(",");
+  const selectionKey = selectedEnvironments
+    .map(({ environmentId }) => environmentId)
+    .toSorted()
+    .join(",");
   const isWaitingLong = useSettleWindow(stillReporting > 0, `${windowKey}|${selectionKey}`);
   const settled = answeredCount > 0 && (stillReporting === 0 || isWaitingLong);
 
