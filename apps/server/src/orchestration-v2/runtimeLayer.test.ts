@@ -2689,16 +2689,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each([
-    "not-found",
-    "cli-unauthenticated",
-    "cli-missing",
-    "provider-unsupported",
-  ] as const)("ends a refused watch on its first read and says why: %s", (reason) =>
+  it.effect.each(
+    (["not-found", "cli-unauthenticated", "cli-missing", "provider-unsupported"] as const).flatMap(
+      (reason) => ["detail", "fingerprint"].map((source) => ({ reason, source })),
+    ),
+  )("ends a refused watch on its first read and says why: $reason $source", ({ reason, source }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make(`runtime-pull-request-watch-refused-${reason}`);
-      const projectId = ProjectId.make(`pr-watch-refused-project-${reason}`);
+      const threadId = ThreadId.make(`runtime-pull-request-watch-refused-${reason}-${source}`);
+      const projectId = ProjectId.make(`pr-watch-refused-project-${reason}-${source}`);
       yield* seedProject({
         projectId,
         title: "Watch refused",
@@ -2710,7 +2709,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make(`pr-watch-refused-create-${reason}`),
+        commandId: CommandId.make(`pr-watch-refused-create-${reason}-${source}`),
         threadId,
         projectId,
         title: "Watch refused",
@@ -2722,7 +2721,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
-        commandId: CommandId.make(`pr-watch-refused-start-${reason}`),
+        commandId: CommandId.make(`pr-watch-refused-start-${reason}-${source}`),
         threadId,
         host: "github.com",
         repository: "pingdotgg/t3code",
@@ -2759,14 +2758,38 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           detail: "Resource not accessible by integration",
         }),
       });
-      let failure: PullRequestService.PullRequestError = forbiddenField;
+      let failure: PullRequestService.PullRequestError | null = forbiddenField;
+      let fingerprintFailure: PullRequestService.PullRequestError | null = null;
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.fail(failure),
-              activity: () => Effect.fail(failure),
+              watchFingerprint: () =>
+                fingerprintFailure === null
+                  ? Effect.succeed(null)
+                  : Effect.fail(fingerprintFailure),
+              detail: () =>
+                failure === null
+                  ? Effect.succeed({
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: 14,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }),
+                      checks: [],
+                    })
+                  : Effect.fail(failure),
+              activity: () =>
+                failure === null
+                  ? Effect.succeed({
+                      comments: [],
+                      commentCount: 0,
+                      commentsTruncated: false,
+                      reviewThreads: [],
+                      commits: [],
+                    })
+                  : Effect.fail(failure),
             }),
           ),
         ),
@@ -2774,14 +2797,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
 
-      failure = hidden;
+      if (source === "fingerprint") {
+        failure = null;
+        yield* reactor.sweep;
+        assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+        fingerprintFailure = hidden;
+      } else {
+        failure = hidden;
+      }
       yield* reactor.sweep;
 
       const thread = yield* orchestrator.getThreadShell(threadId);
       assert.isUndefined(thread?.pullRequests?.[0]?.watch);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(
-        messages.flatMap((message) => message.notification?.summary ?? []),
+        messages.flatMap((message) =>
+          message.notification?.outcome === "failed" ? [message.notification.summary] : [],
+        ),
         ["#14: stopped watching, could not read it"],
       );
       assert.include(messages.at(-1)?.text ?? "", hidden.message);

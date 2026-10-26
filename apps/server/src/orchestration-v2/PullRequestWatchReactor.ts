@@ -443,14 +443,23 @@ export const make = Effect.gen(function* () {
     pullRequests.watchFingerprint(referenceOf(group)).pipe(
       Effect.catchCause(
         (cause): Effect.Effect<ProviderChangeRequestWatchFingerprint | null | "paused"> =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.interrupt
-            : isRateLimited(cause)
-              ? Effect.succeed("paused")
-              : Effect.logDebug("pull request watch fingerprint failed", {
-                  pullRequest: group.key,
-                  cause,
-                }).pipe(Effect.as(null)),
+          Effect.gen(function* () {
+            if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+            if (isRateLimited(cause)) return "paused";
+            const lasting = lastingFailure(cause);
+            if (lasting !== null) {
+              if (yield* eachTarget(group, (target) => giveUp(target, lasting))) {
+                lastReads.delete(group.key);
+                readFailures.delete(group.key);
+              }
+              return "paused";
+            }
+            yield* Effect.logDebug("pull request watch fingerprint failed", {
+              pullRequest: group.key,
+              cause,
+            });
+            return null;
+          }),
       ),
     );
 
