@@ -1692,7 +1692,31 @@ it.effect("a bounded Stop ignores cancelled queues and preserves newer completed
         pendingBackgroundTasks: [{ taskId: "original-background", kind: "command" }],
       },
     });
+    const originalRun = (yield* orchestrator.getThreadProjection(cancelledQueue)).runs[0]!;
+    const completedAt = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("event:stop-retry:completed-provider-turn"),
+      type: "provider-turn.updated",
+      threadId: cancelledQueue,
+      occurredAt: completedAt,
+      payload: {
+        id: ProviderTurnId.make("turn:stop-retry:completed"),
+        providerThreadId: providerThread.id,
+        nodeId: originalRun.rootNodeId!,
+        runAttemptId: originalRun.activeAttemptId!,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "completed",
+        startedAt: completedAt,
+        completedAt,
+      },
+    });
     yield* retryStop(cancelledQueue, cancelledQueueStop);
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(cancelledQueue)).providerThreads[0]!
+        .pendingBackgroundTasks,
+      [],
+    );
     assert.deepEqual(yield* threadState(cancelledQueue), {
       runs: ["completed", "cancelled"],
       watched: [],
