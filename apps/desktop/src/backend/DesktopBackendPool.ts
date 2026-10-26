@@ -21,7 +21,6 @@ import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
-import * as ElectronApp from "../electron/ElectronApp.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -104,7 +103,6 @@ export const layer = Layer.effect(
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
-    const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
@@ -170,9 +168,19 @@ export const layer = Layer.effect(
         electronDialog
           .showErrorBox(
             "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
+            "Another T3 Code server holds this T3 home's ownership lock but has not published its record, so the desktop cannot tell whether it is still starting or which server it is. A background service can hold the lock the same way. The desktop did not start a second server for the same home.\n\nWait for that server to finish starting, then reopen T3 Code. If it does not become ready, stop it and reopen: run `t3 service status`, and if a service is installed, run `t3 service uninstall`. You can also pair with a running server from Settings > Connections.",
           )
-          .pipe(Effect.andThen(electronApp.quit)),
+          .pipe(
+            Effect.andThen(desktopWindow.createMain),
+            Effect.catch((error) =>
+              logBackendPoolWarning(
+                "failed to open the main window for an unrecorded T3 home owner",
+                {
+                  error: error.message,
+                },
+              ),
+            ),
+          ),
     });
 
     const instancesRef = yield* SynchronizedRef.make<
