@@ -355,8 +355,6 @@ function ComposerBannerStackAlert({
             </NoticeText>
           ) : null}
         </ComposerBanner.Content>
-        {/* A shared minimum keeps short actions (Stop, Clear, dismiss) the same width,
-            so the details buttons of stacked notices line up. */}
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
             {item.actions}
