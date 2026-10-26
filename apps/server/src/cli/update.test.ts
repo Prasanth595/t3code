@@ -8,7 +8,13 @@ import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { afterEach, vi } from "vite-plus/test";
 
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import {
+  repointLauncher,
+  resolveLauncherPath,
+  resolveNewestVersion,
+  resolveNextStep,
+} from "./update.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -125,6 +131,61 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(bare, launcher);
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("tells npm users how to move the t3 their package still pins", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const executable = path.join(root, ".t3/runtime/versions/1.0.0/t3");
+      const prefix = path.join(root, "node");
+      const npmGlobal = path.join(prefix, "lib/node_modules/t3/bin/t3.mjs");
+      const npx = path.join(root, ".npm/_npx/abc/node_modules/t3/bin/t3.mjs");
+      const projectLocal = path.join(root, "project/node_modules/t3/bin/t3.mjs");
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "");
+      for (const launcher of [npmGlobal, npx, projectLocal]) {
+        yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+        yield* fs.writeFileString(launcher, "");
+        yield* fs.writeFileString(
+          path.join(path.dirname(launcher), "../package.json"),
+          `{"name":"t3","version":"${packageJson.version}","bin":{"t3":"./bin/t3.mjs"}}`,
+        );
+      }
+      yield* fs.makeDirectory(path.join(prefix, "bin"));
+      yield* fs.symlink(npmGlobal, path.join(prefix, "bin/t3"));
+      const realPrefix = yield* fs.realPath(prefix);
+      const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
+
+      for (const [launcher, expected] of [
+        [
+          npmGlobal,
+          `${stillRuns} Run \`npm install --global --prefix ${realPrefix} t3@9.9.9\` to move to 9.9.9.`,
+        ],
+        [npx, `${stillRuns} Run \`npx t3@9.9.9\` to move to 9.9.9.`],
+        [
+          projectLocal,
+          `${stillRuns} Update it to t3@9.9.9 with the package manager that installed it.`,
+        ],
+        [undefined, "Run /runtime/versions/9.9.9/t3"],
+      ] as const) {
+        const nextStep = yield* resolveNextStep({
+          repointed: false,
+          entryPath: "/runtime/versions/9.9.9/t3",
+          targetVersion: "9.9.9",
+        }).pipe(
+          Effect.provideService(HostProcess.ExecutablePath, executable),
+          Effect.provideService(HostProcess.Arguments, [executable, executable]),
+          Effect.provideService(HostProcess.IsExecutable, true),
+          Effect.provideService(
+            HostProcess.Environment,
+            launcher === undefined ? {} : { T3CODE_NPM_LAUNCHER_PATH: launcher },
+          ),
+        );
+        assert.equal(nextStep, expected, launcher ?? "standalone");
+      }
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 });
