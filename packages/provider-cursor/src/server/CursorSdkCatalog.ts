@@ -87,11 +87,11 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
       Effect.all(
         {
           // Enterprise teams can block account labels while model discovery still works.
-          user: probes.readUser(apiKey).pipe(
-            Effect.catchIf(
-              (error) => error.accountBlocked,
-              () => Effect.undefined,
-            ),
+          user: Effect.catchIf(
+            probes.readUser(apiKey),
+            (error: CursorSdkCatalogError): boolean => error.accountBlocked,
+            () => Effect.undefined,
+            (error: CursorSdkCatalogError) => Effect.fail(error),
           ),
           models: Cache.get(modelCache, apiKey),
         },
