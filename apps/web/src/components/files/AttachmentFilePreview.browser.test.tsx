@@ -21,6 +21,26 @@ vi.mock(import("./ReadOnlySourcePreview"), () => ({
   default: ({ text }: { text: string }) => <pre>{text}</pre>,
 }));
 
+// The Word engine compiles about 30 MB of WebAssembly in a fresh worker per document, which took
+// 10-17 s per test on loaded CI runners. These tests cover fetching, preparation and remounts, so
+// the stand-in shows the prepared body's text instead of laying it out.
+vi.mock(import("./office/WordDocument"), async () => {
+  const { use } = await import("react");
+  const { default: Zip } = await import("jszip");
+  const texts = new WeakMap<ArrayBuffer, Promise<string>>();
+  const read = (bytes: ArrayBuffer) =>
+    Zip.loadAsync(bytes)
+      .then((zip) => zip.file("word/document.xml")!.async("string"))
+      .then((xml) => xml.replace(/<[^>]+>/g, " "));
+  return {
+    default: ({ bytes }: { bytes: ArrayBuffer }) => {
+      let text = texts.get(bytes);
+      if (!text) texts.set(bytes, (text = read(bytes)));
+      return <pre>{use(text)}</pre>;
+    },
+  };
+});
+
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -1807,7 +1827,7 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
   }
 });
 
-it.each([60, 100])("renders all %i pages of a table-heavy Word report", async (pages) => {
+it.each([60, 100])("prepares all %i pages of a table-heavy Word report", async (pages) => {
   const { default: JSZip } = await import("jszip");
   const archive = new JSZip();
   const paragraph = (text: string) =>
@@ -1835,16 +1855,12 @@ it.each([60, 100])("renders all %i pages of a table-heavy Word report", async (p
       sizeBytes={file.size}
     />,
   );
-  await vi.waitFor(() => expect(screen.container.textContent).toMatch(/\d+ pages/), {
-    timeout: 30_000,
+  // The first Office preview in the file loads the lazy viewer chain and the preparation worker.
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("page " + pages), {
+    timeout: 10_000,
   });
   expect(screen.container.textContent).not.toContain("Preview limited");
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
-  const scroll = screen.container.querySelector<HTMLElement>("[data-office-pages]")!;
-  await act(() => scroll.scrollTo({ top: scroll.scrollHeight }));
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("page " + pages), {
-    timeout: 30_000,
-  });
 });
 
 describe("standalone Mermaid previews", () => {
@@ -1978,6 +1994,13 @@ describe("attachment HTML preview recovery", () => {
     await act(async () => button!.click());
   };
   const alert = (screen: Screen) => screen.container.querySelector('[role="alert"]');
+  // The app's connection runtime keeps polling environment discovery through the same global
+  // fetch while these tests run, so only the attachment's own requests are counted.
+  const attachmentFetches = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.map(([url]) => url)
+      .filter((url) => typeof url === "string" && url.startsWith("data:text/html"));
 
   it("keeps a renewed URL for subsequent rendered and source views", async () => {
     setup();
@@ -1994,7 +2017,7 @@ describe("attachment HTML preview recovery", () => {
     await act(async () => {
       await import("./ReadOnlySourcePreview");
     });
-    expect(fetch).toHaveBeenCalledExactlyOnceWith(renewedUrl, expect.any(Object));
+    expect(attachmentFetches()).toEqual([renewedUrl]);
     await vi.waitFor(() =>
       expect(screen.container.querySelector("pre")?.textContent).toBe("<p>Captured HTML</p>"),
     );
@@ -2003,7 +2026,7 @@ describe("attachment HTML preview recovery", () => {
     expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(renewedUrl);
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([renewedUrl, renewedUrl]);
+    expect(attachmentFetches()).toEqual([renewedUrl, renewedUrl]);
   });
 
   it("does not fetch or mark an expired URL fresh when reauthorization is unavailable", async () => {
@@ -2018,13 +2041,13 @@ describe("attachment HTML preview recovery", () => {
     now = 61 * 60_000;
     refresh.mockResolvedValue(null);
     await toggleMode(screen, "Show HTML source");
-    expect(fetch).not.toHaveBeenCalled();
+    expect(attachmentFetches()).toEqual([]);
     expect(alert(screen)?.textContent).toContain("Reconnect to the environment and try again.");
 
     await toggleMode(screen, "Show rendered page");
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(3);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(attachmentFetches()).toEqual([]);
   });
 
   it("can return to rendered HTML after local source decoding fails", async () => {
