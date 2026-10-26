@@ -498,6 +498,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       real: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
       env: { ChocolateyInstall: "D:\\Tools\\Choco" },
     },
+    {
+      name: "a mixed-case custom root with a trailing separator",
+      resolved: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      real: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      env: { ChocolateyInstall: "d:/tools/choco/" },
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: chocolateyPackage },
   ] as const)("keeps a Chocolatey Claude install manual-only through $name", (fixture) =>
     Effect.gen(function* () {
       const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
@@ -528,7 +535,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   // report an update `choco upgrade` cannot install yet.
   it.effect("compares a Chocolatey Claude install against choco search", () =>
     Effect.gen(function* () {
-      const probes: Array<string> = [];
+      const probes: Array<{ command: string; args: ReadonlyArray<string> }> = [];
       const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
         binaryPath: "claude",
         resolvedCommandPath: chocolateyShim,
@@ -539,8 +546,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
-          stdoutSpawner((command) => {
-            probes.push(command);
+          stdoutSpawner((command, args) => {
+            probes.push({ command, args });
             return "claude-code|2.1.304\r\n";
           }),
         ),
@@ -556,9 +563,18 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       );
 
       expect(latest).toBe("2.1.304");
-      expect(probes.map((command) => NodePath.basename(command).replace(/\.\w+$/, ""))).toEqual([
-        "choco",
-      ]);
+      expect(probes.map(({ command }) => NodePath.basename(command).replace(/\.\w+$/, ""))).toEqual(
+        ["choco"],
+      );
+      expect(probes[0]?.args).toEqual(["search", "claude-code", "--exact", "--limit-output"]);
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.304",
+          latestVersion: latest,
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

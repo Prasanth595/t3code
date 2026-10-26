@@ -196,11 +196,6 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly installPath?: string;
-  /**
-   * The owning installer's own release, when it publishes behind npm. Without
-   * it the npm registry is authoritative, and the advisory would keep asking
-   * for a version the installer cannot provide yet.
-   */
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
   readonly manualCommand?: string;
 }): ProviderMaintenanceCapabilities {
@@ -258,13 +253,7 @@ function isWinGetClaudeCommandPath(commandPath: string): boolean {
 
 const CHOCOLATEY_CLAUDE_PACKAGE_ID = "claude-code";
 
-/**
- * Chocolatey's Claude Code package: the shimgen shim in `<root>\bin` or the
- * binary it launches from `<root>\lib\claude-code\tools`. The default root's
- * directory is named `chocolatey`. A custom root is not, so those paths are
- * compared with `ChocolateyInstall`. The shim is a real executable rather than
- * a link, so following symlinks never reaches the package directory.
- */
+// Chocolatey's executable shim is not a symlink, so realpath cannot prove its owner.
 const chocolateyClaudeCommandPath = /\/chocolatey\/(?:bin|lib\/claude-code\/tools)\/claude\.exe$/;
 
 function isChocolateyClaudeCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
