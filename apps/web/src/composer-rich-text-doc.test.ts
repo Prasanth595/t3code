@@ -20,7 +20,10 @@ import {
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
+  ComposerBoldExtension,
   ComposerCodeExtension,
+  ComposerItalicExtension,
+  ComposerStrikeExtension,
   ComposerTaskItemExtension,
   flatToMarkdown,
   flatToPm,
@@ -1114,5 +1117,88 @@ describe("inline code entry", () => {
     expect(editor.state.doc.toJSON()).toEqual(before);
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
     expect(editor.state.doc.toJSON()).toEqual(before);
+  });
+});
+
+describe("mark shortcuts around inline code", () => {
+  function editorFor() {
+    const editor = new Editor({
+      element: null,
+      extensions: [
+        StarterKit.configure({
+          bold: false,
+          code: false,
+          codeBlock: false,
+          italic: false,
+          strike: false,
+          trailingNode: false,
+        }),
+        ComposerBoldExtension,
+        ComposerItalicExtension,
+        ComposerStrikeExtension,
+        ComposerCodeExtension,
+      ],
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    });
+    editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+    onTestFinished(() => editor.destroy());
+    return editor;
+  }
+
+  function type(editor: Editor, text: string) {
+    for (const ch of text) {
+      const { from, to } = editor.state.selection;
+      const insert = () => editor.state.tr.insertText(ch, from, to);
+      const handled = editor.state.plugins.some((plugin) =>
+        plugin.props.handleTextInput?.call(plugin, editor.view, from, to, ch, insert),
+      );
+      if (!handled) editor.view.dispatch(insert());
+    }
+  }
+
+  function marked(editor: Editor, name: string) {
+    const text: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.isText && node.marks.some((mark) => mark.type.name === name)) {
+        text.push(node.text ?? "");
+      }
+    });
+    return text;
+  }
+
+  /** Types `text` into a backtick pair and steps the caret out so it formats. */
+  function typeCode(editor: Editor, text: string) {
+    const offset = editor.state.selection.from;
+    type(editor, "``");
+    editor.commands.setTextSelection(offset + 1);
+    type(editor, text);
+    editor.commands.setTextSelection(offset + text.length + 2);
+    expect(marked(editor, "code")).toContain(text);
+  }
+
+  it.each([
+    { mark: "italic", open: "*" },
+    { mark: "bold", open: "**" },
+    { mark: "strike", open: "~~" },
+  ])("keeps a $mark delimiter inside an earlier code span literal", ({ mark, open }) => {
+    const editor = editorFor();
+    typeCode(editor, `${open}foo`);
+    type(editor, ` bar \`${open}`);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`${open}foo\` bar \`${open}`);
+    expect(marked(editor, mark)).toEqual([]);
+    expect(marked(editor, "code")).toEqual([`${open}foo`]);
+  });
+
+  it.each([
+    { mark: "italic", open: "*" },
+    { mark: "bold", open: "**" },
+    { mark: "strike", open: "~~" },
+  ])("still wraps a code span in $mark when both delimiters are outside it", ({ mark, open }) => {
+    const editor = editorFor();
+    type(editor, open);
+    typeCode(editor, "foo");
+    type(editor, ` bar${open}`);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}\`foo\` bar${open}`);
+    expect(marked(editor, mark)).toEqual(["foo", " bar"]);
   });
 });

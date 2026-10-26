@@ -6,6 +6,11 @@ import {
   type Node as ProseMirrorNode,
   type ResolvedPos,
 } from "@tiptap/pm/model";
+import {
+  Bold,
+  starInputRegex as boldStarInputRegex,
+  underscoreInputRegex as boldUnderscoreInputRegex,
+} from "@tiptap/extension-bold";
 import { Code } from "@tiptap/extension-code";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
@@ -16,11 +21,13 @@ import {
   type Command,
   type Editor,
   Extension,
+  InputRule,
   markInputRule,
   markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
+import { Strike, inputRegex as strikeInputRegex } from "@tiptap/extension-strike";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
 import {
@@ -141,16 +148,59 @@ export const ComposerCodeExtension = Code.extend({
 });
 
 /**
+ * Tiptap's mark rules only skip a match overlapping a mark that excludes theirs,
+ * and the composer's code mark excludes just itself, so a closing `*` matched a
+ * `*` inside an earlier code span. A delimiter in a code span is literal, so the
+ * rule needs the opening delimiter outside code; the caret guard covers the close.
+ */
+function markInputRuleOutsideCode(find: RegExp, type: MarkType): InputRule {
+  const rule = markInputRule({ find, type });
+  return new InputRule({
+    find,
+    handler: (props) => {
+      const { state, range, match } = props;
+      const code = state.schema.marks.code;
+      const content = match[match.length - 1] ?? "";
+      const textStart = range.from + match[0].indexOf(content);
+      const textEnd = textStart + content.length;
+      if (
+        code &&
+        (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
+          state.doc.rangeHasMark(textEnd, range.to, code))
+      ) {
+        return null;
+      }
+      return rule.handler(props);
+    },
+  });
+}
+
+/**
  * The composer writes italic as `*text*`, so it keeps only the `*` shortcuts.
  * Tiptap's `_text_` rules fire on the `_` in names like `node_modules` and
  * italicize back to an earlier `_build`, even one inside a code span.
  */
 export const ComposerItalicExtension = Italic.extend({
   addInputRules() {
-    return [markInputRule({ find: starInputRegex, type: this.type })];
+    return [markInputRuleOutsideCode(starInputRegex, this.type)];
   },
   addPasteRules() {
     return [markPasteRule({ find: starPasteRegex, type: this.type })];
+  },
+});
+
+export const ComposerBoldExtension = Bold.extend({
+  addInputRules() {
+    return [
+      markInputRuleOutsideCode(boldStarInputRegex, this.type),
+      markInputRuleOutsideCode(boldUnderscoreInputRegex, this.type),
+    ];
+  },
+});
+
+export const ComposerStrikeExtension = Strike.extend({
+  addInputRules() {
+    return [markInputRuleOutsideCode(strikeInputRegex, this.type)];
   },
 });
 
