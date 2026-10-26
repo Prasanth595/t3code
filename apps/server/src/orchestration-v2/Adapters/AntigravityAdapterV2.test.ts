@@ -159,6 +159,7 @@ describe("AntigravityAdapterV2 session open", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: () => Effect.fail(cause),
         withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
         defaultModel: Effect.succeed(undefined),
       });
       const threadId = ThreadId.make("thread-antigravity-sign-in");
