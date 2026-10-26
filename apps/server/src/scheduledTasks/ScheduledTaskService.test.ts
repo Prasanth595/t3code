@@ -958,3 +958,30 @@ it.effect("records the provider error for every task steered into the same run",
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("catches an outcome missed by reconnect while dispatch is still in flight", () =>
+  Effect.gen(function* () {
+    const releaseDispatch = yield* Deferred.make<void>();
+    const runId = RunId.make("run:dispatch-reconnect");
+    const harness = yield* makeTurnHarness({
+      dropStreamOnCommand: true,
+      liveTail: true,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("other"), "completed")],
+      duringDispatch: () => Deferred.await(releaseDispatch),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const dispatch = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Queue.take(harness.dispatched);
+      yield* Deferred.succeed(harness.dropStream, undefined);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Ref.get(harness.subscriptions), 2);
+      yield* Deferred.succeed(releaseDispatch, undefined);
+      yield* Fiber.join(dispatch);
+      yield* untilStatus(service, task.id, "succeeded");
+      assert.equal((yield* service.list()).tasks[0]?.runCount, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

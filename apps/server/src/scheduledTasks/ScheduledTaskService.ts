@@ -789,6 +789,69 @@ export const layer = Layer.effect(
       );
     });
 
+    const serviceScope = yield* Effect.scope;
+    let runEventGeneration = 0;
+
+    const catchUpRun = Effect.fn("ScheduledTaskService.catchUpRun")(
+      (pending: ReturnType<typeof trackedRuns.pending>[number]) =>
+        Effect.gen(function* () {
+          const { messageId, threadId } = pending;
+          const { thread, messages } = yield* threadManagement.getThreadRecords(
+            threadId,
+            ["messages"],
+            { messageIds: [messageId] },
+          );
+          const occurredAt = yield* DateTime.now;
+          // Deleting a thread keeps its projection, flagged, so a delete missed
+          // with the stream shows up here rather than as a read failure.
+          if (thread.deletedAt !== null) {
+            const ended = trackedRuns.observe({
+              id: EventId.make(`scheduled-task-catch-up:${threadId}:deleted`),
+              type: "thread.deleted",
+              threadId,
+              occurredAt,
+              payload: undefined as never,
+            });
+            yield* Effect.forEach(ended, settleOutcome, { discard: true });
+            return;
+          }
+          const runId = messages[0]?.runId ?? null;
+          if (runId === null) return;
+          const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"], {
+            runIds: [runId],
+          });
+          const run = runs[0];
+          if (run === undefined) return;
+          trackedRuns.bindRun(messageId, runId);
+          const ended = trackedRuns.observe({
+            id: EventId.make(`scheduled-task-catch-up:${runId}`),
+            type: "run.updated",
+            threadId,
+            runId,
+            occurredAt,
+            payload: run,
+          });
+          yield* Effect.forEach(ended, settleOutcome, { discard: true });
+        }).pipe(
+          // A thread that cannot be read (deleted, records gone) would otherwise
+          // be retried by every resubscribe and nothing else would settle its
+          // row, so after a few tries the run is released as failed.
+          Effect.retry({ times: 3, schedule: Schedule.exponential("500 millis") }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not catch up a scheduled task run", {
+              messageId: pending.messageId,
+              cause,
+            }).pipe(
+              Effect.andThen(
+                Effect.sync(() => trackedRuns.forgetMessage(pending.messageId)).pipe(
+                  Effect.andThen(releaseRun(pending, "Could not read how the run ended.")),
+                ),
+              ),
+            ),
+          ),
+        ),
+    );
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -798,6 +861,7 @@ export const layer = Layer.effect(
         readonly dispatched: Ref.Ref<boolean>;
       },
     ) {
+      const dispatchGeneration = runEventGeneration;
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
         const next = new Set(active);
@@ -991,6 +1055,12 @@ export const layer = Layer.effect(
           if (runSucceeded) {
             const ended = trackedRuns.dispatched(messageId, threadId);
             if (ended !== null) yield* settleOutcome(ended);
+            // Reconnect may have skipped this message before dispatch bookkeeping finished.
+            if (dispatchGeneration !== runEventGeneration) {
+              const pending = trackedRuns.pending().find((run) => run.messageId === messageId);
+              if (pending !== undefined)
+                yield* catchUpRun(pending).pipe(Effect.forkIn(serviceScope));
+            }
           }
         } else trackedRuns.forgetTask(task.id);
         return { task: completed, threadId };
@@ -1120,72 +1190,8 @@ export const layer = Layer.effect(
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
-    // Events missed while the stream was down are caught up from the thread
-    // projection: the run each still-tracked message belongs to is replayed as a
-    // run update. Provider error text is not recovered, so a failed run reads as
-    // the generic failure.
     const catchUpRuns = Effect.suspend(() =>
-      Effect.forEach(
-        trackedRuns.pending(),
-        (pending) =>
-          Effect.gen(function* () {
-            const { messageId, threadId } = pending;
-            const { thread, messages } = yield* threadManagement.getThreadRecords(
-              threadId,
-              ["messages"],
-              { messageIds: [messageId] },
-            );
-            const occurredAt = yield* DateTime.now;
-            // Deleting a thread keeps its projection, flagged, so a delete missed
-            // with the stream shows up here rather than as a read failure.
-            if (thread.deletedAt !== null) {
-              const ended = trackedRuns.observe({
-                id: EventId.make(`scheduled-task-catch-up:${threadId}:deleted`),
-                type: "thread.deleted",
-                threadId,
-                occurredAt,
-                payload: undefined as never,
-              });
-              yield* Effect.forEach(ended, settleOutcome, { discard: true });
-              return;
-            }
-            const runId = messages[0]?.runId ?? null;
-            if (runId === null) return;
-            const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"], {
-              runIds: [runId],
-            });
-            const run = runs[0];
-            if (run === undefined) return;
-            trackedRuns.bindRun(messageId, runId);
-            const ended = trackedRuns.observe({
-              id: EventId.make(`scheduled-task-catch-up:${runId}`),
-              type: "run.updated",
-              threadId,
-              runId,
-              occurredAt,
-              payload: run,
-            });
-            yield* Effect.forEach(ended, settleOutcome, { discard: true });
-          }).pipe(
-            // A thread that cannot be read (deleted, records gone) would otherwise
-            // be retried by every resubscribe and nothing else would settle its
-            // row, so after a few tries the run is released as failed.
-            Effect.retry({ times: 3, schedule: Schedule.exponential("500 millis") }),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not catch up a scheduled task run", {
-                messageId: pending.messageId,
-                cause,
-              }).pipe(
-                Effect.andThen(
-                  Effect.sync(() => trackedRuns.forgetMessage(pending.messageId)).pipe(
-                    Effect.andThen(releaseRun(pending, "Could not read how the run ended.")),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        { discard: true },
-      ),
+      Effect.forEach(trackedRuns.pending(), catchUpRun, { discard: true }),
     );
 
     // The stream resumes after a cursor it fixes on its first pull. Starting
@@ -1195,6 +1201,7 @@ export const layer = Layer.effect(
     const runEvents = Stream.fromPull(
       Effect.gen(function* () {
         const pull = yield* Stream.toPull(threadManagement.streamDomainEvents);
+        runEventGeneration++;
         const first = yield* Effect.forkScoped(pull, { startImmediately: true });
         yield* catchUpRuns;
         let joined = false;
@@ -1756,8 +1763,6 @@ export const layer = Layer.effect(
           : [raced, permits];
       });
     });
-
-    const serviceScope = yield* Effect.scope;
 
     const releaseFailedDelivery = Effect.fn("ScheduledTaskService.releaseFailedDelivery")(
       function* (deliveryId: string) {
