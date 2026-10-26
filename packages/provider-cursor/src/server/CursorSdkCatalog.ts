@@ -31,13 +31,8 @@ export class CursorSdkCatalogError extends Schema.TaggedError<CursorSdkCatalogEr
     return this.cause instanceof CursorSdkError && this.cause.code === "plan_required";
   }
 
-  // The SDK sets code "unknown" when a 403 body has no code, so any 403 except
-  // plan_required counts as blocked, not only feature_unavailable.
   get accountBlocked(): boolean {
-    if (!(this.cause instanceof CursorSdkError)) return false;
-    return (
-      this.cause.code === "feature_unavailable" || (this.cause.status === 403 && !this.planRequired)
-    );
+    return this.cause instanceof CursorSdkError && this.cause.status === 403 && !this.planRequired;
   }
 }
 
@@ -91,16 +86,13 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
     read: (apiKey) =>
       Effect.all(
         {
-          // Enterprise teams can block /v1/me with a 403 while models and local
-          // runs work. The key name and email only label the account, so that
-          // block alone does not fail the read. Other /v1/me failures still do.
-          user: probes
-            .readUser(apiKey)
-            .pipe(
-              Effect.catch((error) =>
-                error.accountBlocked ? Effect.undefined : Effect.fail(error),
-              ),
+          // Enterprise teams can block account labels while model discovery still works.
+          user: probes.readUser(apiKey).pipe(
+            Effect.catchIf(
+              (error) => error.accountBlocked,
+              () => Effect.undefined,
             ),
+          ),
           models: Cache.get(modelCache, apiKey),
         },
         { concurrency: "unbounded" },

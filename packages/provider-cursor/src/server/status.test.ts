@@ -309,6 +309,18 @@ describe("checkCursorProviderStatus", () => {
       },
     },
     {
+      name: "rejects a 401 even when its code is feature_unavailable",
+      meFailure: new CursorSdkError("Unauthorized", {
+        code: "feature_unavailable",
+        status: 401,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      },
+    },
+    {
       name: "fails a key that /v1/me rejects",
       meFailure: new CursorSdkError("Unauthorized", { status: 401 }),
       expected: {
