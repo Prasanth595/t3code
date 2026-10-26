@@ -3864,6 +3864,7 @@ interface ClaudeLiveQueryContext {
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Ambient tasks outlive turns and later frames omit the flag; forget them with this process.
   readonly ambientTaskIds: Set<string>;
+  readonly retiredAmbientSubagentTaskIds: Set<string>;
 }
 
 interface ActiveClaudeToolCall {
@@ -7526,8 +7527,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const classifyAmbientTask = Effect.fnUntraced(function* (
           liveQuery: ClaudeLiveQueryContext,
           taskId: string,
+          message: SDKMessage,
         ) {
           liveQuery.ambientTaskIds.add(taskId);
+          yield* discardBufferedSubagentStarts(liveQuery.nativeThreadId, taskId, message);
           const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
           const current = yield* Ref.get(activeTurn);
           const context =
@@ -7546,6 +7549,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !liveQuery.subagentsFromEarlierProcesses.has(registered)
           ) {
             // Retire the mistaken child projection without stopping the native watcher.
+            liveQuery.retiredAmbientSubagentTaskIds.add(taskId);
             yield* updateClaudeSubagentNode({
               context,
               taskId,
@@ -9258,7 +9262,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   continue;
                 }
                 if (task.ambient === true && isClaudeAmbientBackgroundTaskType(task.task_type)) {
-                  yield* classifyAmbientTask(liveQuery, task.task_id);
+                  yield* classifyAmbientTask(liveQuery, task.task_id, message);
                 } else if (task.ambient === false) {
                   liveQuery.ambientTaskIds.delete(task.task_id);
                 }
@@ -9271,11 +9275,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.ambient === true &&
                 isClaudeAmbientBackgroundTaskType(claudeTaskTypeFromSdkMessage(message))
               ) {
-                yield* classifyAmbientTask(liveQuery, message.task_id);
+                yield* classifyAmbientTask(liveQuery, message.task_id, message);
               } else if (message.ambient === false) {
                 liveQuery.ambientTaskIds.delete(message.task_id);
               }
             }
+          }
+          if (
+            liveQuery?.query === input.query &&
+            message.type === "system" &&
+            message.subtype === "task_notification" &&
+            liveQuery.retiredAmbientSubagentTaskIds.has(message.task_id)
+          ) {
+            yield* reconcileAmbientSubagentOutcome(liveQuery, message);
           }
           if (
             context?.promptUuid === null &&
@@ -9946,6 +9958,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             ambientTaskIds: new Set(),
+            retiredAmbientSubagentTaskIds: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",

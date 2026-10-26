@@ -7486,80 +7486,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("keeps newer ambient classification when an idle start is replayed", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("ambient-replay-first"),
-          text: "Update the artifact.",
-          attachments: [],
-        }),
-      );
-      yield* harness.offerAndWait(turnOneResult);
-      yield* Queue.take(harness.terminalReceipts);
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "task_started",
-          task_id: "replayed-watch",
-          task_type: "monitor_ws",
-          ambient: false,
-          description: "Watch artifact updates",
-          tool_use_id: "toolu-replayed-watch",
-          uuid: "ambient-replay-start",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "background_tasks_changed",
-          tasks: [{ task_id: "replayed-watch", task_type: "monitor_ws", ambient: true }],
-          uuid: "ambient-replay-roster",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
-      yield* harness.offerAndWait(wakeTurnInit);
-      yield* Queue.take(harness.continuationReceipts);
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("ambient-replay-second"),
-          text: "Background work resumed.",
-          attachments: [],
-          providerTurnOrdinal: 2,
-          messageCreatedBy: "agent",
-          messageCreationSource: "provider",
-        }),
-      );
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "task_progress",
-          task_id: "replayed-watch",
-          description: "Watching",
-          uuid: "ambient-replay-progress",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
-      yield* harness.offerAndWait(
-        makeResultFrame({ uuid: "ambient-replay-result", result: "Updated." }),
-      );
-      yield* Queue.take(harness.terminalReceipts);
-      assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+  it.effect.each([false, true])(
+    "keeps ambient idle starts excluded after replacement=%s",
+    (replace) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("ambient-replay-first"),
+            text: "Update the artifact.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "replayed-watch",
+            task_type: "monitor_ws",
+            ambient: false,
+            description: "Watch artifact updates",
+            tool_use_id: "toolu-replayed-watch",
+            uuid: "ambient-replay-start",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ task_id: "replayed-watch", task_type: "monitor_ws", ambient: true }],
+            uuid: "ambient-replay-roster",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        if (replace) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("ambient-replacement-user"),
+              text: "Plan the next update.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode: "approval-required",
+                interactionMode: "plan",
+                cwd: "/workspace",
+              }),
+            }),
+          );
+          assert.lengthOf(harness.processQueues, 2);
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "replacement-user-result", result: "Planned." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+        }
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* Queue.take(harness.continuationReceipts);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("ambient-replay-second"),
+            ...(replace
+              ? { modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-opus-4-6" } }
+              : {}),
+            text: "Background work resumed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        if (!replace)
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_progress",
+              task_id: "replayed-watch",
+              description: "Watching",
+              uuid: "ambient-replay-progress",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "ambient-replay-result", result: "Updated." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
   it.effect("tracks a task that explicitly stops being ambient", () =>
@@ -7695,13 +7724,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ ...task, ambient: false }],
+            uuid: "ambient-agent-ordinary-again",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
             subtype: "task_notification",
             task_id: task.task_id,
             tool_use_id: "toolu-ambient-agent",
             status: "completed",
             output_file: "/tmp/ambient-agent.output",
             summary: "Watch finished.",
-            ambient: true,
             uuid: "00000000-0000-4000-8000-000000000323",
             session_id: WAKE_NATIVE_SESSION,
           }),
@@ -7710,6 +7747,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) =>
             event.type === "subagent.updated" &&
             event.subagent.nativeTaskRef?.nativeId === task.task_id,
+        );
+        assert.equal(
+          latestSubagent?.type === "subagent.updated" && latestSubagent.subagent.status,
+          "completed",
         );
         assert.deepEqual(
           {
