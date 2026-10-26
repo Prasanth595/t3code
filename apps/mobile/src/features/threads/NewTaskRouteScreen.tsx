@@ -7,6 +7,8 @@ import {
   StackActions,
   useIsFocused,
   useNavigation,
+  useNavigationState,
+  useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -122,6 +124,13 @@ function NewTaskHeader(props: {
   readonly onSearchTextChange: (text: string) => void;
 }) {
   const navigation = useNavigation();
+  const routeKey = useRoute().key;
+  // Split view's detail column leaves out Home and Settings, so a picker opened over either is the
+  // column's first page, with no native back button.
+  const firstDetailPage = useNavigationState((state) => {
+    const below = state.routes[state.routes.findIndex((route) => route.key === routeKey) - 1];
+    return below === undefined || below.name === "Home" || below.name === "Settings";
+  });
   const goBack = () => {
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.getParent()?.goBack();
@@ -135,6 +144,9 @@ function NewTaskHeader(props: {
         options={{ headerBackVisible: true }}
         hideBottomBorder
         onBack={goBack}
+        backInSplitView={
+          firstDetailPage ? { accessibilityLabel: "Cancel", icon: "xmark" } : undefined
+        }
         actions={
           props.canAddProject
             ? [
