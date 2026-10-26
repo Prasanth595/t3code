@@ -3,8 +3,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { getSystemLocaleMock } = vi.hoisted(() => ({
+const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
   getSystemLocaleMock: vi.fn(() => "en-GB"),
+  getUserDefaultMock: vi.fn((_key: string) => false),
 }));
 
 vi.mock("electron", () => ({
@@ -12,7 +13,7 @@ vi.mock("electron", () => ({
     getSystemLocale: getSystemLocaleMock,
   },
   systemPreferences: {
-    getUserDefault: vi.fn(() => false),
+    getUserDefault: getUserDefaultMock,
   },
 }));
 
@@ -21,6 +22,7 @@ import * as ElectronApp from "./ElectronApp.ts";
 describe("ElectronApp", () => {
   beforeEach(() => {
     getSystemLocaleMock.mockReset();
+    getUserDefaultMock.mockReset();
   });
 
   it("keeps the macOS region override and hour cycle in the locale tag", () => {
@@ -62,3 +64,26 @@ describe("ElectronApp", () => {
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });
+
+it.effect("reads both macOS hour preferences without overriding explicit formats", () =>
+  Effect.gen(function* () {
+    for (const [preference, expected] of [
+      ["AppleICUForce12HourTime", "en-NL-u-hc-h12"],
+      ["AppleICUForce24HourTime", "en-NL-u-hc-h23"],
+      ["", "en-NL"],
+    ]) {
+      getSystemLocaleMock.mockReturnValue("en_US@rg=nlzzzz");
+      getUserDefaultMock.mockImplementation((key) => key === preference);
+      const locale = yield* ElectronApp.make.systemLocale.pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+      assert.strictEqual(locale, expected);
+      for (const hour12 of [true, false]) {
+        assert.strictEqual(
+          new Intl.DateTimeFormat(locale, { hour: "numeric", hour12 }).resolvedOptions().hour12,
+          hour12,
+        );
+      }
+    }
+  }),
+);
