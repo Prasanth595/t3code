@@ -42,6 +42,12 @@ On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pul
 
 A message steered into a running turn stops that turn, and fx answers the new message in the same session.
 
+## Sub-agents
+
+When fx hands work to a sub-agent, it opens in its own thread under the parent. That thread shows the sub-agent's task and its reply, which fx shortens to a couple of lines. fx doesn't share the sub-agent's individual steps.
+
+fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs one waits until you press **Stop**. This mostly happens in **Supervised**. In **Auto**, sub-agents can finish routine work by themselves.
+
 ## Not supported yet
 
 - Plan mode.

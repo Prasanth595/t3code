@@ -194,6 +194,8 @@ import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
 import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
 import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
+import { fxSubagentInput } from "./fx_subagent/input.ts";
+import { assertFxSubagentOutput } from "./fx_subagent/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
@@ -1627,6 +1629,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: FX_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertFxEarlyStopOutput,
+      },
+    ],
+  },
+  {
+    name: "fx_subagent",
+    buildInput: fxSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_subagent/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertFxSubagentOutput,
       },
     ],
   },
