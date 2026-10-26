@@ -103,6 +103,7 @@ export const relaunchSession = Effect.fn("RunnerRelaunch.relaunchSession")(funct
       startFromOrigin: true,
       message,
       model: project.model,
+      pullRequestUrl: from.prUrl,
     }),
   );
   if (launched._tag === "Failure") {
