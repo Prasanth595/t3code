@@ -950,13 +950,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           );
     return yield* Effect.acquireUseRelease(
       // Require every stop before repair when restoring, so the server releases the database.
-      // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
-      // A failed stop may still stop the service, so restoration runs either way.
-      runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
+      // Launchd drain confirmation stays strict even when the initial status probe failed.
+      runSteps(
+        manager.stop.map((step) => ({
+          ...step,
+          optional: !restore && step.untilExit === undefined,
+        })),
+      ).pipe(Effect.exit),
       (stopped): Effect.Effect<A, E | BootServiceError, R> =>
         Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
-      (_, exit) => {
-        if (!restore) return Effect.void;
+      (stopped, exit) => {
+        if (!restore || (manager.kind === "launchd" && Exit.isFailure(stopped))) return Effect.void;
         // Start only: `activate` would also enable a unit the user disabled.
         // When the operation itself failed, its error is the one worth reporting.
         const start = runSteps(manager.restart);

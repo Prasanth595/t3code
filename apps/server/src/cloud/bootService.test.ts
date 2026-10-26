@@ -864,6 +864,32 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect(
+    "requires launchd shutdown confirmation for maintenance after a failed status probe",
+    () =>
+      Effect.gen(function* () {
+        const { service, control } = yield* makeHarness("darwin");
+        yield* service.install();
+        control.failCommand = "launchctl print gui/501/com.t3tools.t3code.service";
+        let ran = false;
+
+        const error = yield* service
+          .withStopped(
+            Effect.sync(() => {
+              ran = true;
+            }),
+          )
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "waiting for the launch agent to stop",
+          exitCode: 1,
+        });
+        expect(ran).toBe(false);
+      }),
+  );
+
   // regression: #11995 macOS 15 rejects `bootout --wait`, so the stop waits on `print`
   it.effect("starts a booted-out launch agent again only once launchd has removed it", () =>
     Effect.gen(function* () {
@@ -893,25 +919,36 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("fails an install whose launch agent is still loaded after the stop timeout", () =>
-    Effect.gen(function* () {
-      const { service, commands, control } = yield* makeHarness("darwin");
-      const plan = yield* service.install();
-      const polls = yield* Queue.unbounded<void>();
-      control.drainPolls = Number.POSITIVE_INFINITY;
-      control.onDrainPoll = Queue.offer(polls, undefined).pipe(Effect.asVoid);
-      commands.length = 0;
+  it.effect.each(["install", "maintenance"] as const)(
+    "fails %s while launchd is still draining after the stop timeout",
+    (operation) =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness("darwin");
+        const plan = yield* service.install();
+        const polls = yield* Queue.unbounded<void>();
+        control.drainPolls = Number.POSITIVE_INFINITY;
+        control.onDrainPoll = Queue.offer(polls, undefined).pipe(Effect.asVoid);
+        commands.length = 0;
 
-      const reinstall = yield* service.install().pipe(Effect.flip, Effect.forkChild);
-      yield* Queue.take(polls);
-      yield* TestClock.adjust("120 seconds");
+        const run =
+          operation === "install"
+            ? service.install().pipe(Effect.asVoid)
+            : service.withStopped(
+                Effect.sync(() => {
+                  commands.push("repair");
+                }),
+              );
+        const reinstall = yield* run.pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(polls);
+        yield* TestClock.adjust("120 seconds");
 
-      expect(yield* Fiber.join(reinstall)).toMatchObject({
-        _tag: "BootServiceCommandError",
-        step: "waiting for the launch agent to stop",
-      });
-      expect(commands).not.toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
-    }),
+        expect(yield* Fiber.join(reinstall)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "waiting for the launch agent to stop",
+        });
+        expect(commands).not.toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
+        expect(commands).not.toContain("repair");
+      }),
   );
 
   it.effect("fails an install when launchd cannot say whether the agent stopped", () =>
