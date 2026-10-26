@@ -306,8 +306,8 @@ export const make = Effect.gen(function* () {
     (state.populated === undefined &&
       (state.activeState === "inactive" || state.activeState === "failed"));
 
-  const awaitStopped = (systemctl: string, unit: string) =>
-    Effect.gen(function* () {
+  const awaitStopped = Effect.fn("AgentScope.awaitStopped")(
+    function* (systemctl: string, unit: string) {
       while (true) {
         const state = yield* readScope(systemctl, unit);
         if (state === undefined) {
@@ -319,17 +319,20 @@ export const make = Effect.gen(function* () {
         if (hasStopped(state)) return;
         yield* Effect.sleep(STOPPING_POLL_INTERVAL);
       }
-    }).pipe(
-      Effect.interruptible,
-      Effect.timeoutOption("15 seconds"),
-      Effect.flatMap((completed) =>
-        completed._tag === "Some"
-          ? Effect.void
-          : Effect.fail(
-              new AgentScopeStopError({ unit, detail: "Agent scope did not finish stopping" }),
-            ),
+    },
+    (effect, _systemctl, unit) =>
+      effect.pipe(
+        Effect.interruptible,
+        Effect.timeoutOption("15 seconds"),
+        Effect.flatMap((completed) =>
+          completed._tag === "Some"
+            ? Effect.void
+            : Effect.fail(
+                new AgentScopeStopError({ unit, detail: "Agent scope did not finish stopping" }),
+              ),
+        ),
       ),
-    );
+  );
 
   const stop = Effect.fn("AgentScope.stop")(function* (unit: string) {
     if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) {
