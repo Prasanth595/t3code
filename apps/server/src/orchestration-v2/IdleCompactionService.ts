@@ -39,7 +39,6 @@ export const make = Effect.gen(function* () {
         const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
           ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
           : thread.providerInstanceId === "claudeAgent";
-        // Ineligible completions must not load history while holding the database writer.
         if (
           !claudeInstance ||
           resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||

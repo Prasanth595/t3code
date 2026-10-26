@@ -171,82 +171,27 @@ describe("idleCompactionWindow", () => {
 
 describe("IdleCompactionService", () => {
   it.effect.each([
-    { mode: "onReturn", override: "default", enabled: true, projectDisabled: false, reads: 0 },
-    { mode: "off", override: "default", enabled: true, projectDisabled: false, reads: 0 },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: false,
-      reads: 1,
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "off",
-      enabled: true,
-      projectDisabled: false,
-      reads: 0,
-    },
-    {
-      mode: "onReturn",
-      override: "beforeCacheExpires",
-      enabled: true,
-      projectDisabled: false,
-      reads: 1,
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: true,
-      reads: 0,
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: false,
-      projectDisabled: false,
-      reads: 0,
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: false,
-      reads: 0,
-      driver: "codex",
-      instance: "codex",
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: false,
-      reads: 0,
-      driver: "codex",
-      instance: "custom-codex",
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: false,
-      reads: 1,
-      driver: "claudeAgent",
-      instance: "custom-claude",
-    },
-    {
-      mode: "beforeCacheExpires",
-      override: "default",
-      enabled: true,
-      projectDisabled: false,
-      reads: 1,
-      unconfigured: true,
-    },
+    { mode: "onReturn", reads: 0 },
+    { mode: "off", reads: 0 },
+    { mode: "beforeCacheExpires", reads: 1 },
+    { mode: "beforeCacheExpires", override: "off", reads: 0 },
+    { mode: "onReturn", override: "beforeCacheExpires", reads: 1 },
+    { mode: "beforeCacheExpires", projectDisabled: true, reads: 0 },
+    { mode: "beforeCacheExpires", enabled: false, reads: 0 },
+    { mode: "beforeCacheExpires", driver: "codex", instance: "codex", reads: 0 },
+    { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
+    { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
+    { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
   ] as const)(
     "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
-    (test) =>
-      Effect.scoped(
+    (scenario) => {
+      const test = {
+        override: "default",
+        enabled: true,
+        projectDisabled: false,
+        ...scenario,
+      } as const;
+      return Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(NOW_MS);
           const selectedInstance = ProviderInstanceId.make(
@@ -353,6 +298,7 @@ describe("IdleCompactionService", () => {
           expect(historyReads).toBe(test.reads);
           expect(dispatches).toBe(test.reads);
         }),
-      ),
+      );
+    },
   );
 });
