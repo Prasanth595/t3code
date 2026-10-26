@@ -158,6 +158,9 @@ describe("rightPanelStore", () => {
     expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-1" });
 
     store.toggle(refA, "diff");
+    expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-1" });
+
+    store.closeSurface(refA, "terminal:term-1");
     expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-2" });
   });
 

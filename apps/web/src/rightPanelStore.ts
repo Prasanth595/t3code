@@ -93,6 +93,8 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
+  /** The terminal tab last in front, which the terminal shortcut returns to. */
+  lastTerminalSurfaceId?: string;
 }
 
 export interface ThreadPanelVisibility {
@@ -300,13 +302,26 @@ const upsertSurface = (
   activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
 });
 
+const rememberTerminalSurface = (state: ThreadRightPanelState): ThreadRightPanelState => {
+  const active = state.surfaces.find((surface) => surface.id === state.activeSurfaceId);
+  const last =
+    active?.kind === "terminal"
+      ? active.id
+      : state.surfaces.some((surface) => surface.id === state.lastTerminalSurfaceId)
+        ? state.lastTerminalSurfaceId
+        : undefined;
+  if (last === state.lastTerminalSurfaceId) return state;
+  const { lastTerminalSurfaceId: _previous, ...rest } = state;
+  return last === undefined ? rest : { ...rest, lastTerminalSurfaceId: last };
+};
+
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const next = updater(current);
+  const next = rememberTerminalSurface(updater(current));
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
@@ -1193,7 +1208,9 @@ export function resolveRightPanelTerminalToggle(
   const terminal =
     selected?.kind === "terminal"
       ? selected
-      : state.surfaces.findLast((surface) => surface.kind === "terminal");
+      : (state.surfaces.find(
+          (surface) => surface.kind === "terminal" && surface.id === state.lastTerminalSurfaceId,
+        ) ?? state.surfaces.findLast((surface) => surface.kind === "terminal"));
   return terminal ? { kind: "show", surfaceId: terminal.id } : { kind: "create" };
 }
 
