@@ -21,7 +21,7 @@ vi.mock(import("../../state/server"), async (original) => {
   };
 });
 
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -197,7 +197,14 @@ it("isolates drafts by environment, thread and request and discards only resolve
   }
 });
 
-function markdownPanel(onToggleOption = vi.fn(), onAdvance = vi.fn()) {
+function markdownPanel(
+  onToggleOption = vi.fn(),
+  onAdvance = vi.fn(),
+  option = {
+    label: "**Return** Promise<void>",
+    description: "Use [help](https://example.com/help) with Array<string>.",
+  },
+) {
   return (
     <ComposerPendingUserInputPanel
       pendingUserInputs={[
@@ -207,12 +214,7 @@ function markdownPanel(onToggleOption = vi.fn(), onAdvance = vi.fn()) {
             {
               ...prompt.questions[0]!,
               question: "Schema\n\nRead **the guide** and Promise<void>.",
-              options: [
-                {
-                  label: "**Return** Promise<void>",
-                  description: "Use [help](https://example.com/help) with Array<string>.",
-                },
-              ],
+              options: [option],
             },
           ],
         },
@@ -271,4 +273,17 @@ it("renders an inert collapsed Markdown preview", async () => {
   await expect.element(screen.getByText("the guide", { exact: true })).toBeVisible();
   expect(screen.container.innerText).toContain("Promise<void>.");
   expect(screen.container.innerText).not.toContain("**");
+});
+
+it("opens option images without answering", async () => {
+  const select = vi.fn();
+  const advance = vi.fn();
+  const image = new URL("/apple-touch-icon.png", window.location.href).href;
+  await using screen = await render(
+    markdownPanel(select, advance, { label: `![Preview](${image})`, description: "" }),
+  );
+  await userEvent.click(screen.getByAltText("Preview", { exact: true }));
+  await expect.element(page.getByRole("dialog", { name: "Expanded image preview" })).toBeVisible();
+  expect(select).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
 });

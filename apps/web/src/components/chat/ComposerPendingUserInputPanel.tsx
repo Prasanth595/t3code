@@ -287,7 +287,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         <OptionRadio checked={isSelected} />
                       )}
                     </span>
-                    <div className="pointer-events-none relative min-w-0 flex-1 flex flex-col gap-0.5 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_summary]:pointer-events-auto [&_video]:pointer-events-auto [&_audio]:pointer-events-auto [&_pre]:pointer-events-auto [&_[data-slot^=scroll-area-]]:pointer-events-auto">
+                    <div className="pointer-events-none relative min-w-0 flex-1 flex flex-col gap-0.5 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_[role=link]]:pointer-events-auto [&_input]:pointer-events-auto [&_summary]:pointer-events-auto [&_video]:pointer-events-auto [&_audio]:pointer-events-auto [&_pre]:pointer-events-auto [&_[data-slot^=scroll-area-]]:pointer-events-auto">
                       <div id={labelId}>
                         <ChatMarkdown
                           text={option.label}
