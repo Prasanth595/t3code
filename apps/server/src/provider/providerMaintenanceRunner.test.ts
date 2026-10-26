@@ -196,13 +196,14 @@ function makeRegistry(
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
       refreshAfterUpdate: () => {
-        if (options?.installedVersionAfterUpdate === undefined) {
+        const version = options?.installedVersionAfterUpdate;
+        if (version === undefined) {
           return Ref.get(providersRef);
         }
         return Ref.updateAndGet(providersRef, (providers) =>
           providers.map((provider) => ({
             ...provider,
-            version: options.installedVersionAfterUpdate,
+            version,
           })),
         );
       },
@@ -260,7 +261,7 @@ function layerFailingLatestLookupAfterFirst() {
       Effect.gen(function* () {
         lookups += 1;
         if (lookups > 1) {
-          return yield* Effect.fail(new Error("latest lookup failed"));
+          return yield* Effect.die("latest lookup failed");
         }
         return yield* lookup;
       }),
@@ -307,7 +308,19 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("skips the installer when a fresh probe already matches latest", () => {
+  it.effect.each([
+    { name: "current", probe: {}, skip: true },
+    { name: "failed", probe: { status: "error" }, skip: false },
+    { name: "behind", probe: { version: "2.1.309" }, skip: false },
+    { name: "unknown", probe: { version: null }, skip: false },
+    {
+      name: "installed current",
+      probe: { version: "2.1.309", installedVersion: "2.1.310" },
+      skip: true,
+    },
+    { name: "installed behind", probe: { installedVersion: "2.1.309" }, skip: false },
+    { name: "installed unknown", probe: { installedVersion: null }, skip: false },
+  ] as const)("only skips a successful fresh current probe: $name", ({ probe, skip }) => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const refreshedInstanceIds: Array<ProviderInstanceId> = [];
     return Effect.gen(function* () {
@@ -334,6 +347,7 @@ describe("providerMaintenanceRunner", () => {
                 ? {
                     ...provider,
                     version: "2.1.310",
+                    ...probe,
                     checkedAt: "2026-04-10T00:00:01.000Z",
                   }
                 : provider,
@@ -354,7 +368,8 @@ describe("providerMaintenanceRunner", () => {
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(refreshedInstanceIds, [CODEX_INSTANCE_ID]);
-      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(calls, skip ? [] : [{ command: "claude", args: ["update"] }]);
+      if (!skip) return;
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
       assert.deepStrictEqual(
@@ -462,89 +477,6 @@ describe("providerMaintenanceRunner", () => {
       const result = yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("2.1.310"),
-          layerMockSpawner((command, args) => {
-            calls.push({ command, args });
-            return { stdout: "updated" };
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("still runs the installer when the installed version is unknown", () => {
-    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-    return Effect.gen(function* () {
-      const { registry, providersRef } = yield* makeRegistry({
-        ...baseProvider,
-        version: null,
-      });
-      const updater = yield* makeTestRunner({
-        ...registry,
-        refreshInstance: () =>
-          Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) => ({
-              ...provider,
-              checkedAt: "2026-04-10T00:00:01.000Z",
-            })),
-          ),
-        getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
-              provider: CODEX_DRIVER,
-              packageName: "@anthropic-ai/claude-code",
-              updateExecutable: "claude",
-              updateArgs: ["update"],
-              updateLockKey: "claudeAgent-native",
-            }),
-          ),
-      });
-
-      const result = yield* updater.updateProvider(CODEX_DRIVER);
-      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("2.1.310"),
-          layerMockSpawner((command, args) => {
-            calls.push({ command, args });
-            return { stdout: "updated" };
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("still runs the installer when the fresh probe is behind latest", () => {
-    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-    return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry({
-        ...baseProvider,
-        version: "2.1.309",
-      });
-      const updater = yield* makeTestRunner({
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
-              provider: CODEX_DRIVER,
-              packageName: "@anthropic-ai/claude-code",
-              updateExecutable: "claude",
-              updateArgs: ["update"],
-              updateLockKey: "claudeAgent-native",
-            }),
-          ),
-      });
-
-      const result = yield* updater.updateProvider(CODEX_DRIVER);
-      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -1013,6 +945,10 @@ it.effect.each([
       const updater = yield* makeTestRunner(
         {
           ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, checkedAt: "2026-04-10T00:00:01.000Z" })),
+            ),
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
           refreshAfterUpdate: () =>
             Effect.gen(function* () {

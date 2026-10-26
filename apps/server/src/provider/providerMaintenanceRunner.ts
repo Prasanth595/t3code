@@ -508,6 +508,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   (verified) =>
                     verified.checkedAt !== prior.checkedAt &&
                     verified.installed &&
+                    verified.status !== "error" &&
                     verified.versionAdvisory?.status === "current",
                 );
               if (alreadyCurrent) {
