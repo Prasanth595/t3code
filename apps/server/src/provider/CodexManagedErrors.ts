@@ -49,6 +49,17 @@ const failures = {
       "ChatGPT could not authorize this connection. Check the client and sharing permissions.",
   },
 };
+const usageLimitCodes = new Set<string>([
+  "subscription_sharing_usage_limit_exceeded",
+  "subscription_sharing_workplace_individual_usage_limit_exceeded",
+]);
+// Codex can stream only ChatGPT's prose for a sharing failure, without its code.
+const proseCodes = [
+  [
+    "has reached their Subscription Sharing usage limit",
+    "subscription_sharing_usage_limit_exceeded",
+  ],
+] as const;
 export function classifyCodexManagedError(value: unknown) {
   let text: string;
   try {
@@ -57,25 +68,24 @@ export function classifyCodexManagedError(value: unknown) {
     return undefined;
   }
   if (typeof text !== "string") return undefined;
-  for (const [code, failure] of Object.entries(failures)) {
-    if (!text.includes(code)) continue;
-    if (code === "subscription_sharing_unsupported_capability") {
-      if (text.includes("tool 'namespace'"))
-        return {
-          ...failure,
-          code,
-          message:
-            "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
-        };
-      if (text.includes("additional_tools"))
-        return {
-          ...failure,
-          code,
-          message:
-            "Codex sent an input item that ChatGPT sharing does not support. Use another provider for this request.",
-        };
-    }
-    return { ...failure, code };
+  const code =
+    (Object.keys(failures) as Array<keyof typeof failures>).find((known) => text.includes(known)) ??
+    proseCodes.find(([prose]) => text.includes(prose))?.[1];
+  if (code === undefined) return undefined;
+  const failure = { ...failures[code], code, usageLimit: usageLimitCodes.has(code) };
+  if (code === "subscription_sharing_unsupported_capability") {
+    if (text.includes("tool 'namespace'"))
+      return {
+        ...failure,
+        message:
+          "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
+      };
+    if (text.includes("additional_tools"))
+      return {
+        ...failure,
+        message:
+          "Codex sent an input item that ChatGPT sharing does not support. Use another provider for this request.",
+      };
   }
-  return undefined;
+  return failure;
 }
