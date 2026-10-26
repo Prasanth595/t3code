@@ -143,6 +143,14 @@ describe("missingTailscaleEndpointDescription", () => {
     );
   });
 
+  it("keeps detection-off guidance when Network access is off, even with a cached IP", () => {
+    expect(
+      missingTailscaleEndpointDescription({ mode: "local-only", tailscaleServeEnabled: false }, [
+        tailscaleIp,
+      ]),
+    ).toBe("Turn on Network access to detect Tailscale.");
+  });
+
   it("asks to start Tailscale when no Tailscale address is present", () => {
     expect(missingTailscaleEndpointDescription(networkAccessible, [])).toBe(
       "Start Tailscale to set up HTTPS access through MagicDNS.",

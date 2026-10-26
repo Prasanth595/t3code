@@ -66,10 +66,7 @@ export function missingTailscaleEndpointDescription(
   if (state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
     return "Turn on Network access to detect Tailscale.";
   }
-  // The Tailscale IP comes from the network adapter, but the MagicDNS name
-  // needs `tailscale status`. An IP alone means Tailscale is running and the
-  // CLI could not be used: on macOS it is often missing from the app's PATH.
-  return endpoints.some(isTailscaleIpEndpoint)
+  return endpoints.some((endpoint) => endpoint.id.startsWith("tailscale-ip:"))
     ? "Tailscale is running, but its MagicDNS name could not be read. Make sure the tailscale command is installed and MagicDNS is on."
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
 }
@@ -361,10 +358,6 @@ export function selectPairingEndpoint(
 
 export function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.id.startsWith("tailscale-magicdns:");
-}
-
-function isTailscaleIpEndpoint(endpoint: AdvertisedEndpoint): boolean {
-  return endpoint.id.startsWith("tailscale-ip:");
 }
 
 export function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
