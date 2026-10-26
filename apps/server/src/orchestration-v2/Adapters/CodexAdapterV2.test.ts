@@ -4587,6 +4587,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedCode: "subscription_sharing_usage_limit_exceeded",
       expectedMessage: "Usage settings",
     },
+    {
+      name: "sharing-code-mention",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
+      notification: false,
+      expectedClass: "provider_error",
+    },
+    {
+      name: "sharing-code-mention-retry",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
+      notification: true,
+      willRetry: true,
+      expectedClass: "transport_error",
+    },
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {

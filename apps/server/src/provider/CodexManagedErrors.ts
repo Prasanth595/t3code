@@ -60,19 +60,46 @@ const proseCodes = [
     "subscription_sharing_usage_limit_exceeded",
   ],
 ] as const;
-export function classifyCodexManagedError(value: unknown) {
-  let text: string;
-  try {
-    text = typeof value === "string" ? value : JSON.stringify(value);
-  } catch {
-    return undefined;
+
+function unwrapError(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return value;
+    }
   }
-  if (typeof text !== "string") return undefined;
+  return typeof value === "object" && value !== null && "error" in value ? value.error : value;
+}
+
+function isManagedCode(value: unknown): value is keyof typeof failures {
+  return typeof value === "string" && Object.hasOwn(failures, value);
+}
+
+function sharingCode(value: unknown) {
+  const error = unwrapError(value);
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : error;
+  return isManagedCode(code) ? code : undefined;
+}
+
+export function classifyCodexManagedError(value: unknown) {
+  const error = unwrapError(value);
+  const messages =
+    typeof error === "string"
+      ? [error]
+      : typeof error === "object" && error !== null
+        ? [
+            "message" in error ? error.message : null,
+            "additionalDetails" in error ? error.additionalDetails : null,
+          ].filter((message): message is string => typeof message === "string")
+        : [];
   const code =
-    (Object.keys(failures) as Array<keyof typeof failures>).find((known) => text.includes(known)) ??
-    proseCodes.find(([prose]) => text.includes(prose))?.[1];
+    sharingCode(error) ??
+    messages.map(sharingCode).find((code) => code !== undefined) ??
+    proseCodes.find(([prose]) => messages.some((message) => message.includes(prose)))?.[1];
   if (code === undefined) return undefined;
   const failure = { ...failures[code], code, usageLimit: usageLimitCodes.has(code) };
+  const text = messages.join(" ");
   if (code === "subscription_sharing_unsupported_capability") {
     if (text.includes("tool 'namespace'"))
       return {

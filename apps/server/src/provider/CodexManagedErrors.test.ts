@@ -77,3 +77,34 @@ it("treats only ChatGPT sharing allowance limits as usage limits", () => {
   );
   assert.isUndefined(classifyCodexManagedError("You've hit your usage limit."));
 });
+
+it("does not infer sharing codes from incidental mentions in turn errors", () => {
+  const mention = "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.";
+  for (const value of [
+    mention,
+    { message: mention },
+    { message: "Transport unavailable", additionalDetails: mention },
+    { code: "other", message: mention },
+  ]) {
+    assert.isUndefined(classifyCodexManagedError(value));
+  }
+  assert.deepInclude(
+    classifyCodexManagedError({
+      error: { code: "subscription_sharing_usage_unavailable", message: mention },
+    }),
+    { code: "subscription_sharing_usage_unavailable", usageLimit: false },
+  );
+});
+
+it("reads sharing codes from structured errors and exact turn details", () => {
+  const code = "subscription_sharing_usage_limit_exceeded";
+  const response = { error: { code } };
+  for (const value of [
+    response,
+    JSON.stringify(response),
+    { message: "Provider stopped", additionalDetails: code },
+    { message: "Provider stopped", additionalDetails: JSON.stringify(response) },
+  ]) {
+    assert.deepInclude(classifyCodexManagedError(value), { code, usageLimit: true });
+  }
+});
