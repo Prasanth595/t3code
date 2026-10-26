@@ -605,7 +605,7 @@ function ThreadRenameInput(props: {
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
-    isRenaming: isRenamingRequested,
+    isRenaming,
     onCancelRename,
     onCommitRename,
     onContextMenu,
@@ -630,8 +630,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  // Losing operate access mid-rename drops the editor without committing the title.
-  const isRenaming = isRenamingRequested && canOperateThread;
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -1548,6 +1546,13 @@ function latestRunDiff(
   return null;
 }
 
+// Attached only to the highlighted result, so React calls it each time the
+// highlight lands on a different row: a new query, late rows replacing the first
+// result, or arrow keys moving past the scrolled edge.
+const scrollHighlightedResultIntoView = (node: HTMLLIElement | null) => {
+  node?.scrollIntoView({ block: "nearest" });
+};
+
 export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
@@ -1624,7 +1629,12 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     addFolders: () => {},
   });
   return (
-    <li role="presentation" className="list-none" {...fileDropHandlers}>
+    <li
+      ref={props.isHighlighted ? scrollHighlightedResultIntoView : undefined}
+      role="presentation"
+      className="list-none"
+      {...fileDropHandlers}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
