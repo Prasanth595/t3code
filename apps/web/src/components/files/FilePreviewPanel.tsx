@@ -234,16 +234,11 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  useWorkspaceMutationRefresh({
-    enabled: pdf,
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    pdf ? props.workspaceMutationId : undefined,
+  );
   const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
