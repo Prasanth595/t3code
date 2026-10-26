@@ -91,7 +91,7 @@ file from the relay directory. Runtime secrets include Clerk, APNs, and optional
 the configured API and tunnel DNS zones as retained Cloudflare resources. Personal stages reference
 the production-owned zones.
 
-The `prod` Alchemy stage owns the retained, protected `relay` branch of the Neon project named by
+The `prod` Alchemy stage owns the retained `relay` branch of the Neon project named by
 `NEON_PROJECT_ID` and is the shared hosted relay. Every other stage forks that branch's schema
 into its own Neon branch for local development, so deploy `prod` before creating
 developer stages:
