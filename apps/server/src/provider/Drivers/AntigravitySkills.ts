@@ -9,12 +9,7 @@ import { isCloudPlaceholder } from "@t3tools/shared/cloudPlaceholder";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parse as parseYamlDocument } from "yaml";
 
-/**
- * The home directory the agent expands `~` against, matching Python's
- * `os.path.expanduser` in the launch environment T3 hands the process:
- * `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, on Windows and `HOME`
- * elsewhere.
- */
+/** Match Python os.path.expanduser: USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere. */
 export function resolveAntigravityUserHome(
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,
@@ -30,12 +25,7 @@ export function resolveAntigravityUserHome(
   return environment.HOME || home;
 }
 
-/**
- * The agent resolves both under `GEMINI_HOME`, which T3 points at a private
- * profile, so the profile links these back to the user's `~/.gemini`.
- * `~/.agents/skills` is not read: the agent only treats `.agents/skills` as a
- * project directory.
- */
+/** Link private GEMINI_HOME skills to ~/.gemini; ~/.agents/skills is ignored because .agents/skills is project-only. */
 export function antigravityUserSkillDirectories(
   path: Path.Path,
   geminiHome: string,
@@ -152,9 +142,7 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
   return bytes.toString("utf8");
 });
 
-/**
- * Read failures remain typed so workspace snapshots do not cache partial results.
- */
+/** Keep read errors typed so workspace snapshots cannot cache partial results. */
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
