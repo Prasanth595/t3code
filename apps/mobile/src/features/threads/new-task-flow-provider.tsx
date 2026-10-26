@@ -428,6 +428,7 @@ export function NewTaskFlowProvider(
       : null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
+  const selectedProjectOlderSettledCount = useOlderSettledCount(selectedProject);
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
   const t3ProjectFile =
     t3ProjectFileData === null || t3ProjectFileData.exists === false || t3ProjectFileData.truncated
@@ -440,7 +441,6 @@ export function NewTaskFlowProvider(
     t3ProjectFile,
   );
   const canChooseWorkspace = !isScratchDraft;
-  const selectedProjectOlderSettledCount = useOlderSettledCount(selectedProject);
   const selectedProjectHasThreads =
     selectedProject !== null &&
     (selectedProjectOlderSettledCount > 0 ||
