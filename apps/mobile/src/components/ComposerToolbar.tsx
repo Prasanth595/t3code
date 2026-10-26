@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -12,7 +13,14 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
@@ -23,6 +31,20 @@ const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 const INLINE_CONTROL_LABEL_ENTERING = FadeIn.duration(160);
+const INLINE_CONTROL_LABEL_DURATION = 180;
+type LabelPhase = "shown" | "hiding" | "hidden" | "showing";
+
+function slideLabel(
+  reveal: SharedValue<number>,
+  target: 0 | 1,
+  setPhase: (phase: LabelPhase) => void,
+) {
+  reveal.set(
+    withTiming(target, { duration: INLINE_CONTROL_LABEL_DURATION }, (finished) => {
+      if (finished) runOnJS(setPhase)(target === 1 ? "shown" : "hidden");
+    }),
+  );
+}
 export function ComposerInlineControl(props: {
   readonly size?: "regular" | "large";
   readonly accessibilityHint?: string;
@@ -45,12 +67,75 @@ export function ComposerInlineControl(props: {
   const { scale, smallIconSize } = useAndroidControlSizing();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
+  const revealsLabel = animatesLabel && Platform.OS !== "android";
   const iconSize = props.size === "large" ? 20 : smallIconSize;
+  const chevronSize = Math.round((props.size === "large" ? 12 : 10) * scale);
+  const labelShown = !props.iconOnly;
+  const [phase, setPhase] = useState<LabelPhase>(labelShown ? "shown" : "hidden");
+  const [labelWidth, setLabelWidth] = useState(0);
+  if (labelShown && (phase === "hidden" || phase === "hiding")) {
+    setPhase(revealsLabel ? "showing" : "shown");
+  }
+  if (!labelShown && (phase === "shown" || phase === "showing")) {
+    setPhase(revealsLabel && labelWidth > 0 ? "hiding" : "hidden");
+  }
+  const sliding = phase === "hiding" || phase === "showing";
+  const reveal = useSharedValue(labelShown ? 1 : 0);
+  const revealWidth = useSharedValue(0);
+  // oxlint-disable-next-line t3code/react-effect-budget -- starts the UI-thread slide when the label phase changes
+  useLayoutEffect(() => {
+    if (phase === "hiding") slideLabel(reveal, 0, setPhase);
+    else if (phase === "showing" && revealWidth.get() > 0) slideLabel(reveal, 1, setPhase);
+    else if (phase === "shown") reveal.set(1);
+    else if (phase === "hidden") reveal.set(0);
+  }, [phase, reveal, revealWidth]);
+  const [iconFrame, setIconFrame] = useState({ x: 8, width: iconSize });
+  const [labelX, setLabelX] = useState(16 + iconSize);
+  const labelGap = labelX - iconFrame.x - iconFrame.width;
+  const overlayStyle = useAnimatedStyle(() => {
+    const width = iconFrame.width + labelGap + reveal.value * revealWidth.value;
+    const rightEdge =
+      phase === "showing" ? labelX + revealWidth.value : iconFrame.x + iconFrame.width;
+    return { left: rightEdge - width, width };
+  });
+  const overlayLabelStyle = useAnimatedStyle(() => ({
+    width: reveal.value * revealWidth.value,
+  }));
+  const recordLabelWidth = (width: number) => {
+    revealWidth.set(width);
+    if (width !== labelWidth) setLabelWidth(width);
+  };
+  const tint = props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted";
+  const iconNode = props.renderIcon ? (
+    <View
+      className="size-4 shrink-0 items-center justify-center"
+      style={{ width: iconSize, height: iconSize }}
+    >
+      {props.renderIcon(iconSize)}
+    </View>
+  ) : props.icon ? (
+    <SymbolView name={props.icon} size={iconSize} tintColorClassName={tint} type="monochrome" />
+  ) : null;
+  const labelContent = (
+    <>
+      <Text
+        className={cn(
+          "shrink",
+          props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
+          props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+        )}
+        numberOfLines={1}
+      >
+        {props.label}
+      </Text>
+      {props.suffix ? <View className="min-w-0 shrink">{props.suffix}</View> : null}
+    </>
+  );
   return (
     <Animated.View
       style={{
         maxWidth: props.maxWidth ?? 190,
-        overflow: animatesLabel ? "hidden" : undefined,
+        overflow: animatesLabel && !sliding ? "hidden" : undefined,
       }}
     >
       <Pressable
@@ -65,49 +150,56 @@ export function ComposerInlineControl(props: {
         onPress={props.onPress}
         style={{ opacity: props.disabled ? 0.45 : 1 }}
       >
-        {props.renderIcon ? (
-          <View
-            className="size-4 shrink-0 items-center justify-center"
-            style={{ width: iconSize, height: iconSize }}
-          >
-            {props.renderIcon(iconSize)}
-          </View>
-        ) : props.icon ? (
-          <SymbolView
-            name={props.icon}
-            size={iconSize}
-            tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-            }
-            type="monochrome"
-          />
-        ) : null}
-        {props.iconOnly ? null : (
+        <View
+          style={{ opacity: sliding ? 0 : 1 }}
+          onLayout={(event) => {
+            const { x, width } = event.nativeEvent.layout;
+            if (x !== iconFrame.x || width !== iconFrame.width) setIconFrame({ x, width });
+          }}
+        >
+          {iconNode}
+        </View>
+        {phase === "shown" || phase === "showing" ? (
           <Animated.View
-            className="shrink"
-            entering={animatesLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+            className="min-w-0 shrink flex-row items-center gap-2"
+            entering={animatesLabel && !revealsLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+            style={{ opacity: sliding ? 0 : 1 }}
+            onLayout={(event) => {
+              const { x, width } = event.nativeEvent.layout;
+              if (x !== labelX) setLabelX(x);
+              const firstMeasure = phase === "showing" && revealWidth.get() === 0;
+              recordLabelWidth(width);
+              if (firstMeasure) slideLabel(reveal, 1, setPhase);
+            }}
           >
-            <Text
-              className={cn(
-                props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
-                props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
-              )}
-              numberOfLines={1}
-            >
-              {props.label}
-            </Text>
+            {labelContent}
           </Animated.View>
-        )}
-        {!props.iconOnly && props.suffix ? (
-          <View className="min-w-0 shrink">{props.suffix}</View>
+        ) : null}
+        {sliding ? (
+          <Animated.View
+            className="absolute top-0 bottom-0"
+            pointerEvents="none"
+            style={overlayStyle}
+          >
+            <View className="absolute top-0 bottom-0 left-0 justify-center">{iconNode}</View>
+            <Animated.View
+              className="absolute top-0 right-0 bottom-0 overflow-hidden"
+              style={overlayLabelStyle}
+            >
+              <View
+                className="absolute top-0 right-0 bottom-0 flex-row items-center gap-2"
+                style={{ width: labelWidth }}
+              >
+                {labelContent}
+              </View>
+            </Animated.View>
+          </Animated.View>
         ) : null}
         {props.showChevron === false ? null : (
           <SymbolView
             name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-            size={Math.round((props.size === "large" ? 12 : 10) * scale)}
-            tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-            }
+            size={chevronSize}
+            tintColorClassName={tint}
             type="monochrome"
           />
         )}

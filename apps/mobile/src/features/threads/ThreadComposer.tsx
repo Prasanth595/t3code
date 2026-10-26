@@ -217,8 +217,14 @@ export function useCompactComposerEditor(
     position: "absolute",
     overflow: "hidden",
     height: animatedHeight.value,
-    left: isExpanded ? 14 : editorX.value + 4,
-    right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
+    left: isExpanded ? 14 : editorX.value + 4 + expansion.value * (10 - editorX.value),
+    right: isExpanded
+      ? 14
+      : rowWidth.value -
+        editorX.value -
+        editorWidth.value +
+        4 +
+        expansion.value * (10 - rowWidth.value + editorX.value + editorWidth.value),
     bottom:
       (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
   }));
