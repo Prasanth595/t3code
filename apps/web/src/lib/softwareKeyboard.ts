@@ -26,9 +26,7 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
   const viewport = isDesktop ? undefined : win?.visualViewport;
   const keyboard = isDesktop ? undefined : win?.navigator.virtualKeyboard;
   let previous = viewport ? viewportSnapshot(viewport) : undefined;
-  // Our interactive-widget=resizes-content makes browsers that honor it (Firefox Android)
-  // shrink the layout viewport with the visual one, so compare against the tallest layout
-  // seen at this width. A fine pointer means a desktop window resize, not a keyboard.
+  // Firefox Android can shrink both viewports, leaving no gap between them.
   const tracksLayout = viewport !== undefined && win?.matchMedia("(pointer: coarse)").matches;
   let fullLayout = win ? { width: win.innerWidth, height: win.innerHeight } : undefined;
 
