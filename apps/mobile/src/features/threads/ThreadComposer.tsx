@@ -595,6 +595,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const attachmentsHeight = useSharedValue(-1);
+  const attachmentsStyle = useAnimatedStyle(() => ({
+    height: Math.max(0, attachmentsHeight.value),
+  }));
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -925,7 +929,24 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             paddingVertical: hasSidebarTabBar ? 9 : 2,
           }}
         >
-          {editingAttachments}
+          <Animated.View className="overflow-hidden" style={attachmentsStyle}>
+            <View
+              className="absolute inset-x-0 bottom-0"
+              onLayout={(event) => {
+                const height = event.nativeEvent.layout.height;
+                attachmentsHeight.set(
+                  attachmentsHeight.get() < 0 || Platform.OS === "android"
+                    ? height
+                    : withTiming(height, {
+                        duration: COMPOSER_TRANSITION_DURATION_MS,
+                        reduceMotion: ReduceMotion.System,
+                      }),
+                );
+              }}
+            >
+              {editingAttachments}
+            </View>
+          </Animated.View>
           <View onLayout={compactEditor.onRowLayout}>
             <ComposerDictationDraftContent
               className="flex-row items-end"
