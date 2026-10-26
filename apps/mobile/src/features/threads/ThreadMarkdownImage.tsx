@@ -45,18 +45,13 @@ export function ThreadMarkdownImageView(props: {
     measuredWidth > 0 && contextWidth > 0
       ? Math.min(contextWidth, measuredWidth)
       : contextWidth || measuredWidth;
-  const [decodedSize, setDecodedSize] = useState<{ width: number; height: number } | null>(null);
+  // Keyed by source so a new source drops the previous image's decoded dimensions.
+  const [decoded, setDecoded] = useState<{
+    sourceKey: string;
+    size: { width: number; height: number };
+  } | null>(null);
+  const decodedSize = decoded?.sourceKey === props.sourceKey ? decoded.size : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDecodedSize(null);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new source invalidates the decoded image dimensions.
-  }, [props.sourceKey]);
-
-  useEffect(() => {
-    setFailedUri(null);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new image URI clears the previous load failure.
-  }, [props.uri]);
 
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
@@ -129,7 +124,7 @@ export function ThreadMarkdownImageView(props: {
                   key={props.sourceKey}
                   uri={props.uri}
                   format={props.format}
-                  onLoad={setDecodedSize}
+                  onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
                   onError={() => setFailedUri(props.uri)}
                 />
               </View>
