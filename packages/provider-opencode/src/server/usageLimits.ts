@@ -202,9 +202,8 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       },
     ];
     const crypto = yield* Crypto.Crypto;
-    // An unkeyed hash matches across environments without a shared secret. It
-    // permits offline guesses, but Go keys are randomly generated, and a Console
-    // sign-in hashes only account IDs, never its token.
+    // Unkeyed hashes match across environments; random Go keys resist offline guessing,
+    // and a Console sign-in hashes only account IDs, never its token.
     const account = apiKey === consoleCredential?.token ? consoleCredential.account : undefined;
     const credentialFingerprint = yield* crypto
       .digest(
