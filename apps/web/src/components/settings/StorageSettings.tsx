@@ -553,7 +553,13 @@ export function WorktreeCleanupSection() {
                   />
                 }
               />
-              <AdvancedSettings targetIds={[searchableSetting("storage-worktree-keep-when").id]}>
+              <AdvancedSettings
+                // The keep-when search result lands on this section, not its row.
+                targetIds={[
+                  "storage-worktrees",
+                  searchableSetting("storage-worktree-keep-when").id,
+                ]}
+              >
                 {connectedEnvironments.length > 0 &&
                   connectedEnvironments.every(
                     (environment) =>

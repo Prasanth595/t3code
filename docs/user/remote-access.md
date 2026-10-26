@@ -61,7 +61,7 @@ such as `127.0.0.1` reaches only the device opening the link.
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
-its Connections page stays open. If you leave or reload that page, create
+its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
 
 ### Reach one machine several ways
@@ -184,7 +184,7 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
-Connections** on the host, or on a headless host with `t3 auth session list` and
+Sharing & access** on the host, or on a headless host with `t3 auth session list` and
 `t3 auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
