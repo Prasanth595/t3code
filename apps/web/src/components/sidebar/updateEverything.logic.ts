@@ -71,7 +71,7 @@ export function collectServerUpdateTargets(
   const skipped: SkippedMachine[] = [];
   for (const machine of machines) {
     const config = machine.serverConfig;
-    if (machine.hostedByThisApp || config?.environment.capabilities.desktopSecondaryBackend) {
+    if (machine.hostedByThisApp || config?.environment.desktopHost !== undefined) {
       continue;
     }
     if (

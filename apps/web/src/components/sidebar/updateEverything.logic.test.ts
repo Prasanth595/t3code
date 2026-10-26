@@ -59,11 +59,27 @@ function withCapabilities(
   };
 }
 
-const secondary = (id: string, overrides: Partial<UpdateEverythingMachine> = {}) =>
-  withCapabilities(machine(id, "0.0.40", "desktop-managed", overrides), {
+const secondary = (
+  id: string,
+  overrides: Partial<UpdateEverythingMachine> = {},
+  desktopHost: { readonly environmentId?: EnvironmentId } = {
+    environmentId: EnvironmentId.make("windows-primary"),
+  },
+) => {
+  const base = withCapabilities(machine(id, "0.0.40", "desktop-managed", overrides), {
     desktopAppUpdate: false,
-    desktopSecondaryBackend: true,
   });
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        desktopHost,
+      },
+    },
+  };
+};
 
 const oldDesktop = (id: string) =>
   withCapabilities(machine(id, "0.0.40", "desktop-managed"), { desktopAppUpdate: false });
@@ -78,6 +94,7 @@ describe("collectServerUpdateTargets", () => {
         machine("other-desktop", "0.0.49-nightly.20261001.3", "desktop-managed"),
         secondary("other-wsl"),
         secondary("offline-wsl", { connected: false }),
+        secondary("unattributed-wsl", {}, {}),
         oldDesktop("old-desktop"),
         machine("offline", "0.0.40", "boot-service", { connected: false }),
         machine("never-connected", "0.0.40", "boot-service", { serverConfig: null }),

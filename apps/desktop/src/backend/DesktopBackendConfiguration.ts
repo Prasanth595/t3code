@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import type { EnvironmentId } from "@t3tools/contracts";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -47,6 +48,7 @@ export class DesktopBackendConfiguration extends Context.Service<
     readonly resolveWsl: (input: {
       readonly port: number;
       readonly distro: string | null;
+      readonly hostEnvironmentId?: EnvironmentId | undefined;
     }) => Effect.Effect<
       DesktopBackendManager.DesktopBackendStartConfig,
       PlatformError.PlatformError
@@ -548,6 +550,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly hostEnvironmentId?: EnvironmentId | undefined;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -575,6 +578,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    desktopHost:
+      input.hostEnvironmentId === undefined ? {} : { environmentId: input.hostEnvironmentId },
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 

@@ -199,10 +199,9 @@ export const make = Effect.gen(function* () {
   });
   const serverInstallation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
   // Desktop and server ship together; a control fd guarantees requestDesktopUpdate support.
-  // Only the primary gets one, so a desktop backend without it is a secondary such as WSL.
+
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
-  const desktopSecondaryBackend = serverSelfUpdate === "desktop-managed" && !desktopAppUpdate;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -214,6 +213,7 @@ export const make = Effect.gen(function* () {
     },
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+    ...(serverConfig.desktopHost === undefined ? {} : { desktopHost: serverConfig.desktopHost }),
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
@@ -265,7 +265,6 @@ export const make = Effect.gen(function* () {
         ? { serverSelfUpdateProgress: true }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
-      ...(desktopSecondaryBackend ? { desktopSecondaryBackend: true } : {}),
       serverBrowser: true,
     },
   };

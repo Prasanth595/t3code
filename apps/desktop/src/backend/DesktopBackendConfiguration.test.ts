@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -328,7 +329,11 @@ describe("DesktopBackendConfiguration", () => {
       const observedDistros: Array<string | null> = [];
       const config = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        return yield* configuration.resolveWsl({ port: 5000, distro: null });
+        return yield* configuration.resolveWsl({
+          port: 5000,
+          distro: null,
+          hostEnvironmentId: EnvironmentId.make("windows-primary"),
+        });
       }).pipe(
         Effect.provide(
           layerBackendConfiguration().pipe(
@@ -368,6 +373,9 @@ describe("DesktopBackendConfiguration", () => {
       );
 
       assert.equal(config.runningDistro, "Ubuntu");
+      assert.deepEqual(config.bootstrap.desktopHost, {
+        environmentId: EnvironmentId.make("windows-primary"),
+      });
       assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));

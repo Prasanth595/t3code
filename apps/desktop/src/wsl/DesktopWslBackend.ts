@@ -1,12 +1,15 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import * as NetService from "@t3tools/shared/Net";
+import { HttpClient } from "effect/http";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -18,6 +21,7 @@ import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
 export const WSL_INSTANCE_ID_PREFIX = "wsl:";
 const WSL_DEFAULT_DISTRO_ID = `${WSL_INSTANCE_ID_PREFIX}default`;
 const MAX_TCP_PORT = 65_535;
+const PRIMARY_READY_TIMEOUT = Duration.seconds(60);
 
 export class DesktopWslBackend extends Context.Service<
   DesktopWslBackend,
@@ -65,6 +69,7 @@ export const layer = Layer.effect(
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const net = yield* NetService.NetService;
+    const httpClient = yield* HttpClient.HttpClient;
     // Serialize bootstrap and IPC reconciles so concurrent reads cannot register competing WSL instances.
     const reconcileMutex = yield* Semaphore.make(1);
 
@@ -88,6 +93,24 @@ export const layer = Layer.effect(
             }),
         }),
       );
+
+    // Lets clients attribute the WSL backend to this app's primary. On failure WSL still
+    // starts and is still marked as desktop-hosted, just without the primary's id.
+    const resolveHostEnvironmentId = Effect.gen(function* () {
+      const primary = yield* pool.primary;
+      if (!(yield* primary.waitForReady(PRIMARY_READY_TIMEOUT))) return undefined;
+      const { httpBaseUrl } = yield* serverExposure.backendConfig;
+      const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+        httpBaseUrl: httpBaseUrl.href,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      return descriptor.environmentId;
+    }).pipe(
+      Effect.catch((error) =>
+        logWslBackendWarning("could not read the primary environment id", {
+          error: error.message,
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
 
     const startNew = Effect.fn("desktop.wslBackend.startNew")(function* (input: {
       readonly distro: string | null;
@@ -119,7 +142,15 @@ export const layer = Layer.effect(
         .register({
           id: targetId,
           label: Effect.succeed(buildLabel(input.distro)),
-          configResolve: configuration.resolveWsl({ port: allocatedPort, distro: input.distro }),
+          configResolve: resolveHostEnvironmentId.pipe(
+            Effect.flatMap((hostEnvironmentId) =>
+              configuration.resolveWsl({
+                port: allocatedPort,
+                distro: input.distro,
+                hostEnvironmentId,
+              }),
+            ),
+          ),
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
           onStateDirOwned: () =>
