@@ -150,17 +150,8 @@ describe("ssh command", () => {
         { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
         { preHostArgs: ["-F", "none", "-G"], timeoutMs: 900_000 },
       );
-      const config = new Map(
-        stdout
-          .trim()
-          .split(/\r?\n/u)
-          .map((line) => {
-            const [key, ...value] = line.split(/\s+/u);
-            return [key, value.join(" ")] as const;
-          }),
-      );
-      assert.equal(config.get("serveraliveinterval"), "15");
-      assert.equal(config.get("serveralivecountmax"), "3");
+      assert.match(stdout, /^serveraliveinterval 15\r?$/mu);
+      assert.match(stdout, /^serveralivecountmax 3\r?$/mu);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
