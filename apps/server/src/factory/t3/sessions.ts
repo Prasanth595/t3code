@@ -489,6 +489,7 @@ export const make = Effect.gen(function* () {
           : Effect.logWarning("factory could not link the pull request to the launched thread", {
               threadId,
               pullRequestUrl: url,
+              cause: Cause.pretty(cause),
             }),
       ),
     );
