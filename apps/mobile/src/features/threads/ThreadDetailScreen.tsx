@@ -1156,7 +1156,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         // freeze leaves a phantom bottom inset.
         void KeyboardController.dismiss()
           .then(() => {
-            if (scope.aborted) return;
+            // A scroll during the dismissal turns end-follow off; leave the reader where they are.
+            if (scope.aborted || !endFollowEnabledRef.current) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
           })
           .catch(() => {
