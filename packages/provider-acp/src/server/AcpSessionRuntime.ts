@@ -1484,7 +1484,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
       Effect.ignore,
     );
-    if (yield* child.isRunning.pipe(Effect.catch(() => Effect.succeed(true)))) {
+    if (yield* child.isRunning.pipe(Effect.orElseSucceed(() => true))) {
       return yield* new AcpProcessGroupTerminationError({
         detail: "ACP scope launcher is still running",
       });
