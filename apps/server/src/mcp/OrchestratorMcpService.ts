@@ -1550,6 +1550,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
+    const runStatus = taskStatusForRun(taskResultRun ?? childRun);
     const status =
       task.result !== null
         ? taskStatusForRun(
@@ -1560,13 +1561,9 @@ const make = Effect.gen(function* () {
               ? { status: task.status }
               : childRun,
           )
-        : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
-            : taskStatusForRun(taskResultRun ?? childRun) === "starting"
-              ? "starting"
-              : "running";
+        : workState === "result_available" || runStatus === "queued" || runStatus === "starting"
+          ? runStatus
+          : "running";
     const derivedResult =
       task.result !== null
         ? task.result

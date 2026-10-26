@@ -320,7 +320,7 @@ describe("OrchestratorMcpService", () => {
       let providerStarted = false;
       const childProjection = () =>
         ({
-          thread: { id: childThreadId },
+          thread: { id: childThreadId, title: "Child task" },
           runs: [
             {
               id: childRunId,
