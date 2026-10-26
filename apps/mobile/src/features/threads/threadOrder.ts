@@ -409,7 +409,6 @@ export function threadArrangementCommands(
   // Settle clears the pin and both keys; pin clears the parked states.
   if (draft.settledOverride === "settled")
     return saved.settledOverride === "settled" &&
-      saved.settledAt === draft.settledAt &&
       saved.pinnedAt === draft.pinnedAt &&
       saved.snoozedUntil === draft.snoozedUntil
       ? []

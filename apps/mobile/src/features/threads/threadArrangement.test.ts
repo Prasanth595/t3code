@@ -35,6 +35,16 @@ function commandsFor(
 }
 
 describe("thread arrangement drafts", () => {
+  it("does not repeat a confirmed settle when its server timestamp differs from the preview", () => {
+    const saved = [
+      thread("a", { pinnedAt: NOW, pinOrderKey: "g", snoozedUntil: "2099-01-01T00:00:00.000Z" }),
+    ];
+    const [draft] = applyThreadMove(saved, key(saved[0]!), { section: "settled" }, NOW);
+    const confirmed = { ...draft!, settledAt: "2026-10-15T12:00:00.001Z" };
+
+    expect(threadArrangementCommands(confirmed, draft!)).toEqual([]);
+  });
+
   it("wakes an already pinned thread when dropped into Pinned", () => {
     const saved = [
       thread("a", { pinnedAt: NOW, pinOrderKey: "g", snoozedUntil: "2099-01-01T00:00:00.000Z" }),

@@ -755,11 +755,7 @@ export function useThreadListActions(): {
     thread = plan.thread;
     if (plan.section === "settled") {
       appAtomRegistry.set(threadDropBusyAtom, true);
-      try {
-        return await settleThread(thread);
-      } finally {
-        appAtomRegistry.set(threadDropBusyAtom, false);
-      }
+      return settleThread(thread).finally(() => appAtomRegistry.set(threadDropBusyAtom, false));
     }
     const { section, assignments, crossSection, shellByKey } = plan;
     const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
@@ -777,7 +773,7 @@ export function useThreadListActions(): {
           }),
         );
     let succeeded = false;
-    try {
+    return (async () => {
       if (crossSection) {
         if (section === "pinned") {
           const orderKey = assignments.find(
@@ -807,10 +803,10 @@ export function useThreadListActions(): {
       succeeded = true;
       pending?.complete();
       return true;
-    } finally {
+    })().finally(() => {
       if (!succeeded) pending?.cancel();
       appAtomRegistry.set(threadDropBusyAtom, false);
-    }
+    });
   };
   /** The arrange sheet's drafts after one more move, or null when it cannot run. */
   const previewThreadMove = (
@@ -863,7 +859,7 @@ export function useThreadListActions(): {
     if (drafts.size === 0) return true;
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
     appAtomRegistry.set(threadDropBusyAtom, true);
-    try {
+    return (async () => {
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
       const available = new Set(
         shells.map((thread) => scopedThreadKey(thread.environmentId, thread.id)),
@@ -886,9 +882,7 @@ export function useThreadListActions(): {
         }),
       );
       return results.every(Boolean);
-    } finally {
-      appAtomRegistry.set(threadDropBusyAtom, false);
-    }
+    })().finally(() => appAtomRegistry.set(threadDropBusyAtom, false));
   };
 
   const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
