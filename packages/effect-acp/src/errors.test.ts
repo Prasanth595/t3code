@@ -53,6 +53,19 @@ describe("effect-acp errors", () => {
     });
   });
 
+  it("includes the authored detail but not the cause in the transport message", () => {
+    const cause = new Error("connection refused at a private endpoint");
+    const error = new AcpError.AcpTransportError({
+      detail: "ACP replay did not consume all frames",
+      cause,
+    });
+
+    expect(error.message).toBe(
+      "ACP transport operation failed: ACP replay did not consume all frames.",
+    );
+    expect(error.cause).toBe(cause);
+  });
+
   it("preserves structured extension handler failures behind stable request errors", () => {
     const cause = new AcpError.AcpTransportError({
       operation: "read-input-stream",
@@ -113,14 +126,17 @@ describe("effect-acp errors", () => {
   it.effect("summarizes schema issues by path without payload values", () =>
     Effect.gen(function* () {
       const secret = "acp-summary-secret";
-      const cause = yield* Schema.decodeUnknownEffect(
+      const decodeStruct = Schema.decodeUnknownEffect(
         Schema.Struct({
           update: Schema.Struct({ used: Schema.Number, size: Schema.Number }),
           env: Schema.Record(Schema.String, Schema.Number),
         }),
-      )({ update: { size: secret }, env: { [`${secret} key`]: secret } }, { errors: "all" }).pipe(
-        Effect.flip,
       );
+
+      const cause = yield* decodeStruct(
+        { update: { size: secret }, env: { [`${secret} key`]: secret } },
+        { errors: "all" },
+      ).pipe(Effect.flip);
       const error = AcpError.AcpProtocolParseError.fromSchemaError(
         "decode-notification-payload",
         "session/update",
