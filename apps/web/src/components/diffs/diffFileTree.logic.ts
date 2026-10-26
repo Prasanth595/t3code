@@ -14,7 +14,7 @@ export interface DiffFileTreeEntry {
   readonly status: GitStatus;
 }
 
-export function toGitStatus(file: FileDiffMetadata): GitStatus {
+function toGitStatus(file: FileDiffMetadata): GitStatus {
   switch (file.type) {
     case "new":
       return "added";

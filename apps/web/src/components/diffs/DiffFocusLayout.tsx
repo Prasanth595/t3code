@@ -1,5 +1,9 @@
-import type { CodeViewScrollTarget, FileDiffMetadata } from "@pierre/diffs";
-import type { GitStatus } from "@pierre/trees";
+import {
+  getIconForType,
+  SVGSpriteSheet,
+  type CodeViewScrollTarget,
+  type FileDiffMetadata,
+} from "@pierre/diffs";
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { isEditableFocused } from "~/lib/editableFocus";
@@ -12,7 +16,6 @@ import {
   stepDiffChange,
   type DiffFocusPosition,
 } from "./diffFocusNavigation.logic";
-import { toGitStatus } from "./diffFileTree.logic";
 
 const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 960;
 
@@ -144,14 +147,43 @@ export function DiffFocusKeyboard({
   );
 }
 
-const STATUS_BADGES: Record<GitStatus, { letter: string; label: string; className: string }> = {
-  added: { letter: "A", label: "Added", className: "text-success" },
-  untracked: { letter: "A", label: "Added", className: "text-success" },
-  modified: { letter: "M", label: "Modified", className: "text-info" },
-  renamed: { letter: "R", label: "Renamed", className: "text-warning" },
-  deleted: { letter: "D", label: "Deleted", className: "text-destructive" },
-  ignored: { letter: "I", label: "Ignored", className: "text-muted-foreground" },
+const CHANGE_LABELS: Record<FileDiffMetadata["type"], string> = {
+  new: "Added",
+  change: "Modified",
+  deleted: "Deleted",
+  "rename-pure": "Renamed",
+  "rename-changed": "Renamed",
 };
+
+// The viewer colours its header icons like this; modified has no app token, so it uses the viewer's default.
+const CHANGE_ICON_CLASS_NAMES: Record<FileDiffMetadata["type"], string> = {
+  new: "text-diff-addition",
+  change: "text-[light-dark(#009fff,#69b1ff)]",
+  deleted: "text-diff-deletion",
+  "rename-pure": "text-[light-dark(#009fff,#69b1ff)]",
+  "rename-changed": "text-[light-dark(#009fff,#69b1ff)]",
+};
+
+// The viewer's sprite lives in its shadow roots, so `<use href>` cannot reach it from here.
+const changeIconMarkup = new Map(
+  Array.from(
+    SVGSpriteSheet.matchAll(/<symbol id="([^"]+)" viewBox="0 0 16 16">([\s\S]*?)<\/symbol>/g),
+    ([, id, markup]) => [id, markup] as const,
+  ),
+);
+
+function DiffChangeIcon({ type }: { type: FileDiffMetadata["type"] }) {
+  return (
+    <svg
+      role="img"
+      aria-label={CHANGE_LABELS[type]}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={cn("size-4 shrink-0", CHANGE_ICON_CLASS_NAMES[type])}
+      dangerouslySetInnerHTML={{ __html: changeIconMarkup.get(getIconForType(type)) ?? "" }}
+    />
+  );
+}
 
 const LIST_KEYS: Record<string, (navigation: DiffFocusNavigation) => void> = {
   ArrowDown: (navigation) => navigation.stepFile(1),
@@ -207,7 +239,6 @@ export function DiffFocusFileList({
       >
         {files.map((file, index) => {
           const selected = index === navigation.fileIndex;
-          const status = STATUS_BADGES[toGitStatus(file.fileDiff)];
           const slash = file.path.lastIndexOf("/");
           return (
             <div
@@ -232,13 +263,7 @@ export function DiffFocusFileList({
                   <span className="font-medium text-foreground">{file.path.slice(slash + 1)}</span>
                 </bdi>
               </span>
-              <span
-                role="img"
-                aria-label={status.label}
-                className={cn("shrink-0 font-mono text-2xs font-medium", status.className)}
-              >
-                {status.letter}
-              </span>
+              <DiffChangeIcon type={file.fileDiff.type} />
             </div>
           );
         })}
