@@ -207,11 +207,8 @@ export const SaasChatCompletionRequest = Schema.Struct({
 export type SaasChatCompletionRequest = typeof SaasChatCompletionRequest.Type;
 
 /**
- * Error codes in a failed chat completion's `{ error: { code, message } }` body.
- * `sign_up_required`: the free messages without an account are used up for today.
- * `daily_limit`: the plan's daily chat cap is reached.
- * `agentic_not_in_plan`: the plan has no agentic mode (from `/v1/llm`).
- * `session_expired`: the bearer token was rejected; refresh it and retry.
+ * Codes in a failed chat reply's `{ error: { code, message } }` body. `sign_up_required` means
+ * the messages without an account are used up today; `daily_limit` is the plan's daily cap.
  */
 export const SaasChatErrorCode = Schema.Literals([
   "sign_up_required",

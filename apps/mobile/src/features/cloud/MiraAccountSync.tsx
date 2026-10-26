@@ -12,6 +12,7 @@ import { AppState } from "react-native";
 import { environmentCatalog } from "../../connection/catalog";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { fetchMiraAccount, miraAccess, miraChatHistory, miraChatRemote } from "../chat/miraChat";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 
 // SecureStore keys allow only letters, digits, ".", "-", and "_".
@@ -43,6 +44,35 @@ export function MiraAccountSync() {
   });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const autoAdded = useRef<Set<string>>(new Set());
+
+  // The plan decides chat limits and agentic access; chats follow the account across devices.
+  useEffect(() => {
+    if (accountId === null) {
+      miraAccess.set({ signedIn: false, account: null, openSignIn: null });
+      void miraChatHistory.setRemote(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () =>
+      fetchMiraAccount().then(
+        (account) => {
+          if (!cancelled) miraAccess.set({ signedIn: true, account, openSignIn: null });
+        },
+        (cause: unknown) => console.warn("[mira] Could not read the account", cause),
+      );
+    miraAccess.set({ signedIn: true, account: null, openSignIn: null });
+    void refresh();
+    void miraChatHistory.setRemote(miraChatRemote(accountId));
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      void refresh();
+      void miraChatHistory.sync();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [accountId]);
 
   useEffect(() => {
     if (accountId === null) return;

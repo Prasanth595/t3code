@@ -29,7 +29,7 @@ import {
   readAutoAddedComputers,
   rememberAutoAddedComputer,
 } from "./miraSharing";
-import { miraChatHistory, miraChatRemote, setMiraAccess } from "./miraChat";
+import { miraAccess, miraChatHistory, miraChatRemote } from "./miraChat";
 import { fetchMiraAccount } from "./miraAccount";
 import { resolveClerkSignInProps } from "../components/clerk/authRedirect";
 import { useCloudLinkController } from "./useCloudLinkController";
@@ -52,7 +52,7 @@ export function MiraAccountSync() {
   useEffect(() => {
     const signIn = () => openSignIn();
     if (accountId === null) {
-      setMiraAccess({ signedIn: false, account: null, openSignIn: signIn });
+      miraAccess.set({ signedIn: false, account: null, openSignIn: signIn });
       void miraChatHistory.setRemote(null);
       return;
     }
@@ -60,11 +60,11 @@ export function MiraAccountSync() {
     const refresh = () =>
       fetchMiraAccount().then(
         (account) => {
-          if (!cancelled) setMiraAccess({ signedIn: true, account, openSignIn: signIn });
+          if (!cancelled) miraAccess.set({ signedIn: true, account, openSignIn: signIn });
         },
         (cause: unknown) => console.warn("[mira] Could not read the account", cause),
       );
-    setMiraAccess({ signedIn: true, account: null, openSignIn: signIn });
+    miraAccess.set({ signedIn: true, account: null, openSignIn: signIn });
     void refresh();
     void miraChatHistory.setRemote(miraChatRemote(accountId));
     const onFocus = () => {

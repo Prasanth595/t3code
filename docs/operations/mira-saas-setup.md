@@ -40,12 +40,16 @@ price it pays. Any other state returns it to the default plan.
 Open `https://relay.<zone>/admin` and sign in with an admin account.
 
 - **Model**: save the DeepSeek API key and model id. Users get "The model is not configured yet"
-  until a key is saved.
-- **Plans**: Free and Pro exist after the first deploy. Set each plan's monthly tokens, and the
+  until a key is saved. Here you also set how many chat messages a day people get without an
+  account (10 by default) before the app asks them to create one.
+- **Plans**: Free and Pro exist after the first deploy. Free has chat with a 200-message daily
+  safety cap and no agentic mode; Pro has unlimited chat and agentic mode. Per plan, set whether
+  agentic mode is included, its monthly tokens, the daily chat cap (0 is unlimited), and the
   Stripe price id on paid plans. The default plan is what new accounts get. The app's Upgrade
   button buys the plan with id `pro`.
 - **Users**: shows this month's tokens per account and lets you move an account to another plan.
   A Stripe webhook later overrides a manual change for accounts with a subscription.
 
-Usage counts input plus output tokens per UTC calendar month. A request that starts under the
-limit finishes even if it crosses it.
+Agentic usage counts input plus output tokens per UTC calendar month. A request that starts
+under the limit finishes even if it crosses it. Chat is counted in messages per UTC day instead;
+without an account it is counted per device and, more loosely, per network address.
