@@ -134,7 +134,7 @@ const permissionRequestCount = Math.max(
 // id per process, as a real agent that cannot reopen sessions would.
 const sessionId =
   process.env.T3_ACP_UNIQUE_SESSION_IDS === "1"
-    ? `mock-session-${globalThis.crypto.randomUUID()}`
+    ? `mock-session-${process.pid}-${Date.now()}`
     : "mock-session-1";
 
 let currentModeId = antigravityProfile ? "default" : "ask";

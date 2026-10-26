@@ -2473,7 +2473,7 @@ describe("AcpAdapterV2", () => {
         }),
       );
       const previousSessionId = previousThread.nativeThreadRef?.nativeId;
-      if (previousSessionId === undefined) {
+      if (previousSessionId === undefined || previousSessionId === null) {
         return yield* Effect.die("The first ACP session has no session id");
       }
       yield* pollProtocolMethods(protocolEvents);
