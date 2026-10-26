@@ -1,3 +1,4 @@
+import * as NodeModule from "node:module";
 import { defineConfig } from "vite-plus";
 import "vite-plus/test/config";
 
@@ -18,6 +19,15 @@ const reactTests = [
   "src/state/use-selected-thread-git-actions.test.tsx",
 ];
 
+const require = NodeModule.createRequire(import.meta.url);
+const babel: {
+  transformAsync: (
+    code: string,
+    options: Record<string, unknown>,
+  ) => Promise<{ code?: string | null; map?: object | null } | null>;
+} = require("@babel/core");
+const babelConfig = require("./babel.config.js")({ cache: () => {} });
+
 export default defineConfig({
   test: {
     hookTimeout: 60_000,
@@ -37,6 +47,44 @@ export default defineConfig({
       },
       {
         extends: true,
+        plugins: [
+          {
+            name: "mobile-release-react-compiler",
+            enforce: "pre",
+            async transform(code, id) {
+              if (
+                !id.startsWith(new URL("./src/", import.meta.url).pathname) ||
+                !/\.tsx?$/.test(id) ||
+                /\.test\.tsx?$/.test(id)
+              ) {
+                return;
+              }
+              const result = await babel.transformAsync(code, {
+                ...babelConfig,
+                presets: babelConfig.presets.map(([name, options]: [string, object]) => [
+                  require.resolve(name),
+                  // Vite runs in Node; inline Babel helpers instead of Metro runtime imports.
+                  { ...options, enableBabelRuntime: false },
+                ]),
+                filename: id,
+                babelrc: false,
+                configFile: false,
+                sourceMaps: true,
+                caller: {
+                  name: "metro",
+                  bundler: "metro",
+                  platform: "ios",
+                  isDev: false,
+                  isServer: false,
+                  isNodeModule: false,
+                  supportsStaticESM: true,
+                  supportsReactCompiler: true,
+                },
+              });
+              if (result?.code) return { code: result.code, map: result.map };
+            },
+          },
+        ],
         test: {
           name: "react",
           include: reactTests,
