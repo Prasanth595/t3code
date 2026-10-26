@@ -755,6 +755,71 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("installs an archive whose entry listing exceeds the command output limit", () => {
+    const downloadUrl = "https://registry.test/agent-long-listing.tar.gz";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-long-listing-",
+      });
+      const source = `${cacheDir}/source`;
+      yield* fileSystem.makeDirectory(source);
+      yield* fileSystem.writeFileString(`${source}/agent`, "#!/bin/sh\necho managed\n");
+      // 5,000 long names list past the generic 1 MiB command output cap.
+      const entries = `${source}/entries`;
+      yield* fileSystem.makeDirectory(entries);
+      yield* Effect.forEach(
+        Array.from({ length: 5_000 }, (_, index) => index),
+        (index) => fileSystem.writeFileString(`${entries}/${index}-${"e".repeat(240)}`, ""),
+        { concurrency: 16 },
+      );
+      const archivePath = `${cacheDir}/agent.tar.gz`;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const tar = yield* spawner.spawn(
+        ChildProcess.make("tar", ["-czf", archivePath, "-C", source, "."]),
+      );
+      expect(yield* tar.exitCode).toBe(0);
+      const archive = yield* fileSystem.readFile(archivePath);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url === registryUrl
+                  ? new Response(makeRegistry(agent))
+                  : new Response(archive),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* resolver.prepare({ agentId: agent.id });
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
+      expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe(
+        "#!/bin/sh\necho managed\n",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Architecture, "x64"),
+    );
+  });
+
   it.effect("searches compatible agents with deterministic ranking and bounded metadata", () => {
     const exact = {
       ...makeAgent({ npx: { package: "@example/acp@1.2.3" } }),

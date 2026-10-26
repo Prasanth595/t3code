@@ -51,6 +51,10 @@ const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest
 
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
+const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
+// Listings scale with entry count, not archive size: Cortex Code's macOS build lists
+// 12,752 entries in 1.5 MB.
+const MAX_ARCHIVE_LISTING_BYTES = 64 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
 // Older clients omit the limit and validate responses against a 20-agent cap.
 const DEFAULT_SEARCH_LIMIT = 20;
@@ -894,6 +898,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       readonly env?: NodeJS.ProcessEnv;
       readonly timeout?: Duration.Input;
       readonly truncatedOutputReason?: AcpRegistryErrorReason;
+      readonly maxStdoutBytes?: number;
     } = {},
   ) {
     const collect = Effect.gen(function* () {
@@ -912,8 +917,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
       const [stdout, stderr, exitCode] = yield* Effect.all(
         [
-          collectUint8StreamText({ stream: child.stdout, maxBytes: 1024 * 1024 }),
-          collectUint8StreamText({ stream: child.stderr, maxBytes: 1024 * 1024 }),
+          collectUint8StreamText({
+            stream: child.stdout,
+            maxBytes: options.maxStdoutBytes ?? MAX_COMMAND_OUTPUT_BYTES,
+          }),
+          collectUint8StreamText({ stream: child.stderr, maxBytes: MAX_COMMAND_OUTPUT_BYTES }),
           child.exitCode,
         ],
         { concurrency: "unbounded" },
@@ -1510,10 +1518,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               : platform === "win32"
                 ? ["-tf", archivePath]
                 : undefined;
+        const listingOptions = { maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES };
         const entries =
           listArgs === undefined
-            ? yield* runCommand("unzip", ["-Z1", archivePath])
-            : yield* runCommand(tarCommand, listArgs);
+            ? yield* runCommand("unzip", ["-Z1", archivePath], listingOptions)
+            : yield* runCommand(tarCommand, listArgs, listingOptions);
         if (!validateArchiveEntries(entries)) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
