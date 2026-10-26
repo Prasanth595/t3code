@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DeviceHostUnavailableError,
   DeviceId,
+  type DeviceSession,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
@@ -234,4 +235,72 @@ it.effect("rejects unavailable agent access before booting or opening a device",
       ),
     ),
   );
+});
+
+it.effect("device_close with shutdown turns off a device whose session a restart forgot", () => {
+  const shutdowns: Array<unknown> = [];
+  const closes: Array<unknown> = [];
+  const otherThread = ThreadId.make("thread-device-other");
+  const layerFor = (sessions: ReadonlyArray<DeviceSession>) =>
+    McpHttpServer.layerDeviceToolkit.pipe(
+      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+      Layer.provide(
+        Layer.mock(DeviceService.DeviceService)({
+          list: Effect.succeed({ ...state, sessions }),
+          sessionsForThread: (id) =>
+            Effect.succeed(sessions.filter((session) => session.threadId === id)),
+          shutdown: (input) => Effect.sync(() => void shutdowns.push(input)),
+          close: (input) => Effect.sync(() => void closes.push(input)),
+        }),
+      ),
+      Layer.provide(layerProjectsMock),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+  const call = (args: Record<string, unknown>, sessions: ReadonlyArray<DeviceSession> = []) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      return yield* server
+        .callTool({ name: "device_close", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    }).pipe(Effect.scoped, Effect.provide(layerFor(sessions)));
+  const session = (owner: ThreadId): DeviceSession => ({
+    threadId: owner,
+    hostId: "local",
+    deviceId: DeviceId.make("UDID-1"),
+    platform: "ios",
+    openedAt: "2026-09-08T00:00:00.000Z",
+  });
+
+  return Effect.gen(function* () {
+    const forgotten = yield* call({ deviceId: "UDID-1", shutdown: true });
+    expect(forgotten.isError).toBe(false);
+    expect(shutdowns).toEqual([{ hostId: "local", deviceId: "UDID-1", platform: "ios" }]);
+    expect(closes).toEqual([]);
+
+    const foreign = yield* call({ deviceId: "UDID-1", shutdown: true }, [session(otherThread)]);
+    expect(foreign.isError).toBe(true);
+    expect(foreign.content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining("open in another thread") }),
+    ]);
+    expect(shutdowns).toHaveLength(1);
+
+    const untargeted = yield* call({ shutdown: true });
+    expect(untargeted.isError).toBe(true);
+    expect(untargeted.content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining("nothing was turned off") }),
+    ]);
+    expect(shutdowns).toHaveLength(1);
+
+    const recorded = yield* call({ deviceId: "UDID-1", shutdown: true }, [session(threadId)]);
+    expect(recorded.isError).toBe(false);
+    expect(closes).toEqual([{ threadId, deviceId: "UDID-1", shutdown: true }]);
+    expect(shutdowns).toHaveLength(1);
+  });
 });

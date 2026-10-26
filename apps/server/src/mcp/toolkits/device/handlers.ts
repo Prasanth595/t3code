@@ -251,6 +251,43 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
+      if (input.shutdown === true) {
+        const hostId =
+          input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
+        const recorded = (yield* devices.sessionsForThread(scope.thread.threadId)).some(
+          (session) =>
+            (hostId === undefined || session.hostId === hostId) &&
+            (input.deviceId === undefined || session.deviceId === input.deviceId),
+        );
+        // Sessions live in memory, so a restart forgets them and close alone would turn nothing off.
+        if (!recorded) {
+          if (input.deviceId === undefined) {
+            return yield* new DeviceToolUnavailableError({
+              reason:
+                "No device is open in this thread, so nothing was turned off. Pass deviceId to turn a device off.",
+            });
+          }
+          const state = yield* devices.list;
+          if (
+            state.sessions.some(
+              (session) => session.hostId === hostId && session.deviceId === input.deviceId,
+            )
+          ) {
+            return yield* new DeviceToolUnavailableError({
+              reason: `Device ${input.deviceId} on host ${hostId} is open in another thread, so it was not turned off.`,
+            });
+          }
+          const target = yield* pickDevice(state.devices, input);
+          if (target.booted) {
+            yield* devices.shutdown({
+              hostId: target.hostId,
+              deviceId: target.id,
+              platform: target.platform,
+            });
+          }
+          return {};
+        }
+      }
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
