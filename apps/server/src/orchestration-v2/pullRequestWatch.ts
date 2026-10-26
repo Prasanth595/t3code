@@ -68,11 +68,11 @@ export function evaluatePullRequestWatch(
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     // A gate failure the agent already heard of can stand while the rest finish, and then nothing
     // short of a push can wake it: no check is new and the gate cannot pass. A rerun goes pending,
-    // which arms this once more.
+    // or passes between two reads, and either arms this once more.
     const pending = detail.checks.some((check) => check.status === "pending");
-    if (pending) {
+    if (pending || passedNow) {
       finished = false;
-    } else if (!passedNow && failed.length > 0 && newlyFailed.length === 0 && !finished) {
+    } else if (newlyFailed.length === 0 && !finished) {
       changes.push({ kind: "checks-finished", count: detail.checks.length, failed });
       finished = true;
     }

@@ -289,6 +289,15 @@ describe("evaluatePullRequestWatch", () => {
     const done = detail({ checks: [check("lint", "success"), check("test", "failure")] });
     const told = watch({ headSha: "aaaaaaaaaa", failedChecks: ["test"], finished: true });
     assert.deepEqual(evaluatePullRequestWatch(told, done, noRemarks).changes, []);
+
+    // A rerun that passed between two reads was never seen pending, yet it ends the told state.
+    const green = detail({ checks: [check("lint", "success"), check("test", "success")] });
+    const passed = evaluatePullRequestWatch(told, green, noRemarks);
+    assert.deepEqual(passed.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.isFalse(passed.next.finished);
+    const red = evaluatePullRequestWatch(passed.next, done, noRemarks);
+    assert.deepEqual(red.changes, [{ kind: "checks-failed", failed: [check("test", "failure")] }]);
+    assert.isTrue(evaluatePullRequestWatch(red.next, done, noRemarks).finished);
   });
 
   it("ends the message with the stop notice when the checks finished", () => {
