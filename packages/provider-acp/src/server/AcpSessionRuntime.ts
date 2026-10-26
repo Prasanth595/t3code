@@ -1477,6 +1477,21 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
     );
 
+  const terminateScopedProcess = Effect.gen(function* () {
+    yield* child.isRunning.pipe(
+      Effect.flatMap((running) =>
+        running ? child.kill({ forceKillAfter: "1 second" }) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+    if (yield* child.isRunning.pipe(Effect.catch(() => Effect.succeed(true)))) {
+      return yield* new AcpProcessGroupTerminationError({
+        detail: "ACP scope launcher is still running",
+      });
+    }
+    yield* stopScope;
+  });
+
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {
     yield* child.exitCode.pipe(
@@ -1585,7 +1600,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   );
   const terminateOwnedProcessGroupImpl = Effect.gen(function* () {
     if (options.ownDetachedProcessGroup !== true) return;
-    if (scopeUnit !== undefined) return yield* stopScope;
+    if (scopeUnit !== undefined) return yield* terminateScopedProcess;
     if (options.processGroupPlatform === undefined) {
       return yield* new AcpProcessGroupTerminationError({
         detail: "Detached ACP process-group ownership requires a host platform",
@@ -1626,7 +1641,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     const hostPlatform = yield* HostProcess.Platform;
     const forceTerminateOwnedProcessGroup =
       scopeUnit !== undefined
-        ? stopScope
+        ? terminateScopedProcess
         : hostPlatform === "win32"
           ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

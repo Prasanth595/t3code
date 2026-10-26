@@ -351,7 +351,7 @@ export const make = Effect.gen(function* () {
     const stopping =
       state.activeState === "deactivating" ||
       state.result === "oom-kill" ||
-      (scope.supportsOomPolicy && (state.oomKills ?? 0) > 0);
+      (scope.supportsOomPolicy && (state.oomKills === undefined || state.oomKills > 0));
     if (!stopping) {
       const stopped = yield* runner
         .run({

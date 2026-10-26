@@ -198,6 +198,43 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("reaps the scope launcher before accepting an absent scope", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let childIsRunning = Effect.succeed(true);
+      let stops = 0;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        ownDetachedProcessGroup: true,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.tap((child) =>
+                Effect.sync(() => {
+                  childIsRunning = child.isRunning.pipe(Effect.orDie);
+                }),
+              ),
+            ),
+        }),
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-acp-test.scope" }),
+          stop: () =>
+            Effect.gen(function* () {
+              expect(yield* childIsRunning).toBe(false);
+              stops++;
+            }),
+        }),
+      );
+      if (runtime.terminateProcessGroup === undefined) return expect.fail("Missing ACP teardown");
+      yield* runtime.terminateProcessGroup;
+      expect(stops).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the agent scope before creating an owned Linux cgroup", () =>
     Effect.gen(function* () {
       let leases = 0;

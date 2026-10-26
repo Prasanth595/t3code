@@ -253,7 +253,7 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect.each([0, undefined])(
+  it.effect.each([0])(
     "stops populated work with OOM counter %s and waits for completion",
     (oomKills) =>
       withFakeSystemd(({ scope, units, calls, cgroupRoot, handlers }) =>
@@ -276,54 +276,58 @@ describe("AgentScope service", () => {
       ),
   );
 
-  it.effect("waits for pending OOM cleanup without replacing its diagnosis", () =>
-    withFakeSystemd(({ scope, units, calls, cgroupRoot, handlers }) =>
-      Effect.gen(function* () {
-        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        const unit = unitOf(agent);
-        exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 1 });
-        const waiting = yield* Deferred.make<void>();
-        const stopped = yield* Deferred.make<void>();
-        let reads = 0;
-        handlers.set("show", () =>
-          ++reads === 2
-            ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(stopped)))
-            : Effect.void,
-        );
-        const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
-        yield* Deferred.await(waiting);
-        expect(fiber.pollUnsafe()).toBeUndefined();
-        expect(stopsOf(calls)).toEqual([]);
-        units.set(unit, { activeState: "failed", result: "oom-kill" });
-        yield* Deferred.succeed(stopped, undefined);
-        yield* Fiber.join(fiber);
-        expect(yield* scope.oomKilled("a")).toBe(true);
-      }),
-    ),
+  it.effect.each([1, undefined])(
+    "waits for pending OOM cleanup with counter %s without replacing its diagnosis",
+    (oomKills) =>
+      withFakeSystemd(({ scope, units, calls, cgroupRoot, handlers }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          const unit = unitOf(agent);
+          exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills });
+          const waiting = yield* Deferred.make<void>();
+          const stopped = yield* Deferred.make<void>();
+          let reads = 0;
+          handlers.set("show", () =>
+            ++reads === 2
+              ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(stopped)))
+              : Effect.void,
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
+          yield* Deferred.await(waiting);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          expect(stopsOf(calls)).toEqual([]);
+          units.set(unit, { activeState: "failed", result: "oom-kill" });
+          yield* Deferred.succeed(stopped, undefined);
+          yield* Fiber.join(fiber);
+          expect(yield* scope.oomKilled("a")).toBe(true);
+        }),
+      ),
   );
 
-  it.effect("bounds pending cleanup even for an uninterruptible caller", () =>
-    withFakeSystemd(({ scope, units, cgroupRoot, handlers }) =>
-      Effect.gen(function* () {
-        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t" });
-        const unit = unitOf(agent);
-        exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 1 });
-        const waiting = yield* Deferred.make<void>();
-        let reads = 0;
-        handlers.set("show", () =>
-          ++reads === 2
-            ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))
-            : Effect.void,
-        );
-        const fiber = yield* scope.stop(unit).pipe(Effect.uninterruptible, Effect.forkChild);
-        yield* Deferred.await(waiting);
-        yield* TestClock.adjust("15 seconds");
-        expect(yield* Effect.flip(Fiber.join(fiber))).toMatchObject({
-          _tag: "AgentScopeStopError",
-          detail: "Agent scope did not finish stopping",
-        });
-      }),
-    ),
+  it.effect.each([1, undefined])(
+    "bounds pending cleanup with counter %s even for an uninterruptible caller",
+    (oomKills) =>
+      withFakeSystemd(({ scope, units, cgroupRoot, handlers }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t" });
+          const unit = unitOf(agent);
+          exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills });
+          const waiting = yield* Deferred.make<void>();
+          let reads = 0;
+          handlers.set("show", () =>
+            ++reads === 2
+              ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.uninterruptible, Effect.forkChild);
+          yield* Deferred.await(waiting);
+          yield* TestClock.adjust("15 seconds");
+          expect(yield* Effect.flip(Fiber.join(fiber))).toMatchObject({
+            _tag: "AgentScopeStopError",
+            detail: "Agent scope did not finish stopping",
+          });
+        }),
+      ),
   );
 
   it.effect("reports failed scope cleanup", () =>
