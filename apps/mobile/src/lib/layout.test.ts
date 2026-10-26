@@ -13,7 +13,6 @@ import {
 describe("thread arrangement text sizing", () => {
   it("fits two title lines and section labels with combined app and system text scaling", () => {
     const sizing = deriveThreadArrangementSizing({ baseFontSize: 22, fontScale: 1.3 });
-    // The same dimensions feed FlatList offsets, drop targets and the floating preview.
     expect(sizing.rowHeight).toBeGreaterThanOrEqual(2 * 32 * 1.3 + 10);
     expect(sizing.headerHeight).toBeGreaterThanOrEqual(26 * 1.3 + 24);
     expect(deriveThreadArrangementSizing({ baseFontSize: 16, fontScale: 1 })).toEqual({

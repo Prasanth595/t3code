@@ -28,8 +28,6 @@ export function deriveThreadArrangementSizing(input: {
     MOBILE_TYPOGRAPHY.footnote,
     input.baseFontSize,
   );
-  // Two body lines and one footnote line plus the padding the original fixed rows had:
-  // at the default text size these are exactly the old 56pt rows and 48pt headers.
   return {
     rowHeight: Math.max(56, Math.ceil(2 * bodyLineHeight * input.fontScale) + 10),
     headerHeight: Math.max(48, Math.ceil(headerLineHeight * input.fontScale) + 24),
