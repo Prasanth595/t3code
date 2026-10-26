@@ -286,7 +286,7 @@ const make = Effect.gen(function* () {
           ),
         );
     },
-    (effect, origin, input, clientName) =>
+    (effect, origin) =>
       effect.pipe(
         // Endpoint errors are mapped above; what is left is the transport or an
         // answer this version cannot decode.
