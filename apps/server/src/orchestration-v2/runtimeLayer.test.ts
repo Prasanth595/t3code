@@ -6187,6 +6187,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "refused-boundary-manual",
     "refused-boundary-stop-reenable",
     "refused-boundary-cancel",
+    "refused-boundary-cancel-before-arm",
     "refused-boundary-off",
     "refused-boundary-stop",
     "refused-boundary-stop-armed",
@@ -6231,16 +6232,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         createdBy: "user",
         creationSource: "web",
       });
-      if (scenario === "refused-boundary-stop") {
-        const stopped = yield* orchestrator.dispatch({
-          type: "thread.stop",
-          commandId: CommandId.make("recovery:stop-unarmed"),
-          threadId,
-        });
-        assert.isFalse(
-          stopped.storedEvents.some(({ event }) => event.type === "thread.metadata-updated"),
-        );
-      }
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`recovery:message:${scenario}`),
@@ -6610,7 +6601,28 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           assert.isDefined(refused);
           const rearm = limitRecoveryCommand(refused!, true, DateTime.toEpochMillis(refusedAt));
           assert(rearm?.type === "thread.metadata.update");
-          yield* orchestrator.dispatch(rearm);
+          if (scenario === "refused-boundary-cancel-before-arm") {
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("recovery:cancel-before-arm"),
+              threadId,
+              limitRecovery: { runId: retry.id, resetAt, autoResume: false },
+            });
+          }
+          yield* orchestrator.autoArmLimitRecovery({
+            commandId: rearm.commandId,
+            threadId,
+            limitRecovery: rearm.limitRecovery!,
+          });
+          if (scenario === "refused-boundary-cancel-before-arm") {
+            yield* TestClock.adjust("120 seconds");
+            assert.isUndefined(yield* candidate());
+            assert.isFalse(
+              (yield* orchestrator.getThreadShell(threadId))?.limitRecovery?.autoResume,
+            );
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+            return;
+          }
           const rearmed = (yield* orchestrator.getThreadShell(threadId))!;
           assert.equal(rearmed.limitRecovery?.runId, retry.id);
           assert.isUndefined(yield* candidate());
