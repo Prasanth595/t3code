@@ -375,6 +375,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -2111,7 +2112,8 @@ function useThreadFeedPresentation(
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
-  const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
+  const { listRef, onAtEndChange, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } =
+    props;
   const workflowOpening = useWorkflowOpening(props.environmentId, props.threadId);
   const guestThreadRef = useMemo(
     () => scopeThreadRef(props.environmentId, props.threadId),
@@ -2171,6 +2173,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const endFollowEnabledRef = useRef(true);
   // Only user scrolls from drag through momentum break follow; ignore MVCP and programmatic adjustments.
   const userScrollSessionRef = useRef(false);
+  // Null until the first report, so a remounted feed resyncs a screen that outlived the old one.
+  const atEndRef = useRef<boolean | null>(null);
+  const reportListAtEnd = useEffectEvent(() => {
+    // While following, the end only lags a growing row by a frame and the arrow is hidden anyway,
+    // so reporting it would re-render the screen twice per streamed growth for nothing.
+    const isAtEnd = endFollowEnabledRef.current || listRef.current?.getState().isAtEnd;
+    if (isAtEnd === undefined || atEndRef.current === isAtEnd) return;
+    atEndRef.current = isAtEnd;
+    onAtEndChange?.(isAtEnd);
+  });
   const setEndFollow = (enabled: boolean) => {
     if (endFollowEnabledRef.current === enabled) {
       return;
@@ -2178,6 +2190,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     endFollowEnabledRef.current = enabled;
     setEndFollowEnabled(enabled);
     onEndFollowEnabledChange?.(enabled);
+    reportListAtEnd();
   };
   const transitionEndFollow = (event: ThreadFeedLiveFollowEvent) => {
     setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
@@ -2754,6 +2767,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       listRef.current?.reportContentInset({ bottom });
     }
   }, [listMountKey, props.contentInsetEndAdjustment, listRef]);
+  // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
+  // reply streaming in while the reader holds the list also re-reads the end.
+  useLayoutEffect(() => {
+    const listState = listRef.current?.getState();
+    if (!listState) return;
+    const unsubscribeAtEnd = listState.listen("isAtEnd", () => reportListAtEnd());
+    const unsubscribeTotalSize = listState.listen("totalSize", () => reportListAtEnd());
+    reportListAtEnd();
+    return () => {
+      unsubscribeAtEnd();
+      unsubscribeTotalSize();
+    };
+  }, [listMountKey, listRef]);
   // Opening at a message: its run unfolds, the list stops following the end
   // (a render later, so the end does not pull it back), then it scrolls there.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
