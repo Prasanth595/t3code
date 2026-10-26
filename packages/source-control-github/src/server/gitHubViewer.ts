@@ -1,11 +1,11 @@
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { GraphQLClient, GraphQLClientError } from "effect/graphql";
+import { GraphQLClient, GraphQLClientError, GraphQLGroup } from "effect/graphql";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
-import { GitHubViewerGraphQLGroup } from "./gitHubViewer.graphql.ts";
+import { RoutingIdentityViewer } from "./pullRequestReads.graphql.ts";
 
 class GitHubViewerResponseError extends Schema.TaggedError<GitHubViewerResponseError>()(
   "GitHubViewerResponseError",
@@ -16,7 +16,9 @@ class GitHubViewerResponseError extends Schema.TaggedError<GitHubViewerResponseE
   }
 }
 
-const group = GitHubViewerGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth);
+const group = GraphQLGroup.make(RoutingIdentityViewer).middleware(
+  GitHubGraphQlClient.GitHubGraphQlAuth,
+);
 
 const Viewer = Schema.Struct({
   login: TrimmedNonEmptyString,
@@ -39,7 +41,7 @@ export const makeGitHubViewerReader = Effect.gen(function* () {
       Effect.catchIf(
         (error) => error._tag === "GitHubApiResponseError" && error.status === 403,
         () =>
-          client.GitHubViewer({}).pipe(
+          client.RoutingIdentityViewer({}).pipe(
             GitHubGraphQlClient.call(input),
             Effect.flatMap((result) =>
               decodeViewer({ id: result.viewer.databaseId, login: result.viewer.login }),
