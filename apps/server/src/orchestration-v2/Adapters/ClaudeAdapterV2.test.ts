@@ -4386,7 +4386,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const standardNotice = "Claude answered this Fast request at standard speed.";
         yield* turn(8, true, [result(8, "on", undefined, "standard")]);
-        yield* turn(9, true, [result(9, "on", undefined, "standard")]);
+        yield* turn(9, true, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "fast-mode-init-9",
+            session_id: WAKE_NATIVE_SESSION,
+            ...fastModeFields("on"),
+          }),
+          result(9, "on", undefined, "standard"),
+        ]);
         assert.deepEqual(notices().slice(-1), [standardNotice]);
         assert.equal(notices().length, 5);
         yield* turn(10, true, [result(10, "on", undefined, "fast")]);

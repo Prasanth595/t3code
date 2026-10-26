@@ -3747,7 +3747,7 @@ function claudeFastModeNotice(message: SDKMessage): string | null | undefined {
     }
   }
   if (state === undefined || reason === "pending") return undefined;
-  if (state === "on") return null;
+  if (state === "on") return message.type === "result" ? null : undefined;
   if (state === "cooldown") {
     return "Fast mode is paused after a rate limit, so Claude is answering at standard speed until the cooldown ends.";
   }
