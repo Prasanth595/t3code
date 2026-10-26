@@ -390,6 +390,11 @@ it("keeps a closing queued edit's repository state until its save is built", asy
   await screen.render(false);
   expect(screen.current.isGitRepo).toBe(false);
   expect(screen.current.selectedProject).toEqual(screen.projects[2]);
+  await screen.expireIdle();
+  expect(screen.events).not.toContain("stop:/b");
+  await screen.emit("/b", "updated-checkout", true);
+  expect(screen.current.isGitRepo).toBe(true);
+  await screen.emit("/b", "updated-checkout", false);
   await act(async () => screen.current.cancelEditingPendingTask());
   expect(mocks.flushEdit).toHaveBeenCalledOnce();
   expect(mocks.flushEdit.mock.calls[0]![0].message).toMatchObject({
