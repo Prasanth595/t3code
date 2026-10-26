@@ -444,8 +444,10 @@ export function NewTaskFlowProvider(
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
+  // Queued edits can flush as their route closes; keep their repository capability until saved.
+  const projectStatusActive = props.active !== false || editingPendingTask !== null;
   const projectGitStatus = useEnvironmentQuery(
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
+    projectStatusActive && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? vcsEnvironment.status({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot },
@@ -516,12 +518,18 @@ export function NewTaskFlowProvider(
         projectHasThreads: selectedProjectHasThreads,
       })
     : "local";
+  // A resumed status stream can correct stale cached refs; wait before persisting a workspace default.
+  const projectStatusPending =
+    projectGitStatus.isPending &&
+    projectGitStatus.data === null &&
+    fileEnvironment.presentation?.connection?.phase === "connected";
   // Do not persist the provisional workspace default while t3.json is loading; it would override
   // the file's eventual default.
   const defaultWorkspaceModeSettled =
-    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
-    projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    (!t3ProjectFileQuery.isPending && !fileAccessPending);
+    !projectStatusPending &&
+    (selectedProjectDraft.workspaceSelection?.mode !== undefined ||
+      projectSettings.sources.defaultThreadEnvMode !== "environment" ||
+      (!t3ProjectFileQuery.isPending && !fileAccessPending));
   const workspaceSelection = resolveNewTaskWorkspaceSelection({
     selection: canChooseWorkspace ? selectedProjectDraft.workspaceSelection : undefined,
     fallback: { mode: defaultWorkspaceMode, branch: null, worktreePath: null },
@@ -794,6 +802,7 @@ export function NewTaskFlowProvider(
 
   useEffect(() => {
     if (
+      !projectStatusActive ||
       workspaceMode !== "local" ||
       !selectedProject ||
       !selectedProjectDraftKey ||
@@ -819,6 +828,7 @@ export function NewTaskFlowProvider(
       },
     });
   }, [
+    projectStatusActive,
     availableBranches,
     draftStartFromOrigin,
     selectedProject,
@@ -870,6 +880,7 @@ export function NewTaskFlowProvider(
 
   useEffect(() => {
     if (
+      !projectStatusActive ||
       !selectedProjectDraftKey ||
       !defaultWorkspaceModeSettled ||
       workspaceMode !== "worktree" ||
@@ -891,6 +902,7 @@ export function NewTaskFlowProvider(
       selectBranch(preferredBranch);
     }
   }, [
+    projectStatusActive,
     allBranchRefs,
     availableBranches,
     defaultWorkspaceModeSettled,
