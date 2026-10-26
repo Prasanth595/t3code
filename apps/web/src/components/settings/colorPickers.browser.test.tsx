@@ -112,6 +112,15 @@ describe("provider accent color picker", () => {
     expect(screen.onCommit.mock.calls[0]?.[0]).not.toBe("#ff0000");
   });
 
+  it("saves a change back to the saved color while the first change is still saving", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00ff00");
+    await userEvent.fill(byLabel("Custom hex accent color"), "#ff0000");
+
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#ff0000");
+  });
+
   it("shows the saved color again when it is reverted outside the picker", async () => {
     await using screen = await renderAccentPicker("#ff0000");
 

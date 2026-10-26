@@ -170,7 +170,9 @@ export function ProviderAccentColorPicker(props: {
   const commit = (color: string) => {
     const normalized = normalizeProviderAccentColor(color) ?? "";
     setDraft({ color: normalized, base: value, previewing: false });
-    if (normalized !== value) onCommit(normalized);
+    // Not deduplicated against `value`: it is stale while an earlier commit is
+    // in flight, so returning to it must still be submitted.
+    onCommit(normalized);
   };
 
   const picker = (
