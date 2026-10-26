@@ -48,7 +48,6 @@ import {
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
-  isSettingsOverviewVisible,
   revealSettingsSearchTarget,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTION_LABELS,
@@ -128,12 +127,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
-  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
-    heading: group.heading,
-    paths: group.paths.filter(
-      (to) => to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
-    ),
-  }));
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -367,7 +360,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuItem>
                   </SidebarMenu>
                 )}
-                {navGroups.map((group, index) => (
+                {SETTINGS_NAV_GROUPS.map((group, index) => (
                   <div
                     key={group.heading ?? index}
                     role="group"
