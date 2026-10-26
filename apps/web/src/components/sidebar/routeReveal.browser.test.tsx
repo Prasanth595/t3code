@@ -33,9 +33,9 @@ describe("useActiveRowReveal", () => {
   it("scrolls an off-screen row into view when the route opens its thread", async () => {
     const reveal = newReveal();
     const keys = rowKeys(50);
-    // A bare list; the route arrives as the active key.
     await using screen = await render(
       <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-0" />,
+      // No router: the route arrives as the activeKey prop.
       { router: false },
     );
     const target = screen.getByText("thread-40", { exact: true });
@@ -52,6 +52,7 @@ describe("useActiveRowReveal", () => {
     // listed it yet.
     await using screen = await render(
       <RevealList reveal={reveal} rowKeys={rowKeys(5)} activeKey="thread-40" />,
+      // No router: the route arrives as the activeKey prop.
       { router: false },
     );
     await expect.element(screen.getByText("thread-4", { exact: true })).toBeInTheDocument();
@@ -68,6 +69,7 @@ describe("useActiveRowReveal", () => {
     const keys = rowKeys(50);
     await using screen = await render(
       <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+      // No router: the route arrives as the activeKey prop.
       { router: false },
     );
     const target = screen.getByText("thread-40", { exact: true });
@@ -88,6 +90,7 @@ describe("useActiveRowReveal", () => {
     {
       await using screen = await render(
         <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+        // No router: the route arrives as the activeKey prop.
         { router: false },
       );
       await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
@@ -96,6 +99,7 @@ describe("useActiveRowReveal", () => {
     // A remount starts the list at the top; the record outlives it with no reveal pending.
     await using screen = await render(
       <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+      // No router: the route arrives as the activeKey prop.
       { router: false },
     );
     await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
