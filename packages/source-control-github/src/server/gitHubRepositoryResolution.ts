@@ -1,9 +1,7 @@
-import { gitHubApiHostOf } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
-import {
-  detectSourceControlProviderFromRemoteUrl,
-  isSshRemoteUrl,
-} from "@t3tools/shared/sourceControl";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
+import { definition, gitHubApiHostOf } from "../shared/definition.ts";
 
 export interface GitHubRepositoryLocator {
   readonly host: string;
@@ -23,12 +21,8 @@ export function parseFetchRemotes(
 }
 
 /**
- * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a prompt: the
- * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
- * the only remote.
- *
- * Null whenever gh might weigh the remotes differently: a remote on another API host or under a
- * dotless SSH alias, more than one mark, or several remotes with none of those names.
+ * gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous,
+ * SSH-aliased, or on another API host.
  */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
@@ -54,8 +48,7 @@ export function selectGitHubBaseRepository(input: {
     const [owner, name, ...rest] = mark[2]!.toLowerCase().split("/");
     return owner && name && rest.length === 0 ? { owner, name } : null;
   }
-  // gh sorts remotes by these names, case-insensitively, and takes the first. A tie for the
-  // top place has no defined winner.
+  // gh ranks these names case-insensitively; a top-ranked tie has no defined winner.
   const score = (remoteName: string) =>
     ["origin", "github", "upstream"].indexOf(remoteName.toLowerCase()) + 1;
   const ranked = [...repositories.entries()].toSorted(
@@ -67,10 +60,7 @@ export function selectGitHubBaseRepository(input: {
     : null;
 }
 
-/**
- * `host` is the API host it settled on, which a caller names when no repository was
- * found there. GH_REPO is the caller's to check first.
- */
+/** Check GH_REPO first; host is available even without a repository. */
 export function resolveGitHubRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -92,8 +82,7 @@ export function resolveGitHubRepository(input: {
     host,
   });
   if (selected !== null) return { host, locator: { host, ...selected } };
-  // gh's own order without its prompt: upstream, github, origin, then the first remote, among
-  // the ones on this host (an SSH alias counts as its API host).
+  // Match gh's host-filtered priority: upstream, github, origin, then the first remote.
   const rank = (name: string) => ["upstream", "github", "origin"].indexOf(name.toLowerCase());
   const candidates = fetchRemotes
     .filter(
@@ -161,15 +150,14 @@ export function parsePullRequestReference(
 
 /** Dotless GitHub SSH aliases and github.com subdomains use github.com for API requests. */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
-  const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
-  if (provider === null) return null;
-  const host = new URL(provider.baseUrl).host.toLowerCase();
+  const remote = parseGitRemoteHost(remoteUrl);
+  if (remote === null) return null;
+  const host = new URL(`https://${remote.host}`).host.toLowerCase();
   if (gitHubApiHostOf(host) === "github.com") return "github.com";
-  // A dotless SSH host is an alias from ~/.ssh/config, never a real API host.
   if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
     return host.includes("github") ? "github.com" : null;
   }
-  return provider.kind === "github" ? host : null;
+  return definition.recognizeRemote(remote) === null ? null : host;
 }
 
 export function apiHostForHint(host: string): string {

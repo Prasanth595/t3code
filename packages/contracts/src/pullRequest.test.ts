@@ -2,7 +2,11 @@ import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestDetail, PullRequestListResult, pullRequestHostOf } from "./pullRequest.ts";
+import {
+  PullRequestDetail,
+  PullRequestListResult,
+  resolvePullRequestAuthorFilter,
+} from "./pullRequest.ts";
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
@@ -56,37 +60,6 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
-  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
-    const identity = {
-      canonicalKey: "forge.example/team/repo",
-      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
-    };
-    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("forgejo"))).toBe(
-      "forge.example:3000",
-    );
-    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(
-      "forge.example",
-    );
-    expect(
-      pullRequestHostOf(
-        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        SourceControlProviderKind.make("forgejo"),
-      ),
-    ).toBe("forge.example");
-  });
-
-  it("names GitHub subdomain checkouts by their API host and preserves enterprise ports", () => {
-    for (const [host, expected] of [
-      ["ssh.github.com", "github.com"],
-      ["work.github.com:8443", "github.com"],
-      ["github.example.com:8443", "github.example.com:8443"],
-    ]) {
-      const identity = { canonicalKey: `${host}/acme/web` };
-      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(expected);
-      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(host);
-    }
-  });
-
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema
@@ -155,5 +128,22 @@ describe("PullRequestCapabilities", () => {
       requestReviewers: true,
     });
     expect(decoded.title).toBe(detail.title);
+  });
+});
+
+describe("resolvePullRequestAuthorFilter", () => {
+  it("reads me as the signed-in account on the host", () => {
+    expect(resolvePullRequestAuthorFilter("me", "bilal")).toBe("bilal");
+    expect(resolvePullRequestAuthorFilter(" @Me ", "bilal")).toBe("bilal");
+  });
+
+  it("keeps me as a literal login when the host has no viewer", () => {
+    expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
+    expect(resolvePullRequestAuthorFilter("@me", " ")).toBe("@me");
+  });
+
+  it("passes any other login through trimmed", () => {
+    expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
+    expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
   });
 });
