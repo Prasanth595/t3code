@@ -91,7 +91,10 @@ export function makeTrackedRuns() {
       return held === null ? null : end(run, held);
     },
     pending: (): ReadonlyArray<
-      Pick<SettledRun, "taskId" | "startedAtIso" | "messageId"> & { readonly threadId: ThreadId }
+      Pick<SettledRun, "taskId" | "startedAtIso" | "messageId"> & {
+        readonly threadId: ThreadId;
+        readonly runId: RunId | null;
+      }
     > =>
       [...runs.values()].flatMap((run) =>
         run.dispatched && run.threadId !== null
@@ -101,13 +104,16 @@ export function makeTrackedRuns() {
                 startedAtIso: run.startedAtIso,
                 messageId: run.messageId,
                 threadId: run.threadId,
+                runId: run.runId,
               },
             ]
           : [],
       ),
-    bindRun: (messageId: MessageId, runId: RunId) => {
+    bindRun: (messageId: MessageId, runId: RunId, expectedRunId: RunId | null) => {
       const run = runs.get(messageId);
-      if (run !== undefined) run.runId = runId;
+      if (run === undefined || run.runId !== expectedRunId) return false;
+      run.runId = runId;
+      return true;
     },
     confirmCancel: (
       messageId: MessageId,
@@ -115,7 +121,7 @@ export function makeTrackedRuns() {
       messageRunId: RunId | null,
     ): boolean => {
       const run = runs.get(messageId);
-      if (run === undefined) return false;
+      if (run === undefined || run.runId !== cancelledRunId) return false;
       if (messageRunId !== null && messageRunId !== cancelledRunId) {
         run.runId = messageRunId;
         return false;

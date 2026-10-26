@@ -97,8 +97,10 @@ it("lists only dispatched runs as pending, and follows a run bound from the proj
   runs.track(messageId, taskId, "start");
   assert.deepEqual(runs.pending(), []);
   runs.dispatched(messageId, threadId);
-  assert.deepEqual(runs.pending(), [{ taskId, startedAtIso: "start", messageId, threadId }]);
-  runs.bindRun(messageId, RunId.make("run:caught-up"));
+  assert.deepEqual(runs.pending(), [
+    { taskId, startedAtIso: "start", messageId, threadId, runId: null },
+  ]);
+  runs.bindRun(messageId, RunId.make("run:caught-up"), null);
   assert.deepEqual(runs.observe(runEvent("run:caught-up", "completed", MessageId.make("other"))), [
     settledFor("succeeded", null),
   ]);
@@ -130,8 +132,8 @@ it.each(["completed", "failed"] as const)("settles every task sharing a %s run",
   runs.track(secondMessage, secondTask, "second-start");
   runs.dispatched(messageId, threadId);
   runs.dispatched(secondMessage, threadId);
-  runs.bindRun(messageId, RunId.make("run:shared"));
-  runs.bindRun(secondMessage, RunId.make("run:shared"));
+  runs.bindRun(messageId, RunId.make("run:shared"), null);
+  runs.bindRun(secondMessage, RunId.make("run:shared"), null);
   const error = status === "failed" ? "The run failed." : null;
   assert.deepEqual(runs.observe(runEvent("run:shared", status)), [
     settledFor(status === "completed" ? "succeeded" : "failed", error),
@@ -150,10 +152,37 @@ it("keeps a promoted message tracked when cancellation arrived before dispatch r
   runs.track(messageId, taskId, "start");
   runs.observe(runEvent("run:queued", "queued"));
   runs.observe(runEvent("run:queued", "cancelled"));
-  runs.bindRun(messageId, RunId.make("run:active"));
+  runs.bindRun(messageId, RunId.make("run:active"), RunId.make("run:queued"));
   const held = runs.dispatched(messageId, threadId);
   assert.equal(held?.cancelledRunId, "run:queued");
   assert.isFalse(runs.confirmCancel(messageId, RunId.make("run:queued"), RunId.make("run:active")));
+  assert.deepEqual(runs.observe(runEvent("run:active", "completed")), [
+    settledFor("succeeded", null),
+  ]);
+});
+
+it("does not let a stale catch-up overwrite a live promotion", () => {
+  const runs = makeTrackedRuns();
+  runs.track(messageId, taskId, "start");
+  runs.dispatched(messageId, threadId);
+  runs.observe(runEvent("run:queued", "queued"));
+  const queuedRunId = RunId.make("run:queued");
+  runs.observe(runEvent("run:queued", "cancelled"));
+  runs.confirmCancel(messageId, queuedRunId, RunId.make("run:active"));
+  assert.isFalse(runs.bindRun(messageId, queuedRunId, queuedRunId));
+  assert.deepEqual(runs.observe(runEvent("run:active", "completed")), [
+    settledFor("succeeded", null),
+  ]);
+});
+
+it("ignores a stale cancellation read after a live promotion", () => {
+  const runs = makeTrackedRuns();
+  runs.track(messageId, taskId, "start");
+  runs.dispatched(messageId, threadId);
+  runs.observe(runEvent("run:queued", "queued"));
+  const queuedRunId = RunId.make("run:queued");
+  runs.confirmCancel(messageId, queuedRunId, RunId.make("run:active"));
+  assert.isFalse(runs.confirmCancel(messageId, queuedRunId, queuedRunId));
   assert.deepEqual(runs.observe(runEvent("run:active", "completed")), [
     settledFor("succeeded", null),
   ]);

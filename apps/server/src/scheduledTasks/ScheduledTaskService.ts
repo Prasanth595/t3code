@@ -822,7 +822,7 @@ export const layer = Layer.effect(
           });
           const run = runs[0];
           if (run === undefined) return;
-          trackedRuns.bindRun(messageId, runId);
+          if (!trackedRuns.bindRun(messageId, runId, pending.runId)) return;
           const ended = trackedRuns.observe({
             id: EventId.make(`scheduled-task-catch-up:${runId}`),
             type: "run.updated",
