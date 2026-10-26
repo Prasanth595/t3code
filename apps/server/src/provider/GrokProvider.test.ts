@@ -407,8 +407,8 @@ describe("Grok usage limits", () => {
   };
 
   it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
-    for (const [currentPeriod, kind, label, resetsAt] of [
-      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+    for (const [currentPeriod, kind, label, resetsAt, windowDurationMins] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z", 7 * 24 * 60],
       [
         {
           type: "USAGE_PERIOD_TYPE_MONTHLY",
@@ -418,12 +418,15 @@ describe("Grok usage limits", () => {
         "monthly",
         "Monthly",
         "2026-10-01T00:00:00.000Z",
+        30 * 24 * 60,
       ],
     ] as const) {
       const response = { config: { currentPeriod } };
       expect
         .soft(grokUsageResponseToLimits(response, checkedAt).windows)
-        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+        .toEqual([
+          { id: "subscription", kind, label, usedPercent: 0, resetsAt, windowDurationMins },
+        ]);
     }
   });
 
@@ -512,7 +515,15 @@ describe("Grok usage limits", () => {
 
   it("leaves the window length unknown when the period start is unusable", () => {
     const end = "2026-10-21T20:51:37.352+00:00";
-    for (const start of [undefined, null, 42, "invalid", end, "2026-10-28T20:51:37.352+00:00"]) {
+    for (const start of [
+      undefined,
+      null,
+      42,
+      "invalid",
+      "2026-02-30T00:00:00.000Z",
+      end,
+      "2026-10-28T20:51:37.352+00:00",
+    ]) {
       const [window] = grokUsageResponseToLimits(
         {
           config: {

@@ -67,13 +67,11 @@ export function grokUsageResponseToLimits(
   const period = response.config?.currentPeriod;
   const periodType = period?.type?.replace(/^USAGE_PERIOD_TYPE_/, "");
   const kind = periodType === "WEEKLY" ? "weekly" : periodType === "MONTHLY" ? "monthly" : "other";
+  const start = typeof period?.start === "string" ? parsePeriodBoundary(period.start) : NaN;
+  const end = parsePeriodBoundary(period?.end);
+  const windowDurationMins = Math.round((end - start) / 60_000);
   let usedPercent = response.config?.creditUsagePercent;
-  if (
-    usedPercent === undefined &&
-    (kind === "weekly" || kind === "monthly") &&
-    typeof period?.start === "string" &&
-    parsePeriodBoundary(period?.start) < parsePeriodBoundary(period?.end)
-  ) {
+  if (usedPercent === undefined && (kind === "weekly" || kind === "monthly") && start < end) {
     // Grok omits a zero percentage while retaining the complete subscription period.
     usedPercent = 0;
   }
@@ -81,14 +79,6 @@ export function grokUsageResponseToLimits(
     return makeUsageLimits({ checkedAt, windows: [] });
   }
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
-  const start = typeof period?.start === "string" ? DateTime.make(period.start) : Option.none();
-  // Pace and the even-spend marker need the period length; months vary, so use the reported bounds.
-  const windowDurationMins =
-    Option.isSome(start) && Option.isSome(reset)
-      ? Math.round(
-          (DateTime.toEpochMillis(reset.value) - DateTime.toEpochMillis(start.value)) / 60_000,
-        )
-      : 0;
   const window: ServerProviderUsageWindow = {
     id: "subscription",
     kind,
