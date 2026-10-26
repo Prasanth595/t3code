@@ -284,7 +284,7 @@ export const T3_CHAT_THEME: ThemeDefinition = {
     messageActionHover: "oklch(0.539042 0.197866 0.305)",
     codeBackground: "oklch(0.953855 0.019695 315.668)",
     codeForeground: "oklch(0.445128 0.13005 307.026)",
-    inlineCodeForeground: "oklch(0.325698 0.116116 325.037)",
+    inlineCodeForeground: "oklch(0.354591 0.093575 307.568)",
     searchMatchBackground: "oklch(0.915 0.11 85)",
     searchMatchForeground: "oklch(0.216164 0.028283 77.423)",
     searchMatchActiveBackground: "oklch(0.774202 0.151946 74.331)",

@@ -1572,10 +1572,6 @@ html[data-theme-id="t3-chat"] {
     & [data-changed-files-state] {
       border-color: transparent;
     }
-
-    & .chat-markdown :not(pre) > code {
-      color: var(--contrast-message-foreground);
-    }
   }
 }
 
