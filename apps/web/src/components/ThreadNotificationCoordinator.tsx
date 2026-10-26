@@ -126,6 +126,7 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  const reconnecting = useRef(false);
 
   // Completions fire from a timer, so read settings, focus and route when presenting.
   const present = useEffectEvent((threadId: ThreadId, kind: ThreadNotificationKind) => {
@@ -231,8 +232,11 @@ function EnvironmentNotifications({
   useEffect(() => {
     const pendingCompletions = gate.current;
     if (!pendingCompletions) return;
-    // Keep the last live baseline and completion history through reconnects.
-    if (threads === null) return;
+    if (threads === null) {
+      pendingCompletions.cancelPending();
+      reconnecting.current = true;
+      return;
+    }
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
@@ -240,7 +244,11 @@ function EnvironmentNotifications({
       if (rawThread.lineage.relationshipToParent === "subagent") continue;
       const prior = previous.current.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
-      if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
+      if (
+        !reconnecting.current &&
+        prior?.raw === rawThread &&
+        prior.subagentRequest === subagentRequest
+      ) {
         next.set(rawThread.id, prior);
         continue;
       }
@@ -269,6 +277,7 @@ function EnvironmentNotifications({
       next.set(thread.id, state);
       changed.push([prior, state]);
     }
+    reconnecting.current = false;
     previous.current = next;
     pendingCompletions.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {

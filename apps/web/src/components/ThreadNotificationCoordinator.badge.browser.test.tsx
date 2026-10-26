@@ -293,3 +293,27 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     ]);
   },
 );
+
+it.each([false, true])(
+  "rechecks a pending completion after reconnect (continued: %s)",
+  async (continued) => {
+    await using app = setup();
+    await app.render();
+    using _timers = fakeTimers();
+    const completed = shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    });
+    state.shells.set("one", completed);
+    await app.render();
+    state.shells.set("one", { ...completed, status: "cached" });
+    await app.render();
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent).toEqual([]);
+    state.shells.set("one", continued ? shell() : completed);
+    await app.render();
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(
+      continued ? [] : ["Thread completed"],
+    );
+  },
+);
