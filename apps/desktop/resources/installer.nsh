@@ -1,8 +1,6 @@
 !macro customInstall
   !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
-    # With $keepShortcuts, electron-builder only moves an existing shortcut and never recreates
-    # a missing one. Repair it on a user-run install, but not on auto-updates (--updated): the
-    # user may have deleted it on purpose.
+    # Auto-updates (--updated) must preserve shortcuts the user deleted; manual installs repair them.
     ${IfNot} ${isUpdated}
     ${AndIfNot} ${FileExists} "$newStartMenuLink"
       !insertmacro createMenuDirectory
