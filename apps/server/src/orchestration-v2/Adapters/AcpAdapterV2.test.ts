@@ -392,7 +392,12 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   return Effect.fnUntraced(function* (
     messageText: string,
     expectedStatus = "completed",
-    reopen: boolean | "rollback" | "compact" | "resume-compact-reopen" = false,
+    reopen:
+      | boolean
+      | "rollback"
+      | "compact"
+      | "resume-compact-reopen"
+      | "resume-info-reopen" = false,
     interactionMode: "default" | "plan" = "default",
   ) {
     const turnRuntimePolicy = { ...runtimePolicy, interactionMode };
@@ -432,7 +437,23 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         runtimePolicy: turnRuntimePolicy,
       });
     });
-    if (reopen === true || reopen === "resume-compact-reopen") yield* resume();
+    if (reopen === true || reopen === "resume-compact-reopen" || reopen === "resume-info-reopen")
+      yield* resume();
+    if (reopen === "resume-info-reopen") {
+      if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+      const sessionId = providerThread.nativeThreadRef?.nativeId;
+      if (sessionId == null) return yield* Effect.die("Missing native session");
+      yield* sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: "session_info_update", title: "Updated native title" },
+      });
+      const updated = yield* session.runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_thread.updated"),
+        Stream.runHead,
+      );
+      providerThread = Option.getOrThrow(updated).providerThread;
+      yield* resume();
+    }
     if (reopen === "resume-compact-reopen") {
       if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
       const sessionId = providerThread.nativeThreadRef?.nativeId;
@@ -496,6 +517,16 @@ function assertReinjectedInstructions(
 }
 
 describe("AcpAdapterV2", () => {
+  it.live("retains delivered instructions across a resumed session info update", () =>
+    Effect.gen(function* () {
+      const runTurn = yield* makeInstructionCompactionHarness({});
+      yield* runTurn("Start work.");
+      assert.equal(
+        (yield* runTurn("Continue work.", "completed", "resume-info-reopen"))[0]?.text,
+        "Continue work.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
   it.live.each(["rollback", "compact"] as const)(
     "reinjects instructions after idle %s with no continuation consumer",
     (transition) =>

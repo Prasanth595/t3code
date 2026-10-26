@@ -7904,6 +7904,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
+                  yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                    new Map(current).set(sessionId, {
+                      ...threadInput.providerThread.nativeMetadata,
+                      ...current.get(sessionId),
+                    }),
+                  );
                   yield* Ref.update(providerThreadByNativeSessionId, (current) =>
                     new Map(current).set(sessionId, {
                       ...threadInput.providerThread,
