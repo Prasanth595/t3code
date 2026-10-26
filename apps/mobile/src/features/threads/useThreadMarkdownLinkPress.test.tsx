@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";

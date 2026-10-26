@@ -313,3 +313,25 @@ it("names image-only options and separates hard breaks", () => {
   expect(markdownAccessibility("![](choice.png)").label).toBe("![](choice.png)");
   expect(markdownAccessibility("first  \nsecond").label).toBe("first second");
 });
+
+it("matches file-embed rewrites in spoken names and actions", () => {
+  const label = (href: string, standalone: boolean) =>
+    markdownFileEmbedLabel(
+      href,
+      {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/repo",
+      },
+      standalone,
+    );
+  expect(
+    markdownAccessibility("[![sheet](./report.csv)](https://example.com/download)", label),
+  ).toMatchObject({
+    label: "report.csv",
+    targets: [{ href: "https://example.com/download", label: "report.csv", image: false }],
+  });
+  expect(markdownAccessibility("![sheet](./report.csv)", label).targets).toEqual([
+    { href: "./report.csv", label: "report.csv", image: true },
+  ]);
+});

@@ -447,10 +447,20 @@ export function markdownWithFileEmbeds(
   return { markdown: parts.join(""), fileHrefs };
 }
 
-export function markdownAccessibility(markdown: string) {
-  const document = parseMarkdownDocument(
-    markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
-  );
+export function markdownAccessibility(
+  markdown: string,
+  fileEmbedLabel?: (href: string, standalone: boolean) => string | null,
+) {
+  const rendered = fileEmbedLabel
+    ? markdownWithFileEmbeds(
+        markdownWithInlineFileLinks(markdownWithHtml(markdown), ENRICHED_INLINE_FILE_LINK_REGEX),
+        fileEmbedLabel,
+      )
+    : {
+        markdown: markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        fileHrefs: new Set<string>(),
+      };
+  const document = parser.parse(markdownWithTableBreaks(rendered.markdown));
   const definitions = new Map<string, string>();
   visit(document, "definition", (node) => {
     if (!definitions.has(node.identifier)) definitions.set(node.identifier, node.url);
@@ -477,7 +487,8 @@ export function markdownAccessibility(markdown: string) {
     targets.push({
       href,
       label: toString(node).trim() || href,
-      image: node.type === "image" || node.type === "imageReference",
+      image:
+        node.type === "image" || node.type === "imageReference" || rendered.fileHrefs.has(href),
     });
   });
   return { label: text || markdown.trim(), hasText: text.length > 0, targets };

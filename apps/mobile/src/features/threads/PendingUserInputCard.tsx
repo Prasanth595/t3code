@@ -78,15 +78,28 @@ export interface PendingUserInputCardProps {
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const fileEmbedLabel = useCallback(
+    (href: string, standalone: boolean) =>
+      markdownFileEmbedLabel(
+        href,
+        {
+          environmentId: props.environmentId,
+          threadId: props.threadId,
+          workspaceRoot: props.workspaceRoot,
+        },
+        standalone,
+      ),
+    [props.environmentId, props.threadId, props.workspaceRoot],
+  );
   const questions = useMemo(
     () =>
       props.pendingUserInput.questions.map((question) => ({
         question,
-        spokenFallback: markdownAccessibility(question.question).hasText
+        spokenFallback: markdownAccessibility(question.question, fileEmbedLabel).hasText
           ? undefined
           : question.question,
       })),
-    [props.pendingUserInput.questions],
+    [props.pendingUserInput.questions, fileEmbedLabel],
   );
   const styles = useMarkdownPreviewStyles();
   const theme = useUniwindTheme();
@@ -149,16 +162,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     setExpandedFile,
   });
   const markdownProps = {
-    fileEmbedLabel: (href: string, standalone: boolean) =>
-      markdownFileEmbedLabel(
-        href,
-        {
-          environmentId: props.environmentId,
-          threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
-        },
-        standalone,
-      ),
+    fileEmbedLabel,
     renderImage,
     onLinkPress,
     onImagePress,
@@ -439,9 +443,13 @@ function PendingUserInputOption(props: {
 }) {
   const description =
     props.option.description !== props.option.label ? props.option.description : undefined;
+  const { fileEmbedLabel } = props.markdownProps;
   const content = useMemo(
-    () => [props.option.label, ...(description ? [description] : [])].map(markdownAccessibility),
-    [props.option.label, description],
+    () =>
+      [props.option.label, ...(description ? [description] : [])].map((markdown) =>
+        markdownAccessibility(markdown, fileEmbedLabel),
+      ),
+    [props.option.label, description, fileEmbedLabel],
   );
   const targets = content
     .flatMap((item) => item.targets)

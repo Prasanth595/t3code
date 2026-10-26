@@ -78,7 +78,7 @@ export function useThreadMarkdownLinkPress(props: {
         return;
       }
 
-      if (presentation.kind !== "file" && presentation.href) {
+      if (presentation.href) {
         const href = presentation.href;
         if (/^https?:\/\//i.test(presentation.href) && isPdfFile({ name: presentation.href })) {
           setExpandedFile((current) => current ?? { kind: "pdf", uri: href, name: "Document.pdf" });

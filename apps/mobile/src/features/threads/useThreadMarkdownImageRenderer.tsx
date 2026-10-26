@@ -29,7 +29,7 @@ export function useThreadMarkdownImageRenderer(props: {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly setExpandedFile: Dispatch<SetStateAction<FilePreviewSource | null>>;
 }): MarkdownImageRenderer {
-  const { environmentId, threadId, workspaceRoot, setExpandedFile } = props;
+  const { environmentId, threadId, workspaceRoot, setExpandedFile, onLinkPress, textStyle } = props;
   return useCallback<MarkdownImageRenderer>(
     (image) => {
       const media = resolveMarkdownMediaPreview(image.href, {
@@ -51,7 +51,7 @@ export function useThreadMarkdownImageRenderer(props: {
           <ThreadInlineFilePreview
             key={image.href}
             source={media.source}
-            onOpen={() => props.onLinkPress(image.href, true)}
+            onOpen={() => onLinkPress(image.href, true)}
           />
         );
       }
@@ -66,11 +66,11 @@ export function useThreadMarkdownImageRenderer(props: {
           <Text
             accessibilityRole="link"
             accessibilityLabel={`Open ${name}`}
-            onPress={() => props.onLinkPress(image.href, true)}
+            onPress={() => onLinkPress(image.href, true)}
             style={{
-              color: props.textStyle.linkColor,
-              fontSize: props.textStyle.fontSize,
-              lineHeight: props.textStyle.lineHeight,
+              color: textStyle.linkColor,
+              fontSize: textStyle.fontSize,
+              lineHeight: textStyle.lineHeight,
             }}
           >
             {name}
@@ -114,6 +114,6 @@ export function useThreadMarkdownImageRenderer(props: {
         />
       );
     },
-    [environmentId, threadId, workspaceRoot, setExpandedFile, props.onLinkPress, props.textStyle],
+    [environmentId, threadId, workspaceRoot, setExpandedFile, onLinkPress, textStyle],
   );
 }
