@@ -535,9 +535,13 @@ const servePortHolder = (
     ) {
       return { _tag: "other" };
     }
-    for (const [hostPort, web] of Object.entries(scope.Web ?? {})) {
-      if (!hostPort.endsWith(`:${servePort}`)) continue;
-      if (scope !== config) return { _tag: "other" };
+    const webEntries = Object.entries(scope.Web ?? {}).filter(([hostPort]) =>
+      hostPort.endsWith(`:${servePort}`),
+    );
+    if (webEntries.length > 1 || (scope !== config && webEntries.length > 0)) {
+      return { _tag: "other" };
+    }
+    for (const [, web] of webEntries) {
       const root = web.Handlers?.["/"];
       if (root !== undefined) {
         return root.Proxy !== undefined ? { _tag: "proxy", target: root.Proxy } : { _tag: "other" };

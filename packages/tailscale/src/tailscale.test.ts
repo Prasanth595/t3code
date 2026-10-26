@@ -105,7 +105,6 @@ function layerServeFixture(
 ) {
   const writes: Array<ReadonlyArray<string>> = [];
   const serveStatus = JSON.stringify({
-    ...extra,
     TCP: { "443": listener },
     Web: {
       "desktop.tail.ts.net:443": {
@@ -115,6 +114,7 @@ function layerServeFixture(
         },
       },
     },
+    ...extra,
   });
   const layer = layerMockSpawner((_command, args) => {
     if (args.join(" ") === "serve status --json") {
@@ -327,10 +327,18 @@ describe("tailscale", () => {
     });
   });
 
-  it.effect("leaves Funnel and foreground handlers untouched", () =>
+  it.effect("leaves Funnel, foreground and ambiguous hostname mappings untouched", () =>
     Effect.gen(function* () {
       for (const extra of [
         { AllowFunnel: { "desktop.tail.ts.net:443": true } },
+        {
+          Web: {
+            "old.tail.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } },
+            "desktop.tail.ts.net:443": {
+              Handlers: { "/": { Proxy: "http://another-server:3774" } },
+            },
+          },
+        },
         {
           Foreground: {
             session: {
