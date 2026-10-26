@@ -339,8 +339,13 @@ const make = Effect.gen(function* () {
           return [{ order, after: Duration.millis(state.restartAfterMillis) }, started] as const;
         }
         if (now - state.streak.since < state.restartAfterMillis) return [null, state] as const;
-        // A newer check may have finished while this one waited for the runtime's lock.
-        if (!(yield* runtime.restartConnector(dead.pid, isLatest(order)))) {
+        // Checks can invalidate the streak while this request waits for the runtime's lock.
+        const streakOrder = state.streak.order;
+        const stillDead = Effect.gen(function* () {
+          if (!(yield* isLatest(order))) return false;
+          return (yield* Ref.get(lastHealthyOrder)) < streakOrder;
+        });
+        if (!(yield* runtime.restartConnector(dead.pid, stillDead))) {
           return [null, state] as const;
         }
         const restarted = {

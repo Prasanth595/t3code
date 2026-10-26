@@ -242,6 +242,59 @@ describe("ConnectReachability stale connector recovery", () => {
     }),
   );
 
+  it.effect("rejects a restart when an overtaken healthy check finishes while it waits", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const healthyRequested = yield* Deferred.make<void>();
+      const healthyAnswer = yield* Deferred.make<void>();
+      const restartRequested = yield* Deferred.make<void>();
+      const releaseRestart = yield* Deferred.make<void>();
+      const guardChecks = yield* Queue.unbounded<boolean>();
+      let status = 530;
+      const layer = reachabilityLayer(
+        Effect.gen(function* () {
+          const served = status;
+          if (served === 200) {
+            yield* Deferred.succeed(healthyRequested, undefined);
+            yield* Deferred.await(healthyAnswer);
+          }
+          return { status: served, body: "error code: 1033" };
+        }),
+        (_pid, stillDead) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(restartRequested, undefined);
+            yield* Deferred.await(releaseRestart);
+            const accepted = yield* stillDead;
+            yield* Queue.offer(guardChecks, accepted);
+            return accepted;
+          }),
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.seconds(119));
+
+        status = 200;
+        const healthy = yield* Effect.forkChild(reachability.check);
+        yield* Deferred.await(healthyRequested);
+        status = 530;
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.await(restartRequested);
+
+        yield* Deferred.succeed(healthyAnswer, undefined);
+        expect(yield* Fiber.join(healthy)).toMatchObject({ status: "reachable" });
+        yield* Deferred.succeed(releaseRestart, undefined);
+        expect(yield* Queue.take(guardChecks)).toBe(false);
+
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* Queue.size(guardChecks)).toBe(0);
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* Queue.take(guardChecks)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("keeps a 530 whose error body never finishes", () =>
     Effect.gen(function* () {
       using _connect = mockEdgeConnect();
