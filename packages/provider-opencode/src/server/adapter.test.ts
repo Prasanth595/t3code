@@ -1727,6 +1727,7 @@ describe("OpenCodeAdapterV2", () => {
     "stale-idle-then-busy",
     "no-idle",
     "idle-during-status",
+    "repeated-user-during-status",
   ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1748,6 +1749,20 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => {
             statusCalls++;
             statusRead.resolve();
+            if (idleTiming === "repeated-user-during-status") {
+              await nativeEvents.push({
+                type: "message.updated",
+                properties: {
+                  sessionID: sessionId,
+                  info: {
+                    id: promptIds[1],
+                    sessionID: sessionId,
+                    role: "user",
+                    time: { created: 1 },
+                  },
+                },
+              });
+            }
             if (idleTiming === "idle-during-status" && statusCalls === 1) {
               await nativeEvents.push(idle);
               return { data: { [sessionId]: { type: "busy" } } };
@@ -1758,6 +1773,7 @@ describe("OpenCodeAdapterV2", () => {
                   type:
                     idleTiming === "during" ||
                     idleTiming === "no-idle" ||
+                    idleTiming === "repeated-user-during-status" ||
                     idleTiming === "idle-during-status"
                       ? "idle"
                       : "busy",
@@ -1768,6 +1784,22 @@ describe("OpenCodeAdapterV2", () => {
           promptAsync: async (input: { messageID: string }) => {
             promptIds.push(input.messageID);
             if (promptIds.length === 1) return { data: true };
+            if (idleTiming === "repeated-user-during-status") {
+              await nativeEvents.push(idle);
+              await nativeEvents.push({
+                type: "message.updated",
+                properties: {
+                  sessionID: sessionId,
+                  info: {
+                    id: input.messageID,
+                    sessionID: sessionId,
+                    role: "user",
+                    time: { created: 1 },
+                  },
+                },
+              });
+              return { data: true };
+            }
             if (idleTiming === "during" || idleTiming === "stale-idle-then-busy") {
               await nativeEvents.push(idle);
             }
@@ -1823,7 +1855,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         }),
       );
-      assert.isTrue(Exit.isFailure(steer));
+      assert.equal(Exit.isFailure(steer), idleTiming !== "repeated-user-during-status");
       if (idleTiming === "stale-idle-then-busy") {
         const active = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,

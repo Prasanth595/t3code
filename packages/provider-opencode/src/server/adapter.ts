@@ -288,6 +288,7 @@ interface ActiveOpenCodeTurn {
   admissionAccepted: boolean;
   admissionMessageObserved: boolean;
   idleDuringAdmission: boolean;
+  admissionIdleSequence: number;
   admissionSettled: Deferred.Deferred<void>;
   admissionAbortController: AbortController | null;
 }
@@ -2115,7 +2116,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           generation: number,
         ) {
           while (promptAdmissionIsCurrent(state, turn, generation)) {
-            turn.idleDuringAdmission = false;
+            const idleSequence = turn.admissionIdleSequence;
             const status = yield* reconcileOpenCodePromptAdmissionStatus(
               turn,
               generation,
@@ -2148,7 +2149,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               return;
             }
             if (status === "busy") {
-              if (!turn.idleDuringAdmission) return;
+              if (turn.admissionIdleSequence === idleSequence) return;
               turn.admissionPending = true;
               continue;
             }
@@ -2238,6 +2239,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             admissionAccepted: true,
             admissionMessageObserved: true,
             idleDuringAdmission: false,
+            admissionIdleSequence: 0,
             admissionSettled: Deferred.makeUnsafe<void>(),
             admissionAbortController: null,
           };
@@ -2602,6 +2604,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               if (event.properties.status.type === "idle" && state.activeTurn !== null) {
                 if (state.activeTurn.admissionPending) {
+                  state.activeTurn.admissionIdleSequence++;
                   advanceOpenCodePromptAdmission(state.activeTurn, "idle");
                   return;
                 }
@@ -2618,6 +2621,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 if (state.activeTurn.admissionPending) {
+                  state.activeTurn.admissionIdleSequence++;
                   advanceOpenCodePromptAdmission(state.activeTurn, "idle");
                   return;
                 }
@@ -3168,6 +3172,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 admissionAccepted: isCompaction,
                 admissionMessageObserved: false,
                 idleDuringAdmission: false,
+                admissionIdleSequence: 0,
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 // @effect-diagnostics-next-line abortControllerInEffect:off - Turn interruption owns prompt admission cancellation.
                 admissionAbortController: new AbortController(),
