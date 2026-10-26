@@ -531,6 +531,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "thread-details",
+    title: "Thread details",
+    to: "/settings/chat",
+    searchTerms: ["card panel hide collapse default new thread workspace scripts branch git"],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/chat",
