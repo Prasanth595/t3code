@@ -690,7 +690,6 @@ const connectStatusCommand = Command.make("status", {
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const [
           desired,
-          authenticated,
           cloudUserId,
           relayUrl,
           publishAgentActivity,
@@ -701,7 +700,6 @@ const connectStatusCommand = Command.make("status", {
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
-            tokens.hasCredential,
             secrets.get(CLOUD_LINKED_USER_ID),
             secrets.get(RELAY_URL_SECRET),
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
@@ -724,7 +722,7 @@ const connectStatusCommand = Command.make("status", {
           : null;
         const status: CloudCliStatus = {
           desired,
-          authenticated,
+          authenticated: Option.isSome(storedToken),
           linked: Option.isSome(cloudUserId),
           revoked: Option.isSome(cloudUserId) && Option.isSome(revoked),
           cloudUserId: linkedCloudUserId,

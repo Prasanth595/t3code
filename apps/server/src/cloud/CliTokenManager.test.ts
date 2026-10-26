@@ -111,7 +111,12 @@ const tokenRequests = (requests: ReadonlyArray<RecordedTokenRequest>) =>
   requests.filter((request) => request.url.endsWith("/oauth/token"));
 
 const expiredStoredToken = new TextEncoder().encode(
-  JSON.stringify({ accessToken: "expired", refreshToken: "refresh-token-1", expiresAtEpochMs: 0 }),
+  JSON.stringify({
+    accessToken: "expired",
+    refreshToken: "refresh-token-1",
+    expiresAtEpochMs: 0,
+    subject: "user_theo",
+  }),
 );
 
 const provideRefreshManager = (
@@ -206,6 +211,7 @@ it.effect(
         const token = Option.getOrThrow(yield* Fiber.join(reader));
         assert.equal(token.refreshToken, "rotated-refresh");
         assert.equal(token.accessToken, "rotated-access");
+        assert.equal(token.subject, "user_theo");
       }).pipe(
         Effect.ensuring(Deferred.succeed(releaseRequest, undefined)),
         Effect.ensuring(Deferred.succeed(releasePersist, undefined)),
