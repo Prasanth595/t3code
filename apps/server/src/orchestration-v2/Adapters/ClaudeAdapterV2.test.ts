@@ -1388,7 +1388,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           "resume_return",
           "refusal_fallback_prompt",
         ]);
-        const answerRefusalDialog = (requestId: string, answer: string) =>
+        const answerRefusalDialog = (requestId: string, answer: string | null) =>
           Effect.gen(function* () {
             const refusalRequestEvent = yield* runtime.events.pipe(
               Stream.filter(
@@ -1399,6 +1399,8 @@ describe("ClaudeAdapterV2 resume compaction", () => {
               Stream.runHead,
               Effect.forkScoped,
             );
+            // @effect-diagnostics-next-line abortControllerInEffect:off - The SDK cancels this dialog independently of the test fiber.
+            const controller = new AbortController();
             const refusalDialog = yield* Effect.promise(() =>
               callback!(
                 {
@@ -1409,7 +1411,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                     apiRefusalCategory: "cyber",
                   },
                 },
-                { signal: new AbortController().signal, requestId },
+                { signal: controller.signal, requestId },
               ),
             ).pipe(Effect.forkScoped);
             const refusalEvent = yield* Fiber.join(refusalRequestEvent);
@@ -1420,20 +1422,38 @@ describe("ClaudeAdapterV2 resume compaction", () => {
             ) {
               return yield* Effect.die("missing refusal question");
             }
-            yield* runtime.respondToRuntimeRequest({
-              requestId: refusalEvent.value.runtimeRequest.id,
-              answers: { "Claude Opus 5.5's safeguards flagged this message.": answer },
-            });
+            if (answer === null) {
+              controller.abort();
+            } else {
+              yield* runtime.respondToRuntimeRequest({
+                requestId: refusalEvent.value.runtimeRequest.id,
+                answers: { "Claude Opus 5.5's safeguards flagged this message.": answer },
+              });
+            }
             return yield* Fiber.join(refusalDialog);
           });
         assert.deepEqual(
           yield* answerRefusalDialog("dialog-refusal-1", "Switch to Claude Opus 4.8"),
           { behavior: "completed", result: "retry_fallback" },
         );
-        assert.deepEqual(yield* answerRefusalDialog("dialog-refusal-2", "Edit message"), {
-          behavior: "completed",
-          result: "edit_prompt",
-        });
+        for (const [requestId, answer] of [
+          ["dialog-refusal-stop", "Stop"],
+          ["dialog-refusal-custom", "Do something else"],
+          ["dialog-refusal-aborted", null],
+        ] as const) {
+          assert.deepEqual(yield* answerRefusalDialog(requestId, answer), {
+            behavior: "cancelled",
+          });
+        }
+        assert.deepEqual(
+          yield* Effect.promise(() =>
+            callback!(
+              { dialogKind: "refusal_fallback_prompt", payload: {} },
+              { signal: AbortSignal.abort(), requestId: "dialog-refusal-invalid" },
+            ),
+          ),
+          { behavior: "cancelled" },
+        );
 
         assert.deepEqual(
           yield* Effect.promise(() =>

@@ -45,7 +45,6 @@ import {
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
-  type UserDialogRequest,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -64,10 +63,6 @@ import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
-import {
-  CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
-  formatClaudeRefusalFallbackQuestion,
-} from "@t3tools/shared/claudeRefusalFallback";
 import {
   type ChatAttachment,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -9509,41 +9504,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
-        const askDialogQuestion = (
-          request: UserDialogRequest,
-          callbackOptions: { readonly signal: AbortSignal; readonly requestId: string },
-          prompt: {
-            readonly header: string;
-            readonly question: string;
-            readonly options: ReadonlyArray<{
-              readonly label: string;
-              readonly description: string;
-            }>;
-          },
-        ) =>
-          canUseToolEffect(
-            "AskUserQuestion",
-            { questions: [{ ...prompt, multiSelect: false }] },
-            {
-              signal: callbackOptions.signal,
-              requestId: callbackOptions.requestId,
-              toolUseID: request.toolUseID ?? callbackOptions.requestId,
-            },
-          ).pipe(
-            Effect.map((result) => {
-              if (result.behavior !== "allow") return Option.none();
-              const answers =
-                result.updatedInput === undefined
-                  ? undefined
-                  : Reflect.get(result.updatedInput, "answers");
-              return Option.some(
-                typeof answers === "object" && answers !== null
-                  ? Reflect.get(answers, prompt.question)
-                  : undefined,
-              );
-            }),
-          );
-
         const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
           request,
           callbackOptions,
@@ -9555,28 +9515,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (typeof originalModel !== "string" || typeof fallbackModel !== "string") {
                   return { behavior: "cancelled" as const };
                 }
-                const originalModelName = formatModelSlugName(originalModel);
+                const question = `${formatModelSlugName(originalModel)}'s safeguards flagged this message.`;
                 const switchLabel = `Switch to ${formatModelSlugName(fallbackModel)}`;
-                const selection = yield* askDialogQuestion(request, callbackOptions, {
-                  header: "Message flagged",
-                  question: formatClaudeRefusalFallbackQuestion(originalModelName),
-                  options: [
-                    {
-                      label: switchLabel,
-                      description: "Send the same message again on the fallback model.",
-                    },
-                    {
-                      label: CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
-                      description: `Change it, then send it again on ${originalModelName}.`,
-                    },
-                  ],
-                });
-                if (Option.isNone(selection)) return { behavior: "cancelled" as const };
-                return selection.value === switchLabel
+                const result = yield* canUseToolEffect(
+                  "AskUserQuestion",
+                  {
+                    questions: [
+                      {
+                        header: "Message flagged",
+                        question,
+                        options: [
+                          {
+                            label: switchLabel,
+                            description: "Send the same message again on the fallback model.",
+                          },
+                          { label: "Stop", description: "End the turn without retrying." },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                  },
+                  {
+                    signal: callbackOptions.signal,
+                    requestId: callbackOptions.requestId,
+                    toolUseID: request.toolUseID ?? callbackOptions.requestId,
+                  },
+                );
+                if (result.behavior !== "allow") return { behavior: "cancelled" as const };
+                const answers =
+                  result.updatedInput === undefined
+                    ? undefined
+                    : Reflect.get(result.updatedInput, "answers");
+                return typeof answers === "object" &&
+                  answers !== null &&
+                  Reflect.get(answers, question) === switchLabel
                   ? { behavior: "completed" as const, result: "retry_fallback" as const }
-                  : selection.value === CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER
-                    ? { behavior: "completed" as const, result: "edit_prompt" as const }
-                    : { behavior: "cancelled" as const };
+                  : { behavior: "cancelled" as const };
               }
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
@@ -9606,31 +9580,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ageMinutes,
                 estimatedTokens,
               });
-              const selection = yield* askDialogQuestion(request, callbackOptions, {
-                header: "Resume session",
-                question,
-                options: [
-                  {
-                    label: CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
-                    description: "Resume with a summary and use fewer tokens.",
-                  },
-                  {
-                    label: "Keep full history",
-                    description: "Resume without changing the conversation.",
-                  },
-                  {
-                    label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-                    description: "Keep full history and skip future resume prompts.",
-                  },
-                ],
-              });
-              if (Option.isNone(selection)) return { behavior: "cancelled" as const };
+              const result = yield* canUseToolEffect(
+                "AskUserQuestion",
+                {
+                  questions: [
+                    {
+                      header: "Resume session",
+                      question,
+                      options: [
+                        {
+                          label: CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
+                          description: "Resume with a summary and use fewer tokens.",
+                        },
+                        {
+                          label: "Keep full history",
+                          description: "Resume without changing the conversation.",
+                        },
+                        {
+                          label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+                          description: "Keep full history and skip future resume prompts.",
+                        },
+                      ],
+                      multiSelect: false,
+                    },
+                  ],
+                },
+                {
+                  signal: callbackOptions.signal,
+                  requestId: callbackOptions.requestId,
+                  toolUseID: request.toolUseID ?? callbackOptions.requestId,
+                },
+              );
+              if (result.behavior !== "allow") return { behavior: "cancelled" as const };
+              const answers =
+                result.updatedInput === undefined
+                  ? undefined
+                  : Reflect.get(result.updatedInput, "answers");
+              const selection =
+                typeof answers === "object" && answers !== null
+                  ? Reflect.get(answers, question)
+                  : undefined;
               return {
                 behavior: "completed" as const,
                 result:
-                  selection.value === CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER
+                  selection === CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER
                     ? ("compact" as const)
-                    : selection.value === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
+                    : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
                       ? ("never" as const)
                       : ("continue" as const),
               };
