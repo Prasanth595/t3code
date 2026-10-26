@@ -214,15 +214,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
   return endpoints;
 };
 
-/**
- * Narrows the endpoints derived from this machine's network to the ones a WSL
- * backend can be reached on. Under NAT networking the distro has its own
- * addresses, so Windows LAN and Tailscale IPs are dropped and the distro's own
- * Tailscale IPs are added; under mirrored networking the distro shares
- * Windows' addresses and everything is kept. Loopback (forwarded by wslhost),
- * Tailscale HTTPS (Serve forwards to loopback and probes its own reachability)
- * and manual endpoints are never touched.
- */
+// NAT distros cannot receive traffic on Windows interface addresses; mirrored distros can.
 const selectWslReachableEndpoints = (input: {
   readonly port: number;
   readonly windowsEndpoints: readonly AdvertisedEndpoint[];
@@ -322,13 +314,7 @@ export class DesktopServerExposure extends Context.Service<
       readonly port?: number;
     }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
-    /**
-     * Records which primary backend is running: the WSL distro it was launched
-     * in (null: the default distro), or null for the Windows primary. Called
-     * each time the primary config is resolved, so a persisted wsl-only setting
-     * that fell back to Windows doesn't filter Windows addresses, and a changed
-     * default distro doesn't redirect the probe away from the running backend.
-     */
+    // Pin probes to the selected primary, independent of later settings or default-distro changes.
     readonly setWslPrimary: (wsl: { readonly distro: string | null } | null) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}

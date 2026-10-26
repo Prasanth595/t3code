@@ -995,23 +995,13 @@ const runDistroShell = (
 const parseIpv4Addresses = (raw: string): ReadonlyArray<string> =>
   raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part));
 
-/**
- * Every IPv4 address the distro has bound (`hostname -I`, loopback excluded),
- * or `None` when the probe fails or times out. Under WSL2 NAT this is the eth0
- * vEthernet address plus any distro-local VPN addresses (e.g. Tailscale); under
- * mirrored networking it is the Windows host's own addresses.
- */
 export const probeDistroIpv4Addresses = Effect.fn("DesktopWslEnvironment.probeDistroIpv4Addresses")(
   function* (distro: string | null) {
     return Option.map(yield* runDistroShell(distro, "hostname -I"), parseIpv4Addresses);
   },
 );
 
-/**
- * The IPv4 addresses the distro's own Tailscale reports (`tailscale ip -4`).
- * Empty when Tailscale isn't installed or running in the distro, since address
- * ranges alone can't tell Tailscale from other VPNs sharing 100.64.0.0/10.
- */
+// Other VPNs share 100.64.0.0/10, so ask the distro's Tailscale rather than infer ownership.
 export const probeDistroTailscaleIpv4Addresses = Effect.fn(
   "DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses",
 )(function* (distro: string | null) {

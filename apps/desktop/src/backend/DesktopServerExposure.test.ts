@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -40,22 +41,24 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: () => void) {
+function layerMockSpawner(
+  statusJson: string | ((command: ChildProcess.Command) => string | null) = "{}",
+  onSpawn?: () => void,
+) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
+    ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         onSpawn?.();
+        const output = typeof statusJson === "string" ? statusJson : statusJson(command);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(output === null ? 1 : 0)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.make(
-            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
-          ),
+          stdout: Stream.make(encoder.encode(output ?? "")),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -350,40 +353,14 @@ describe("DesktopServerExposure", () => {
       readonly distro?: string;
     }
 
-    // Answers `wsl.exe` by inspecting the shell script it runs, and everything
-    // else (the Windows tailscale CLI) with the Windows node's status.
     const wslSpawner = (probe: DistroProbe) =>
-      Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
-          const isWsl = command._tag === "StandardCommand" && command.command === "wsl.exe";
-          const script = isWsl ? (command.args.at(-1) ?? "") : "";
-          const wrongDistro =
-            isWsl && probe.distro !== undefined && command.args[1] !== probe.distro;
-          const output = !isWsl
-            ? tailscaleStatus
-            : wrongDistro
-              ? null
-              : script === "hostname -I"
-                ? probe.hostnameOutput
-                : probe.tailscaleOutput;
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(output === null ? 1 : 0)),
-              isRunning: Effect.succeed(false),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.make(encoder.encode(output ?? "")),
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
-          );
-        }),
-      );
+      layerMockSpawner((command) => {
+        if (command._tag !== "StandardCommand" || command.command !== "wsl.exe") {
+          return tailscaleStatus;
+        }
+        if (probe.distro !== undefined && command.args[1] !== probe.distro) return null;
+        return command.args.at(-1) === "hostname -I" ? probe.hostnameOutput : probe.tailscaleOutput;
+      });
 
     const advertisedUrls = (
       probe: DistroProbe,
