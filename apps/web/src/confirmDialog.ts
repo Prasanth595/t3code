@@ -49,7 +49,7 @@ export function readConfirmDialogState(): ConfirmDialogState {
  * Only themed hosts subscribe, so a subscriber is a mounted host. When the last
  * one leaves, pending confirmations resolve as cancelled.
  */
-export function subscribeConfirmDialog(listener: () => void): () => void {
+export function subscribeConfirmDialogHost(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     if (!listeners.delete(listener) || listeners.size > 0) return;

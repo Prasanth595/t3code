@@ -29,7 +29,7 @@ export function createLiveRegion() {
     cancelClear();
     // Screen readers ignore a write that leaves the text unchanged, so a repeat
     // gets a trailing non-breaking space to count as new.
-    region.textContent = region.textContent === text ? `${text} ` : text;
+    region.textContent = region.textContent === text ? `${text}\u00A0` : text;
     clearTimer = setTimeout(clear, CLEAR_AFTER_MS);
   };
 

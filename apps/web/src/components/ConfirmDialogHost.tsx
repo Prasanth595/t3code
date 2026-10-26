@@ -4,7 +4,7 @@ import {
   completeConfirmDialogClose,
   readConfirmDialogState,
   respondToConfirmDialog,
-  subscribeConfirmDialog,
+  subscribeConfirmDialogHost,
 } from "../confirmDialog";
 import {
   AlertDialog,
@@ -52,7 +52,7 @@ function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
 
 export function ConfirmDialogHost() {
   const state = useSyncExternalStore(
-    subscribeConfirmDialog,
+    subscribeConfirmDialogHost,
     readConfirmDialogState,
     readConfirmDialogState,
   );

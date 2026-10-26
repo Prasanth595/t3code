@@ -6,10 +6,10 @@ import {
   requestConfirmDialog,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
-  subscribeConfirmDialog,
+  subscribeConfirmDialogHost,
 } from "./confirmDialog";
 
-const mountHost = () => subscribeConfirmDialog(() => {});
+const mountHost = () => subscribeConfirmDialogHost(() => {});
 
 function requireConfirmation(confirmation: Promise<boolean> | undefined): Promise<boolean> {
   if (!confirmation) {
