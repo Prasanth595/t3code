@@ -10,6 +10,7 @@ import {
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;
   readonly thumbnailVisible?: boolean;
+  readonly onPlaybackStart?: () => void;
 }) {
   const { source } = props;
   const visible = useThreadMediaVisible(props.thumbnailVisible);
@@ -35,6 +36,8 @@ export function ThreadMarkdownVideo(props: {
       name={source.name}
       thumbnailKey={thumbnailKey}
       thumbnailVisible={visible}
+      paused={!visible}
+      onPlaybackStart={props.onPlaybackStart}
       unavailable={"resource" in source && asset._tag === "Failure"}
       actionsSource={source.actionsSource}
     />
