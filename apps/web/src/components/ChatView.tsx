@@ -2732,6 +2732,7 @@ export default function ChatView(props: ChatViewProps) {
     openProviderSetupStable,
     toggleInteractionModeStable,
   } = useComposerSelection({
+    composerRef,
     environmentId,
     composerDraftTarget,
     draftThread,

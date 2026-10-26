@@ -6,7 +6,7 @@ import type {
   SourceControlWritingStyleMode,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, resolveModelPick } from "@t3tools/shared/model";
 import {
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
@@ -384,7 +384,8 @@ export function SourceControlWritingSettingsSection() {
                       return;
                     }
                     updateSettings({
-                      sourceControlWriterModelSelection: createModelSelection(instanceId, model),
+                      sourceControlWriterModelSelection:
+                        resolveModelPick(activeSelection, instanceId, model) ?? activeSelection,
                     });
                   }}
                 />
@@ -488,7 +489,9 @@ export function SourceControlWritingSettingsSection() {
                           return;
                         }
                         updateSettings({
-                          reviewGuideModelSelection: createModelSelection(instanceId, model),
+                          reviewGuideModelSelection:
+                            resolveModelPick(reviewGuideSelection, instanceId, model) ??
+                            reviewGuideSelection,
                         });
                       }}
                     />

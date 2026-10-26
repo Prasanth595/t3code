@@ -1,6 +1,8 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
-import type { Dispatch } from "react";
+import type { Dispatch, RefObject } from "react";
+import type { ChatComposerHandle } from "./ChatComposer";
+import { resolveModelPick } from "@t3tools/shared/model";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -26,6 +28,7 @@ import {
   makeModelDisabledReason,
 } from "../ChatView.logic";
 interface ComposerSelectionInput {
+  readonly composerRef: RefObject<ChatComposerHandle | null>;
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly draftThread: DraftSessionState | null;
@@ -59,6 +62,7 @@ interface ComposerSelectionInput {
  */
 export function useComposerSelection(input: ComposerSelectionInput) {
   const {
+    composerRef,
     environmentId,
     composerDraftTarget,
     draftThread,
@@ -184,12 +188,16 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
       return;
     }
-    const rememberedOptions =
-      useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const nextModelSelection: ModelSelection =
-      rememberedOptions !== undefined && rememberedOptions.length > 0
-        ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-        : { instanceId, model: resolvedModel };
+    const nextModelSelection = resolveModelPick(
+      composerRef.current?.getSendContext().selectedModelSelection,
+      instanceId,
+      resolvedModel,
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel],
+    );
+    if (!nextModelSelection) {
+      if (options?.focusComposer !== false) scheduleComposerFocus();
+      return;
+    }
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       providers: providerStatuses,
       hasStartedSession: activeRuntime !== null,
