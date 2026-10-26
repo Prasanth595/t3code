@@ -295,6 +295,38 @@ describe("ConnectReachability stale connector recovery", () => {
     }),
   );
 
+  it.effect("drops the confirming check of a streak that already ended", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const restarts = yield* Queue.unbounded<number>();
+      let status = 530;
+      let requests = 0;
+      const layer = reachabilityLayer(
+        Effect.sync(() => {
+          requests += 1;
+          return { status, body: "error code: 1033" };
+        }),
+        (pid, stillDead) =>
+          stillDead.pipe(Effect.tap((dead) => (dead ? Queue.offer(restarts, pid) : Effect.void))),
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(1));
+        status = 200;
+        yield* reachability.check;
+        status = 530;
+        yield* reachability.check;
+
+        const before = requests;
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(requests).toBe(before);
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* Queue.take(restarts)).toBe(connected.pid);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("keeps a 530 whose error body never finishes", () =>
     Effect.gen(function* () {
       using _connect = mockEdgeConnect();
