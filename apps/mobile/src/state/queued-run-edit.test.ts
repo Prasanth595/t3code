@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { Atom } from "effect/reactivity";
 import {
   ChatAttachmentId,
   ComposerContextId,
@@ -8,22 +9,20 @@ import {
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
-import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
-import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
+import { submitComposer } from "./submit-composer";
+import { appAtomRegistry } from "./atom-registry";
 import {
+  activeComposerDraftKey,
   beginQueuedRunEdit,
-  endQueuedRunEdit,
   getQueuedRunEdit,
+  endQueuedRunEdit,
+  queuedEditDraftKey,
+  removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
   type QueuedRunEdit,
 } from "./queued-run-edit";
-import { submitComposer } from "./submit-composer";
-
-vi.mock("./use-composer-drafts", () => ({
-  clearComposerDraft: vi.fn(),
-  setComposerDraftContext: vi.fn(),
-  setComposerDraftText: vi.fn(),
-}));
+import { threadComposerErrorsAtom } from "./thread-composer-error";
+import { getComposerDraftSnapshot, setComposerDraftText } from "./use-composer-drafts";
 
 const image = (id: string): ChatAttachment => ({
   type: "image",
@@ -57,16 +56,6 @@ function context(attachmentIds: ReadonlyArray<string>): OrchestrationMessageCont
     })),
   };
 }
-
-describe("queued edit draft key", () => {
-  it("keeps the environment readable so attachment uploads still resolve it", () => {
-    const key = queuedEditDraftKey("env-1:thread-9", "run-3");
-
-    expect(isQueuedEditDraftKey(key)).toBe(true);
-    expect(isQueuedEditDraftKey("env-1:thread-9")).toBe(false);
-    expect(composerDraftEnvironmentId(key, [])).toBe("env-1");
-  });
-});
 
 describe("resolveQueuedEditPayload", () => {
   it("resends the kept server attachments ahead of the newly uploaded ones", () => {
@@ -104,17 +93,75 @@ describe("resolveQueuedEditPayload", () => {
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
   });
+});
 
-  it("returns no context when every record lost its attachment", () => {
-    const payload = resolveQueuedEditPayload({
-      edit: edit([]),
-      draftContext: context(["gone"]),
-      draftAttachments: [],
-      uploaded: [],
-    });
+describe("beginQueuedRunEdit", () => {
+  it("ends a changed edit when its run starts, without the thread's composer mounted", () => {
+    const threadKey = "env-exit:thread-exit";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    setComposerDraftText(threadKey, "other work");
+    beginQueuedRunEdit(threadKey, edit([]), runs);
+    setComposerDraftText(queuedEditDraftKey(threadKey, runId), "changed");
 
-    expect(payload.attachments).toEqual([]);
-    expect(payload.context).toBeUndefined();
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("other work");
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
+  });
+
+  it("reports a cleared edit as discarded when the run starts", () => {
+    const threadKey = "env-exit:thread-cleared";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    beginQueuedRunEdit(threadKey, edit([]), runs);
+    setComposerDraftText(queuedEditDraftKey(threadKey, runId), "");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("");
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
+  });
+
+  it("treats a removed server attachment as a change when the run starts", () => {
+    const threadKey = "env-exit:thread-removed";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    setComposerDraftText(threadKey, "other work");
+    beginQueuedRunEdit(threadKey, edit([image("kept")]), runs);
+    removeQueuedRunEditAttachment(threadKey, "kept");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
+  });
+});
+
+describe("activeComposerDraftKey", () => {
+  const threadKey = "env:thread";
+  const editKey = queuedEditDraftKey(threadKey, RunId.make("run-1"));
+
+  it("keeps a queued edit's draft while that edit is open", () => {
+    expect(activeComposerDraftKey(threadKey, editKey, edit([]))).toBe(editKey);
+  });
+
+  it("falls back to the thread's draft once the edit has ended", () => {
+    expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
   });
 });
 
@@ -126,7 +173,12 @@ describe("submitting with a pending native correction", () => {
   it.each(["draft", "queued edit"])(
     "reads the corrected %s only after preparation finishes",
     async (kind) => {
-      if (kind === "queued edit") beginQueuedRunEdit(threadKey, edit([]));
+      if (kind === "queued edit")
+        beginQueuedRunEdit(
+          threadKey,
+          edit([]),
+          Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+        );
       const correction = Promise.withResolvers<string>();
       let text = "Teh";
       const submitted: string[] = [];
@@ -161,7 +213,12 @@ describe("submitting with a pending native correction", () => {
   it.each(["cancelled edit", "replacement edit", "inactive draft"])(
     "blocks submission for %s even when native preparation succeeds",
     async (change) => {
-      if (change !== "inactive draft") beginQueuedRunEdit(threadKey, edit([]));
+      if (change !== "inactive draft")
+        beginQueuedRunEdit(
+          threadKey,
+          edit([]),
+          Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+        );
       const preparation = Promise.withResolvers<boolean>();
       let active = true;
       const send = vi.fn(async () => MessageId.make("unexpected-send"));
@@ -181,7 +238,12 @@ describe("submitting with a pending native correction", () => {
         active = false;
       } else {
         endQueuedRunEdit(threadKey);
-        if (change === "replacement edit") beginQueuedRunEdit(threadKey, edit([]));
+        if (change === "replacement edit")
+          beginQueuedRunEdit(
+            threadKey,
+            edit([]),
+            Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+          );
       }
       const replacement = getQueuedRunEdit(threadKey);
       preparation.resolve(true);
