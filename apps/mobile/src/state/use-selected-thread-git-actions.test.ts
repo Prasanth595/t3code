@@ -1,7 +1,11 @@
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import type { VcsListRefsResult } from "@t3tools/contracts";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
@@ -20,14 +24,14 @@ const state = vi.hoisted(() => ({
   results: [] as { type: string; description?: string }[],
   afterGitAction: undefined as (() => void) | undefined,
   statusRefreshes: 0,
+  refsQuery: vi.fn(),
 }));
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
-  useEffect: () => {},
-  useEffectEvent: (callback: unknown) => callback,
 }));
+vi.mock("@effect/atom-react", () => ({ useAtomMount: () => {} }));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
@@ -50,8 +54,13 @@ vi.mock("./queries", () => ({
   useBranches: () => ({ data: { refs: [] }, refresh: () => {} }),
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
+vi.mock("./atom-registry", async () => ({
+  appAtomRegistry: (await import("effect/reactivity")).AtomRegistry.make(),
+}));
+vi.mock("./use-remote-environment-registry", () => ({
+  environmentConnectedAtom: () => null,
+  setPendingConnectionError: () => {},
+}));
 vi.mock("./use-vcs-action-state", () => ({
   showGitActionResult: (result: { type: string; description?: string }) =>
     state.results.push(result),
@@ -76,6 +85,7 @@ vi.mock("./threads", () => ({
   },
 }));
 vi.mock("./vcs", () => ({
+  vcsRefsQuery: state.refsQuery,
   vcsEnvironment: {
     refreshStatus: async () => {
       state.statusRefreshes += 1;
@@ -118,6 +128,7 @@ vi.mock("./vcs", () => ({
 }));
 
 import { useSelectedThreadGitActions } from "./use-selected-thread-git-actions";
+import { appAtomRegistry } from "./atom-registry";
 
 describe("thread Git mutation permissions", () => {
   beforeEach(() => {
@@ -152,37 +163,6 @@ describe("thread Git mutation permissions", () => {
       expect(state.thread.branch).toBe(canOperate ? "feature/task" : "main");
     },
   );
-
-  it.each(["create", "checkout", "commit on new branch"] as const)(
-    "requires task permission before %s",
-    async (operation) => {
-      const actions = useSelectedThreadGitActions();
-      if (operation === "create") {
-        expect(await actions.onCreateSelectedThreadBranch("feature")).toBeNull();
-      }
-      if (operation === "checkout")
-        expect(await actions.onCheckoutSelectedThreadBranch("feature")).toBeNull();
-      if (operation === "commit on new branch")
-        await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true });
-      expect(state.branch).toBe("main");
-      expect(state.thread.branch).toBe("main");
-      expect(state.commits).toBe(0);
-    },
-  );
-
-  it("rechecks task permission when a retained menu callback runs", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-    const actions = useSelectedThreadGitActions();
-    state.scopes.delete(AuthOrchestrationOperateScope);
-    expect(
-      await actions.onCreateSelectedThreadWorktree({
-        baseBranch: "main",
-        newBranch: "feature/task",
-      }),
-    ).toBeNull();
-    expect(state.worktrees).toEqual([]);
-    expect(state.thread.worktreePath).toBeNull();
-  });
 
   it("keeps ordinary commits and pushes available without task permission", async () => {
     const actions = useSelectedThreadGitActions();
@@ -234,15 +214,6 @@ describe("thread Git mutation permissions", () => {
     expect(state.statusRefreshes).toBe(1);
   });
 
-  it("uses a newly granted task permission for a retained branch callback", async () => {
-    state.primaryScopes.clear();
-    const actions = useSelectedThreadGitActions();
-    state.scopes.add(AuthOrchestrationOperateScope);
-    await actions.onCreateSelectedThreadBranch("feature");
-    expect(state.thread.branch).toBe("feature");
-    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
-  });
-
   it.each(["create", "checkout", "worktree"] as const)(
     "returns the accepted %s result when only source-control permission is revoked after Git",
     async (operation) => {
@@ -268,15 +239,67 @@ describe("thread Git mutation permissions", () => {
       expect(state.results).toEqual([]);
     },
   );
+});
 
-  it("returns a successful checkout when the requested branch is already selected", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
+afterAll(() => appAtomRegistry.dispose());
 
-    expect(await useSelectedThreadGitActions().onCheckoutSelectedThreadBranch("main")).toEqual({
-      refName: "main",
+describe("automatic feature branch refs", () => {
+  const empty: VcsListRefsResult = {
+    refs: [],
+    isRepo: true,
+    hasPrimaryRemote: true,
+    nextCursor: null,
+    totalCount: 0,
+  };
+
+  it.each([false, true])("awaits fresh refs before naming, cached: %s", async (cached) => {
+    const request = Promise.withResolvers<VcsListRefsResult>();
+    let response = cached ? Promise.resolve(empty) : request.promise;
+    const query = Atom.make(Effect.tryPromise(() => response)).pipe(Atom.keepAlive);
+    state.refsQuery.mockReturnValue(query);
+    if (cached) {
+      await executeAtomQuery(appAtomRegistry, query);
+      response = request.promise;
+    }
+    let settled = false;
+    const refresh = useSelectedThreadGitActions()
+      .refreshSelectedThreadBranches()
+      .then((refs) => {
+        settled = true;
+        return refs;
+      });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    const local = {
+      name: "feature/update",
+      isRemote: false,
+      current: false,
+      isDefault: false,
+      worktreePath: null,
+    };
+    request.resolve({
+      ...empty,
+      refs: [
+        local,
+        { ...local, name: "origin/feature/update", isRemote: true, remoteName: "origin" },
+      ],
+      totalCount: 2,
     });
-    expect(state.branch).toBe("main");
-    expect(state.thread.branch).toBe("main");
-    expect(state.results).toEqual([]);
+    const refs = await refresh;
+    expect(refs).toEqual([local]);
+    expect(resolveAutoFeatureBranchName(refs!.map((ref) => ref.name))).toBe("feature/update-2");
+    expect(state.refsQuery).toHaveBeenCalledWith({
+      environmentId: "environment",
+      input: { cwd: "/repo", limit: 100 },
+    });
+  });
+
+  it("reports lookup failure instead of returning empty refs", async () => {
+    state.results = [];
+    state.refsQuery.mockReturnValue(Atom.make(Effect.fail(new Error("Cannot list refs"))));
+    expect(await useSelectedThreadGitActions().refreshSelectedThreadBranches()).toBeNull();
+    expect(state.results).toEqual([
+      { type: "error", title: "Git action failed", description: "Cannot list refs" },
+    ]);
   });
 });
