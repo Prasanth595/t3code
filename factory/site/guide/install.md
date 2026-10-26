@@ -71,7 +71,7 @@ When the token expires, the log says it cannot read the status and nothing deplo
 
 A deploy or rollback you run by hand stays until `main` moves: the next tick leaves it in place and logs that it is doing so.
 
-To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back.
+To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back. If a build was waiting when you stopped the job, also delete `~/.config/t3fac/factory/deploy-pending`, or every pass logs it as stale.
 
 ## Install the desktop app
 

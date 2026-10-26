@@ -2523,7 +2523,7 @@ describe("draining for a deploy", () => {
     `draining for deploy: build 7a70dadf1 has waited ${waited} for the runs in progress to finish; no ready issue claimed until it is installed`;
   const waitingItems = (fake: Fake) => fake.items.filter((item) => item.id === "deploy-waiting");
   const WAITING_MESSAGE =
-    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it on its next tick, factory runs resume on the new build and a person's thread is interrupted";
+    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it once it can, factory runs resume on the new build and a person's thread is interrupted";
 
   it.effect("claims nothing while a build waits, and says so once", () =>
     Effect.gen(function* () {
@@ -2541,6 +2541,17 @@ describe("draining for a deploy", () => {
       );
       assert.deepEqual(waitingItems(fake), []);
       assert.deepEqual([report.claimed, report.attention], [0, 0]);
+    }),
+  );
+
+  it.effect("names no build when the marker holds no sha", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: null, writtenMs: T0 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(drainLines(lines), [
+        "draining for deploy: a build has waited 10m for the runs in progress to finish; no ready issue claimed until it is installed",
+      ]);
     }),
   );
 
@@ -2638,7 +2649,7 @@ describe("draining for a deploy", () => {
       assert.deepEqual(
         lines.filter((l) => l.startsWith("deploy-pending is stale:")),
         [
-          "deploy-pending is stale: autodeploy last wrote it 31m ago; no build is taken to be waiting",
+          "deploy-pending is stale: autodeploy last wrote it 31m ago; no build is taken to be waiting; delete it if autodeploy is off",
         ],
       );
       assert.deepEqual(drainLines(lines), []);

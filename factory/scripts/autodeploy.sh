@@ -4,7 +4,8 @@
 # its own checkout changes. Each tick:
 #
 # - reads T3FAC_AUTODEPLOY_CLONE (a clone used for nothing else) and T3FAC_AUTODEPLOY_TOKEN (scope
-#   orchestration:read) from ~/.config/t3fac/env; with no clone set it does nothing;
+#   orchestration:read) from ~/.config/t3fac/env; with no clone set it does nothing but remove
+#   `deploy-pending`;
 # - fetches origin and stops, printing nothing, when origin/main is the commit in `current`'s
 #   `+fac.<sha>` or the commit whose deploy last failed;
 # - after a deploy or rollback by hand, records origin/main as that commit, so what the person
@@ -91,7 +92,10 @@ if [[ -f $env_file ]]; then
 fi
 clone=${T3FAC_AUTODEPLOY_CLONE:-}
 token=${T3FAC_AUTODEPLOY_TOKEN:-}
-[[ -n $clone ]] || exit 0
+if [[ -z $clone ]]; then
+  clear_pending
+  exit 0
+fi
 
 mkdir -p "$root" "$logs"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lock.sh"
@@ -186,7 +190,7 @@ read_deploy_limit() {
 # work, or a status it cannot read. The pending marker is rewritten each tick that reads the status,
 # busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
 # as it is: the server ignores one that is older than 30 minutes, which covers an autodeploy that
-# cannot fetch, has no clone, has no token, or is not running at all, and a blip does not lose the
+# cannot fetch, has no token, or is not running at all, and a blip does not lose the
 # first-wait time. Once the build has waited past the limit this returns 0 whatever is in the way,
 # a thread count T3 could not read included: the status cannot tell a person's thread from a
 # factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
@@ -274,9 +278,10 @@ build() {
   watchdog=$!
   # The server takes a marker older than 30 minutes as nothing pending, and a build can run an
   # hour, so the marker is touched while it runs. Its content stays; the server reads the mtime.
+  # The loop ends with this script however it ends, so a killed tick cannot keep the marker fresh.
   {
-    while sleep "$pending_refresh"; do
-      [[ -e $pending_file ]] && touch "$pending_file"
+    while sleep "$pending_refresh" && kill -0 $$; do
+      touch -c "$pending_file"
     done
   } 2> /dev/null &
   refresher=$!

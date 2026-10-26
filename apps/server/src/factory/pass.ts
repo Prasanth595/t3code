@@ -834,12 +834,10 @@ export const PENDING_STALE_MS = 30 * 60_000;
 const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
 
 /**
- * Whether autodeploy has a build waiting. It installs only when no run is in progress, which a
- * steady queue never allows, so the pass claims nothing until the runs end and the build is
- * installed: one line and one `claim_skipped` event a pass. Once the build has waited past
- * `deploy_wait_minutes` autodeploy installs it with factory runs in progress, which resume on the
- * new build, and an attention item says so until the marker is gone. A marker older than
- * {@link PENDING_STALE_MS} is nothing pending. Relaunches of claimed runs are not held back.
+ * Whether autodeploy has a build waiting, which a steady queue would starve: the pass claims
+ * nothing until it is installed. Past `deploy_wait_minutes` autodeploy installs over the runs in
+ * progress and an attention item says so. A marker older than {@link PENDING_STALE_MS} is nothing
+ * pending. Relaunches of claimed runs are not held back.
  */
 const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
   world: PassWorld,
@@ -855,7 +853,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
   const age = world.nowMs() - pending.writtenMs;
   if (age > PENDING_STALE_MS) {
     pass.line(
-      `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting`,
+      `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting; delete it if autodeploy is off`,
     );
     yield* clear;
     return false;
@@ -878,7 +876,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     issue: null,
     run: null,
     // No figures: an open item is not raised again, so they would go stale.
-    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick, factory runs resume on the new build and a person's thread is interrupted`,
+    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it once it can, factory runs resume on the new build and a person's thread is interrupted`,
   });
   return true;
 });

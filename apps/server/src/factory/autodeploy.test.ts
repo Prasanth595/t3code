@@ -1,4 +1,3 @@
-// @effect-diagnostics globalDate:off - the marker holds wall-clock epoch seconds the script compares with its own `date`.
 // @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -65,11 +64,10 @@ const git = (cwd: string, ...args: Array<string>) => {
   return result.stdout.trim();
 };
 
-// A deploy.sh that records each call with its commit and flags, and on an install keeps the old
-// `current` as `previous` and points `current` at the commit, as install.sh would. Unlike
-// install.sh it leaves the install time of an existing version directory, so `current` can be
-// the oldest. DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, BACKDATE_PENDING, HOLD_DURING_BUILD and
-// CURRENT_AT vary it.
+// A deploy.sh that records each call and, on an install, moves `current` to `previous` and to the
+// commit, as install.sh would. Unlike install.sh it keeps an existing version directory's install
+// time, so `current` can be the oldest. DEPLOY_FAIL, KILL_TICK, BACKDATE_PENDING, BUILD_HANG,
+// HOLD_DURING_BUILD, INSTALL_FAIL and CURRENT_AT vary it.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -78,6 +76,7 @@ const FAKE_DEPLOY = [
   'locked=no-lock; [[ -n $held && $held == "${T3FAC_DEPLOY_LOCK:-}" ]] && locked=lock',
   'echo "${1:-install} $sha ${T3FAC_SKIP_RELOAD:-} $locked" >> "$DEPLOY_LOG"',
   '[[ -z ${DEPLOY_FAIL:-} ]] || { echo "build: boom" >&2; exit 1; }',
+  '[[ -z ${KILL_TICK:-} ]] || kill -KILL "$(readlink "$HOME/.local/share/t3fac/autodeploy.lock")"',
   '[[ -z ${BACKDATE_PENDING:-} ]] || touch -t 200001010000 "$BACKDATE_PENDING"',
   'if [[ -n ${BUILD_HANG:-} ]]; then sleep 30 & echo $! > "$BUILD_HANG"; wait; fi',
   '[[ -z ${HOLD_DURING_BUILD:-} ]] || : > "$HOME/.local/share/t3fac/autodeploy.hold"',
@@ -141,9 +140,12 @@ const setupSandbox = () => {
   statusAuth = [];
 };
 
+// Every process the tick starts inherits fd 3, so `close` waits until the last of them has exited:
+// a loop the tick leaves running keeps the run from returning.
 const runAutodeploy = (extraEnv: Record<string, string> = {}) =>
   new Promise<{ status: number | null; output: string; deploys: Array<string> }>((resolve) => {
     const child = NodeChildProcess.spawn("bash", [script], {
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
       env: {
         HOME: home,
         PATH: "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin",
@@ -153,6 +155,8 @@ const runAutodeploy = (extraEnv: Record<string, string> = {}) =>
       },
     });
     let output = "";
+    const inherited = child.stdio[3];
+    if (inherited && "resume" in inherited) inherited.resume();
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
     child.on("close", (code) => {
@@ -541,9 +545,15 @@ describe("autodeploy.sh", () => {
 
 describe("autodeploy.sh waiting behind runs", () => {
   const pendingFile = () => NodePath.join(home, ".config/t3fac/factory/deploy-pending");
+  // The script's clock is `date` and file mtimes, so "now" is an mtime just stamped, in ms.
+  const stampNow = () => {
+    const stamp = NodePath.join(tmp, "now");
+    NodeFS.writeFileSync(stamp, "");
+    return NodeFS.statSync(stamp).mtimeMs;
+  };
   const writePending = (secondsAgo: number, sha = "0".repeat(40)) => {
     NodeFS.mkdirSync(NodePath.dirname(pendingFile()), { recursive: true });
-    const since = Math.floor(Date.now() / 1000) - secondsAgo;
+    const since = Math.floor(stampNow() / 1000) - secondsAgo;
     NodeFS.writeFileSync(pendingFile(), `${since} ${sha}\n`);
     return since;
   };
@@ -666,6 +676,23 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(NodeFS.existsSync(pendingFile())).toBe(false);
   });
 
+  it("removes the marker when main is still the commit it gave up on", async () => {
+    const sha = commitToOrigin("second");
+    NodeFS.mkdirSync(root(), { recursive: true });
+    NodeFS.writeFileSync(failedFile(), `${sha}\n`);
+    writePending(60, sha);
+    expect((await runAutodeploy()).output).toBe("");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("removes the marker when no clone is configured", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    writeEnv([`T3FAC_AUTODEPLOY_TOKEN=${TOKEN}`]);
+    expect((await runAutodeploy()).output).toBe("");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
   it("keeps the marker while a build is retried", async () => {
     commitToOrigin("second");
     const since = writePending(60);
@@ -676,7 +703,7 @@ describe("autodeploy.sh waiting behind runs", () => {
   // A tick that cannot ask leaves the marker as it is: the server ignores one that goes stale, and
   // a blip does not lose the first-wait time.
   const minutesAgo = (minutes: number) => {
-    const time = Date.now() / 1000 - minutes * 60;
+    const time = stampNow() / 1000 - minutes * 60;
     NodeFS.utimesSync(pendingFile(), time, time);
     return NodeFS.statSync(pendingFile()).mtimeMs;
   };
@@ -728,12 +755,13 @@ describe("autodeploy.sh waiting behind runs", () => {
     writePending(3 * 3600);
     minutesAgo(31);
     statusBodies = [BUSY];
+    const before = stampNow();
     const result = await runAutodeploy();
     expect(result.deploys).toEqual([]);
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toMatch(/waited [01]s of deploy_wait_minutes 120/);
     const [since] = NodeFS.readFileSync(pendingFile(), "utf8").split(" ");
-    expect(Math.abs(Number(since) - Date.now() / 1000)).toBeLessThan(10);
+    expect(Number(since)).toBeGreaterThanOrEqual(Math.floor(before / 1000));
   });
 
   it("keeps the first-wait time across a short blip", async () => {
@@ -750,6 +778,7 @@ describe("autodeploy.sh waiting behind runs", () => {
     commitToOrigin("second");
     const since = writePending(600);
     const hung = NodePath.join(tmp, "hung.pid");
+    const before = stampNow();
     const result = await runAutodeploy({
       BUILD_HANG: hung,
       BACKDATE_PENDING: pendingFile(),
@@ -757,7 +786,22 @@ describe("autodeploy.sh waiting behind runs", () => {
       T3FAC_PENDING_REFRESH: "1",
     });
     expect(result.output).toContain("took over 3s");
-    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBeGreaterThanOrEqual(before);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
+  });
+
+  it("stops touching the marker once the tick is killed mid-build", async () => {
+    commitToOrigin("second");
+    const since = writePending(600);
+    const before = stampNow();
+    const result = await runAutodeploy({
+      KILL_TICK: "1",
+      BACKDATE_PENDING: pendingFile(),
+      T3FAC_BUILD_LIMIT: "2",
+      T3FAC_PENDING_REFRESH: "1",
+    });
+    expect(result.status).toBeNull();
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(before);
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
   });
 
@@ -766,9 +810,10 @@ describe("autodeploy.sh waiting behind runs", () => {
     const since = writePending(600, sha);
     minutesAgo(20);
     statusBodies = [BUSY];
+    const before = stampNow();
     await runAutodeploy();
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
-    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBeGreaterThanOrEqual(before);
   });
 
   it("marks the build pending on an idle tick too, so a run that starts during the build waits", async () => {
