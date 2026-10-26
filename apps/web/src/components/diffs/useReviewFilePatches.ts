@@ -58,13 +58,19 @@ export function useReviewFilePatches({
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
   );
-  // Opening the panel refreshes the preview, and its new revision revalidates the cached files.
-  // Refreshing them on mount as well would request and decode every patch twice.
-  const previousRevision = useRef(revision);
+  // Opening the panel refreshes the preview. Under its new revision, each cached file revalidates
+  // once, including files requested later. Refreshing them on mount as well would request and
+  // decode every patch twice.
+  const revalidated = useRef({ revision, queries: null as Set<unknown> | null });
   useEffect(() => {
-    if (previousRevision.current === revision) return;
-    previousRevision.current = revision;
+    if (revalidated.current.revision !== revision) {
+      revalidated.current = { revision, queries: new Set() };
+    }
+    const seen = revalidated.current.queries;
+    if (!seen) return;
     for (const { query } of queries) {
+      if (seen.has(query)) continue;
+      seen.add(query);
       const result = registry.get(query);
       if (result._tag !== "Initial" && !result.waiting) registry.refresh(query);
     }
@@ -226,7 +232,10 @@ const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
   return Atom.make((get) =>
     Effect.gen(function* () {
-      const source = yield* get.result(reviewEnvironment.diffFilePatch(target));
+      // Waiting out a revalidation keeps the previous parse visible and the refresh pending.
+      const source = yield* get.result(reviewEnvironment.diffFilePatch(target), {
+        suspendOnWaiting: true,
+      });
       const previous = Option.getOrUndefined(
         Option.flatMap(get.self<AsyncResult.AsyncResult<ParsedPatch>>(), AsyncResult.value),
       );

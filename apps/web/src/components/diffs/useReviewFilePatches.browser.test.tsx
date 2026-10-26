@@ -42,25 +42,31 @@ vi.mock("./parsePatchOffMainThread", async () => {
 
 import { useReviewFilePatches } from "./useReviewFilePatches";
 
-const source: ReviewDiffPreviewSource = {
-  id: "working-tree",
-  kind: "working-tree",
-  title: "Uncommitted",
-  baseRef: null,
-  headRef: null,
-  diff: "preview",
-  diffHash: "hash",
-  truncated: true,
-  files: [{ path: "a.ts", previousPath: null, additions: 1, deletions: 0 }],
-};
+function previewSource(paths: string[]): ReviewDiffPreviewSource {
+  return {
+    id: "working-tree",
+    kind: "working-tree",
+    title: "Uncommitted",
+    baseRef: null,
+    headRef: null,
+    diff: "preview",
+    diffHash: "hash",
+    truncated: true,
+    files: paths.map((path) => ({ path, previousPath: null, additions: 1, deletions: 0 })),
+  };
+}
 
 type HookResult = ReturnType<typeof useReviewFilePatches>;
 
-function Harness(props: { revision: string; onResult: (result: HookResult) => void }) {
+function Harness(props: {
+  source: ReviewDiffPreviewSource;
+  revision: string;
+  onResult: (result: HookResult) => void;
+}) {
   const result = useReviewFilePatches({
     environmentId: EnvironmentId.make("test"),
     cwd: "/repo",
-    source,
+    source: props.source,
     baseRef: null,
     ignoreWhitespace: false,
     theme: "dark",
@@ -79,24 +85,32 @@ function Harness(props: { revision: string; onResult: (result: HookResult) => vo
   );
 }
 
-function setup() {
+function setup(paths = ["a.ts"]) {
   mocks.requests = [];
   mocks.parses = [];
   const registry = AtomRegistry.make();
+  const source = previewSource(paths);
   const results: HookResult[] = [];
   return {
     ui: (revision = "first") => (
       <RegistryContext.Provider value={registry}>
-        <Harness revision={revision} onResult={(result) => results.push(result)} />
+        <Harness source={source} revision={revision} onResult={(result) => results.push(result)} />
       </RegistryContext.Provider>
     ),
     latest: () => results.at(-1)!,
-    complete(contents: string) {
+    requestsFor: (path: string) => mocks.requests.filter((request) => request === path).length,
+    complete(path: string, contents: string) {
       registry.set(
-        patchQuery("a.ts"),
+        patchQuery(path),
         AsyncResult.success({
           ...source,
-          diff: `diff --git a/a.ts b/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/a.ts\n@@ -0,0 +1 @@\n+${contents}\n`,
+          diff: `diff --git a/${path} b/${path}
+new file mode 100644
+--- /dev/null
++++ b/${path}
+@@ -0,0 +1 @@
++${contents}
+`,
           truncated: false,
         }),
       );
@@ -107,24 +121,43 @@ function setup() {
 it("reopening shows the kept parse and revalidates once the preview refreshes", async () => {
   const h = setup();
   {
-    await using screen = await render(h.ui(), { router: false });
-    h.complete("first");
+    await using screen = await render(h.ui());
+    h.complete("a.ts", "first");
     await expect.element(screen.getByText("a.ts first")).toBeInTheDocument();
   }
   const parsed = h.latest().renderableFiles[0];
-  await using screen = await render(h.ui(), { router: false });
+  await using screen = await render(h.ui());
   expect(h.latest().renderableFiles[0]).toBe(parsed);
   expect(mocks.requests).toEqual(["a.ts"]);
 
   await screen.rerender(h.ui("refreshed"));
   expect(mocks.requests).toEqual(["a.ts", "a.ts"]);
-  h.complete("first");
+  await vi.waitFor(() => expect(h.latest().isPending).toBe(true));
+  expect(h.latest().renderableFiles[0]).toBe(parsed);
+  h.complete("a.ts", "first");
   await vi.waitFor(() => expect(h.latest().isPending).toBe(false));
   expect(h.latest().renderableFiles[0]).toBe(parsed);
   expect(mocks.parses).toHaveLength(1);
 
   await screen.rerender(h.ui("changed"));
-  h.complete("changed");
+  h.complete("a.ts", "changed");
   await expect.element(screen.getByText("a.ts changed")).toBeInTheDocument();
   expect(mocks.parses).toHaveLength(2);
+});
+
+it("revalidates a cached file requested after the preview refreshes", async () => {
+  const h = setup(["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]);
+  {
+    await using screen = await render(h.ui());
+    h.latest().requestFile(4);
+    await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(1));
+    h.complete("e.ts", "first");
+    await expect.element(screen.getByText("e.ts first")).toBeInTheDocument();
+  }
+  await using screen = await render(h.ui());
+  await screen.rerender(h.ui("refreshed"));
+  h.latest().requestFile(4);
+  await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(2));
+  await screen.rerender(h.ui("refreshed"));
+  expect(h.requestsFor("e.ts")).toBe(2);
 });
