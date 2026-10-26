@@ -1184,12 +1184,7 @@ it.effect("rejects a preparation retry after the project disables its provider",
         workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
       }),
     );
-    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-      Stream.filter(
-        (stored) => stored.event.type === "run.updated" && stored.event.payload.status === "failed",
-      ),
-      Stream.runHead,
-    );
+    yield* preparationSettled(launched.threadId);
     yield* settings.updateSettings({
       projectSettingsOverrides: {
         [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
@@ -1224,7 +1219,6 @@ it.effect("does not release a prepared run after the project disables its provid
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const settings = yield* ServerSettings.ServerSettingsService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
       const launched = yield* launches.launch(
         launchInput({
           command: "command:launch:disable-during-preparation",
@@ -1240,15 +1234,7 @@ it.effect("does not release a prepared run after the project disables its provid
         },
       });
       yield* Deferred.succeed(allowSetup, undefined);
-      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
-        ),
-        Stream.runHead,
-      );
-
-      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const projection = yield* preparationSettled(launched.threadId);
       assert.equal(projection.runs[0]?.status, "failed");
       const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
         CommandId.make("command:launch:disable-during-preparation:release"),
