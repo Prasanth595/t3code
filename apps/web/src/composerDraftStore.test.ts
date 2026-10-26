@@ -1428,42 +1428,7 @@ describe("composerDraftStore draft promotion", () => {
     const state = useComposerDraftStore.getState();
     expect(state.getDraftSession(draftId)).toBeNull();
     expect(state.getPromotedDraftRedirect(draftId)).toEqual(threadRef);
-    expect(state.getPromotedDraftIdByRef(threadRef)).toBe(draftId);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("typed during setup");
-  });
-
-  it("keeps a promotion redirect only while the route shows the draft or its thread", () => {
-    const otherRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-other"));
-    useComposerDraftStore.setState({ promotedDraftRedirects: { [draftId]: threadRef } });
-    const store = useComposerDraftStore.getState();
-
-    store.retainPromotedDraftRedirectsForRoute({
-      modalPage: false,
-      target: { kind: "draft", draftId },
-    });
-    store.retainPromotedDraftRedirectsForRoute({
-      modalPage: false,
-      target: { kind: "server", threadRef },
-    });
-    expect(useComposerDraftStore.getState().getPromotedDraftIdByRef(threadRef)).toBe(draftId);
-
-    store.retainPromotedDraftRedirectsForRoute({
-      modalPage: false,
-      target: { kind: "server", threadRef: otherRef },
-    });
-    expect(useComposerDraftStore.getState().promotedDraftRedirects).toEqual({});
-    // A later visit renders the shared unkeyed ChatView.
-    expect(useComposerDraftStore.getState().getPromotedDraftIdByRef(threadRef)).toBeNull();
-  });
-
-  it("keeps a promotion redirect while Settings or Usage is open over its draft", () => {
-    useComposerDraftStore.setState({ promotedDraftRedirects: { [draftId]: threadRef } });
-    const store = useComposerDraftStore.getState();
-
-    // Each settings section is its own route with no thread target; closing returns to the draft.
-    store.retainPromotedDraftRedirectsForRoute({ modalPage: true, target: null });
-    store.retainPromotedDraftRedirectsForRoute({ modalPage: true, target: null });
-    expect(useComposerDraftStore.getState().getPromotedDraftRedirect(draftId)).toEqual(threadRef);
   });
 
   it("holds a background submission on its draft until the send settles", async () => {
@@ -1484,6 +1449,30 @@ describe("composerDraftStore draft promotion", () => {
     h.flush();
     await waitForDraftHeroTransition();
     expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+  });
+
+  it("keeps the redirect of a draft finalized while another route was open", async () => {
+    // A failed send restored onto its existing thread, or a background send, finalizes while the
+    // user is elsewhere; "Open draft" or Back to /draft/<id> later must still reach the thread.
+    const h = draftPromotionHarness();
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    h.arrive(threadRef, {
+      latestRun: preparingRun,
+      latestUserMessageAt: "2026-03-29T00:00:00.000Z",
+    });
+    await waitForDraftHeroTransition();
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+
+    const laterDraftId = DraftId.make("draft-later");
+    const laterThreadId = ThreadId.make("thread-later");
+    store.setProjectDraftThreadId(projectRef, laterDraftId, { threadId: laterThreadId });
+    h.arrive(scopeThreadRef(TEST_ENVIRONMENT_ID, laterThreadId), {
+      latestRun: preparingRun,
+      latestUserMessageAt: "2026-03-29T00:00:00.000Z",
+    });
+    await waitForDraftHeroTransition();
+    expect(useComposerDraftStore.getState().getPromotedDraftRedirect(draftId)).toEqual(threadRef);
   });
 
   it("does not finalize a draft whose send failed and was restored", async () => {

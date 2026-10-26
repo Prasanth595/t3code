@@ -1,5 +1,6 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Navigate, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
@@ -45,12 +46,20 @@ export function ThreadRouteView({
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
-  // The ChatView that carried a draft keeps its identity once the thread route takes over.
-  const promotedDraftId = useComposerDraftStore((store) =>
-    serverThreadRef
-      ? (store.getDraftIdByRef(serverThreadRef) ?? store.getPromotedDraftIdByRef(serverThreadRef))
-      : null,
-  );
+  // The ChatView that carried a draft keeps its key through the redirect to its thread, and only
+  // until the route leaves that thread, so later visits reuse the shared unkeyed ChatView.
+  const [handoffKey, setHandoffKey] = useState<{ threadKey: string; key: string } | null>(null);
+  const nextHandoffKey =
+    draftId !== null && draftSession === null && draftRedirect
+      ? handoffKey?.key === draftId
+        ? handoffKey
+        : { threadKey: scopedThreadKey(draftRedirect), key: draftId }
+      : serverThreadRef && handoffKey?.threadKey === scopedThreadKey(serverThreadRef)
+        ? handoffKey
+        : null;
+  if (nextHandoffKey !== handoffKey) {
+    setHandoffKey(nextHandoffKey);
+  }
   const environmentHasDraftThreads = useComposerDraftStore((store) =>
     serverThreadRef ? store.hasDraftThreadsInEnvironment(serverThreadRef.environmentId) : false,
   );
@@ -124,7 +133,7 @@ export function ThreadRouteView({
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView
-        key={promotedDraftId ?? undefined}
+        key={nextHandoffKey?.key}
         environmentId={target.threadRef.environmentId}
         threadId={target.threadRef.threadId}
         routeKind="server"

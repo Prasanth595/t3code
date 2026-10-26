@@ -15,7 +15,7 @@ import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToas
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
-import { isAppModalPage, startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
+import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
 import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
 import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
@@ -144,25 +144,6 @@ function startThreadOverlayRetention(router: AppRouter): void {
 }
 
 /**
- * Drafts promote as their server threads arrive, wherever the user is. The redirect a finalized
- * draft leaves only serves the route that shows that draft or its thread.
- */
-function startDraftThreadPromotion(router: AppRouter): void {
-  subscribeDraftThreadPromotion({
-    registry: appAtomRegistry,
-    threadShellAtom: environmentThreadShells.quietThreadShellAtom,
-    threadRefsAtom: environmentThreadShells.threadRefsAtom,
-  });
-  router.subscribe("onResolved", () => {
-    const target = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
-    useComposerDraftStore.getState().retainPromotedDraftRedirectsForRoute({
-      modalPage: isAppModalPage(router.state.location.pathname),
-      target,
-    });
-  });
-}
-
-/**
  * Starts every app-lifetime service once, before the first render, and returns the router.
  * They run for the life of the page, so their disposers are dropped here.
  */
@@ -193,7 +174,12 @@ export function startAppServices(): AppRouter {
   installChatRouteCommands(router);
   registerOpenFavoriteEditorCommand();
   startThreadOverlayRetention(router);
-  startDraftThreadPromotion(router);
+  // Drafts promote as their server threads arrive, wherever the user is.
+  subscribeDraftThreadPromotion({
+    registry: appAtomRegistry,
+    threadShellAtom: environmentThreadShells.quietThreadShellAtom,
+    threadRefsAtom: environmentThreadShells.threadRefsAtom,
+  });
   startMainAppLocationTracking(router);
   startBackgroundThreadAnnouncements(appAtomRegistry, router);
   startThreadVisitedMigration(appAtomRegistry);

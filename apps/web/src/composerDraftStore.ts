@@ -52,7 +52,6 @@ import type {
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
-import type { ThreadRouteTarget } from "./threadRoutes";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -419,9 +418,8 @@ interface ComposerDraftStoreState {
   logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
   backgroundSubmissionThreadKeys: Record<string, true>;
   /**
-   * Where a just-finalized draft went, so its route and ChatView follow it. Only the handoff
-   * needs it: `retainPromotedDraftRedirectsForRoute` drops entries the open route no longer
-   * shows, so a later visit to the thread renders the shared unkeyed ChatView.
+   * Where each finalized draft went, so `/draft/<id>` keeps leading to its thread (Back, an
+   * "Open draft" toast) after the draft is gone. In memory only, one small entry per sent draft.
    */
   promotedDraftRedirects: Record<string, ScopedThreadRef>;
   rewindingThreadKeys: ReadonlySet<string>;
@@ -439,11 +437,6 @@ interface ComposerDraftStoreState {
   getDraftSessionByRef: (threadRef: ScopedThreadRef) => DraftSessionState | null;
   getDraftIdByRef: (threadRef: ScopedThreadRef) => DraftId | null;
   getPromotedDraftRedirect: (draftId: DraftId) => ScopedThreadRef | null;
-  getPromotedDraftIdByRef: (threadRef: ScopedThreadRef) => DraftId | null;
-  retainPromotedDraftRedirectsForRoute: (route: {
-    modalPage: boolean;
-    target: ThreadRouteTarget | null;
-  }) => void;
   getDraftThreadByRef: (threadRef: ScopedThreadRef) => DraftThreadState | null;
   getDraftThread: (threadRef: ComposerThreadTarget) => DraftThreadState | null;
   listDraftThreadKeys: () => string[];
@@ -2488,29 +2481,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           return null;
         },
         getPromotedDraftRedirect: (draftId) => get().promotedDraftRedirects[draftId] ?? null,
-        getPromotedDraftIdByRef: (threadRef) => {
-          for (const [draftId, promotedTo] of Object.entries(get().promotedDraftRedirects)) {
-            if (scopedThreadRefsEqual(promotedTo, threadRef)) {
-              return DraftId.make(draftId);
-            }
-          }
-          return null;
-        },
-        retainPromotedDraftRedirectsForRoute: ({ modalPage, target }) => {
-          // Settings and Usage render over the draft and close back to it, so it still needs its redirect.
-          if (modalPage) return;
-          set((state) => {
-            const entries = Object.entries(state.promotedDraftRedirects);
-            const retained = entries.filter(([draftId, promotedTo]) =>
-              target?.kind === "draft"
-                ? target.draftId === draftId
-                : target?.kind === "server" && scopedThreadRefsEqual(promotedTo, target.threadRef),
-            );
-            return retained.length === entries.length
-              ? state
-              : { promotedDraftRedirects: Object.fromEntries(retained) };
-          });
-        },
         getDraftThread: (threadRef) => {
           if (typeof threadRef === "string") {
             return get().getDraftSession(DraftId.make(threadRef));
