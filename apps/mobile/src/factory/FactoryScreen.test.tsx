@@ -11,6 +11,7 @@ const { Children, mocks } = vi.hoisted(() => ({
       isLoadingSavedConnection: false,
       savedConnectionsById: {} as Record<string, SavedRemoteConnection>,
     },
+    insetBottom: 0,
   },
 }));
 
@@ -21,7 +22,7 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("react-native-webview", () => ({ WebView: () => <div data-webview="" /> }));
 vi.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 34, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, bottom: mocks.insetBottom, left: 0, right: 0 }),
 }));
 vi.mock("../features/settings/components/SettingsScreen", () => ({
   SettingsScreen: (props: { title: string; children?: ReactNode }) => (
@@ -86,19 +87,26 @@ function save(...connections: SavedRemoteConnection[]) {
 
 const page = (body: string) => `<section data-screen="Factory">${body}</section>`;
 
-beforeEach(() => save());
+beforeEach(() => {
+  save();
+  mocks.insetBottom = 0;
+});
 
 describe("FactoryScreen", () => {
   it("lays the environment picker out as a scrolling Settings page", () => {
     save(connection("beta", "Beta"), connection("alpha", "Alpha"));
-
-    expect(renderToStaticMarkup(<FactoryScreen />)).toBe(
+    const picker = (bottom: number) =>
       page(
-        '<div data-scroll="automatic" data-content="px-5 pt-4" data-bottom="52">' +
+        `<div data-scroll="automatic" data-content="px-5 pt-4" data-bottom="${bottom}">` +
           '<ul data-section="Environment"><li>Alpha</li><li>Beta</li></ul>' +
           "</div>",
-      ),
-    );
+      );
+
+    // No home indicator: the 18pt floor plus the page's own 18pt.
+    expect(renderToStaticMarkup(<FactoryScreen />)).toBe(picker(36));
+
+    mocks.insetBottom = 34;
+    expect(renderToStaticMarkup(<FactoryScreen />)).toBe(picker(52));
   });
 
   it("keeps the message states on the Settings page, outside any scroll view", () => {
