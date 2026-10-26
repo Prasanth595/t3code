@@ -26,6 +26,7 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
+  isExactServiceVersion,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
@@ -39,6 +40,8 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
+/** macOS only: the launch agent's copy of the runtime, under `<baseDir>/runtime`. */
+const SERVICE_LAUNCHER_DIR = "launcher";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -569,6 +572,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  // macOS privacy grants track the launchd parent's executable path across updates.
+  const launcherDir = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_DIR);
+  const launcher =
+    platform === "darwin"
+      ? {
+          dir: launcherDir,
+          stagingDir: `${launcherDir}.next`,
+          retiredDir: `${launcherDir}.prev`,
+          entryPath: path.join(launcherDir, path.basename(runtimePaths.entryPath)),
+          sentinelPath: path.join(launcherDir, path.basename(runtimePaths.sentinelPath)),
+        }
+      : undefined;
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -589,7 +604,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
-    program: [runtimePaths.entryPath, "__service-launcher"],
+    program: [launcher?.entryPath ?? runtimePaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,
     logPath,
     unitPath,
@@ -706,6 +721,94 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
+  const launcherComplete = Effect.fn("cloud.boot_service.launcher_complete")(function* (
+    directory: string,
+  ) {
+    const entryExists = yield* fs.exists(
+      path.join(directory, path.basename(runtimePaths.entryPath)),
+    );
+    const sentinel = yield* fs
+      .readFileString(path.join(directory, path.basename(runtimePaths.sentinelPath)))
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")));
+    return entryExists && isExactServiceVersion(sentinel.trim());
+  });
+  const recoverLauncher = Effect.suspend(() =>
+    launcher === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          if (yield* launcherComplete(launcher.dir)) return;
+          // Restore a complete candidate before fallible runtime preparation.
+          // Prefer the previous launcher, since publication did not commit.
+          for (const candidate of [launcher.retiredDir, launcher.stagingDir]) {
+            if (yield* launcherComplete(candidate)) {
+              yield* fs.remove(launcher.dir, { recursive: true, force: true });
+              yield* fs.rename(candidate, launcher.dir);
+              return;
+            }
+          }
+        }),
+  ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  // Copy the completion marker last: an interrupted tree copy must not look
+  // recoverable just because it already copied the source's marker and entry.
+  const stageLauncher = Effect.suspend(() =>
+    launcher === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          yield* fs.remove(launcher.stagingDir, { recursive: true, force: true });
+          const mode = (yield* fs.stat(runtimePaths.versionDir)).mode & 0o777;
+          yield* fs.makeDirectory(launcher.stagingDir, { mode });
+          const sentinel = path.basename(runtimePaths.sentinelPath);
+          for (const entry of yield* fs.readDirectory(runtimePaths.versionDir)) {
+            if (entry !== sentinel) {
+              yield* fs.copy(
+                path.join(runtimePaths.versionDir, entry),
+                path.join(launcher.stagingDir, entry),
+              );
+            }
+          }
+          yield* fs.copy(runtimePaths.sentinelPath, path.join(launcher.stagingDir, sentinel));
+        }),
+  ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  // Rename instead of overwriting a running executable; keep recovery copies if rollback fails.
+  const publishLauncher = Effect.suspend(() =>
+    launcher === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          yield* fs.remove(launcher.retiredDir, { recursive: true, force: true });
+          // Honor cancellation only once the fixed path is populated again.
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const retired = yield* fs.exists(launcher.dir);
+              if (retired) yield* fs.rename(launcher.dir, launcher.retiredDir);
+              yield* fs
+                .rename(launcher.stagingDir, launcher.dir)
+                .pipe(
+                  Effect.tapError(() =>
+                    retired
+                      ? fs.rename(launcher.retiredDir, launcher.dir).pipe(Effect.ignore)
+                      : Effect.void,
+                  ),
+                );
+            }),
+          );
+          yield* fs
+            .remove(launcher.retiredDir, { recursive: true, force: true })
+            .pipe(Effect.ignore);
+        }),
+  );
+  const discardStagedLauncher = Effect.suspend(() =>
+    launcher === undefined
+      ? Effect.void
+      : launcherComplete(launcher.dir).pipe(
+          Effect.flatMap((complete) =>
+            complete
+              ? fs.remove(launcher.stagingDir, { recursive: true, force: true })
+              : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+  );
+
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
@@ -719,6 +822,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* requireSystemdPrerequisites.pipe(Effect.tapError(logFailure));
     }
 
+    yield* recoverLauncher;
     yield* ensurePinnedRuntimeInstalled({
       baseDir: input.baseDir,
       version: input.cliVersion,
@@ -771,6 +875,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
+    yield* stageLauncher;
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -848,6 +953,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
+      yield* publishLauncher;
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
@@ -863,7 +969,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ),
     );
     return plan;
-  });
+  }, Effect.ensuring(discardStagedLauncher));
 
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
@@ -946,18 +1052,33 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
-    if (
-      !(yield* fs
-        .exists(unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    )
-      return false;
-    yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
+    const installed = yield* fs
+      .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    yield* runSteps(manager.finalize);
-    return true;
+    if (installed) {
+      yield* runSteps(manager.deactivate);
+      yield* fs
+        .remove(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    }
+    // A prior uninstall may have removed the plist before copy cleanup failed.
+    let removedLauncher = false;
+    if (launcher !== undefined) {
+      for (const directory of [launcher.dir, launcher.stagingDir, launcher.retiredDir]) {
+        if (
+          yield* fs
+            .exists(directory)
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })))
+        ) {
+          yield* fs
+            .remove(directory, { recursive: true, force: true })
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+          removedLauncher = true;
+        }
+      }
+    }
+    if (installed) yield* runSteps(manager.finalize);
+    return installed || removedLauncher;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
@@ -967,12 +1088,24 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
-      fs.readFileString(unitPath),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-      fs.readFileString(statePath).pipe(Effect.option),
-    ]);
+    const [unit, runtimeEntryExists, runtimeSentinel, stateText, launcherCurrent] =
+      yield* Effect.all([
+        fs.readFileString(unitPath),
+        fs.exists(runtimePaths.entryPath),
+        fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+        fs.readFileString(statePath).pipe(Effect.option),
+        launcher === undefined
+          ? Effect.succeed(true)
+          : Effect.all([
+              fs.exists(launcher.entryPath),
+              fs.readFileString(launcher.sentinelPath).pipe(Effect.option),
+            ]).pipe(
+              Effect.map(
+                ([exists, sentinel]) =>
+                  exists && Option.isSome(sentinel) && sentinel.value.trim() === input.cliVersion,
+              ),
+            ),
+      ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
@@ -995,6 +1128,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         problems.length === 0 &&
         normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
         runtimeEntryExists &&
+        launcherCurrent &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&
