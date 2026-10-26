@@ -59,9 +59,8 @@ function ruleFor(schedule: Pick<CustomSchedule, "expression" | "startAt" | "time
       toString: () => `${schedule.startAt}[${schedule.timeZone}]`,
     },
     strict: true,
-    // Bound pathological or impossible rules without enumerating infinite sets.
+    // Only the library's default candidate budget enables its fast query plans.
     maxIterations: 10_000,
-    maxCandidateEvaluations: 100_000,
     cache: false,
   });
 }

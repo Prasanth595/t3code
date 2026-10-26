@@ -1,5 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import { RRuleTemporal } from "rrule-temporal";
 
 import { normalizeCustomSchedule, customOccurrences } from "./CustomSchedule.ts";
 
@@ -122,6 +123,36 @@ describe("custom recurrence", () => {
     expect(customOccurrences(schedule, DateTime.makeUnsafe("2026-01-02T09:00:00Z"), 5)).toEqual([]);
     const count = normalize("DTSTART:20251201T090000Z\nRRULE:FREQ=DAILY;COUNT=2");
     expect(customOccurrences(count, now, 5)).toEqual([]);
+  });
+
+  it("previews old finite rules without walking their elapsed occurrences", () => {
+    const date = new RRuleTemporal({
+      rruleString: "DTSTART:20200101T090000Z\nRRULE:FREQ=DAILY;COUNT=10000",
+    })
+      .options()
+      .dtstart.toPlainDate();
+    const calendar = Object.getPrototypeOf(date) as typeof date;
+    // Count calendar advances instead of timing synchronous evaluation.
+    using advances = vi.spyOn(calendar, "add");
+    const from = DateTime.makeUnsafe("2026-10-26T12:00:00Z");
+    const schedule = normalizeCustomSchedule(
+      {
+        type: "custom",
+        expression: "FREQ=DAILY;COUNT=10000",
+        startAt: "2020-01-01T09:00:00Z",
+        timeZone: "UTC",
+      },
+      from,
+    );
+    expect(customOccurrences(schedule, from, 5)).toEqual([
+      "2026-10-27T09:00:00.000Z",
+      "2026-10-28T09:00:00.000Z",
+      "2026-10-29T09:00:00.000Z",
+      "2026-10-30T09:00:00.000Z",
+      "2026-10-31T09:00:00.000Z",
+    ]);
+    expect(advances.mock.calls.length).toBeLessThan(100);
+    expect(customOccurrences(schedule, DateTime.makeUnsafe("2050-01-01T00:00:00Z"), 5)).toEqual([]);
   });
 
   it("evaluates cron in its saved zone across DST and month boundaries", () => {
