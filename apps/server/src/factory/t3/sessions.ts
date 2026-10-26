@@ -462,8 +462,8 @@ export const make = Effect.gen(function* () {
    * be made is logged and dropped. The command id derives from the launch's, so a launch sent
    * again does not link twice.
    */
-  const linkPullRequest = (launchCommandId: string, threadId: ThreadId, url: string) =>
-    Effect.gen(function* () {
+  const linkPullRequest = Effect.fn("Sessions.linkPullRequest")(
+    function* (launchCommandId: string, threadId: ThreadId, url: string) {
       const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
       if (parsed === undefined) {
         return yield* Effect.logWarning("factory could not read the pull request URL to link", {
@@ -482,8 +482,9 @@ export const make = Effect.gen(function* () {
         url,
         source: "agent",
       });
-    }).pipe(
-      Effect.catchCause((cause) =>
+    },
+    (effect, _launchCommandId, threadId, url) =>
+      Effect.catchCause(effect, (cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause as Cause.Cause<never>)
           : Effect.logWarning("factory could not link the pull request to the launched thread", {
@@ -492,7 +493,7 @@ export const make = Effect.gen(function* () {
               cause: Cause.pretty(cause),
             }),
       ),
-    );
+  );
 
   const launch: FactorySessions["Service"]["launch"] = Effect.fn("Sessions.launch")(
     function* (request) {
