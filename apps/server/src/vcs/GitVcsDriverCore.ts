@@ -3759,11 +3759,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.gen(function* () {
           if (!input.newRefName || !progress?.onWorktreeClaimed) return;
           // A failing post-checkout hook can leave a registered checkout despite Git's exit code.
-          const registered = yield* runGitStdout(
+          const registered = yield* executeWorktreeList(
             "GitVcsDriver.createWorktree.checkClaim",
             input.cwd,
-            ["worktree", "list", "--porcelain", "-z"],
-          ).pipe(Effect.orElseSucceed(() => ""));
+            [],
+          ).pipe(
+            Effect.map((result) => result.stdout),
+            Effect.orElseSucceed(() => ""),
+          );
           const claimedPath = parseWorktreeBranchPaths(registered).get(input.newRefName);
           if (claimedPath === undefined) return;
           const physicalPath = yield* fileSystem

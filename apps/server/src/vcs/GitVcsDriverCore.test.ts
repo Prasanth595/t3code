@@ -704,6 +704,30 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
         paths.map((listed) => NodeFS.realpathSync.native(listed)),
         worktreePath,
       );
+      yield* writeTextFile(
+        cwd,
+        ".git/hooks/post-checkout",
+        "#!/bin/sh\ngit branch feature/old-git\n",
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.chmod(cwd + "/.git/hooks/post-checkout", 0o755);
+      const failedPath = cwd + "/failed-hook";
+      const claimed: string[] = [];
+      const failed = yield* driver
+        .createWorktree(
+          { cwd, path: failedPath, refName: "HEAD", newRefName: "feature/old-git-hook" },
+          {
+            progress: {
+              onWorktreeClaimed: (path) =>
+                Effect.sync(() => {
+                  claimed.push(path);
+                }),
+            },
+          },
+        )
+        .pipe(Effect.result);
+      assert.isTrue(Result.isFailure(failed));
+      assert.deepEqual(claimed, [failedPath]);
     }),
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
