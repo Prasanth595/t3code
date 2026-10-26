@@ -183,15 +183,7 @@ export function FontFamilyPicker({
       }}
     >
       <ComboboxTrigger aria-label={ariaLabel} render={<SelectButton size="sm" />}>
-        <span
-          style={{
-            fontFamily: displayFontFamily(
-              selectedFamily.length === 0 ? defaultFamily : selectedFamily,
-            ),
-          }}
-        >
-          {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
-        </span>
+        {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <ComboboxSearchInput
