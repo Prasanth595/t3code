@@ -38,20 +38,7 @@ export function filterProjectScopes(
   );
 }
 
-export interface NewTaskScratchOption {
-  readonly environmentId: EnvironmentId;
-  /** False while the environment is still connecting; the row shows but cannot start yet. */
-  readonly ready: boolean;
-}
-
-/**
- * Project rows and the server config both restore from cache before the
- * connection is up, so the "No project" row is decided from the config alone.
- * Gating it on the connection phase too made it pop in once connected and
- * shift the rows below it. The phase only decides whether it is enabled. The
- * two cache reads are separate, so a config that was never cached can still
- * arrive after the rows; that case is not covered here.
- */
+// Cached configuration reserves the row; connection readiness only gates activation.
 export function resolveNewTaskScratchOption(input: {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -59,12 +46,11 @@ export function resolveNewTaskScratchOption(input: {
   }>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "scratchWorkspaceRoot">>;
   readonly selectedEnvironmentId: EnvironmentId | null;
-}): NewTaskScratchOption | null {
+}) {
   const offering = input.environments.filter(
     (environment) =>
       (input.serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot ?? null) !== null,
   );
-  if (offering.length === 0) return null;
   const ready = offering.filter(
     (environment) =>
       availableScratchWorkspaceRoot(
@@ -72,18 +58,11 @@ export function resolveNewTaskScratchOption(input: {
         input.serverConfigs.get(environment.environmentId),
       ) !== null,
   );
-  const preferred = (candidates: typeof offering) =>
-    candidates.find((environment) => environment.environmentId === input.selectedEnvironmentId) ??
-    candidates[0] ??
-    null;
-  const readyEnvironment = preferred(ready);
-  if (readyEnvironment !== null) {
-    return { environmentId: readyEnvironment.environmentId, ready: true };
-  }
-  const pendingEnvironment = preferred(offering);
-  return pendingEnvironment === null
-    ? null
-    : { environmentId: pendingEnvironment.environmentId, ready: false };
+  const candidates = ready.length > 0 ? ready : offering;
+  const environment =
+    candidates.find((candidate) => candidate.environmentId === input.selectedEnvironmentId) ??
+    candidates[0];
+  return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
 function getOnlySelectableProject(
