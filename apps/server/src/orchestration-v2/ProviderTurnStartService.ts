@@ -1081,6 +1081,7 @@ export const layer: Layer.Layer<
             alreadyDeliveredItemIds: new Set<string>(),
           });
           if (
+            prospectiveUsageState.modelContextWindow !== undefined &&
             prospectivePlan.status === "ready" &&
             !(yield* (
               session.hasPendingBackgroundWork ??

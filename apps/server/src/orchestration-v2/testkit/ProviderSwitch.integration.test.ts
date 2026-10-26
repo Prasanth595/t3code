@@ -627,7 +627,7 @@ describe("orchestration v2 provider switching", () => {
           const current = scenario.includes("overflow-oversized")
             ? "x".repeat(300_000)
             : scenario.includes("unknown-window")
-              ? "x".repeat(100_000)
+              ? "Continue work"
               : scenario.includes("overflow-compact")
                 ? "/compact"
                 : scenario.startsWith("compact")
