@@ -409,11 +409,7 @@ export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
 
-/**
- * Linear documents `linear://` + a linear.app page URL as the way to open that page in its
- * desktop app (https://linear.app/docs/get-the-app). Accept only that shape, so the scheme
- * cannot carry other targets to the OS handler.
- */
+// Linear documents this destination shape at https://linear.app/docs/get-the-app.
 export function isLinearAppLinkHref(href: string): boolean {
   try {
     const url = new URL(href);
