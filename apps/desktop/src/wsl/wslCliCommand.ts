@@ -1,11 +1,5 @@
 import { MARKER } from "../app/DesktopCliShim.ts";
 
-/**
- * What the app's WSL backend last launched, inside the distro's runtime folder:
- * a program, then the script it runs, if any. The backend runs a staged runtime
- * or falls back to Node and the mounted server, and an update moves it to a new
- * runtime, so the `t3` command reads this on every run.
- */
 const WSL_RUNTIME_POINTER = "current";
 
 export type WslCliCommandAction = "state" | "install" | "uninstall";
@@ -29,9 +23,7 @@ const READ_TARGET = [
 const TARGET_MISSING =
   '[ -z "$app" ] || [ ! -x "$app" ] || { [ -n "$script" ] && [ ! -f "$script" ]; }';
 
-// Written into the distro after the lines naming its paths. The desktop's WSL
-// backend runs with no T3CODE_HOME, so its home is `~/.t3`; the launcher names
-// it absolutely so `sudo t3`, which changes HOME, still finds this user's data.
+// Embed the distro home so the command uses the backend's data even if HOME changes.
 const LAUNCHER_BODY = [
   ...READ_TARGET,
   `if ${TARGET_MISSING}; then`,
@@ -59,20 +51,10 @@ const COMMON = [
   // `wsl.exe --exec` skips the user's profile, so its PATH is not a terminal's.
   "terminal_path() {",
   '  set -- "${SHELL:-/bin/sh}" -ilc \'printf "\\n__t3_path__:%s\\n" "$PATH"\'',
-  // An interactive shell outside the terminal's foreground group stops itself
-  // reaching for it, so it gets a session of its own. That also puts whatever
-  // the profile starts in one process group the deadline can kill.
-  '  if command -v setsid >/dev/null 2>&1; then set -- setsid "$@"; fi',
+  // timeout owns the probe's process group, including children started by a profile.
+  "  command -v timeout >/dev/null 2>&1 || { printf '%s' \"$PATH\"; return; }",
   "  out=$(mktemp) || { printf '%s' \"$PATH\"; return; }",
-  // A file, not a pipe: a pipe stays open, and the read waits, for as long as
-  // anything the profile started is alive.
-  '  "$@" </dev/null >"$out" 2>/dev/null &',
-  "  probe=$! ticks=0",
-  '  while kill -0 "$probe" 2>/dev/null; do',
-  '    if [ "$ticks" -ge 100 ]; then kill -s KILL -- "-$probe" "$probe" 2>/dev/null; break; fi',
-  "    sleep 0.1",
-  "    ticks=$((ticks + 1))",
-  "  done",
+  '  timeout --kill-after=1 10 "$@" </dev/null >"$out" 2>/dev/null || true',
   "  captured=$(sed -n 's/^__t3_path__://p' \"$out\" | tail -n 1)",
   '  rm -f "$out"',
   "  printf '%s' \"${captured:-$PATH}\"",
@@ -166,12 +148,6 @@ const REPORT = [
   "fi",
 ];
 
-/**
- * Installs, removes or reports the `t3` command in a WSL distro, the way the
- * desktop app does on Linux: a file in `~/.local/bin` or `~/bin`, recognized
- * by the launcher marker, never replacing a `t3` it did not write. The report
- * uses a new terminal's PATH, so a `t3` that would run first there is named.
- */
 export const buildWslCliCommandScript = (action: WslCliCommandAction) =>
   [
     ...COMMON,
@@ -179,10 +155,6 @@ export const buildWslCliCommandScript = (action: WslCliCommandAction) =>
     ...REPORT,
   ].join("\n");
 
-/**
- * Records what the app's WSL backend launched for the `t3` command. Written
- * aside and renamed, so a `t3` starting meanwhile reads one whole target.
- */
 export const buildWslCliTargetScript = (command: ReadonlyArray<string>) =>
   [
     "set -eu",

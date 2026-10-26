@@ -623,8 +623,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       : preflight.runtime.kind === "executable"
         ? [preflight.runtime.entryPath]
         : [preflight.runtime.nodePath, preflight.runtime.linuxEntryPath];
-  // A dev build must not repoint the installed app's `t3` at a worktree. The
-  // record runs alongside the IP probe so its wsl.exe call adds no start time.
+  // Dev builds must not repoint the installed command at a worktree.
   const [distroIp] = yield* Effect.all(
     [
       wslEnvironment.getDistroIp(distroForConfig),
@@ -729,12 +728,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 export const describePrimaryBackend = Effect.gen(function* () {
   const persistedSettings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
   const wslRequested = persistedSettings.wslOnly && persistedSettings.wslBackendEnabled;
-  // Only honor wsl-only when WSL is actually usable. If the user
-  // persisted wsl-only but WSL has since become unavailable (wsl.exe
-  // removed, no distro), fall back to the Windows primary instead of
-  // looping forever on preflight failures: the Connections backend
-  // control is hidden while WSL is unavailable, so a stuck WSL primary
-  // would otherwise leave no in-app way back to Windows.
+  // When WSL is unavailable its controls are hidden; fall back to Windows to keep recovery possible.
   const useWsl =
     wslRequested && (yield* (yield* DesktopWslEnvironment.DesktopWslEnvironment).isAvailable);
   return { useWsl, wslRequested, distro: persistedSettings.wslDistro };
@@ -821,9 +815,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Dispatch happens at resolve time so toggling wsl-only between restarts
-  // is picked up on the next start cycle (the pool's primary instance is
-  // created once at layer init, but configResolve fires on each restart).
+  // Resolve on each restart so toggling wsl-only takes effect without recreating the pool.
   const describePrimary = describePrimaryBackend.pipe(
     Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
     Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),

@@ -863,7 +863,7 @@ const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function
   });
 });
 
-const cliCommandImpl = Effect.fn("desktop.wsl.cliCommandImpl")(function* (
+const cliCommandImpl = Effect.fn("desktop.wsl.cliCommand")(function* (
   distro: string | null,
   action: WslCliCommandAction,
 ): Effect.fn.Return<
@@ -880,12 +880,13 @@ const cliCommandImpl = Effect.fn("desktop.wsl.cliCommandImpl")(function* (
   yield* Effect.logWarning("Could not run the t3 command script in WSL.", {
     distro,
     action,
-    detail: `${result.stdout}${result.stderr}`.trim().slice(-500) || `exit ${result.exitCode}`,
+    exitCode: result.exitCode,
+    transportFailure: result.transportFailure,
   });
   return Option.none();
 });
 
-const recordCliTargetImpl = Effect.fn("desktop.wsl.recordCliTargetImpl")(function* (
+const recordCliTargetImpl = Effect.fn("desktop.wsl.recordCliTarget")(function* (
   distro: string | null,
   command: ReadonlyArray<string>,
 ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
@@ -1243,14 +1244,8 @@ export const layer = Layer.effect(
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),
         ),
-      cliCommand: (distro, action) =>
-        provideSpawner(cliCommandImpl(distro, action)).pipe(
-          Effect.withSpan("desktop.wsl.cliCommand"),
-        ),
-      recordCliTarget: (distro, command) =>
-        provideSpawner(recordCliTargetImpl(distro, command)).pipe(
-          Effect.withSpan("desktop.wsl.recordCliTarget"),
-        ),
+      cliCommand: (distro, action) => provideSpawner(cliCommandImpl(distro, action)),
+      recordCliTarget: (distro, command) => provideSpawner(recordCliTargetImpl(distro, command)),
     });
   }),
 );

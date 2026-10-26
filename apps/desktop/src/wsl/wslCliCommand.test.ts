@@ -128,18 +128,23 @@ describe.skipIf(!hasSh)("t3 command in a WSL distro (executed)", () => {
   it("falls back to the default PATH when the login shell never finishes", () => {
     const distro = createDistro();
     expect(distro.run("install").onPath).toBe(true);
-    const bash = runShell("command -v bash").stdout.trim();
-    expect(distro.exec(`echo 'sleep 60' > "$HOME/.bash_profile"`).status).toBe(0);
+    expect(
+      distro.exec(
+        `mkfifo "$HOME/blocked"
+printf '%s\\n' '#!/bin/sh' 'echo $$ > "$HOME/probe-pid"' 'exec cat "$HOME/blocked"' > ${sh(`${distro.work}/shell`)}`,
+      ).status,
+    ).toBe(0);
 
-    // The probe gets ten seconds. Read through a pipe, the profile's sleep
-    // would hold it open, and the script, for the full minute.
     const result = NodeChildProcess.spawnSync("sh", ["-s"], {
-      input: `export HOME=${sh(distro.home)} SHELL=${sh(bash)}\n${buildWslCliCommandScript("state")}`,
+      input: `export HOME=${sh(distro.home)} SHELL=${sh(`${distro.work}/shell`)}\n${buildWslCliCommandScript("state")}`,
       encoding: "utf8",
       // Under the project's 15 second test timeout, which a sync spawn would block.
       timeout: 14_000,
     });
     expect(result.signal).toBeNull();
+    const pid = Number(distro.exec('cat "$HOME/probe-pid"').stdout.trim());
+    expect(pid).toBeGreaterThan(0);
+    expect(() => process.kill(pid, 0)).toThrow();
     expect(result.status, result.stderr).toBe(0);
     expect(parseWslCliCommandReport(result.stdout)).toMatchObject({
       installedPath: `${distro.home}/.local/bin/t3`,
