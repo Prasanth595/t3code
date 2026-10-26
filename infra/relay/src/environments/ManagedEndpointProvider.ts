@@ -1112,8 +1112,7 @@ export const make = Effect.gen(function* () {
         )
         .pipe(
           Effect.catchTags({
-            // A refused delete must roll back the marking claim before it
-            // becomes a successful false result.
+            // Return false only after the refused deletion rolls back the release marker.
             ManagedEndpointDeprovisioningFailed: (failure) =>
               isManagedEndpointTunnelInUse(failure.cause)
                 ? Effect.succeedSome(false)
