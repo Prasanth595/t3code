@@ -510,7 +510,21 @@ export const make = Effect.gen(function* () {
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
+  const getState = Effect.gen(function* () {
+    const state = toContractState(yield* Ref.get(stateRef));
+    const wslPrimary = yield* Ref.get(wslPrimaryRef);
+    if (!state.endpointUrl || wslPrimary === null || Option.isSome(config.desktopLanHostOverride)) {
+      return state;
+    }
+    const probe = yield* Cache.get(wslAddressesCache, wslPrimary.distro ?? "");
+    if (
+      Option.isNone(probe) ||
+      probe.value.addresses.includes(new URL(state.endpointUrl).hostname)
+    ) {
+      return state;
+    }
+    return { ...state, endpointUrl: null, advertisedHost: null };
+  });
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(

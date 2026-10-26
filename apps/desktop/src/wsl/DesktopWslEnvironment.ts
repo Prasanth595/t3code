@@ -997,7 +997,10 @@ const parseIpv4Addresses = (raw: string): ReadonlyArray<string> =>
 
 export const probeDistroIpv4Addresses = Effect.fn("DesktopWslEnvironment.probeDistroIpv4Addresses")(
   function* (distro: string | null) {
-    return Option.map(yield* runDistroShell(distro, "hostname -I"), parseIpv4Addresses);
+    return Option.filter(
+      Option.map(yield* runDistroShell(distro, "hostname -I"), parseIpv4Addresses),
+      (addresses) => addresses.length > 0,
+    );
   },
 );
 

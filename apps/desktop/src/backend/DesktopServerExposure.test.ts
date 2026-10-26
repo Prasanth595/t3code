@@ -347,6 +347,7 @@ describe("DesktopServerExposure", () => {
     interface DistroProbe {
       /** `hostname -I` output; null makes the probe fail. */
       readonly hostnameOutput: string | null;
+      readonly windowsStatus?: string;
       /** `tailscale ip -4` output; null makes it fail (not installed). */
       readonly tailscaleOutput: string | null;
       /** When set, only `wsl.exe -d <distro>` answers; other distros fail. */
@@ -356,7 +357,7 @@ describe("DesktopServerExposure", () => {
     const wslSpawner = (probe: DistroProbe) =>
       layerMockSpawner((command) => {
         if (command._tag !== "StandardCommand" || command.command !== "wsl.exe") {
-          return tailscaleStatus;
+          return probe.windowsStatus ?? tailscaleStatus;
         }
         if (probe.distro !== undefined && command.args[1] !== probe.distro) return null;
         return command.args.at(-1) === "hostname -I" ? probe.hostnameOutput : probe.tailscaleOutput;
@@ -454,12 +455,36 @@ describe("DesktopServerExposure", () => {
       }),
     );
 
+    it.effect("NAT: clears the Windows pairing fallback when only loopback remains", () =>
+      withHarness(
+        hostInterfaces,
+        Effect.gen(function* () {
+          const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setServerExposureMode("network-accessible");
+          yield* exposure.configureFromSettings({ port: 4173 });
+          yield* exposure.setWslPrimary({ distro: "Ubuntu" });
+          assert.deepEqual(
+            (yield* exposure.getAdvertisedEndpoints).map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:4173/"],
+          );
+          const state = yield* exposure.getState;
+          assert.isNull(state.endpointUrl);
+          assert.isNull(state.advertisedHost);
+        }),
+        {},
+        wslSpawner({ hostnameOutput: "172.20.1.5", tailscaleOutput: null, windowsStatus: "{}" }),
+      ),
+    );
+
     it.effect("keeps the Windows addresses when the distro can't be probed", () =>
       Effect.gen(function* () {
-        assert.deepEqual(
-          yield* advertisedUrls({ hostnameOutput: null, tailscaleOutput: null }),
-          windowsUrls,
-        );
+        for (const hostnameOutput of [null, ""]) {
+          assert.deepEqual(
+            yield* advertisedUrls({ hostnameOutput, tailscaleOutput: null }),
+            windowsUrls,
+          );
+        }
       }),
     );
 
