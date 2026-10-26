@@ -175,25 +175,26 @@ async function setAllowed(allowed: boolean) {
 }
 
 it("displays and copies a code span range but opens at its start line", async () => {
-  await renderMarkdown("`src/main.ts:49-74`");
-  expect(anchor().textContent).toBe("main.ts · L49-74");
+  using _setup = setup();
+  await using screen = await renderMarkdown("`src/main.ts:49-74`");
+  expect(screen.anchor().textContent).toBe("main.ts · L49-74");
 
   state.choose.mockResolvedValue("copy-relative");
-  await openContextMenu();
-  await vi.waitFor(() => expect(state.copy).toHaveBeenLastCalledWith("work/src/main.ts:49-74"));
+  await screen.openContextMenu();
+  await vi.waitFor(() => expect(state.copy).toHaveBeenLastCalledWith("src/main.ts:49-74"));
   state.choose.mockResolvedValue("copy-full");
-  await openContextMenu();
+  await screen.openContextMenu();
   await vi.waitFor(() => expect(state.copy).toHaveBeenLastCalledWith("/work/src/main.ts:49-74"));
 
   state.choose.mockResolvedValue("open");
-  await openContextMenu();
+  await screen.openContextMenu();
   await vi.waitFor(() =>
     expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
       environmentId: threadRef.environmentId,
       input: { cwd: "/work/src/main.ts:49", editor: "vscode" },
     }),
   );
-  await act(async () => anchor().click());
+  await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "src/main.ts", 49);
 });
 
