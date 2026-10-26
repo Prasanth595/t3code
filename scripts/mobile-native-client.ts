@@ -626,15 +626,36 @@ const publish = Effect.fn("nativeClient.publish")(function* (staging: string, ta
   yield* fs.rename(staging, target);
 });
 
-/** Off macOS there is no Xcode: EAS builds the same simulator client from this checkout. */
+const easCli = "eas-cli@25.3.0";
+
+/** Xcode builds iOS locally; without it (Linux, or a Mac with no Xcode) EAS builds in the cloud. */
+const hasXcode = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "darwin") return false;
+  return yield* command("xcrun", ["--find", "xcodebuild"]).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+/** Without Xcode, EAS builds the same simulator client from this checkout. */
 const buildIosOnEas = Effect.fn("nativeClient.buildIosOnEas")(function* (staging: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Fail before any work when neither builder is available.
+  yield* command("npx", ["-y", easCli, "whoami"]).pipe(
+    Effect.mapError(
+      () =>
+        new NativeClientError({
+          message:
+            "iOS builds need Xcode on macOS, or an EAS login (`npx eas-cli login`, or EXPO_TOKEN) to build in the cloud.",
+        }),
+    ),
+  );
   yield* Console.error("No Xcode here; building the iOS simulator client on EAS (10-30 min).");
   const [build] = yield* decodeEasBuilds(
     yield* command("npx", [
       "-y",
-      "eas-cli@25.3.0",
+      easCli,
       "build",
       "--platform",
       "ios",
@@ -675,7 +696,7 @@ const build = Effect.fn("nativeClient.build")(function* (
     ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
     true,
   ).pipe(Effect.asVoid);
-  const onEas = platform === "ios" && (yield* HostProcess.Platform) !== "darwin";
+  const onEas = platform === "ios" && !(yield* hasXcode);
   if (platform === "android") yield* prebuildAndroid(mobile, prebuild);
   else if (!onEas) yield* prebuild;
   const staging = yield* fs.makeTempDirectory({
