@@ -128,6 +128,14 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+      const persistenceError =
+        (stage: EnvironmentCredentialCreatePersistenceError["stage"]) => (cause: unknown) =>
+          new EnvironmentCredentialCreatePersistenceError({
+            stage,
+            environmentId: input.environmentId,
+            credentialId: credential.credentialId,
+            cause,
+          });
       const now = DateTime.formatIso(yield* DateTime.now);
       // Serialize rotations across workers so the last commit keeps a valid credential.
       yield* db.$client
@@ -137,17 +145,7 @@ const make = Effect.gen(function* () {
               .execute(
                 sql`select pg_advisory_xact_lock(hashtext(${input.environmentId}::text), hashtext(${input.environmentPublicKey}::text))`,
               )
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new EnvironmentCredentialCreatePersistenceError({
-                      stage: "lock-credentials",
-                      environmentId: input.environmentId,
-                      credentialId: credential.credentialId,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(persistenceError("lock-credentials")));
             yield* db
               .insert(relayEnvironmentCredentials)
               .values({
@@ -159,17 +157,7 @@ const make = Effect.gen(function* () {
                 createdAt: now,
                 updatedAt: now,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new EnvironmentCredentialCreatePersistenceError({
-                      stage: "insert-credential",
-                      environmentId: input.environmentId,
-                      credentialId: credential.credentialId,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(persistenceError("insert-credential")));
             yield* db
               .update(relayEnvironmentCredentials)
               .set({
@@ -184,17 +172,7 @@ const make = Effect.gen(function* () {
                   isNull(relayEnvironmentCredentials.revokedAt),
                 ),
               )
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new EnvironmentCredentialCreatePersistenceError({
-                      stage: "revoke-previous-credentials",
-                      environmentId: input.environmentId,
-                      credentialId: credential.credentialId,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(persistenceError("revoke-previous-credentials")));
           }),
         )
         .pipe(
@@ -202,14 +180,7 @@ const make = Effect.gen(function* () {
           Effect.catchCause((cause) =>
             Effect.failCause(
               Cause.map(cause, (error) =>
-                SqlError.isSqlError(error)
-                  ? new EnvironmentCredentialCreatePersistenceError({
-                      stage: "transaction",
-                      environmentId: input.environmentId,
-                      credentialId: credential.credentialId,
-                      cause: error,
-                    })
-                  : error,
+                SqlError.isSqlError(error) ? persistenceError("transaction")(error) : error,
               ),
             ),
           ),
