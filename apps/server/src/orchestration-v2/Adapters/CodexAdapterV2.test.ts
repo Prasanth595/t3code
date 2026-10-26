@@ -557,7 +557,6 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
-  readonly sentInput?: ReadonlyArray<unknown>;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -648,7 +647,7 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: input.sentInput ?? [{ type: "text", text: input.sentPrompt ?? input.prompt }],
+          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -5959,8 +5958,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeThreadId,
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
-                // The objective reaches Codex through the goal, not as a prompt.
-                sentInput: [],
+                sentPrompt: `Start working toward this goal: ${objective}`,
               }).slice(5),
               5,
             ),
