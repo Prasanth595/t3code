@@ -270,12 +270,29 @@ it.effect("lists Android devices without probing the host again once it reports 
 
     modes.splice(0);
 
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
     // The SDK appears after connecting, so the next listing still probes the host.
     androidInstalled = true;
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual(["probe", ""]);
 
     // Android is now known to be available, so listing only runs `emulator -list-avds`.
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual([""]);
+
+    androidInstalled = false;
+    expect((yield* host.platformAvailability("android")).available).toBe(false);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
+    androidInstalled = true;
+    yield* host.inspect;
+    expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual([""]);
     yield* host.stop;
