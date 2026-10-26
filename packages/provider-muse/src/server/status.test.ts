@@ -59,23 +59,24 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
     return writeFakeCli({ directory, name: "muse", source });
   });
 
-const slowVersionSpawner = ChildProcessSpawner.make(() =>
-  Effect.succeed(
-    ChildProcessSpawner.makeHandle({
-      pid: ChildProcessSpawner.ProcessId(900_000_001),
-      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)).pipe(Effect.delay("6 seconds")),
-      isRunning: Effect.succeed(false),
-      kill: () => Effect.void,
-      unref: Effect.succeed(Effect.void),
-      stdin: Sink.drain,
-      stdout: Stream.succeed(new TextEncoder().encode("muse 1.4.12-R6909.1\n")),
-      stderr: Stream.empty,
-      all: Stream.empty,
-      getInputFd: () => Sink.drain,
-      getOutputFd: () => Stream.empty,
-    }),
-  ),
-);
+const slowVersionSpawner = (delayMs: number) =>
+  ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(900_000_001),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)).pipe(Effect.delay(delayMs)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.succeed(new TextEncoder().encode("muse 1.4.12-R6909.1\n")),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    ),
+  );
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>
@@ -161,13 +162,34 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         undefined,
         async () => host,
       ).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowVersionSpawner),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowVersionSpawner(6_000)),
         Effect.forkChild({ startImmediately: true }),
       );
       yield* TestClock.adjust("6 seconds");
       const snapshot = yield* Fiber.join(probing);
       expect(snapshot.status).toBe("ready");
       expect(snapshot.version).toBe("1.4.12-R6909.1");
+    }),
+  );
+
+  it.effect("stops a version check after fifteen seconds without starting the SDK", () =>
+    Effect.gen(function* () {
+      const createHost = vi.fn(async () => makeHost(metaCatalog));
+      const probing = yield* checkMuseProviderStatus(
+        settings({ enabled: true, binaryPath: "muse" }),
+        undefined,
+        undefined,
+        createHost,
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowVersionSpawner(16_000)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("15 seconds");
+      const snapshot = yield* Fiber.join(probing);
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toBe("Muse Code CLI version check timed out.");
+      expect(snapshot.version).toBeNull();
+      expect(createHost).not.toHaveBeenCalled();
     }),
   );
 });

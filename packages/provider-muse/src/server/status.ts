@@ -19,8 +19,7 @@ import {
   type ProviderProbeResult,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
-// Meant to stop a hung `--version`. On Windows, Muse can take 4-9 seconds to start
-// inside a job object, and the processes the T3 server starts run inside one.
+// Muse can take 4-9 seconds to start inside a Windows job object.
 const MUSE_VERSION_PROBE_TIMEOUT = "15 seconds";
 
 const MUSE_PRESENTATION = {
