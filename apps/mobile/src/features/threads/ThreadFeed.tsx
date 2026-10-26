@@ -2535,7 +2535,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <ThreadInlineFilePreview
           key={image.href}
           source={media.source}
-          onOpen={() => onMarkdownLinkPress(image.href, true)}
+          onOpen={() => onMarkdownLinkPress(image.href, undefined, true)}
           onPlaybackStart={onInlinePlaybackStart}
         />
       );
@@ -2550,7 +2550,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <Text
           accessibilityRole="link"
           accessibilityLabel={`Open ${name}`}
-          onPress={() => onMarkdownLinkPress(image.href, true)}
+          onPress={() => onMarkdownLinkPress(image.href, undefined, true)}
           style={{
             color: markdownStyles.assistant.nativeTextStyle.linkColor,
             fontSize: markdownStyles.assistant.nativeTextStyle.fontSize,
