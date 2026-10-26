@@ -95,6 +95,7 @@ export function threadTitleMenuVersion(thread: EnvironmentThreadShell | null) {
     // Nonblocking questions leave both flags false but still block snoozing.
     thread.source.pendingRuntimeRequest != null,
     thread.pendingSubagentRequest,
+    thread.pendingGuestMessageCount,
     thread.latestUserMessageAt,
     thread.latestRun?.status,
     thread.latestRun?.requestedAt,

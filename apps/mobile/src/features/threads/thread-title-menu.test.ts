@@ -215,6 +215,17 @@ describe("thread title header content", () => {
     );
   });
 
+  it("refreshes snooze availability when a guest message arrives or clears", () => {
+    const idle = { ...thread, pendingGuestMessageCount: 0 };
+    const waiting = { ...thread, pendingGuestMessageCount: 1 };
+    expect(ids({ thread: idle })).toContain("snooze");
+    expect(ids({ thread: waiting })).not.toContain("snooze");
+    expect(threadTitleMenuVersion(waiting)).not.toEqual(threadTitleMenuVersion(idle));
+    expect(threadTitleMenuVersion({ ...waiting, pendingGuestMessageCount: 0 })).toEqual(
+      threadTitleMenuVersion(idle),
+    );
+  });
+
   const gitItems = [
     { type: "button", icon: { name: "branch" } },
     { type: "spacing", spacing: 8 },

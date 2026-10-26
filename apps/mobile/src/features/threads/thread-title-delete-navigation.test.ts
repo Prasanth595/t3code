@@ -2,7 +2,7 @@ import * as NodeModule from "node:module";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { AndroidWorkspaceResetAction } from "../../lib/android-workspace-navigation";
+import type { RootStackResetAction } from "../../lib/root-stack-reset";
 import { leaveDeletedThread, threadRouteStillShows } from "./thread-title-delete-navigation";
 
 const require = NodeModule.createRequire(import.meta.url);
@@ -94,7 +94,7 @@ function deleteFromFocusedRoute(initial: StackState) {
     isFocused: () => state.routes[state.index]?.key === focusedKey,
     getState: () => state,
     getParent: () => undefined,
-    dispatch: (action: AndroidWorkspaceResetAction) => {
+    dispatch: (action: RootStackResetAction) => {
       state = apply(state, action);
     },
   };
