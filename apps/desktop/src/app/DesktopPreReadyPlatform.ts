@@ -10,7 +10,7 @@ import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
-import { resolveDesktopAppBranding, resolveDesktopSafeStorageName } from "./DesktopEnvironment.ts";
+import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
@@ -49,16 +49,11 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
-    // Chromium reads the safeStorage key's name before startup first yields.
-    // DesktopAppIdentity's later rename only changes the branded app name.
-    if (platform === "darwin" || platform === "linux") {
-      Electron.app.setName(resolveDesktopSafeStorageName(Electron.app.getVersion()));
-    }
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
@@ -114,15 +109,17 @@ export const make = Effect.gen(function* () {
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
             }).displayName,
-            execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+            execTarget:
+              process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() ||
+              process.env.APPIMAGE?.trim() ||
+              process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
           "utf8",
         );
       } catch {}
-      // Chromium caches its portal registration during startup. Set the identity
-      // before any asynchronous work can initialize it with Electron's default.
+      // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
       Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
@@ -151,8 +148,7 @@ export const make = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
-// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
-// observe app readiness before scheme privileges and command-line switches exist.
+// Complete scheme privileges and switches before later layers can observe app readiness.
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
   Layer.effect(DesktopPreReadyElectronOptions, make),

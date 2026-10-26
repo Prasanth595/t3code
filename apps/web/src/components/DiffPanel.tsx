@@ -29,7 +29,11 @@ import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import {
+  selectThreadDiffPanelSelection,
+  useDiffPanelSessionStore,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -111,11 +115,6 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   return entry;
 }
 
-interface CollapsedDiffFilesState {
-  readonly scopeKey: string | null;
-  readonly fileKeys: ReadonlySet<string>;
-}
-
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 function DiffFileCollapseToggle({
@@ -176,7 +175,9 @@ function DiffFileHeaderSuffix({
 }) {
   return (
     <>
-      <DiffFilePathCopyButton filePath={filePath} />
+      <span data-diff-copy-path className="inline-flex">
+        <DiffFilePathCopyButton filePath={filePath} />
+      </span>
       {hasStat ? (
         <DiffFileStatus error={error} truncated={truncated} retry={() => onRetry(filePath)} />
       ) : null}
@@ -214,10 +215,6 @@ export default function DiffPanel({
     Schema.Boolean,
   );
   const [baseRefQuery, setBaseRefQuery] = useState("");
-  const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
-    scopeKey: null,
-    fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
-  }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
 
@@ -390,7 +387,6 @@ export default function DiffPanel({
           cacheKey: selectedGitSource.diffHash,
         })
       : undefined;
-  // The code view keeps one loader for its lifetime; a new identity would remount it.
   const loadDiffFiles: FileDiffContentsLoader = useStableCallback(async (fileDiff) => {
     if (!currentLoadDiffFiles) {
       throw new Error("Diff file contents are unavailable for this selection.");
@@ -514,10 +510,18 @@ export default function DiffPanel({
   const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
     ? new Set(diffFileKeys)
     : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-  const collapsedDiffFileKeys =
-    collapsedDiffFiles.scopeKey === collapseScopeKey
-      ? collapsedDiffFiles.fileKeys
-      : defaultCollapsedDiffFileKeys;
+  const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
+    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
+  );
+  const collapsedDiffFileKeys = storedCollapsedDiffFileKeys ?? defaultCollapsedDiffFileKeys;
+  const updateCollapsedDiffFiles = (
+    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
+  ) => {
+    if (!collapseScopeKey) return;
+    useDiffPanelSessionStore
+      .getState()
+      .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
+  };
   const renderLoadingBoundary = () =>
     settledFileCount < renderableFiles.length ? (
       <DiffFileLoadingBoundary
@@ -539,6 +543,7 @@ export default function DiffPanel({
         collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
     }));
   const codeViewFileKeys = codeViewFiles.map((file) => file.fileKey);
+  const pendingFiles = renderableFiles.filter((file) => file.cacheKey?.endsWith(":pending"));
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles);
@@ -550,12 +555,10 @@ export default function DiffPanel({
     );
     const file = renderableFileEntries[index];
     if (!file) return false;
-    setCollapsedDiffFiles((current) => {
-      const next = new Set(
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
-      );
+    updateCollapsedDiffFiles((current) => {
+      const next = new Set(current);
       next.delete(file.fileKey);
-      return { scopeKey: collapseScopeKey, fileKeys: next };
+      return next;
     });
     if (lazySource && index >= settledFileCount) {
       requestFile(index);
@@ -602,43 +605,30 @@ export default function DiffPanel({
       },
     });
   };
-  // Every file header holds these; a new identity per collapse change would redraw them all.
   const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
-    setCollapsedDiffFiles((current) => {
-      const next = new Set(
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
-      );
+    updateCollapsedDiffFiles((current) => {
+      const next = new Set(current);
       if (next.has(fileKey)) {
         next.delete(fileKey);
       } else {
         next.add(fileKey);
       }
-      return { scopeKey: collapseScopeKey, fileKeys: next };
+      return next;
     });
   });
   // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
   const unfoldDiffFile = useStableCallback((fileKey: string) => {
-    setCollapsedDiffFiles((current) => {
-      const fileKeys =
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
-      if (!fileKeys.has(fileKey)) return current;
-      const next = new Set(fileKeys);
+    updateCollapsedDiffFiles((current) => {
+      if (!current.has(fileKey)) return current;
+      const next = new Set(current);
       next.delete(fileKey);
-      return { scopeKey: collapseScopeKey, fileKeys: next };
+      return next;
     });
   });
 
   const toggleDiffFileCollapse = () => {
     setCodeViewRevision((current) => current + 1);
-    setCollapsedDiffFiles((current) => {
-      const currentKeys =
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
-
-      return {
-        scopeKey: collapseScopeKey,
-        fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
-      };
-    });
+    updateCollapsedDiffFiles((current) => toggleAllDiffFiles(diffFileKeys, current));
   };
 
   const selectTurn = (runId: RunId) => {
@@ -673,7 +663,7 @@ export default function DiffPanel({
 
   const headerRow = (
     <>
-      <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+      <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="secondary" />}
@@ -726,18 +716,30 @@ export default function DiffPanel({
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
             aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
           >
-            {/* The head ref keeps 3rem while the row has room; below that the
-                base-ref button keeps 2.25rem so its menu stays reachable. */}
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="flex min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden" />
+                  // Too narrow for both refs, the New design keeps the target readable and drops
+                  // the head, which is the thread's own branch.
+                  <span className="flex min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden redesign:@max-[20rem]/diff-refs:hidden" />
                 }
               >
                 <span className="min-w-0 max-w-48 truncate">
                   {selectedGitSource.headRef ?? "HEAD"}
                 </span>
                 <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span aria-hidden className="hidden redesign:@max-[20rem]/diff-refs:inline" />
+                }
+              >
+                vs
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
@@ -757,7 +759,7 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
-                className="min-w-9 max-w-48 shrink"
+                className="min-w-9 max-w-48 shrink redesign:shrink-0"
                 aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
               >
                 <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
@@ -1044,8 +1046,7 @@ export default function DiffPanel({
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
                     for (const node of composedPath) {
                       if (!(node instanceof HTMLElement)) continue;
-                      // Header controls keep their own actions. In particular, the chevron must
-                      // not also trigger the row handler or the two toggles cancel each other.
+                      // Header buttons own their clicks; bubbling a chevron click would toggle twice.
                       if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                         return;
                       }
@@ -1096,6 +1097,7 @@ export default function DiffPanel({
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
+                    pendingFiles={pendingFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}

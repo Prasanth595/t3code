@@ -38,7 +38,6 @@ import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
-import * as DesktopSafeStorageIdentity from "./app/DesktopSafeStorageIdentity.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopCliCommand from "./app/DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
@@ -147,10 +146,7 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopLegacyLocalStorage.layer,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
-  DesktopConnectionCatalogStore.layer.pipe(
-    Layer.provideMerge(DesktopSavedEnvironments.layer),
-    Layer.provide(DesktopSafeStorageIdentity.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),
-  ),
+  DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
@@ -167,8 +163,7 @@ const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
 
 const layerDesktopPreview = PreviewManager.layer.pipe(
   Layer.provideMerge(DesktopBrowserHost.layer),
-  // Merged rather than provided so the IPC handlers can reach the import
-  // service alongside the manager; both sit on the same BrowserSession.
+  // IPC needs both services on the same BrowserSession.
   Layer.provideMerge(BrowserImport.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),
   Layer.provideMerge(BrowserSession.layer),
   Layer.provideMerge(PreviewPasskeys.layer),
@@ -237,8 +232,7 @@ const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
   Layer.provideMerge(layerElectron),
 );
 
-// Acquire strict pre-ready setup before Clerk. Nothing before the Clerk bridge
-// may yield, or Electron can emit ready before Clerk registers its scheme.
+// Pre-ready setup and Clerk must not yield before Clerk registers its scheme.
 const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.flatMap((clerkContext) =>
     layerDesktopApplicationRuntime.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
