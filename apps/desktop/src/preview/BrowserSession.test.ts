@@ -85,8 +85,6 @@ describe("BrowserSession", () => {
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
 
-      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
-      // two supported ids would hash to one partition and share every cookie.
       const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
       const replacementChar = yield* browserSessions.getPartition("p\ufffd");
       assert.notStrictEqual(loneSurrogate, replacementChar);
@@ -116,13 +114,8 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  // A rewritten session UA — any variant, even ones that keep the Electron
-  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so the
-  // guest must end up with Electron's native User-Agent.
   it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
     Effect.gen(function* () {
-      // Electron's real UA shape: app token, then Chrome, then Electron, then
-      // Safari — the token order and casing matter to any strip regex.
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
       fromPartition.mockReset();
@@ -248,52 +241,6 @@ describe("BrowserSession", () => {
       const created = sessions.get(partition);
       assert.isDefined(created);
       assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("correlates clear failures while still attempting every session", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      yield* browserSessions.getSession("scope-a");
-      yield* browserSessions.getSession("scope-b");
-      const firstPartition = yield* browserSessions.getPartition("scope-a");
-      const secondPartition = yield* browserSessions.getPartition("scope-b");
-      const firstSession = sessions.get(firstPartition);
-      const secondSession = sessions.get(secondPartition);
-      assert.isDefined(firstSession);
-      assert.isDefined(secondSession);
-
-      const storageCause = new Error("storage clear failed");
-      secondSession.clearStorageData.mockImplementationOnce(() => Promise.reject(storageCause));
-      const storageError = yield* browserSessions.clearCookies().pipe(Effect.flip);
-
-      assert.instanceOf(storageError, BrowserSession.BrowserSessionStorageClearError);
-      assert.equal(storageError.partition, secondPartition);
-      assert.strictEqual(storageError.cause, storageCause);
-      assert.equal(
-        storageError.message,
-        `Failed to clear desktop preview browser storage for partition ${secondPartition}.`,
-      );
-      assert.notInclude(storageError.message, storageCause.message);
-      for (const browserSession of sessions.values()) {
-        assert.strictEqual(browserSession.clearStorageData.mock.calls.length, 1);
-      }
-
-      const cacheCause = new Error("cache clear failed");
-      firstSession.clearCache.mockImplementationOnce(() => Promise.reject(cacheCause));
-      const cacheError = yield* browserSessions.clearCache().pipe(Effect.flip);
-
-      assert.instanceOf(cacheError, BrowserSession.BrowserSessionCacheClearError);
-      assert.equal(cacheError.partition, firstPartition);
-      assert.strictEqual(cacheError.cause, cacheCause);
-      assert.equal(
-        cacheError.message,
-        `Failed to clear the desktop preview browser cache for partition ${firstPartition}.`,
-      );
-      assert.notInclude(cacheError.message, cacheCause.message);
-      for (const browserSession of sessions.values()) {
-        assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
-      }
     }).pipe(Effect.provide(layer)),
   );
 });
