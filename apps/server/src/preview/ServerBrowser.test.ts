@@ -85,7 +85,9 @@ const PNG_HEADER = (() => {
 
 function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
+  const metrics = { ratio: 2, width: 1280, height: 800 };
   return {
+    metrics,
     on: vi.fn((name: string, listener: () => void) => events.on(name, listener)),
     emit: (name: string) => events.emit(name),
     detach: vi.fn(async () => {}),
@@ -100,12 +102,17 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
       if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
+        const worldName = (input as { worldName?: string }).worldName;
         return {
-          executionContextId: (input as { worldName?: string }).worldName === "t3-preview" ? 1 : 7,
+          executionContextId:
+            worldName === "t3-preview" ? 1 : worldName === "t3-preview-metrics" ? 9 : 7,
         };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 1) {
         return { result: { value: [] } };
+      }
+      if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9) {
+        return { result: { value: metrics } };
       }
       if (method === "Page.addScriptToEvaluateOnNewDocument") frame?.recording.resolve();
       if (method === "Input.dispatchKeyEvent" && (input as { commands?: unknown }).commands) {
@@ -159,7 +166,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     frames: () => [page],
     url: () => url,
     title: vi.fn(async () => "test page"),
-    viewportSize: () => viewport,
+    viewportSize: vi.fn<Page["viewportSize"]>(() => viewport),
     setViewportSize: vi.fn(async (size: typeof viewport) => {
       viewport = size;
     }),
@@ -623,6 +630,33 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("sends desktop viewport dimensions when Playwright has no emulated viewport", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, tabId } = yield* ready;
+      const { page } = desktopConnections[0]!.context;
+      page.viewportSize.mockReturnValue(null);
+      page.setViewportSize.mockClear();
+
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      const outputs = yield* Queue.takeAll(viewer.output);
+      expect(outputs).toContainEqual({ _tag: "viewport", width: 1280, height: 800 });
+
+      const session = desktopConnections[0]!.context.sessions[0]!;
+      session.metrics.width = 960;
+      session.metrics.height = 600;
+      session.emit("Page.frameResized");
+      expect(yield* Queue.take(viewer.output)).toEqual({
+        _tag: "viewport",
+        width: 960,
+        height: 600,
+      });
+      expect(page.setViewportSize).not.toHaveBeenCalled();
     }),
   ).pipe(Effect.provide(layer)),
 );
