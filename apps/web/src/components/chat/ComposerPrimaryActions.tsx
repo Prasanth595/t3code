@@ -1,5 +1,5 @@
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useClientSettings, useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -10,6 +10,7 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
@@ -367,48 +368,32 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
-              className={
+            <span
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 tabular-nums",
                 redesign
-                  ? "flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm aria-pressed:bg-accent/60 aria-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
-                  : cn(
-                      "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:h-8 [&_svg]:pointer-events-none [&_svg]:size-3.5",
-                      keepFullHistory
-                        ? "border-border text-muted-foreground hover:text-foreground"
-                        : "border-warning/40 text-warning hover:bg-warning/8",
-                    )
-              }
-              {...pointerFocusProps}
-              aria-pressed={!keepFullHistory}
-              aria-label={`Compact ${compactTokens} tokens of history before sending`}
-              disabled={!canOperateThread}
-              onClick={onToggleKeepFullHistory}
+                  ? "h-7 font-medium text-base text-foreground/80 sm:text-sm"
+                  : "h-9 text-muted-foreground text-xs sm:h-8",
+              )}
             />
           }
         >
-          <Minimize2Icon aria-hidden="true" />
           {/* The new design keeps the token count in the tooltip so the permission label keeps its room. */}
-          {redesign ? (
-            keepFullHistory ? (
-              "Keep full"
-            ) : (
-              "Compact next"
-            )
-          ) : (
-            <>
-              {keepFullHistory ? "Full" : "Compact"}
-              <span>{compactTokens}</span>
-            </>
-          )}
+          {redesign ? "Compact" : `Compact ${compactTokens}`}
+          {/* No <label>: clicking one focuses the switch and steals focus from the composer. */}
+          <Switch
+            size="sm"
+            {...pointerFocusProps}
+            checked={!keepFullHistory}
+            disabled={!canOperateThread}
+            aria-label={`Compact ${compactTokens} tokens of history before sending`}
+            onCheckedChange={onToggleKeepFullHistory}
+          />
         </TooltipTrigger>
         <TooltipPopup>
-          <div>
-            {keepFullHistory
-              ? `Next send keeps all ${compactTokens} tokens.`
-              : `Next send compacts ${compactTokens} tokens first.`}
-          </div>
-          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
+          {keepFullHistory
+            ? `Next send keeps all ${compactTokens} tokens.`
+            : `Next send compacts ${compactTokens} tokens first.`}
         </TooltipPopup>
       </Tooltip>
       {submit}
