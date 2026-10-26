@@ -4,6 +4,8 @@ import { parse } from "react-native-svg";
 import { fetch } from "expo/fetch";
 import { expect, it, vi } from "vite-plus/test";
 
+const harness = vi.hoisted(() => ({ failImage: () => {} }));
+
 vi.mock("react-native", () => ({
   View: ({ children, style }: { children: ReactNode; style?: CSSProperties }) => (
     <div style={Array.isArray(style) ? Object.assign({}, ...style) : style}>{children}</div>
@@ -22,7 +24,12 @@ vi.mock("react-native-svg", async () => {
   return { parse: vi.fn(xml.parse), SvgAst: xml.SvgAst };
 });
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
-vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("expo-image", () => ({
+  Image: (props: { onError: () => void }) => {
+    harness.failImage = props.onError;
+    return <img alt="" />;
+  },
+}));
 vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
@@ -51,6 +58,7 @@ const dataUri = (xml: string) => `data:image/svg+xml,${encodeURIComponent(xml)}`
 type FetchResponse = Awaited<ReturnType<typeof fetch>>;
 
 function setup() {
+  harness.failImage = () => {};
   vi.mocked(parse).mockClear();
   vi.mocked(fetch).mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -63,7 +71,7 @@ function setup() {
   };
   return {
     container,
-    render(uri: string) {
+    render(uri: string | null, format: "svg" | "raster" = "svg") {
       act(() =>
         root.render(
           <MarkdownImageAvailableWidthContext value={100}>
@@ -72,7 +80,7 @@ function setup() {
               sourceKey="image"
               unavailable={false}
               alt={null}
-              format="svg"
+              format={format === "svg" ? "svg" : undefined}
               onPressPreview={() => undefined}
             />
           </MarkdownImageAvailableWidthContext>,
@@ -178,4 +186,16 @@ it("shows a current request failure without entering the parser", async () => {
   await act(async () => response.reject(new Error("offline")));
   expect(parse).not.toHaveBeenCalled();
   expect(view.container.textContent).toBe("Image unavailable");
+});
+
+it("retries a failed image once its URI comes back through null", async () => {
+  using view = setup();
+  view.render("https://example.test/a.png", "raster");
+  await act(async () => harness.failImage());
+  expect(view.container.textContent).toContain("Image unavailable");
+
+  view.render(null, "raster");
+  view.render("https://example.test/a.png", "raster");
+  expect(view.container.textContent).not.toContain("Image unavailable");
+  expect(view.container.querySelector("img")).not.toBeNull();
 });
