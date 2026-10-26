@@ -452,6 +452,9 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
+// CDP cannot cancel a screenshot, so a session keeps at most one unanswered.
+const unansweredCaptures = new WeakMap<CDPSession, Promise<void>>();
+
 // Never pass a clip scale: Chromium mirrors the top-left of the page into a `backdrop-filter`
 // in any capture it shrinks.
 export const captureViewport = async (
@@ -462,11 +465,18 @@ export const captureViewport = async (
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(noFrame()), CAPTURE_TIMEOUT_MS);
   });
-  const captured = cdp.send("Page.captureScreenshot", {
-    format: options.format,
-    ...(options.quality === undefined ? {} : { quality: options.quality }),
-  });
   try {
+    const unanswered = unansweredCaptures.get(cdp);
+    if (unanswered) await Promise.race([unanswered, expired]);
+    const captured = cdp.send("Page.captureScreenshot", {
+      format: options.format,
+      ...(options.quality === undefined ? {} : { quality: options.quality }),
+    });
+    const settled = captured.then(constVoid, constVoid);
+    unansweredCaptures.set(cdp, settled);
+    void settled.then(() => {
+      if (unansweredCaptures.get(cdp) === settled) unansweredCaptures.delete(cdp);
+    });
     return (await Promise.race([captured, expired])).data;
   } finally {
     clearTimeout(timer);

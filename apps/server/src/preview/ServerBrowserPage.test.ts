@@ -413,4 +413,37 @@ describe("server browser capture", () => {
       vi.useRealTimers();
     }
   });
+
+  it("sends no new screenshot while an earlier one is unanswered", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstAnswer = Promise.withResolvers<{ data: string }>();
+      const send = vi
+        .fn()
+        .mockReturnValueOnce(firstAnswer.promise)
+        .mockResolvedValue({ data: "second" });
+      const cdp = { send } as unknown as CDPSession;
+      const outcome = (capture: Promise<string>) =>
+        capture.then(
+          (data) => data,
+          (error: unknown) => error,
+        );
+
+      const first = outcome(ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await first).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+
+      const blocked = outcome(ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await blocked).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+      expect(send).toHaveBeenCalledTimes(1);
+
+      firstAnswer.resolve({ data: "first" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await ServerBrowserPage.captureViewport(cdp, { format: "jpeg" })).toBe("second");
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
