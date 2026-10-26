@@ -1,3 +1,4 @@
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId } from "@t3tools/contracts";
 
@@ -107,10 +108,23 @@ export function resolveDraftProjectSelection(
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }
 
+/** The scopes the project picker lists; it offers scratch projects as "No project" instead. */
+export function pickerProjectScopes(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  serverConfigs: ReadonlyMap<EnvironmentId, { readonly scratchWorkspaceRoot?: string }>,
+): ReadonlyArray<HomeProjectScope> {
+  return scopes.filter(
+    (scope) =>
+      !scope.projects.every((project) =>
+        isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
+      ),
+  );
+}
+
 /**
- * Where a global "New thread" goes: a draft in the only selectable project, keeping the current
- * project's workspace, or else the picker, which lists the current project first and opens the
- * draft only once a project is chosen.
+ * Where a global "New thread" goes, given the picker's scopes: a draft in the only selectable
+ * project, keeping the current project's workspace, or else the picker, which lists the current
+ * project first and opens the draft only once a project is chosen.
  */
 export function newTaskDestination(
   projectScopes: ReadonlyArray<HomeProjectScope>,

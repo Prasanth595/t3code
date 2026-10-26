@@ -11,7 +11,6 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -40,6 +39,7 @@ import {
   filterProjectScopes,
   getProjectScopeSelectionTarget,
   orderSuggestedProjectFirst,
+  pickerProjectScopes,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
@@ -183,12 +183,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const serverConfigs = useServerConfigs();
   const suggestedProjectKey = route.params?.suggestedProjectKey;
   const listScopes = orderSuggestedProjectFirst(
-    projectScopes.filter(
-      (scope) =>
-        !scope.projects.every((project) =>
-          isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
-        ),
-    ),
+    pickerProjectScopes(projectScopes, serverConfigs),
     suggestedProjectKey,
   );
   const visibleScopes = filterProjectScopes(listScopes, searchText);

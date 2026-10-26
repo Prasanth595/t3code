@@ -1,4 +1,4 @@
-import { ActiveNewTaskContext } from "../../state/active-new-task";
+import { ActiveNewTaskContext, activeNewTaskProjectKeyAtom } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -438,16 +438,18 @@ export function NewTaskFlowProvider(
             : selectedProjectDraftKey
               ? `draft-task:${selectedProjectDraftKey}`
               : null;
-  const activeProjectKey = selectedProject
-    ? scopedProjectKey(selectedProject.environmentId, selectedProject.id)
-    : null;
   const activeNewTask = React.useMemo(
-    () =>
-      props.active === false
-        ? null
-        : { pendingKey: activePendingKey, projectKey: activeProjectKey },
-    [props.active, activePendingKey, activeProjectKey],
+    () => (props.active === false ? null : { pendingKey: activePendingKey }),
+    [props.active, activePendingKey],
   );
+  const activeProjectKey =
+    props.active !== false && selectedProject
+      ? scopedProjectKey(selectedProject.environmentId, selectedProject.id)
+      : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Publishes the derived selection to an atom read at press time, so readers don't re-render on every draft change.
+  useEffect(() => {
+    appAtomRegistry.set(activeNewTaskProjectKeyAtom, activeProjectKey);
+  }, [activeProjectKey]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;

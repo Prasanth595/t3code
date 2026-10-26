@@ -7,6 +7,7 @@ import {
   getProjectScopeSelectionTarget,
   newTaskDestination,
   orderSuggestedProjectFirst,
+  pickerProjectScopes,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
 } from "./new-task-project-selection";
@@ -108,6 +109,14 @@ describe("resolveDraftProjectSelection", () => {
     });
   });
 
+  it("keeps a draft's chosen project instead of asking again", () => {
+    const projects = [makeProject("first"), makeProject("chosen")];
+    const scopes = projects.map((project) => makeScope([project], project.id));
+    expect(resolveDraftProjectSelection("environment:chosen", projects, scopes)).toEqual({
+      kind: "preserve",
+    });
+  });
+
   it("does not preserve a project key that is missing from the catalog", () => {
     const project = makeProject("t3code");
     expect(
@@ -150,6 +159,26 @@ describe("newTaskDestination", () => {
     });
   });
 
+  it("counts only the projects the picker lists, not projectless threads", () => {
+    const real = makeScope([makeProject("only")], "only");
+    const scratch = makeScope([
+      makeProject("scratch", "environment", { workspaceRoot: "/scratch" }),
+    ]);
+    const serverConfigs = new Map([
+      [EnvironmentId.make("environment"), { scratchWorkspaceRoot: "/scratch" }],
+    ]);
+    expect(
+      newTaskDestination(pickerProjectScopes([real, scratch], serverConfigs), undefined, "request"),
+    ).toEqual({
+      kind: "draft",
+      draft: { requestId: "request", environmentId: "environment", projectId: "only" },
+    });
+    // With no real project the picker still opens, offering "No project" and Add project.
+    expect(
+      newTaskDestination(pickerProjectScopes([scratch], serverConfigs), undefined, "request"),
+    ).toEqual({ kind: "pick", picker: { requestId: "request" } });
+  });
+
   it("keeps the current workspace when the only project spans environments", () => {
     const scope = makeScope([makeProject("t3code", "mac"), makeProject("t3code", "server")]);
     expect(newTaskDestination([scope], "server:t3code", "request")).toEqual({
@@ -170,15 +199,5 @@ describe("newTaskDestination", () => {
     expect(getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), "server:t3code")).toBe(
       server,
     );
-  });
-});
-
-describe("project-scoped new threads", () => {
-  it("do not ask again once the route's project is applied", () => {
-    const projects = [makeProject("first"), makeProject("chosen")];
-    const scopes = projects.map((project) => makeScope([project], project.id));
-    expect(resolveDraftProjectSelection("environment:chosen", projects, scopes)).toEqual({
-      kind: "preserve",
-    });
   });
 });

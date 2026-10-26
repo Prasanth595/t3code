@@ -44,8 +44,9 @@ import {
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useActiveNewTask } from "../../state/active-new-task";
+import { activeNewTaskProjectKeyAtom } from "../../state/active-new-task";
 import { useProjects } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -71,7 +72,7 @@ import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
-import { newTaskDestination } from "../threads/new-task-project-selection";
+import { newTaskDestination, pickerProjectScopes } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -512,15 +513,15 @@ function AdaptiveWorkspaceLayoutContent(
     handleSelectDetail({ name: "Thread", params });
 
   const projects = useProjects();
-  const activeNewTask = useActiveNewTask();
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
   const handleStartNewTask = () => {
     const state = rootStackState(navigation);
-    const currentRoute = workspaceRoutesOf(
+    const { workspace, overlays } = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
-    ).workspace.at(-1);
+    );
+    const currentRoute = workspace.at(-1);
     const params =
       currentRoute?.name === "Thread"
         ? (currentRoute.params as ReactNavigation.RootParamList["Thread"])
@@ -538,10 +539,13 @@ function AdaptiveWorkspaceLayoutContent(
     const currentProjectKey = thread
       ? scopedProjectKey(thread.environmentId, thread.projectId)
       : params?.draft
-        ? (activeNewTask?.projectKey ?? undefined)
+        ? (appAtomRegistry.get(activeNewTaskProjectKeyAtom) ?? undefined)
         : undefined;
     const destination = newTaskDestination(
-      buildHomeProjectScopes({ projects, environmentId: null, projectGroupingMode }),
+      pickerProjectScopes(
+        buildHomeProjectScopes({ projects, environmentId: null, projectGroupingMode }),
+        appAtomRegistry.get(environmentServerConfigsAtom),
+      ),
       currentProjectKey,
       uuidv4(),
     );
@@ -551,7 +555,13 @@ function AdaptiveWorkspaceLayoutContent(
     }
     // The picker opens over the current page, so backing out of it returns there.
     if (layout.primarySidebarOverlaysContent) setPrimarySidebarVisible(false);
-    navigation.navigate("NewTaskProject", destination.picker);
+    if (!state || overlays.length === 0) {
+      navigation.navigate("NewTaskProject", destination.picker);
+      return;
+    }
+    // Close open sheets first, or the picker would open inside them.
+    const routes = [...workspace, { name: "NewTaskProject", params: destination.picker }];
+    dispatchRootStackReset(navigation, state, { ...state, index: routes.length - 1, routes });
   };
 
   useHardwareKeyboardCommand("newTask", () => {
