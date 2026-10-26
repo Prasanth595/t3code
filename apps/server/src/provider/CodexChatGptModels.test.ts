@@ -125,6 +125,11 @@ it.effect(
             },
             {
               ...accountModel,
+              slug: "blank-levels",
+              supported_reasoning_levels: [{ effort: "  " }],
+            },
+            {
+              ...accountModel,
               slug: "invalid-default",
               default_reasoning_level: {},
               supported_reasoning_levels: [{ effort: "future-effort" }],
@@ -140,11 +145,12 @@ it.effect(
       );
       assert.deepStrictEqual(
         models.map(({ slug }) => slug),
-        [accountModel.slug, "invalid-levels", "invalid-default"],
+        [accountModel.slug, "invalid-levels", "blank-levels", "invalid-default"],
       );
       assert.strictEqual(models[0]!.capabilities!.optionDescriptors![0]!.currentValue, "medium");
       assert.isNull(models[1]!.capabilities);
-      assert.deepStrictEqual(models[2]!.capabilities!.optionDescriptors, [
+      assert.isNull(models[2]!.capabilities);
+      assert.deepStrictEqual(models[3]!.capabilities!.optionDescriptors, [
         {
           id: "reasoningEffort",
           label: "Reasoning",

@@ -27,7 +27,7 @@ const Catalog = Schema.Struct({
 });
 
 const decodeReasoningLevels = Schema.decodeUnknownOption(
-  Schema.Array(Schema.Struct({ effort: Schema.NonEmptyString })),
+  Schema.Array(Schema.Struct({ effort: Schema.NonEmptyString.check(Schema.isPattern(/\S/u)) })),
 );
 
 export const chatGptModels = Effect.fn("chatGptModels")(function* (
