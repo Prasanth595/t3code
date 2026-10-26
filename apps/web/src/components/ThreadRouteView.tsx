@@ -46,6 +46,10 @@ export function ThreadRouteView({
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  // Reached from the sidebar before finalize, the thread still has its draft.
+  const serverThreadDraftId = useComposerDraftStore((store) =>
+    serverThreadRef ? store.getDraftIdByRef(serverThreadRef) : null,
+  );
   // The ChatView that carried a draft keeps its key through the redirect to its thread, and only
   // until the route leaves that thread, so later visits reuse the shared unkeyed ChatView.
   const [handoffKey, setHandoffKey] = useState<{ threadKey: string; key: string } | null>(null);
@@ -56,7 +60,9 @@ export function ThreadRouteView({
         : { threadKey: scopedThreadKey(draftRedirect), key: draftId }
       : serverThreadRef && handoffKey?.threadKey === scopedThreadKey(serverThreadRef)
         ? handoffKey
-        : null;
+        : serverThreadRef && serverThreadDraftId
+          ? { threadKey: scopedThreadKey(serverThreadRef), key: serverThreadDraftId }
+          : null;
   if (nextHandoffKey !== handoffKey) {
     setHandoffKey(nextHandoffKey);
   }
