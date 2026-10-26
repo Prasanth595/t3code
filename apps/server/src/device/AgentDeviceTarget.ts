@@ -83,11 +83,7 @@ export const releaseAgentDeviceSession =
       }),
       Effect.flatMap((request) => http.pipe(HttpClient.withScope).execute(request)),
       // agent-device reports an already-released session as HTTP 404.
-      Effect.flatMap((response) =>
-        response.status === 404
-          ? Effect.succeed(response)
-          : HttpClientResponse.filterStatusOk(response),
-      ),
+      Effect.filterOrElse((response) => response.status === 404, HttpClientResponse.filterStatusOk),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentCloseResult)),
       Effect.scoped,
       Effect.timeout(Duration.seconds(15)),
