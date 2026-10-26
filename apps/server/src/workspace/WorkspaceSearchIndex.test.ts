@@ -157,14 +157,20 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
               value: grepResult("needleSuffix", [[0, 6]], nextCursor),
             },
       );
+      using now = vi.spyOn(performance, "now").mockReturnValue(0);
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        scanFiles: () => {
+          now.mockReturnValue(1_000);
+          return { ok: true as const, value: undefined };
+        },
         grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      yield* TestClock.adjust("5 minutes");
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,

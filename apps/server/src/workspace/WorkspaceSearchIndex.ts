@@ -384,17 +384,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
     execute: () => Result<A>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
-    // Watchers can lose events; repair hot indexes occasionally, rather than after every turn.
-    yield* Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      if (now - refreshedAt < WORKSPACE_INDEX_RECOVERY_INTERVAL_MS) return;
-      refreshedAt = now;
-      yield* refresh().pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Periodic workspace index recovery failed", { cwd, cause }),
-        ),
-      );
-    }).pipe(refreshPermit.withPermits(1));
     const result = yield* Effect.try({
       try: execute,
       catch: (cause) =>
@@ -448,8 +437,21 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     refreshedAt = yield* Clock.currentTimeMillis;
   });
 
+  // Watchers can lose events; repair hot indexes occasionally, rather than after every turn.
+  const recover = Effect.fn("WorkspaceSearchIndex.recover")(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    if (now - refreshedAt < WORKSPACE_INDEX_RECOVERY_INTERVAL_MS) return;
+    refreshedAt = now;
+    yield* refresh().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Periodic workspace index recovery failed", { cwd, cause }),
+      ),
+    );
+  }, refreshPermit.withPermits(1));
+
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
+      yield* recover();
       const incompleteBeforeQuery = hasIncompleteInitialScan();
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
@@ -470,6 +472,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (query, limit, kind, imageOnly) {
+    yield* recover();
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
@@ -496,6 +499,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
+    yield* recover();
     const { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
