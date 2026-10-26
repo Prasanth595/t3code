@@ -10,9 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -107,18 +108,16 @@ export function mergeAnsweredUsage(
   return mergeUsage(answered, USAGE_CONTRACT_VERSION);
 }
 
-const SETTLE_WINDOW_MS = 300;
+const settleWindowAtom = Atom.family((loadKey: string) =>
+  Atom.make(Effect.sleep("300 millis").pipe(Effect.as(true))).pipe(
+    Atom.withLabel(`web-usage:settle:${loadKey}`),
+  ),
+);
+const idleSettleWindowAtom = Atom.make(AsyncResult.initial<boolean>());
 
-function useSettleWindow(active: boolean, key: string) {
-  const [elapsedKey, setElapsedKey] = useState<string | null>(null);
-  if (elapsedKey !== null && (!active || elapsedKey !== key)) setElapsedKey(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- the settle window is wall-clock time
-  useEffect(() => {
-    if (!active) return;
-    const timeout = setTimeout(() => setElapsedKey(key), SETTLE_WINDOW_MS);
-    return () => clearTimeout(timeout);
-  }, [active, key]);
-  return active && elapsedKey === key;
+function useSettleWindow(active: boolean, loadKey: string) {
+  const elapsed = useAtomValue(active ? settleWindowAtom(loadKey) : idleSettleWindowAtom);
+  return active && AsyncResult.isSuccess(elapsed);
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
