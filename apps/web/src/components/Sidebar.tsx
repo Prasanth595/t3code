@@ -155,6 +155,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   buildThreadMoveTargets,
+  NEW_MOVE_PROJECT_ID,
   threadMoveRequest,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
@@ -2368,13 +2369,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
-        const moveTargets =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadProjectMove ===
-          true
-            ? buildThreadMoveTargets(projects, thread)
-            : [];
+        const threadServerConfig = serverConfigs.get(thread.environmentId);
+        const supportsProjectMove =
+          threadServerConfig?.environment.capabilities.threadProjectMove === true;
+        const moveTargets = supportsProjectMove ? buildThreadMoveTargets(projects, thread) : [];
+        const canCreateMoveProject =
+          supportsProjectMove && threadServerConfig?.newProjectsRoot != null;
         const canMoveProject =
-          moveTargets.length > 0 &&
+          (moveTargets.length > 0 || canCreateMoveProject) &&
           threadRuntimeCanArchive(thread.runtime) &&
           thread.lineage.relationshipToParent !== "subagent";
         const threadProjectGroup =
@@ -2408,6 +2410,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               canMoveProject,
               moveTargets,
+              canCreateMoveProject,
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
@@ -2425,6 +2428,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value === NEW_MOVE_PROJECT_ID) {
+          openCommandPalette({ moveThreadToNewProject: threadRef });
+          return;
+        }
         if (clicked.value?.startsWith("move-project:")) {
           const target = moveTargets.find(
             (candidate) => `move-project:${candidate.projectId}` === clicked.value,

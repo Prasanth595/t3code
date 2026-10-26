@@ -61,6 +61,35 @@ export function threadMoveRequest(
     : { keepWorktree: true, description: "The checkout stays where it is." };
 }
 
+/** Creates a project, then moves the thread into it. */
+export const NEW_MOVE_PROJECT_ID = "move-project-new" as const;
+
+/** The Move to project… submenu: other projects, then a new one when the server can create it. */
+export function threadMoveMenuChildren(
+  targets: ReadonlyArray<ThreadMoveTarget>,
+  canCreateProject: boolean,
+): ReadonlyArray<{
+  readonly id: `move-project:${string}` | typeof NEW_MOVE_PROJECT_ID;
+  readonly label: string;
+  readonly separatorBefore?: true;
+}> {
+  return [
+    ...targets.map((target) => ({
+      id: `move-project:${target.projectId}` as const,
+      label: target.label,
+    })),
+    ...(canCreateProject
+      ? [
+          {
+            id: NEW_MOVE_PROJECT_ID,
+            label: "New project…",
+            ...(targets.length > 0 ? { separatorBefore: true as const } : {}),
+          },
+        ]
+      : []),
+  ];
+}
+
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -78,6 +107,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "move-project"
   | `move-project:${string}`
+  | typeof NEW_MOVE_PROJECT_ID
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
@@ -143,6 +173,8 @@ export interface ThreadActionMenuState {
   readonly isRunning: boolean;
   readonly canMoveProject: boolean;
   readonly moveTargets: ReadonlyArray<ThreadMoveTarget>;
+  /** The server can create a project to move into, so the menu shows even with no other project. */
+  readonly canCreateMoveProject?: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -275,7 +307,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    ...(state.moveTargets.length > 0
+    ...(state.moveTargets.length > 0 || state.canCreateMoveProject === true
       ? [
           {
             id: "move-project" as const,
@@ -284,10 +316,10 @@ export function buildThreadActionMenuItems(
             disabled: !state.canMoveProject,
             ...(state.canMoveProject
               ? {
-                  children: state.moveTargets.map((target) => ({
-                    id: `move-project:${target.projectId}` as const,
-                    label: target.label,
-                  })),
+                  children: threadMoveMenuChildren(
+                    state.moveTargets,
+                    state.canCreateMoveProject === true,
+                  ),
                 }
               : {}),
           },

@@ -318,6 +318,13 @@ export function readEnvironmentSupportsThreadProjectMove(environmentId: Environm
   );
 }
 
+/** True when the server has a folder for new projects, as the palette's New project needs. */
+export function readEnvironmentCanCreateProject(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.newProjectsRoot != null
+  );
+}
+
 export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

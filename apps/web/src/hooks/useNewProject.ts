@@ -7,7 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { waitForProject } from "~/state/entities";
@@ -69,6 +69,8 @@ export function useNewProject() {
     readonly environmentId: EnvironmentId;
     readonly name: string;
     readonly publishTo: NewProjectPublishTarget | null;
+    /** Runs instead of opening a new thread in the project. */
+    readonly onCreated?: (projectId: ProjectId) => Promise<void>;
   }): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
@@ -105,6 +107,11 @@ export function useNewProject() {
         workspaceRoot,
         target: input.publishTo,
       });
+    }
+
+    if (input.onCreated) {
+      await input.onCreated(projectId);
+      return true;
     }
 
     const projectRef = scopeProjectRef(input.environmentId, projectId);

@@ -131,6 +131,11 @@ session ends, and the next turn starts in the destination project. Nothing is
 deleted. The thread shows a note with the old folder's path, and the CLI and
 `t3_thread_update` return it as `scratchFolder`.
 
+To move into a project that does not exist yet, pick **New project…** at the
+end of the **Move to project…** list. Name it, choose **Create and move**, and
+the app creates the project on the same machine and moves the thread into it.
+If the move fails, the new project stays.
+
 An agent can move its own thread with `t3_thread_update` and
 `action: "move_project"`. Because the agent is always mid-turn when it asks,
 the move is checked right away and applied when the turn completes. The

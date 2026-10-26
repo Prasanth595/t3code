@@ -82,6 +82,20 @@ describe("reduceCommandPaletteUiState", () => {
       reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
     ).toBeNull();
   });
+
+  it("opens the new project form to move a thread into it", () => {
+    const thread = { environmentId: LOCAL_ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") };
+    expect(
+      reduceCommandPaletteUiState(
+        { open: false, mode: "files", openIntent: null },
+        { _tag: "OpenMoveThreadToNewProject", thread },
+      ),
+    ).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "move-thread-new-project", thread },
+    });
+  });
 });
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");

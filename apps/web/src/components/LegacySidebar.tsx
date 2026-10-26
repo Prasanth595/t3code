@@ -96,6 +96,7 @@ import { isMacPlatform } from "../lib/utils";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
+  readEnvironmentCanCreateProject,
   readEnvironmentSupportsThreadProjectMove,
   readThreadShell,
   useProjects,
@@ -140,7 +141,12 @@ import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
-import { buildThreadMoveTargets, threadMoveRequest } from "./threadActionMenu.logic";
+import {
+  buildThreadMoveTargets,
+  NEW_MOVE_PROJECT_ID,
+  threadMoveMenuChildren,
+  threadMoveRequest,
+} from "./threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { RelativeTime } from "./RelativeTime";
 import { Kbd } from "./ui/kbd";
@@ -2172,11 +2178,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         thread.environmentId,
         AuthOrchestrationOperateScope,
       );
-      const moveTargets = readEnvironmentSupportsThreadProjectMove(thread.environmentId)
+      const supportsProjectMove = readEnvironmentSupportsThreadProjectMove(thread.environmentId);
+      const moveTargets = supportsProjectMove
         ? buildThreadMoveTargets(environmentProjects, thread)
         : [];
+      const canCreateMoveProject =
+        supportsProjectMove && readEnvironmentCanCreateProject(thread.environmentId);
       const canMoveProject =
-        moveTargets.length > 0 &&
+        (moveTargets.length > 0 || canCreateMoveProject) &&
         canOperateThread &&
         threadRuntimeCanArchive(thread.runtime) &&
         thread.lineage.relationshipToParent !== "subagent";
@@ -2186,7 +2195,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
-          ...(moveTargets.length > 0
+          ...(moveTargets.length > 0 || canCreateMoveProject
             ? [
                 {
                   id: "move-project",
@@ -2195,10 +2204,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   disabled: !canMoveProject,
                   ...(canMoveProject
                     ? {
-                        children: moveTargets.map((target) => ({
-                          id: `move-project:${target.projectId}`,
-                          label: target.label,
-                        })),
+                        children: threadMoveMenuChildren(moveTargets, canCreateMoveProject),
                       }
                     : {}),
                 },
@@ -2258,6 +2264,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      if (clicked === NEW_MOVE_PROJECT_ID) {
+        openCommandPalette({
+          moveThreadToNewProject: scopeThreadRef(thread.environmentId, thread.id),
+        });
+        return;
+      }
       if (clicked?.startsWith("move-project:")) {
         const target = moveTargets.find(
           (candidate) => `move-project:${candidate.projectId}` === clicked,

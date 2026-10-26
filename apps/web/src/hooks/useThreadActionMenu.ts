@@ -19,6 +19,7 @@ import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   buildThreadMoveTargets,
+  NEW_MOVE_PROJECT_ID,
   threadMoveRequest,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
@@ -28,6 +29,7 @@ import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
+  readEnvironmentCanCreateProject,
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
@@ -38,6 +40,7 @@ import {
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { openCommandPalette } from "../commandPaletteBus";
 import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -133,11 +136,12 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-      const moveTargets = readEnvironmentSupportsThreadProjectMove(threadRef.environmentId)
-        ? buildThreadMoveTargets(projects, thread)
-        : [];
+      const supportsProjectMove = readEnvironmentSupportsThreadProjectMove(threadRef.environmentId);
+      const moveTargets = supportsProjectMove ? buildThreadMoveTargets(projects, thread) : [];
+      const canCreateMoveProject =
+        supportsProjectMove && readEnvironmentCanCreateProject(threadRef.environmentId);
       const canMoveProject =
-        moveTargets.length > 0 &&
+        (moveTargets.length > 0 || canCreateMoveProject) &&
         threadRuntimeCanArchive(thread.runtime) &&
         thread.lineage.relationshipToParent !== "subagent";
       const items = buildThreadActionMenuItems({
@@ -153,6 +157,7 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         canMoveProject,
         moveTargets,
+        canCreateMoveProject,
         supports,
         snoozePresets,
         canShareWithGuest,
@@ -168,6 +173,10 @@ export function useThreadActionMenu(input: {
           "Thread action unavailable",
           new Error("This connection cannot change threads."),
         );
+        return;
+      }
+      if (action === NEW_MOVE_PROJECT_ID) {
+        openCommandPalette({ moveThreadToNewProject: threadRef });
         return;
       }
       if (action.startsWith("move-project:")) {

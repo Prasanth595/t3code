@@ -46,7 +46,12 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
+vi.mock("../commandPaletteBus", () => ({
+  openCommandPalette: (detail: { moveThreadToNewProject?: { threadId: string } }) =>
+    recordEffect(`palette:${detail.moveThreadToNewProject?.threadId}`),
+}));
 vi.mock("../state/entities", () => ({
+  readEnvironmentCanCreateProject: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,
@@ -182,4 +187,28 @@ describe("thread menu permissions", () => {
       expect(state.effects).toEqual([]);
     },
   );
+});
+
+describe("move into a new project", () => {
+  it("offers New project… with no other project and opens the palette to name it", async () => {
+    state.granted.add("secondary");
+    state.show.mockImplementation(async () => "move-project-new");
+    createMenu().openMenu(position);
+    await state.completed.promise;
+    const items = state.show.mock.calls[0]?.[0] ?? [];
+    const move = items.find((item) => item.id === "move-project");
+    expect(move?.children?.map((child) => child.label)).toEqual(["New project…"]);
+    expect(state.effects).toEqual(["palette:thread"]);
+  });
+
+  it("does not open the palette once the connection loses operate", async () => {
+    state.granted.add("secondary");
+    const choice = deferred<ThreadActionMenuId | null>();
+    state.show.mockReturnValue(choice.promise);
+    createMenu().openMenu(position);
+    state.granted.delete("secondary");
+    choice.resolve("move-project-new");
+    await state.completed.promise;
+    expect(state.effects).toEqual([]);
+  });
 });

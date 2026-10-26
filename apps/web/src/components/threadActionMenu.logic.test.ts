@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildThreadActionMenuItems,
   buildThreadMoveTargets,
+  NEW_MOVE_PROJECT_ID,
+  threadActionRequiresOperate,
   threadMoveRequest,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
@@ -93,6 +95,30 @@ describe("buildThreadActionMenuItems", () => {
     }).find((item) => item.id === "move-project");
     expect(blocked?.disabled).toBe(true);
     expect(blocked?.children).toBeUndefined();
+  });
+
+  it("offers a new project after the others when the server can create one", () => {
+    const moveTargets = [{ projectId: "project-b" as ProjectId, label: "Beta" }];
+    const open = buildThreadActionMenuItems({
+      ...baseState,
+      moveTargets,
+      canCreateMoveProject: true,
+    }).find((item) => item.id === "move-project");
+    expect(open?.children).toEqual([
+      { id: "move-project:project-b", label: "Beta" },
+      { id: NEW_MOVE_PROJECT_ID, label: "New project…", separatorBefore: true },
+    ]);
+  });
+
+  it("shows the picker with only New project… when no other project exists", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, canCreateMoveProject: true });
+    expect(items.find((item) => item.id === "move-project")?.children).toEqual([
+      { id: NEW_MOVE_PROJECT_ID, label: "New project…" },
+    ]);
+    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "move-project")).toBe(
+      false,
+    );
+    expect(threadActionRequiresOperate(NEW_MOVE_PROJECT_ID)).toBe(true);
   });
 });
 

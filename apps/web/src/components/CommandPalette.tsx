@@ -45,6 +45,8 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type ProjectId,
+  type ScopedThreadRef,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
@@ -112,6 +114,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { useMoveThreadToProject } from "../hooks/useMoveThreadToProject";
 import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
@@ -372,7 +375,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
-        if (detail.open === "new-thread-in") {
+        if (detail.moveThreadToNewProject !== undefined) {
+          dispatch({ _tag: "OpenMoveThreadToNewProject", thread: detail.moveThreadToNewProject });
+        } else if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
@@ -605,6 +610,8 @@ function OpenCommandPaletteDialog(props: {
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
     readonly sourcesEnvironmentId: EnvironmentId | null;
+    /** Move this thread into the project instead of opening a new thread there. */
+    readonly moveThread?: ScopedThreadRef;
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
   const [newProjectPublishKind, setNewProjectPublishKind] =
@@ -613,6 +620,7 @@ function OpenCommandPaletteDialog(props: {
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
+  const moveThreadToProject = useMoveThreadToProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
@@ -1004,10 +1012,15 @@ function OpenCommandPaletteDialog(props: {
   const startNewProject = (
     environmentId: EnvironmentId,
     sourcesEnvironmentId: EnvironmentId | null,
+    moveThread?: ScopedThreadRef,
   ): void => {
     setAddProjectEnvironmentId(environmentId);
     setAddProjectCloneFlow(null);
-    setNewProjectFlow({ environmentId, sourcesEnvironmentId });
+    setNewProjectFlow({
+      environmentId,
+      sourcesEnvironmentId,
+      ...(moveThread ? { moveThread } : {}),
+    });
     setNewProjectPublishes(false);
     setNewProjectPublishKind(null);
     pushPaletteView({
@@ -1427,11 +1440,15 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
-    const moveTargets =
-      activeThreadServerConfig?.environment.capabilities.threadProjectMove === true
-        ? buildThreadMoveTargets(projects, thread)
-        : [];
-    if (moveTargets.length > 0 && thread.lineage.relationshipToParent !== "subagent") {
+    const supportsProjectMove =
+      activeThreadServerConfig?.environment.capabilities.threadProjectMove === true;
+    const moveTargets = supportsProjectMove ? buildThreadMoveTargets(projects, thread) : [];
+    const canCreateMoveProject =
+      supportsProjectMove && newProjectsRootFor(thread.environmentId) !== null;
+    if (
+      (moveTargets.length > 0 || canCreateMoveProject) &&
+      thread.lineage.relationshipToParent !== "subagent"
+    ) {
       actionItems.push({
         kind: "submenu",
         value: "action:move-thread-project",
@@ -1474,6 +1491,32 @@ function OpenCommandPaletteDialog(props: {
               },
             })),
           },
+          ...(canCreateMoveProject
+            ? [
+                {
+                  value: "new-project",
+                  label: "New project",
+                  items: [
+                    {
+                      kind: "action" as const,
+                      value: "action:move-thread-new-project",
+                      searchTerms: ["new project", "create", "move"],
+                      title: "New project…",
+                      description: "Name a project, then move this thread into it",
+                      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+                      keepOpen: true,
+                      run: async () => {
+                        startNewProject(
+                          thread.environmentId,
+                          null,
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        );
+                      },
+                    },
+                  ],
+                },
+              ]
+            : []),
         ],
       });
     }
@@ -1584,6 +1627,9 @@ function OpenCommandPaletteDialog(props: {
         return;
       case "add-project":
         openAddProjectFlow();
+        return;
+      case "move-thread-new-project":
+        startNewProject(intent.thread.environmentId, null, intent.thread);
         return;
       case "new-thread-in":
         pushPaletteView({
@@ -1936,11 +1982,20 @@ function OpenCommandPaletteDialog(props: {
     }
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
+    const { moveThread } = newProjectFlow;
+    const name = newProjectName;
     const created = await settlePromise(() =>
       createNewProject({
         environmentId: newProjectFlow.environmentId,
-        name: newProjectName,
+        name,
         publishTo: newProjectPublishes ? newProjectPublishTarget : null,
+        ...(moveThread
+          ? {
+              onCreated: async (projectId: ProjectId) => {
+                await moveThreadToProject(moveThread, { projectId, label: name });
+              },
+            }
+          : {}),
       }),
     );
     newProjectSubmittingRef.current = false;
@@ -2234,6 +2289,7 @@ function OpenCommandPaletteDialog(props: {
         );
   const showNewProjectMachines =
     newProjectFlow !== null &&
+    newProjectFlow.moveThread === undefined &&
     (newProjectEnvironmentOptions.length > 1 ||
       (selectedNewProjectEnvironment === undefined && newProjectEnvironmentOptions.length > 0));
   const newProjectEnvironmentLabel = showNewProjectMachines
@@ -2264,7 +2320,7 @@ function OpenCommandPaletteDialog(props: {
           })),
         };
   const newProjectExistingGroup: CommandPaletteView["groups"][number] | null =
-    newProjectFlow === null
+    newProjectFlow === null || newProjectFlow.moveThread !== undefined
       ? null
       : {
           value: "new-project-existing",
@@ -2685,7 +2741,13 @@ function OpenCommandPaletteDialog(props: {
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton
-        label={isCreatingNewProject ? "Creating" : "Create"}
+        label={
+          isCreatingNewProject
+            ? "Creating"
+            : newProjectFlow.moveThread
+              ? "Create and move"
+              : "Create"
+        }
         shortcutLabel={createShortcutLabel}
         ariaLabel={`Create (${createShortcutLabel})`}
         tooltip={`Create (${createShortcutLabel})`}

@@ -23,6 +23,7 @@ import {
   type EnvironmentMachineKind,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type ScopedThreadRef,
   type SourceControlDiscoveryResult,
   type SourceControlRepositoryInfo,
   THREAD_JUMP_KEYBINDING_COMMANDS,
@@ -72,6 +73,7 @@ export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
   | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "move-thread-new-project"; readonly thread: ScopedThreadRef }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -95,6 +97,7 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "OpenMoveThreadToNewProject"; readonly thread: ScopedThreadRef }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
   | { readonly _tag: "ClearOpenIntent" }
@@ -141,6 +144,12 @@ export function reduceCommandPaletteUiState(
       };
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
+    case "OpenMoveThreadToNewProject":
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { kind: "move-thread-new-project", thread: action.thread },
+      };
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
     case "OpenChangeTheme":
