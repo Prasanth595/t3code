@@ -1414,9 +1414,10 @@ describe("ClaudeAdapterV2 user message skill dispatch", () => {
   const skills = new Map([
     ["review", { path: "/skills/review/SKILL.md" }],
     ["implement", { path: "/skills/implement/SKILL.md" }],
+    ["deploy.prod", { path: "/skills/deploy.prod/SKILL.md" }],
   ]);
 
-  it.each(["goal", "review"])(
+  it.each(["goal", "review", "deploy.prod"])(
     "preserves a leading /%s in one text block with known skills rewritten inline",
     (command) => {
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
@@ -1487,6 +1488,15 @@ describe("ClaudeAdapterV2 attachments", () => {
       expectedText: "Ultrathink:\nplease /implement fixes\n\nThen report the result",
       command: "/implement fixes\n\nThen report the result",
       ultrathink: true,
+      resumed: false,
+      budget: "none",
+    },
+    {
+      name: "leading goal with skill",
+      prompt: "/goal ship using $implement",
+      expectedText: "/goal ship using /implement",
+      command: undefined,
+      ultrathink: false,
       resumed: false,
       budget: "none",
     },

@@ -10,7 +10,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-const LEADING_SLASH_COMMAND_PATTERN = /^\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u;
+const LEADING_SLASH_COMMAND_PATTERN = /^\/([^\s/]+)(?=\s|$)/u;
 
 export type ClaudeSkillTarget = Pick<ServerProviderSkill, "path" | "userInvocationOnly">;
 
