@@ -12,8 +12,12 @@ type DraftProjectSelectionResolution =
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
+  suggestedProjectKey?: string,
 ): EnvironmentProject {
   return (
+    scope.projects.find(
+      (project) => scopedProjectKey(project.environmentId, project.id) === suggestedProjectKey,
+    ) ??
     scope.projects.find((project) => project.environmentId === preferredEnvironmentId) ??
     scope.representative
   );
@@ -103,25 +107,29 @@ export function resolveDraftProjectSelection(
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }
 
+/** The project-less draft for a global "New thread"; the picker lists the current project first. */
 export function newTaskDestination(
-  _usesSplitView: boolean,
-  projects: ReadonlyArray<EnvironmentProject>,
   currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
   requestId: string,
 ) {
-  const project =
-    projects.find(
-      (candidate) =>
-        candidate.environmentId === currentProject?.environmentId &&
-        candidate.id === currentProject.id,
-    ) ?? projects[0];
-  return project
-    ? {
-        draft: {
-          requestId,
-          environmentId: String(project.environmentId),
-          projectId: String(project.id),
-        },
-      }
-    : { draft: { requestId } };
+  return {
+    draft: {
+      requestId,
+      ...(currentProject
+        ? { suggestedProjectKey: scopedProjectKey(currentProject.environmentId, currentProject.id) }
+        : {}),
+    },
+  };
+}
+
+export function orderSuggestedProjectFirst(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  suggestedProjectKey: string | undefined,
+): ReadonlyArray<HomeProjectScope> {
+  const suggested = scopes.find((scope) =>
+    scope.projectRefs.some(
+      (ref) => scopedProjectKey(ref.environmentId, ref.projectId) === suggestedProjectKey,
+    ),
+  );
+  return suggested ? [suggested, ...scopes.filter((scope) => scope !== suggested)] : scopes;
 }

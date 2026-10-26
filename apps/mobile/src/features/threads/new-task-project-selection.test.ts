@@ -4,7 +4,9 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
+  getProjectScopeSelectionTarget,
   newTaskDestination,
+  orderSuggestedProjectFirst,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
 } from "./new-task-project-selection";
@@ -40,10 +42,13 @@ function makeProject(
   };
 }
 
-function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScope {
+function makeScope(
+  projects: ReadonlyArray<EnvironmentProject>,
+  key = "github.com/t3tools/t3code",
+): HomeProjectScope {
   return {
-    key: "github.com/t3tools/t3code",
-    title: "T3 Code",
+    key,
+    title: key,
     representative: projects[0]!,
     projects,
     projectRefs: projects.map((project) => ({
@@ -115,26 +120,70 @@ describe("resolveDraftProjectSelection", () => {
 });
 
 describe("newTaskDestination", () => {
-  it("opens the current thread's project directly in split view", () => {
-    const projects = [makeProject("first"), makeProject("current", "other-environment")];
-    expect(newTaskDestination(true, projects, projects[1], "request")).toEqual({
-      draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+  // The draft screen opens the picker for a draft without a project when more than one is selectable.
+  const projects = [makeProject("first"), makeProject("current", "other-environment")];
+  const scopes = projects.map((project) => makeScope([project], project.id));
+  const openFromNewThread = (current: EnvironmentProject | undefined) => {
+    const { draft } = newTaskDestination(current, "request");
+    return {
+      draft,
+      selection: resolveDraftProjectSelection(null, projects, scopes),
+      pickerScopes: orderSuggestedProjectFirst(scopes, draft.suggestedProjectKey),
+    };
+  };
+
+  it("asks for a project with a thread open, listing its project first", () => {
+    const opened = openFromNewThread(projects[1]);
+    expect(opened.draft).toEqual({
+      requestId: "request",
+      suggestedProjectKey: "other-environment:current",
+    });
+    expect(opened.selection).toEqual({ kind: "pick" });
+    expect(opened.pickerScopes.map((scope) => scope.key)).toEqual(["current", "first"]);
+  });
+
+  it("asks for a project in the existing order with no thread open", () => {
+    const opened = openFromNewThread(undefined);
+    expect(opened.draft).toEqual({ requestId: "request" });
+    expect(opened.selection).toEqual({ kind: "pick" });
+    expect(opened.pickerScopes).toBe(scopes);
+  });
+
+  it("opens the draft directly in the only selectable project", () => {
+    const only = makeProject("only");
+    expect(newTaskDestination(only, "request").draft).toEqual({
+      requestId: "request",
+      suggestedProjectKey: "environment:only",
+    });
+    expect(resolveDraftProjectSelection(null, [only], [makeScope([only])])).toEqual({
+      kind: "select",
+      project: only,
     });
   });
-  it("uses an available project when split view has no current project", () => {
-    expect(newTaskDestination(true, [makeProject("first")], undefined, "request")).toEqual({
-      draft: { requestId: "request", environmentId: "environment", projectId: "first" },
-    });
+
+  it("keeps the current project's workspace when its scope is picked", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const scope = makeScope([mac, server]);
+    const { draft } = newTaskDestination(server, "request");
+    expect(
+      orderSuggestedProjectFirst(
+        [makeScope([projects[0]!], "first"), scope],
+        draft.suggestedProjectKey,
+      )[0],
+    ).toBe(scope);
+    expect(
+      getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), draft.suggestedProjectKey),
+    ).toBe(server);
   });
-  it("keeps the picker when there are no projects", () => {
-    expect(newTaskDestination(true, [], undefined, "request")).toEqual({
-      draft: { requestId: "request" },
-    });
-  });
-  it("opens the same draft route in compact view", () => {
-    const project = makeProject("current");
-    expect(newTaskDestination(false, [project], project, "request")).toEqual({
-      draft: { requestId: "request", environmentId: "environment", projectId: "current" },
+});
+
+describe("project-scoped new threads", () => {
+  it("do not ask again once the route's project is applied", () => {
+    const projects = [makeProject("first"), makeProject("chosen")];
+    const scopes = projects.map((project) => makeScope([project], project.id));
+    expect(resolveDraftProjectSelection("environment:chosen", projects, scopes)).toEqual({
+      kind: "preserve",
     });
   });
 });

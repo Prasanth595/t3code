@@ -153,6 +153,7 @@ export function NewTaskDraftScreen(props: {
   readonly pendingTaskId?: string;
   readonly draftId?: string;
   readonly incomingShareId?: string;
+  readonly suggestedProjectKey?: string;
 }) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
@@ -510,7 +511,9 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    navigation.dispatch(CommonActions.navigate("NewTaskProject"));
+    navigation.dispatch(
+      CommonActions.navigate("NewTaskProject", { suggestedProjectKey: props.suggestedProjectKey }),
+    );
   }, [
     projectScopes,
     projects,
@@ -520,6 +523,7 @@ export function NewTaskDraftScreen(props: {
     props.incomingShareId,
     props.pendingTaskId,
     props.draftId,
+    props.suggestedProjectKey,
     navigation,
     selectedProject,
     selectedProjectKey,

@@ -202,6 +202,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
           }
           pendingTaskId={pendingTaskId}
           draftId={draftId}
+          suggestedProjectKey={params.suggestedProjectKey}
         />
       )}
     </>

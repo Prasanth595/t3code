@@ -540,9 +540,7 @@ function AdaptiveWorkspaceLayoutContent(
           (project) =>
             project.environmentId === draftEnvironmentId && project.id === draftProjectId,
         );
-    handleSelectThreadRoute(
-      newTaskDestination(layout.usesSplitView, projects, currentProject, uuidv4()),
-    );
+    handleSelectThreadRoute(newTaskDestination(currentProject, uuidv4()));
   };
 
   useHardwareKeyboardCommand("newTask", () => {

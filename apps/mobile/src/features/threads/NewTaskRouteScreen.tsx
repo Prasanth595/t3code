@@ -36,7 +36,11 @@ import { useWorkspaceState } from "../../state/workspace";
 import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
+import {
+  filterProjectScopes,
+  getProjectScopeSelectionTarget,
+  orderSuggestedProjectFirst,
+} from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 type NewTaskRouteParams = {
@@ -46,6 +50,7 @@ type NewTaskRouteParams = {
   readonly pr?: string | string[];
   readonly provider?: string | string[];
   readonly model?: string | string[];
+  readonly suggestedProjectKey?: string;
 };
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -174,11 +179,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
-  const listScopes = projectScopes.filter(
-    (scope) =>
-      !scope.projects.every((project) =>
-        isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
-      ),
+  const suggestedProjectKey = route.params?.suggestedProjectKey;
+  const listScopes = orderSuggestedProjectFirst(
+    projectScopes.filter(
+      (scope) =>
+        !scope.projects.every((project) =>
+          isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
+        ),
+    ),
+    suggestedProjectKey,
   );
   const visibleScopes = filterProjectScopes(listScopes, searchText);
   const resumedDestinationKeyRef = useRef<string | null>(null);
@@ -463,6 +472,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 const selectionTarget = getProjectScopeSelectionTarget(
                   scope,
                   selectedEnvironmentId,
+                  suggestedProjectKey,
                 );
                 if (Platform.OS === "android") {
                   return (
