@@ -1089,9 +1089,10 @@ export function createThreadOutboxDelivery(): {
     draining = true;
     try {
       do {
+        if (disposed) return;
         drainRequested = false;
         drainPass();
-      } while (drainRequested && !disposed);
+      } while (drainRequested);
     } finally {
       draining = false;
     }
