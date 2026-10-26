@@ -3889,31 +3889,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
-          ...(sender === "notification"
-            ? {
-                createdBy: "agent" as const,
-                creationSource: "provider" as const,
+          ...(
+            {
+              notification: {
+                createdBy: "agent",
+                creationSource: "provider",
                 notification: {
-                  source: { kind: "background_task" as const },
-                  outcome: "updated" as const,
+                  source: { kind: "background_task" },
+                  outcome: "updated",
                   summary: "Background activity updated",
                 },
-              }
-            : sender === "agent"
-              ? {
-                  createdBy: "agent" as const,
-                  creationSource: "mcp" as const,
-                  senderThreadId: ThreadId.make("settle-automatic-sender"),
-                }
-              : sender === "scheduled"
-                ? {
-                    createdBy: "user" as const,
-                    creationSource: "web" as const,
-                    scheduledTaskId: ScheduledTaskId.make("settle-automatic-schedule"),
-                  }
-                : sender === "system"
-                  ? { createdBy: "system" as const, creationSource: "server" as const }
-                  : { createdBy: "user" as const, creationSource: "web" as const }),
+              },
+              agent: {
+                createdBy: "agent",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("settle-automatic-sender"),
+              },
+              scheduled: {
+                createdBy: "user",
+                creationSource: "web",
+                scheduledTaskId: ScheduledTaskId.make("settle-automatic-schedule"),
+              },
+              system: { createdBy: "system", creationSource: "server" },
+              user: { createdBy: "user", creationSource: "web" },
+            } as const
+          )[sender],
           commandId: CommandId.make(id),
           threadId,
           messageId: MessageId.make(id),
