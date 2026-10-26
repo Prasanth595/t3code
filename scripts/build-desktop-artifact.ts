@@ -64,12 +64,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
 
-// On-disk name of the macOS .app (and its executable). electron-builder would
-// otherwise derive it from productName, and Squirrel.Mac renames the installed
-// bundle to the update's name but then tries to relaunch from the old path, so
-// any bundle rename leaves the app closed after an update. Display names still
-// come from productName. Never change this value: it is the name most installs
-// have had since 0.1.0, and changing it fails every install's next relaunch.
+// Keep the installed path stable: Squirrel.Mac relaunches from the old path after an update.
 const MAC_BUNDLE_FILENAME = "T3 Code (Beta)";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
