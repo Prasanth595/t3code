@@ -9,24 +9,31 @@ import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRe
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
 import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
 import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
+import { KeybindingsConfigWarning } from "./components/KeybindingsConfigWarning";
+import { createKeybindingsUpdateToastController } from "./components/KeybindingsUpdateToast.logic";
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
 import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
+import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
 import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
 import { startGuideRunNotifications } from "./components/pullRequest/guide/PullRequestGuideRunCoordinator";
+import { stackedThreadToast, toastManager } from "./components/ui/toast";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "./branding";
 import { resolveServerBackedAppDisplayName } from "./branding.logic";
 import { isElectron } from "./env";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
+import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
 import {
   getClientSettings,
   startModelPreferencesMigration,
   subscribeClientSettings,
 } from "./hooks/useSettings";
+import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
+import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
@@ -34,7 +41,8 @@ import {
 import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
-import { primaryServerConfigAtom } from "./state/server";
+import { primaryEnvironmentIdAtom } from "./state/primaryEnvironment";
+import { primaryServerConfigAtom, primaryServerConfigEventAtom } from "./state/server";
 import { resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
@@ -104,6 +112,51 @@ function startDocumentTitle(): void {
   );
 }
 
+/** Toasts each keybindings reload the primary server reports. */
+function startKeybindingsUpdateToasts(): void {
+  const controller = createKeybindingsUpdateToastController({});
+  appAtomRegistry.subscribe(primaryServerConfigEventAtom, (event) => {
+    const decision = controller.handle(event);
+    if (!decision) return;
+
+    if (decision._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
+      });
+      return;
+    }
+
+    const serverConfig = appAtomRegistry.get(primaryServerConfigAtom);
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: (
+          <KeybindingsConfigWarning
+            message={decision.message}
+            environmentId={appAtomRegistry.get(primaryEnvironmentIdAtom)}
+            configPath={serverConfig?.keybindingsConfigPath ?? null}
+            availableEditors={serverConfig?.availableEditors ?? []}
+          />
+        ),
+      }),
+    );
+  });
+}
+
+/**
+ * Each route paints its own surface, which the browser chrome samples once it is on screen.
+ * onRendered only fires for a new href; onResolved also covers `router.invalidate()`, which
+ * can swap the root between the bare outlet and the shell at the same address.
+ */
+function startBrowserChromeThemeSync(router: AppRouter): void {
+  const resync = () => window.requestAnimationFrame(syncBrowserChromeTheme);
+  router.subscribe("onRendered", resync);
+  router.subscribe("onResolved", resync);
+}
+
 /** Chat overlays belong to the thread they were opened in, so leaving its route drops them. */
 function startThreadOverlayRetention(router: AppRouter): void {
   router.subscribe("onResolved", () => {
@@ -138,8 +191,12 @@ export function startAppServices(): AppRouter {
     syncDocumentWindowControlsOverlayClass();
   }
 
+  installDesktopPasteAsText(window.desktopBridge, window);
+
   startClientAppearance();
   startDocumentTitle();
+  startEnvironmentThemeRepaint();
+  startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
   startAgentOpenedPreviews();
@@ -150,6 +207,8 @@ export function startAppServices(): AppRouter {
   startThreadVisitedMigration(appAtomRegistry);
   startSshPasswordPromptQueue();
 
+  startKeybindingsUpdateToasts();
+  startSlowRpcRequestToasts();
   startHostFreezeToasts();
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
