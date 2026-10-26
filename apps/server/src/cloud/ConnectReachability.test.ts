@@ -4,8 +4,11 @@ import * as NodeNet from "node:net";
 
 import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -94,44 +97,63 @@ describe("classifyReachability", () => {
   });
 });
 
-describe("ConnectReachability stale connector recovery", () => {
-  it.effect("restarts cloudflared when Cloudflare has no connector but it reports ready", () =>
-    Effect.gen(function* () {
-      using _connect = vi.spyOn(NodeNet, "connect").mockImplementation(() => {
-        const socket = new NodeNet.Socket();
-        queueMicrotask(() => socket.emit("connect"));
-        return socket;
-      });
-      const restarts = yield* Queue.unbounded<number>();
-      let status = 530;
-      let body = "error code: 1033";
-      const layer = ConnectReachability.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
-              inspectConnector: Effect.succeed(connected),
-              readinessChanged: Stream.never,
-              restartConnector: (pid, stillDead) =>
-                stillDead.pipe(
-                  Effect.tap((dead) => (dead ? Queue.offer(restarts, pid) : Effect.void)),
-                ),
-            }),
-            Layer.mock(ServerSecretStore.ServerSecretStore)({
-              get: () => Effect.succeedSome(new Uint8Array()),
-            }),
-            // Cloudflare answers 530 while cloudflared still reports four ready connections.
-            Layer.succeed(
-              HttpClient.HttpClient,
-              HttpClient.make((request) =>
-                Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status }))),
+interface ServedResponse {
+  readonly status: number;
+  readonly body: string | ReadableStream<Uint8Array>;
+}
+
+const reachabilityLayer = (
+  respond: Effect.Effect<ServedResponse>,
+  restartConnector: (pid: number, stillDead: Effect.Effect<boolean>) => Effect.Effect<boolean>,
+) =>
+  ConnectReachability.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+          inspectConnector: Effect.succeed(connected),
+          readinessChanged: Stream.never,
+          restartConnector,
+        }),
+        Layer.mock(ServerSecretStore.ServerSecretStore)({
+          get: () => Effect.succeedSome(new Uint8Array()),
+        }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            respond.pipe(
+              Effect.map(({ status, body }) =>
+                HttpClientResponse.fromWeb(request, new Response(body, { status })),
               ),
-            ),
-            Layer.succeed(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make(() => Effect.die("no tailscale")),
             ),
           ),
         ),
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("no tailscale")),
+        ),
+      ),
+    ),
+  );
+
+const mockEdgeConnect = () =>
+  vi.spyOn(NodeNet, "connect").mockImplementation(() => {
+    const socket = new NodeNet.Socket();
+    queueMicrotask(() => socket.emit("connect"));
+    return socket;
+  });
+
+describe("ConnectReachability stale connector recovery", () => {
+  it.effect("restarts cloudflared when Cloudflare has no connector but it reports ready", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const restarts = yield* Queue.unbounded<number>();
+      // Cloudflare answers 530 while cloudflared still reports four ready connections.
+      let status = 530;
+      let body = "error code: 1033";
+      const layer = reachabilityLayer(
+        Effect.sync(() => ({ status, body })),
+        (pid, stillDead) =>
+          stillDead.pipe(Effect.tap((dead) => (dead ? Queue.offer(restarts, pid) : Effect.void))),
       );
       // The scheduled checks run in the layer's scope, so the assertions run inside it.
       yield* Effect.gen(function* () {
@@ -164,6 +186,87 @@ describe("ConnectReachability stale connector recovery", () => {
         yield* reachability.check;
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.take(restarts)).toBe(connected.pid);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("starts a new streak after a healthy check that a newer check overtook", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const restartTimes = yield* Queue.unbounded<number>();
+      const healthyRequested = yield* Deferred.make<void>();
+      const healthyAnswer = yield* Deferred.make<void>();
+      let status = 530;
+      const layer = reachabilityLayer(
+        Effect.gen(function* () {
+          const served = status;
+          if (served === 200) {
+            yield* Deferred.succeed(healthyRequested, undefined);
+            yield* Deferred.await(healthyAnswer);
+          }
+          return { status: served, body: "error code: 1033" };
+        }),
+        (_pid, stillDead) =>
+          stillDead.pipe(
+            Effect.tap((dead) =>
+              dead
+                ? Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((now) => Queue.offer(restartTimes, now)),
+                  )
+                : Effect.void,
+            ),
+          ),
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        const startedAt = yield* Clock.currentTimeMillis;
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(1));
+
+        // The healthy answer arrives after a newer check already reported the tunnel dead.
+        status = 200;
+        const healthy = yield* Effect.forkChild(reachability.check);
+        yield* Deferred.await(healthyRequested);
+        status = 530;
+        yield* reachability.check;
+        yield* Deferred.succeed(healthyAnswer, undefined);
+        expect(yield* Fiber.join(healthy)).toMatchObject({ status: "reachable" });
+
+        // The grace period starts again at the next dead check, a minute after the first one.
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect((yield* Queue.take(restartTimes)) - startedAt).toBe(
+          Duration.toMillis(Duration.minutes(3)),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps a 530 whose error body never finishes", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      let markBodyRead = () => {};
+      const bodyRead = new Promise<void>((resolve) => {
+        markBodyRead = resolve;
+      });
+      const layer = reachabilityLayer(
+        Effect.sync(() => ({
+          status: 530,
+          body: new ReadableStream({
+            pull: () => {
+              markBodyRead();
+              return new Promise<void>(() => {});
+            },
+          }),
+        })),
+        () => Effect.succeed(false),
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        const check = yield* Effect.forkChild(reachability.check);
+        yield* Effect.promise(() => bodyRead);
+        yield* TestClock.adjust(Duration.seconds(2));
+        expect(yield* Fiber.join(check)).toMatchObject({ cause: "no_connector" });
       }).pipe(Effect.provide(layer));
     }),
   );

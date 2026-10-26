@@ -30,6 +30,7 @@ const TUNNEL_EDGE_HOSTS = ["region1.v2.argotunnel.com", "region2.v2.argotunnel.c
 const TUNNEL_EDGE_PORT = 7844;
 const EDGE_CONNECT_TIMEOUT = Duration.seconds(5);
 const ENDPOINT_REQUEST_TIMEOUT = Duration.seconds(10);
+const ERROR_BODY_READ_TIMEOUT = Duration.seconds(2);
 // cloudflared registers several connections within a few seconds; they are one change.
 const READINESS_CHANGE_DEBOUNCE = Duration.seconds(3);
 // Readiness changes miss failures and recoveries past cloudflared (DNS, origin, edge errors).
@@ -217,10 +218,22 @@ const make = Effect.gen(function* () {
     Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
   );
   const checkCounter = yield* Ref.make(0);
+  // Checks update this as they finish, even when a newer check already did. A dead streak
+  // or a restart backoff that began before a healthy check no longer counts.
+  const lastHealthyOrder = yield* Ref.make(0);
   const deadConnectorRef = yield* SynchronizedRef.make<{
-    readonly streak: { readonly pid: number; readonly since: number } | null;
+    readonly streak: {
+      readonly pid: number;
+      readonly since: number;
+      readonly order: number;
+    } | null;
     readonly restartAfterMillis: number;
-  }>({ streak: null, restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER) });
+    readonly restartOrder: number;
+  }>({
+    streak: null,
+    restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
+    restartOrder: 0,
+  });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   const readExitNode = readTailscaleExitNode.pipe(
@@ -228,31 +241,33 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
-  const probeEndpoint = (hostname: string) =>
-    httpClient.get(`https://${hostname}/.well-known/t3/environment`).pipe(
-      Effect.flatMap((response) =>
-        response.status === 530
-          ? response.text.pipe(
-              Effect.orElseSucceed(() => ""),
-              Effect.map((body): EndpointProbe => {
-                // Non-browser clients get a plain-text body such as `error code: 1033`.
-                const code = /error code:\s*(\d{4})/i.exec(body)?.[1];
-                return code === undefined
-                  ? { kind: "status", status: 530 }
-                  : { kind: "status", status: 530, cloudflareError: code };
-              }),
-            )
-          : Effect.succeed<EndpointProbe>({ kind: "status", status: response.status }),
-      ),
-      Effect.scoped,
-      Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT),
-      Effect.map(Option.getOrElse((): EndpointProbe => ({ kind: "timeout" }))),
-      Effect.catch((error) =>
-        Effect.succeed<EndpointProbe>({
-          kind: hasErrorCode(error, DNS_ERROR_CODES) ? "dns_failed" : "network_error",
-        }),
-      ),
-    );
+  const probeEndpoint = Effect.fn("ConnectReachability.probeEndpoint")(
+    function* (hostname: string) {
+      const response = yield* httpClient
+        .get(`https://${hostname}/.well-known/t3/environment`)
+        .pipe(Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT));
+      if (Option.isNone(response)) return { kind: "timeout" } satisfies EndpointProbe;
+      const { status } = response.value;
+      if (status !== 530) return { kind: "status", status } satisfies EndpointProbe;
+      // Non-browser clients get a plain-text body such as `error code: 1033`.
+      const body = yield* response.value.text.pipe(
+        Effect.timeoutOption(ERROR_BODY_READ_TIMEOUT),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
+      const code = /error code:\s*(\d{4})/i.exec(Option.getOrElse(body, () => ""))?.[1];
+      return (
+        code === undefined
+          ? { kind: "status", status }
+          : { kind: "status", status, cloudflareError: code }
+      ) satisfies EndpointProbe;
+    },
+    Effect.scoped,
+    Effect.catch((error) =>
+      Effect.succeed<EndpointProbe>({
+        kind: hasErrorCode(error, DNS_ERROR_CODES) ? "dns_failed" : "network_error",
+      }),
+    ),
+  );
 
   const gatherFacts = Effect.gen(function* () {
     const managedTunnelConfigured = Option.isSome(
@@ -290,8 +305,8 @@ const make = Effect.gen(function* () {
       Effect.map((latest) => Option.isNone(latest) || latest.value.order <= order),
     );
 
-  // Runs inside the check span; the runtime restart has its own. Returns how long to
-  // wait before confirming a dead connector that was just seen for the first time.
+  // Runs inside the check span; the runtime restart has its own. Returns the streak a dead
+  // connector just started and when to confirm it.
   const restartDeadConnector = Effect.fnUntraced(function* (
     facts: ReachabilityFacts,
     result: EnvironmentConnectReachability,
@@ -306,20 +321,22 @@ const make = Effect.gen(function* () {
       (connector.readyConnections ?? 0) > 0
         ? connector
         : null;
-    return yield* SynchronizedRef.modifyEffect(deadConnectorRef, (state) =>
+    return yield* SynchronizedRef.modifyEffect(deadConnectorRef, (current) =>
       Effect.gen(function* () {
+        const healthy = yield* Ref.get(lastHealthyOrder);
+        const state = {
+          streak: current.streak && current.streak.order > healthy ? current.streak : null,
+          restartAfterMillis:
+            current.restartOrder > healthy
+              ? current.restartAfterMillis
+              : Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
+          restartOrder: current.restartOrder,
+        };
         if (!(yield* isLatest(order))) return [null, state] as const;
-        if (result.status === "reachable") {
-          const reset = {
-            streak: null,
-            restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
-          };
-          return [null, reset] as const;
-        }
         if (dead === null) return [null, { ...state, streak: null }] as const;
         if (state.streak?.pid !== dead.pid) {
-          const started = { ...state, streak: { pid: dead.pid, since: now } };
-          return [Duration.millis(state.restartAfterMillis), started] as const;
+          const started = { ...state, streak: { pid: dead.pid, since: now, order } };
+          return [{ order, after: Duration.millis(state.restartAfterMillis) }, started] as const;
         }
         if (now - state.streak.since < state.restartAfterMillis) return [null, state] as const;
         // A newer check may have finished while this one waited for the runtime's lock.
@@ -332,6 +349,7 @@ const make = Effect.gen(function* () {
             state.restartAfterMillis * 2,
             Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER_MAX),
           ),
+          restartOrder: order,
         };
         return [null, restarted] as const;
       }),
@@ -342,19 +360,24 @@ const make = Effect.gen(function* () {
     const order = yield* Ref.updateAndGet(checkCounter, (count) => count + 1);
     const facts = yield* gatherFacts;
     const result = classifyReachability(facts, DateTime.formatIso(yield* DateTime.now));
+    if (result.status === "reachable") {
+      yield* Ref.update(lastHealthyOrder, (healthy) => Math.max(healthy, order));
+    }
     const previous = yield* Ref.modify(latestRef, (current) =>
       Option.isSome(current) && current.value.order > order
         ? [null, current]
         : [current, Option.some({ order, result })],
     );
     if (previous === null) return result;
-    const confirmAfter = yield* restartDeadConnector(facts, result, order);
+    const started = yield* restartDeadConnector(facts, result, order);
     // Nothing else would look again until the next periodic check.
-    if (confirmAfter !== null) {
-      yield* Effect.sleep(confirmAfter).pipe(
-        Effect.andThen(Effect.suspend(() => check)),
-        Effect.forkIn(scope),
+    if (started !== null) {
+      const confirm = SynchronizedRef.get(deadConnectorRef).pipe(
+        Effect.flatMap(({ streak }) =>
+          streak?.order === started.order ? Effect.suspend(() => check) : Effect.void,
+        ),
       );
+      yield* Effect.sleep(started.after).pipe(Effect.andThen(confirm), Effect.forkIn(scope));
     }
     const changed = Option.match(previous, {
       onNone: () => true,
