@@ -7587,7 +7587,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.deepEqual(
-          providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+            .pendingBackgroundTasks ?? [],
           [],
         );
         for (const ambient of [true, false]) {
