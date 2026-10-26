@@ -632,13 +632,7 @@ function startLiveWidgetObserver(): void {
   );
 }
 
-// Arms the lock-screen card the moment the user starts agent work from this
-// phone, while the app is still foregrounded and the fresh activity's token
-// can be registered immediately. The seeded row is a best-effort placeholder;
-// the relay's registration replay repaints it with the authoritative
-// aggregate within seconds. No-ops when a card is already armed, and skips
-// environments that report publishing disabled — the seed would sit on
-// "Connecting" forever with no update ever arriving to repaint or end it.
+// Arm while foregrounded so the token can register; skip nonpublishing environments to avoid a permanently stale seed.
 export function armAgentAwarenessLiveActivityForLocalWork(input: {
   readonly environmentId: EnvironmentId;
   readonly threadTitle: string;

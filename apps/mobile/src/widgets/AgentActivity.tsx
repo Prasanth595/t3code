@@ -162,13 +162,7 @@ export function AgentActivity(
       ? phaseTint(failedRow.phase)
       : tint;
 
-  // With nothing active the aggregate only carries recently finished work, so
-  // "0 active agents" (and a lone "0" in the expanded island) read as broken.
-  // Lead with the outcome instead. The outcome is derived here from the rows
-  // rather than taken from the server subtitle (which keys off the newest
-  // terminal row): every presentation — header text, tint, count slots,
-  // minimal glyph — must agree, and a failure anywhere should dominate a
-  // newer success.
+  // Derive terminal outcomes from all rows so a failure dominates a newer success in every presentation.
   const allDone =
     activeCount === 0 ||
     (props.isExpired === true &&
@@ -266,11 +260,7 @@ export function AgentActivity(
     </HStack>
   );
 
-  // Single-line row used by every presentation: glyph, title, inline project,
-  // status. The project and status carry layoutPriority(1) so when space runs
-  // out it's the title that truncates, never the (short) project name or the
-  // status label. Single-line keeps rows inside the expanded island's hard
-  // height budget (~160pt) and lets the banner fit more agents.
+  // Single-line rows fit the expanded island height budget; protect project and status from truncation.
   const renderCompactRow = (row: AgentActivityRowProps) => (
     <HStack spacing={7} alignment="center">
       <Text
@@ -299,12 +289,7 @@ export function AgentActivity(
     </HStack>
   );
 
-  // The branded T3 mark. `assetName` resolves the template image set bundled in
-  // the widget extension's asset catalog. Image views only honor `resizable`
-  // directly (frame/foregroundStyle are dropped), so we size it via a container
-  // frame the resizable image fills and tint it through the container's
-  // foreground style, which the template image inherits. The 3:2 frame matches
-  // the glyph's aspect ratio so it never distorts.
+  // Widget Image ignores frame/foregroundStyle; size and tint its resizable template through a 3:2 container.
   const renderLogo = (height: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
     <HStack
       modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}
