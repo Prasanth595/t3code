@@ -290,17 +290,25 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     if (next !== null) setDrafts(next);
   }
 
-  async function done() {
+  function done() {
     if (savingRef.current) return;
     savingRef.current = true;
     stop();
     setSaving(true);
-    try {
-      if (await saveThreadArrangement(drafts)) props.onClose();
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
+    void saveThreadArrangement(drafts)
+      .then((saved) => {
+        if (saved) props.onClose();
+      })
+      .catch((error: unknown) => {
+        Dialog.alert(
+          "Could not save arrangement",
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(() => {
+        savingRef.current = false;
+        setSaving(false);
+      });
   }
 
   function close() {
