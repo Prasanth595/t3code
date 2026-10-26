@@ -12,6 +12,7 @@ import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -78,8 +79,28 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     event.stopPropagation();
     onDiscard(draftId);
   };
+  const discardButton = (
+    <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Discard draft"
+              onClick={handleDiscard}
+              className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+            >
+              <XIcon className="size-3" />
+            </button>
+          }
+        />
+        <TooltipPopup side="top">Discard draft</TooltipPopup>
+      </Tooltip>
+    </span>
+  );
+  const redesign = useClientSettings((s) => s.redesignEnabled);
   return (
-    <li className="list-none py-0.5">
+    <li className={cn("list-none", !redesign && "py-0.5")}>
       <div
         role="button"
         tabIndex={0}
@@ -95,37 +116,37 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onKeyDown={handleKeyDown}
       >
         <span className="sr-only">{preview}</span>
-        <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
-          <div className="flex h-5 min-w-0 items-center gap-1.5">
+        {redesign ? (
+          <div className="relative z-10 flex h-9 min-w-0 items-center gap-2.5 px-2.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectDisplayName}
+            <span
+              aria-hidden
+              className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+            >
+              {preview}
             </span>
-            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label="Discard draft"
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
-              </Tooltip>
-            </span>
+            {discardButton}
           </div>
-          <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
-            {preview}
+        ) : (
+          <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+            <div className="flex h-5 min-w-0 items-center gap-1.5">
+              <SquarePenIcon aria-hidden className={draftPenClassName} />
+              {props.project ? (
+                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+              ) : null}
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+                {props.projectDisplayName}
+              </span>
+              {discardButton}
+            </div>
+            <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
+              {preview}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </li>
   );
