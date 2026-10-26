@@ -251,6 +251,33 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("does not restore removed concrete models after a session refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity140Session,
+        });
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: {
+            ...antigravity140Session,
+            models: {
+              ...antigravity140Session.models,
+              availableModels: antigravity140Session.models.availableModels.slice(0, 1),
+            },
+          },
+        });
+        yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
+        expect(
+          (yield* harness.provider.snapshot.getSnapshot).models.map((model) => model.slug),
+        ).toEqual(["gemini-3.8-flash-high"]);
+      }),
+    ),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

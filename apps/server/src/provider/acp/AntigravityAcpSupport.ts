@@ -104,8 +104,7 @@ export function antigravitySessionModels(setup: {
   readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
   readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
 }) {
-  // ACP 1.4 splits model families and thinking levels; only session models
-  // contain the concrete IDs accepted by session/set_model.
+  // ACP 1.4 session models contain concrete IDs; config options split family and thinking level.
   return setup.configOptions?.some((option) => option.id === "thinking_level")
     ? (setup.models ?? null)
     : null;
@@ -141,8 +140,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       (input.defaultModel && options.some((option) => option.value === input.defaultModel)
         ? input.defaultModel
         : current);
-    // Session model state can predate a thinking-level change. Reapply concrete
-    // selections even when setup reports that model as current.
+    // Setup can predate thinking-level changes, so reapply even the current concrete model.
     if (resolved === undefined || (!models && !explicitModel && resolved === current))
       return current;
     if (!options.some((option) => option.value === resolved)) {

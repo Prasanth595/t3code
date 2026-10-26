@@ -292,7 +292,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
-      const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ag-title-" });
+      const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3 ag title ü-" });
       const agentPath = path.join(profileDirectory, "agent.mjs");
       const logPath = path.join(profileDirectory, "requests.ndjson");
       yield* fs.writeFileString(agentPath, antigravity140AgentSource);

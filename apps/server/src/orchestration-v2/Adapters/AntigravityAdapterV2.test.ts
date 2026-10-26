@@ -142,7 +142,7 @@ describe("AntigravityAdapterV2 ACP 1.4 models", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
-        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-models-" });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 ag models ü-" });
         const agentPath = path.join(workspace, "agent.mjs");
         const logPath = path.join(workspace, "requests.ndjson");
         yield* fileSystem.writeFileString(agentPath, antigravity140AgentSource);

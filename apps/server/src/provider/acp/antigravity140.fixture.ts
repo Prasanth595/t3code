@@ -36,7 +36,7 @@ export const antigravity140Session = {
   ],
 } satisfies AcpSchema.NewSessionResponse;
 
-// Native v1 framing follows provider/testFixtures/grok-text-mock-agent.mjs.
+// Use CRLF to exercise Windows framing with the captured v1 payload.
 export const antigravity140AgentSource = `
 import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -44,7 +44,7 @@ import { createInterface } from "node:readline";
 const setup = ${JSON.stringify(antigravity140Session)};
 let sessionId = setup.sessionId;
 let modelId = setup.models.currentModelId;
-const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const write = (message) => process.stdout.write(JSON.stringify(message) + "\\r\\n");
 const update = (update) => write({
   jsonrpc: "2.0", method: "session/update", params: { sessionId, update },
 });
