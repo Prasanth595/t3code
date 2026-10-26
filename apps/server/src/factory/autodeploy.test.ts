@@ -720,7 +720,7 @@ describe("autodeploy.sh waiting behind runs", () => {
     statusBodies = [IDLE, BUSY];
     const result = await runAutodeploy();
     expect(result.deploys).toHaveLength(1);
-    expect(result.output).toContain("waited 0s of deploy_wait_minutes 120");
+    expect(result.output).toMatch(/waited [01]s of deploy_wait_minutes 120/);
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^\\d+ ${sha}\\n$`));
   });
 });

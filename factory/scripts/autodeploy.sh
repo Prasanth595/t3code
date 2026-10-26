@@ -11,11 +11,14 @@
 #   installed stays until main moves;
 # - writes `<epoch seconds> <sha>` to `deploy-pending` in the factory data dir while origin/main
 #   has a commit it has not installed, keeping the first time across newer commits, and removes it
-#   when nothing is pending; the server stops claiming issues while the file is there;
+#   when nothing is pending; the server stops claiming issues while the file is there. The file is
+#   rewritten every tick that reads the status, and the server takes one older than 30 minutes as
+#   nothing pending, so an autodeploy that stopped ticking holds nothing back;
 # - asks GET /api/factory/status whether a factory run is in progress or an agent is at work in
 #   any thread, and waits for the next tick when one is or when it cannot tell, logging how long
 #   the build has waited; past `deploy_wait_minutes` (machine config, default 120) it deploys
-#   anyway, and the runs in progress resume on the new build;
+#   anyway while only factory runs are in the way, and they resume on the new build; a thread with
+#   an agent at work still holds the deploy;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
 #   its limit is tried on the next two ticks before the commit is given up on;
@@ -138,16 +141,13 @@ if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then
 fi
 
 # Records that $target is waiting to be installed. The time is that of the first build left
-# waiting, so it survives main moving: the wait is measured from the oldest undeployed build.
+# waiting, so it survives main moving: the wait is measured from the oldest undeployed build. The
+# file is written on every call, so its mtime shows the last tick that read the status.
 mark_pending() {
   local since="" sha="" tmp
   mkdir -p "$data_dir"
-  read -r since sha 2> /dev/null < "$pending_file" || true
-  if [[ $since =~ ^[0-9]+$ ]]; then
-    [[ ${sha:-} != "$target" ]] || return 0
-  else
-    since=$(date +%s)
-  fi
+  read -r since _ 2> /dev/null < "$pending_file" || true
+  [[ $since =~ ^[0-9]+$ ]] || since=$(date +%s)
   tmp="$data_dir/.deploy-pending.$$"
   echo "$since $target" > "$tmp"
   mv -f "$tmp" "$pending_file"
@@ -172,21 +172,23 @@ read_deploy_limit() {
 # Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
 # and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
 # person, including one whose file cannot be read), a pass running, a thread with an agent at
-# work, or a status it cannot read. The pending marker is written once the status has been read,
-# busy or not, so the server drains through the build too, and removed when it cannot be: a tick
-# that cannot ask about runs never installs, and the server must not drain for a deploy that
-# cannot happen.
+# work, or a status it cannot read. The pending marker is rewritten each tick that reads the status,
+# busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
+# as it is: the server ignores one that is older than three ticks, which covers an autodeploy that
+# cannot fetch, has no clone, has no token, or is not running at all, and a blip does not lose the
+# first-wait time. The limit ends the wait only for factory runs, which the pass resumes; a
+# person's thread (or a thread count T3 could not read) keeps the wait going. A factory run with a
+# person's thread alongside is still cut off, since the status cannot tell them apart, and the
+# person sees the restart.
 factory_idle() {
   local body busy
   if [[ -z $token ]]; then
-    clear_pending
     say "not deploying $short: T3FAC_AUTODEPLOY_TOKEN is not set in $env_file"
     return 1
   fi
   # The header goes on stdin, so the token never shows in ps.
   if ! body=$(curl -fsS -m 10 -H @- "http://127.0.0.1:$port/api/factory/status" \
     <<< "Authorization: Bearer $token" 2> /dev/null); then
-    clear_pending
     say "not deploying $short: cannot read http://127.0.0.1:$port/api/factory/status"
     return 1
   fi
@@ -197,7 +199,6 @@ factory_idle() {
     then "a factory run is in progress"
     elif .threads != null and .threads.running != 0 then "an agent is at work in a thread"
     else "" end' <<< "$body" 2> /dev/null); then
-    clear_pending
     say "not deploying $short: cannot read the factory status"
     return 1
   fi
@@ -209,13 +210,15 @@ factory_idle() {
     [[ $since =~ ^[0-9]+$ ]] || since=$now
     waited=$((now - since))
     read_deploy_limit
-    if ((waited >= deploy_limit * 60)); then
+    if ((waited >= deploy_limit * 60)) && [[ $busy == "a factory run is in progress" ]]; then
       # factory_idle runs again after the build; the line is said once.
       [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; the runs in progress resume on the new build$deploy_limit_note"
       said_overdue=1
       return 0
     fi
-    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
+    local over=""
+    ((waited < deploy_limit * 60)) || over=", which ends the wait for factory runs only"
+    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$over$deploy_limit_note"
     return 1
   fi
 }
