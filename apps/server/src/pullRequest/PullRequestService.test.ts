@@ -3687,13 +3687,11 @@ it.effect("clears a file against what the head has now, not what it had a moment
 it.effect("records shown revisions until the reader ticks the pushed version", () =>
   Effect.gen(function* () {
     const asked: Array<ReadonlyArray<string>> = [];
-    const service = yield* environmentViewedService(
-      new Map([
-        ["src/a.ts", "pushed-a"],
-        ["src/b.ts", "current-b"],
-      ]),
-      asked,
-    );
+    const revisions = new Map([
+      ["src/a.ts", "pushed-a"],
+      ["src/b.ts", "current-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, asked);
 
     yield* service.setFilesViewed({
       ...GITLAB_REFERENCE,
@@ -3710,12 +3708,12 @@ it.effect("records shown revisions until the reader ticks the pushed version", (
     ]);
 
     const reads = asked.length;
+    revisions.set("src/a.ts", "pushed-a-again");
     yield* service.setFilesViewed({
       ...GITLAB_REFERENCE,
-      files: [{ path: "src/a.ts", viewed: true, revision: "pushed-a" }],
+      files: [{ path: "src/a.ts", viewed: true, revision: "pushed-a-again" }],
     });
     assert.strictEqual(asked.length, reads);
-    yield* service.invalidate({ reference: GITLAB_REFERENCE });
     assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
       { path: "src/a.ts", state: "viewed" },
       { path: "src/b.ts", state: "viewed" },
