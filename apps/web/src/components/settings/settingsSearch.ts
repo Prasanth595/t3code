@@ -83,7 +83,7 @@ export interface SettingsSearchAvailability {
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
-  "/settings/projects": "Project",
+  "/settings/projects": "Projects",
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
@@ -91,7 +91,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
-  "/settings/threads": "Projects & threads",
+  "/settings/threads": "Threads",
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
   "/settings/scheduled-tasks": "Scheduled tasks",
@@ -113,7 +113,6 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   {
     heading: null,
     paths: [
-      "/settings/projects",
       "/settings/general",
       "/settings/appearance",
       "/settings/chat",
@@ -132,7 +131,10 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/scheduled-tasks",
     ],
   },
-  { heading: "Code", paths: ["/settings/source-control", "/settings/worktrees"] },
+  {
+    heading: "Code",
+    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
+  },
   { heading: "Connections", paths: ["/settings/connections", "/settings/access"] },
   {
     heading: null,
