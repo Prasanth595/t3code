@@ -225,7 +225,6 @@ export function ThreadMcpApp(props: {
     theme,
     props,
     asset,
-    detailAtom,
     callTool,
     toolInfo: toolInfoCommand,
     readResource,
@@ -235,12 +234,12 @@ export function ThreadMcpApp(props: {
     navigation,
   };
   const latest = useRef(live);
-  const hostRef = useRef<McpAppHost | null>(null);
-  const followToolCallRef = useRef<((atom: typeof detailAtom) => void) | null>(null);
+  // The attached WebView owns its host; state lets the tool-call effect pair
+  // a host only with an atom from a render after that host existed.
+  const [host, setHost] = useState<McpAppHost | null>(null);
   useEffect(() => {
     const previous = latest.current;
     latest.current = live;
-    if (previous.detailAtom !== live.detailAtom) followToolCallRef.current?.(live.detailAtom);
     // Building the context is not free, so resend only when one of its inputs changed.
     if (
       previous.theme !== live.theme ||
@@ -250,9 +249,24 @@ export function ThreadMcpApp(props: {
       previous.props.height !== live.props.height ||
       previous.props.displayMode !== live.props.displayMode
     ) {
-      hostRef.current?.updateHostContext();
+      host?.updateHostContext();
     }
   });
+  // The host sends the call once the app initializes, so a stored item that
+  // lands late still reaches it. A completed call can arrive under a new
+  // revision, which is a new atom, so the host follows the current one.
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes the MCP host to the current tool call
+  useEffect(() => {
+    if (host === null) return;
+    return appAtomRegistry.subscribe(
+      detailAtom,
+      (result) => {
+        const call = AsyncResult.isSuccess(result) ? storedToolCall(result.value.item) : undefined;
+        if (call !== undefined) host.setToolCall(call);
+      },
+      { immediate: true },
+    );
+  }, [host, detailAtom]);
   const userActive = useRef(false);
 
   // Each WebView document gets its own host: the view is keyed by document,
@@ -301,7 +315,7 @@ export function ThreadMcpApp(props: {
             : { toolInfo: { tool: current.toolDefinition } }),
         };
       };
-      const host: McpAppHost = makeMcpAppHost({
+      const documentHost: McpAppHost = makeMcpAppHost({
         app,
         hostVersion: Constants.expoConfig?.version ?? "0.0.0",
         post: (message) =>
@@ -388,7 +402,7 @@ export function ThreadMcpApp(props: {
             return current.displayMode ?? "inline";
           }
           if (mode === "fullscreen" && current.displayMode !== "fullscreen") {
-            await host.teardown();
+            await documentHost.teardown();
             // Approval arrival or navigation during the wait requires reloading inline.
             const navigation = latest.current.navigation;
             if (latest.current.awaitingUser || !navigation.isFocused()) {
@@ -406,7 +420,7 @@ export function ThreadMcpApp(props: {
             return "fullscreen";
           }
           if (mode === "inline" && current.displayMode === "fullscreen") {
-            await host.teardown();
+            await documentHost.teardown();
             current.onExitFullscreen?.();
             return "inline";
           }
@@ -449,9 +463,9 @@ export function ThreadMcpApp(props: {
         onRequestTeardown: () => {
           const current = latest.current.props;
           if (current.displayMode === "fullscreen") {
-            void host.teardown().then(() => current.onExitFullscreen?.());
+            void documentHost.teardown().then(() => current.onExitFullscreen?.());
           } else {
-            void host.teardown().then(() => setClosed(true));
+            void documentHost.teardown().then(() => setClosed(true));
           }
         },
         onSizeChanged: (size) => {
@@ -460,32 +474,11 @@ export function ThreadMcpApp(props: {
           if (nextHeight !== undefined) setHeight(nextHeight);
         },
       });
-      hostRef.current = host;
-      // The host sends the call once the app initializes, so a stored item
-      // that lands late still reaches it. A completed call can arrive under a
-      // new revision, which is a new atom, so the host follows the current one.
-      let unsubscribeToolCall = () => {};
-      const followToolCall = (atom: typeof latest.current.detailAtom) => {
-        unsubscribeToolCall();
-        unsubscribeToolCall = appAtomRegistry.subscribe(
-          atom,
-          (result) => {
-            const call = AsyncResult.isSuccess(result)
-              ? storedToolCall(result.value.item)
-              : undefined;
-            if (call !== undefined) host.setToolCall(call);
-          },
-          { immediate: true },
-        );
-      };
-      followToolCall(latest.current.detailAtom);
-      followToolCallRef.current = followToolCall;
+      setHost(documentHost);
       return () => {
-        unsubscribeToolCall();
-        if (followToolCallRef.current === followToolCall) followToolCallRef.current = null;
         // An unmount cannot wait: the request goes out before the view does.
-        void host.teardown();
-        if (hostRef.current === host) hostRef.current = null;
+        void documentHost.teardown();
+        setHost((current) => (current === documentHost ? null : current));
       };
     },
     [app],
@@ -572,12 +565,12 @@ export function ThreadMcpApp(props: {
             if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
             const message = envelope.message;
             if (Predicate.isObject(message) && message.t3 === "navigated") {
-              hostRef.current?.dispose();
+              host?.dispose();
               setNavigatedAway(true);
               return;
             }
             userActive.current = envelope.active === true;
-            hostRef.current?.receive(message);
+            host?.receive(message);
             userActive.current = false;
           }}
         />
