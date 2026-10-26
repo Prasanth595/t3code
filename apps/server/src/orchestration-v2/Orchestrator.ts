@@ -12669,11 +12669,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               child.thread.forkedFrom.nodeId === input.taskId &&
               progressAfterTurn(child).state !== "result_available"
             : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null;
-        // Descendant refusal must not publish a successful cancellation of this task.
-        yield* input.stopDescendants;
         yield* threadDispatch.withLock(
           command.threadId,
           Effect.gen(function* () {
+            // Hold intake closed until descendants stop and this thread's Stop commits.
+            yield* input.stopDescendants;
             const child = yield* projectionStore
               .getThreadRecords(
                 command.threadId,
