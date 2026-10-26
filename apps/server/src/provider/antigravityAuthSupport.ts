@@ -155,7 +155,6 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
   if (configIssue !== null || auth.authMethod !== "agent-platform" || auth.apiKey) {
     return configIssue;
   }
-  if (host.environment.GCE_METADATA_HOST) return null;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const gcloudDirectory =
@@ -178,11 +177,11 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
 
 // The Go client's metadata server check. Like Go's transport it never uses a proxy, which cannot
 // reach this host's link-local address. Unreachable link-local addresses can hang, so bound it.
-export const probeMetadataServer = (url: string) =>
+export const probeGoogleMetadataServer = (host = "169.254.169.254") =>
   Effect.acquireUseRelease(
     Effect.try(makeDirectFetch),
     (direct) =>
-      HttpClient.get(url).pipe(
+      HttpClient.get(`http://${host}`).pipe(
         Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
         Effect.provideService(FetchHttpClient.Fetch, direct.fetch),
       ),
@@ -191,8 +190,6 @@ export const probeMetadataServer = (url: string) =>
     Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
     Effect.orElseSucceed(() => false),
   );
-
-export const probeGoogleMetadataServer = probeMetadataServer("http://169.254.169.254");
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials

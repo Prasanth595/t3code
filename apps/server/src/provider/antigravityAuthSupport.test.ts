@@ -37,7 +37,6 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   probeGoogleMetadataServer,
-  probeMetadataServer,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -711,6 +710,16 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
           CLOUDSDK_CONFIG: path.join(userHome, "missing"),
           GCE_METADATA_HOST: "metadata.google.internal",
         }),
+      ).toContain("gcloud auth application-default login");
+      expect(
+        yield* issueWith(
+          {
+            CLOUDSDK_CONFIG: path.join(userHome, "missing"),
+            GCE_METADATA_HOST: "metadata.google.internal",
+          },
+          "linux",
+          true,
+        ),
       ).toBeNull();
 
       // Windows reads %APPDATA%\gcloud and never the POSIX path.
@@ -737,7 +746,7 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
   it.effect("detects the metadata server the way the Go client does", () =>
     Effect.gen(function* () {
       const probeWith = (respond: Parameters<typeof HttpClient.make>[0]) =>
-        probeGoogleMetadataServer.pipe(
+        probeGoogleMetadataServer().pipe(
           Effect.provideService(HttpClient.HttpClient, HttpClient.make(respond)),
         );
       const respondWith = (headers: Record<string, string>) =>
@@ -801,7 +810,7 @@ describe("Google metadata server probe", () => {
           }),
       );
 
-      const onGoogleCloud = yield* probeMetadataServer(metadataServer).pipe(
+      const onGoogleCloud = yield* probeGoogleMetadataServer(new URL(metadataServer).host).pipe(
         Effect.provide(FetchHttpClient.layer),
       );
       expect({ onGoogleCloud, proxied }).toEqual({ onGoogleCloud: true, proxied: [] });

@@ -58,6 +58,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
     readonly metadataServer?: boolean;
+    readonly metadataHost?: string;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -162,7 +163,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   });
   const metadataRequests: Array<string> = [];
   const httpClient = HttpClient.make((request) => {
-    if (!request.url.startsWith("http://169.254.169.254")) {
+    if (!request.url.startsWith(`http://${options.metadataHost ?? "169.254.169.254"}`)) {
       return Effect.die("Unexpected quota request");
     }
     metadataRequests.push(request.url);
@@ -421,13 +422,17 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
         const h = yield* makeHarness({
           config: { authMethod: "agent-platform", gcpProject: "proj", gcpLocation: "us-central1" },
-          environment: [{ name: "HOME", value: home }],
+          environment: [
+            { name: "HOME", value: home },
+            { name: "GCE_METADATA_HOST", value: "metadata.internal:8080" },
+          ],
+          metadataHost: "metadata.internal:8080",
           metadataServer: true,
         });
         yield* h.refresh();
         yield* h.refresh();
         expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
-        expect(h.metadataRequests).toHaveLength(1);
+        expect(h.metadataRequests).toEqual(["http://metadata.internal:8080"]);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );
