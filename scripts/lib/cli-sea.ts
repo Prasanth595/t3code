@@ -13,6 +13,13 @@ class CliSeaBuildError extends Schema.TaggedError<CliSeaBuildError>()("CliSeaBui
 
 const encodeConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+export const resolveCliExecutableTarget = Effect.fn("resolveCliExecutableTarget")(function* (
+  target?: string,
+) {
+  const env = yield* HostProcess.Environment;
+  return (target ?? env.T3CODE_PACK_EXE_TARGET)?.trim() || undefined;
+});
+
 export const isLinuxArm64SeaTarget = Effect.fn("isLinuxArm64SeaTarget")(function* (
   target?: string,
 ) {
@@ -66,7 +73,7 @@ export function assertLinuxArm64PageCompatibility(bytes: Uint8Array) {
   if (ranges.length === 0) throw new Error("ELF executable has no LOAD segments.");
 }
 
-// Node 26.12.1's built-in injector relocates ARM64 segments on 4 KiB boundaries.
+// nodejs/node#65564: Node 26.12.1's injector relocates ARM64 segments on 4 KiB boundaries.
 // Keep its security-fixed runtime and blob format, but use postject's ELF layout.
 export const buildLinuxArm64Sea = Effect.fn("buildLinuxArm64Sea")(function* (input: {
   bundlePath: string;
@@ -119,7 +126,7 @@ const runSeaCommand = Effect.fn("runSeaCommand")(function* (args: Array<string>)
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(
     ChildProcess.make(process.execPath, args, {
-      stdout: "ignore",
+      stdout: "inherit",
       stderr: "inherit",
     }),
   );

@@ -11,7 +11,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
-import { buildLinuxArm64Sea, isLinuxArm64SeaTarget } from "../../../scripts/lib/cli-sea.ts";
+import {
+  buildLinuxArm64Sea,
+  isLinuxArm64SeaTarget,
+  resolveCliExecutableTarget,
+} from "../../../scripts/lib/cli-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -119,6 +123,7 @@ const buildExeCmd = Command.make(
       const serverDir = path.join(repoRoot, "apps/server");
 
       yield* Effect.log("[cli] Building single-executable...");
+      const target = yield* resolveCliExecutableTarget(Option.getOrUndefined(config.target));
       const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
       yield* runCommand(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -126,10 +131,7 @@ const buildExeCmd = Command.make(
           env: {
             ...process.env,
             T3CODE_PACK_EXE: "1",
-            ...Option.match(config.target, {
-              onNone: () => ({}),
-              onSome: (target) => ({ T3CODE_PACK_EXE_TARGET: target }),
-            }),
+            T3CODE_PACK_EXE_TARGET: target ?? "",
           },
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
@@ -143,7 +145,6 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
-      const target = Option.getOrUndefined(config.target)?.trim();
       if (yield* isLinuxArm64SeaTarget(target)) {
         yield* buildLinuxArm64Sea({
           bundlePath,
