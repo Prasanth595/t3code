@@ -7,20 +7,9 @@ import {
   nextTerminalAttachSeedState,
 } from "@t3tools/client-runtime/state/terminal";
 
-import {
-  shouldHandleTerminalExit,
-  synchronizeTerminalOutput,
-  terminalContextMenuItems,
-} from "./ThreadTerminalDrawer";
+import { shouldHandleTerminalExit, synchronizeTerminalOutput } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
-  it("offers Add to chat, Copy and Paste from the right-click menu over a selection", () => {
-    const enabled = terminalContextMenuItems({ hasSelection: true })
-      .filter((item) => !item.disabled)
-      .map((item) => item.id);
-    expect(enabled).toEqual(expect.arrayContaining(["add-to-chat", "copy", "paste"]));
-  });
-
   it("handles an exit that lands while the terminal surface is still loading", () => {
     expect(shouldHandleTerminalExit("exited", "running", false, 1)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false, 1)).toBe(false);

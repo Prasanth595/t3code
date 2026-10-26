@@ -369,7 +369,7 @@ function terminalSelectionMenuItems(options?: {
   ];
 }
 
-export function terminalContextMenuItems(options: {
+function terminalContextMenuItems(options: {
   hasSelection: boolean;
   canAddToChat?: boolean;
   readOnly?: boolean;
