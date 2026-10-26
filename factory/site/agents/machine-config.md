@@ -4,17 +4,17 @@ File: `<base dir>/factory/config.yml`, by default `~/.config/t3fac/factory/confi
 
 ## Schema
 
-| Key                    | Type         | Required | Default | Rule                                                                                                       |
-| ---------------------- | ------------ | -------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| `gh_config_dir`        | string       | yes      |         | Non-empty. Full path; `~` is not expanded.                                                                 |
-| `poll_seconds`         | integer ≥ 10 | no       | `60`    |                                                                                                            |
-| `max_concurrent_runs`  | integer ≥ 1  | yes      |         | Across all repos.                                                                                          |
-| `max_concurrent_gates` | integer ≥ 1  | no       | `2`     |                                                                                                            |
-| `feedback_seconds`     | integer ≥ 0  | no       | `600`   | Seconds between feedback reads of a `pr-open` run; `0` reads every pass.                                   |
-| `notify`               | boolean      | no       | `true`  | macOS notification per new attention item.                                                                 |
-| `min_free_gib`         | integer ≥ 0  | no       | `10`    | Free GiB floor; `0` turns the check off.                                                                   |
-| `max_load_per_core`    | integer ≥ 0  | no       | `1`     | 1-minute load per core ceiling; `0` turns the check off.                                                   |
-| `deploy_wait_minutes`  | integer ≥ 1  | no       | `120`   | Minutes a build autodeploy has waiting holds claims back before it installs with factory runs in progress. |
+| Key                    | Type         | Required | Default | Rule                                                                                                                                                        |
+| ---------------------- | ------------ | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gh_config_dir`        | string       | yes      |         | Non-empty. Full path; `~` is not expanded.                                                                                                                  |
+| `poll_seconds`         | integer ≥ 10 | no       | `60`    |                                                                                                                                                             |
+| `max_concurrent_runs`  | integer ≥ 1  | yes      |         | Across all repos.                                                                                                                                           |
+| `max_concurrent_gates` | integer ≥ 1  | no       | `2`     |                                                                                                                                                             |
+| `feedback_seconds`     | integer ≥ 0  | no       | `600`   | Seconds between feedback reads of a `pr-open` run; `0` reads every pass.                                                                                    |
+| `notify`               | boolean      | no       | `true`  | macOS notification per new attention item.                                                                                                                  |
+| `min_free_gib`         | integer ≥ 0  | no       | `10`    | Free GiB floor; `0` turns the check off.                                                                                                                    |
+| `max_load_per_core`    | integer ≥ 0  | no       | `1`     | 1-minute load per core ceiling; `0` turns the check off.                                                                                                    |
+| `deploy_wait_minutes`  | integer ≥ 1  | no       | `120`   | Minutes a build autodeploy has waiting holds claims back before it installs whatever is in progress; factory runs resume, a person's thread is interrupted. |
 
 | Retired key      | Load result                       |
 | ---------------- | --------------------------------- |

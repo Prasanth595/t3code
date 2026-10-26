@@ -878,7 +878,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     issue: null,
     run: null,
     // No figures: an open item is not raised again, so they would go stale.
-    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick unless a person's thread has an agent at work, and the runs resume on the new build`,
+    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick, factory runs resume on the new build and a person's thread is interrupted`,
   });
   return true;
 });

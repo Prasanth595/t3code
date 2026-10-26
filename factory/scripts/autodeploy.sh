@@ -12,13 +12,14 @@
 # - writes `<epoch seconds> <sha>` to `deploy-pending` in the factory data dir while origin/main
 #   has a commit it has not installed, keeping the first time across newer commits, and removes it
 #   when nothing is pending; the server stops claiming issues while the file is there. The file is
-#   rewritten every tick that reads the status, and the server takes one older than 30 minutes as
-#   nothing pending, so an autodeploy that stopped ticking holds nothing back;
+#   rewritten every tick that reads the status and touched while a build runs, and the server takes
+#   one older than 30 minutes as nothing pending, so an autodeploy that stopped ticking holds
+#   nothing back;
 # - asks GET /api/factory/status whether a factory run is in progress or an agent is at work in
 #   any thread, and waits for the next tick when one is or when it cannot tell, logging how long
 #   the build has waited; past `deploy_wait_minutes` (machine config, default 120) it deploys
-#   anyway while only factory runs are in the way, and they resume on the new build; a thread with
-#   an agent at work still holds the deploy;
+#   whatever is in the way: factory runs resume on the new build, and a person's thread is
+#   interrupted, which the person continues in T3;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
 #   its limit is tried on the next two ticks before the commit is given up on;
@@ -54,6 +55,11 @@ job=io.github.rawphp.t3fac.autodeploy
 port=${T3FAC_PORT:-3876}
 # How long a build may take. T3FAC_BUILD_LIMIT exists only so tests can make a build time out.
 build_limit=${T3FAC_BUILD_LIMIT:-3600}
+# Seconds between touches of the pending marker while a build runs. T3FAC_PENDING_REFRESH exists
+# only so tests can shorten it.
+pending_refresh=${T3FAC_PENDING_REFRESH:-300}
+# The server's PENDING_STALE_MS in pass.ts is the same span; change both together.
+pending_stale_minutes=30
 
 say() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) autodeploy: $*"
@@ -148,6 +154,11 @@ mark_pending() {
   mkdir -p "$data_dir"
   read -r since _ 2> /dev/null < "$pending_file" || true
   [[ $since =~ ^[0-9]+$ ]] || since=$(date +%s)
+  # A marker this old was ignored by the server, which may have claimed since: the wait starts
+  # again. A short blip keeps the first-wait time.
+  if [[ -n $(find "$pending_file" -mmin +"$pending_stale_minutes" 2> /dev/null) ]]; then
+    since=$(date +%s)
+  fi
   tmp="$data_dir/.deploy-pending.$$"
   echo "$since $target" > "$tmp"
   mv -f "$tmp" "$pending_file"
@@ -174,12 +185,12 @@ read_deploy_limit() {
 # person, including one whose file cannot be read), a pass running, a thread with an agent at
 # work, or a status it cannot read. The pending marker is rewritten each tick that reads the status,
 # busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
-# as it is: the server ignores one that is older than three ticks, which covers an autodeploy that
+# as it is: the server ignores one that is older than 30 minutes, which covers an autodeploy that
 # cannot fetch, has no clone, has no token, or is not running at all, and a blip does not lose the
-# first-wait time. The limit ends the wait only for factory runs, which the pass resumes; a
-# person's thread (or a thread count T3 could not read) keeps the wait going. A factory run with a
-# person's thread alongside is still cut off, since the status cannot tell them apart, and the
-# person sees the restart.
+# first-wait time. Once the build has waited past the limit this returns 0 whatever is in the way,
+# a thread count T3 could not read included: the status cannot tell a person's thread from a
+# factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
+# shows as interrupted in T3 and the person continues it.
 factory_idle() {
   local body busy
   if [[ -z $token ]]; then
@@ -210,15 +221,13 @@ factory_idle() {
     [[ $since =~ ^[0-9]+$ ]] || since=$now
     waited=$((now - since))
     read_deploy_limit
-    if ((waited >= deploy_limit * 60)) && [[ $busy == "a factory run is in progress" ]]; then
+    if ((waited >= deploy_limit * 60)); then
       # factory_idle runs again after the build; the line is said once.
-      [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; the runs in progress resume on the new build$deploy_limit_note"
+      [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; factory runs in progress resume on the new build, a person's thread is interrupted$deploy_limit_note"
       said_overdue=1
       return 0
     fi
-    local over=""
-    ((waited < deploy_limit * 60)) || over=", which ends the wait for factory runs only"
-    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$over$deploy_limit_note"
+    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
     return 1
   fi
 }
@@ -248,7 +257,7 @@ build_failed() {
 # stop autodeploy for good. Returns 124 on a timeout. set -m gives each background job a process
 # group of its own, so one kill reaches every process the build started.
 build() {
-  local pid watchdog status=0 timed_out="$root/.autodeploy-timeout.$$"
+  local pid watchdog refresher status=0 timed_out="$root/.autodeploy-timeout.$$"
   rm -f "$timed_out"
   set -m
   {
@@ -262,10 +271,20 @@ build() {
     kill -TERM -- "-$pid"
   } 2> /dev/null &
   watchdog=$!
+  # The server takes a marker older than 30 minutes as nothing pending, and a build can run an
+  # hour, so the marker is touched while it runs. Its content stays; the server reads the mtime.
+  {
+    while sleep "$pending_refresh"; do
+      [[ -e $pending_file ]] && touch "$pending_file"
+    done
+  } 2> /dev/null &
+  refresher=$!
   set +m
   wait "$pid" || status=$?
   kill -TERM -- "-$watchdog" 2> /dev/null || true
   wait "$watchdog" 2> /dev/null || true
+  kill -TERM -- "-$refresher" 2> /dev/null || true
+  wait "$refresher" 2> /dev/null || true
   if [[ -e $timed_out ]]; then
     rm -f "$timed_out"
     return 124
