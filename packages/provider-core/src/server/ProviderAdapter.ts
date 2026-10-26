@@ -584,10 +584,6 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
-  readonly stopTask?: (input: {
-    readonly providerThread: OrchestrationV2ProviderThread;
-    readonly taskId: string;
-  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   /**
    * Marks or unmarks background tasks the agent will resume from, using the ids the agent saw.
    * Ids not running on this provider thread come back unmatched and change nothing.

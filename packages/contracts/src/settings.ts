@@ -568,7 +568,7 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
-export const IDLE_COMPACTION_MODES = [
+const IDLE_COMPACTION_MODES = [
   { value: "onReturn", label: "When you return" },
   { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
   { value: "off", label: "Never" },
@@ -579,11 +579,6 @@ export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 // Shipped clients reject the whole server config unless `compactIdleThreads` is boolean.
 // Keep the mode in `idleCompaction`, but accept strings from older servers.
 const LegacyCompactIdleThreads = Schema.Union([Schema.Boolean, IdleCompactionMode]);
-
-const InstanceIdleCompaction = Schema.Literals([
-  "default",
-  ...IDLE_COMPACTION_MODES.map((mode) => mode.value),
-]);
 
 export const UsageLimitSourceConfig = Schema.Struct({
   kind: Schema.Literal("cliproxy"),
@@ -1085,14 +1080,6 @@ export const resolveProjectProviderInstanceEnabled = (
     : isUnconfiguredDefaultInstanceEnabled(instanceId);
 };
 
-const decodeInstanceIdleCompaction = Schema.decodeUnknownOption(
-  Schema.Struct({
-    idleCompaction: InstanceIdleCompaction.pipe(
-      Schema.withDecodingDefault(Effect.succeed("default" as const)),
-    ),
-  }),
-);
-
 type IdleCompactionSettings = Pick<ServerSettings, "compactIdleThreads" | "idleCompaction">;
 
 /** The environment-wide idle compaction mode, from whichever field the settings carry. */
@@ -1109,36 +1096,6 @@ export const withIdleCompaction = <S extends IdleCompactionSettings>(
   settings: S,
   mode: IdleCompactionMode,
 ): S => ({ ...settings, idleCompaction: mode, compactIdleThreads: mode === "beforeCacheExpires" });
-
-/** Whether a server reads modes, rather than only the boolean switch from before them. */
-export const readsIdleCompactionModes = (settings: IdleCompactionSettings) =>
-  settings.idleCompaction !== undefined || typeof settings.compactIdleThreads === "string";
-
-/**
- * The patch that sets `mode` in the form the server's settings show it reads:
- * the mode for a server that has `idleCompaction` or kept the mode in the legacy
- * field, the boolean switch for a server from before modes.
- */
-export const idleCompactionPatch = (settings: IdleCompactionSettings, mode: IdleCompactionMode) =>
-  settings.idleCompaction !== undefined
-    ? { idleCompaction: mode }
-    : readsIdleCompactionModes(settings)
-      ? { compactIdleThreads: mode }
-      : { compactIdleThreads: mode === "beforeCacheExpires" };
-
-export const resolveIdleCompaction = (
-  settings: Pick<ServerSettings, "providerInstances" | "compactIdleThreads" | "idleCompaction">,
-  instanceId: ProviderInstanceId,
-): IdleCompactionMode => {
-  const instance = Object.hasOwn(settings.providerInstances, instanceId)
-    ? settings.providerInstances[instanceId]
-    : undefined;
-  const override = decodeInstanceIdleCompaction(instance?.config ?? {}).pipe(
-    Option.map((config) => config.idleCompaction),
-    Option.getOrElse(() => "default" as const),
-  );
-  return override === "default" ? globalIdleCompaction(settings) : override;
-};
 
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",

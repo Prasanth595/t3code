@@ -3295,7 +3295,6 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
-  stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -3671,41 +3670,11 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedError<Orchest
   },
 ) {}
 
-export const OrchestrationV2StopWorkflowInput = Schema.Struct({
-  threadId: ThreadId,
-  subagentId: NodeId,
-});
-export type OrchestrationV2StopWorkflowInput = typeof OrchestrationV2StopWorkflowInput.Type;
-
-export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<OrchestrationV2StopWorkflowError>()(
-  "OrchestrationV2StopWorkflowError",
-  {
-    threadId: ThreadId,
-    subagentId: NodeId,
-    reason: Schema.Literals(["not-running", "unsupported", "unavailable", "stop-failed"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    switch (this.reason) {
-      case "not-running":
-        return "This workflow is no longer running.";
-      case "unsupported":
-        return "This provider cannot stop a workflow.";
-      case "unavailable":
-        return "This workflow has no live provider task.";
-      case "stop-failed":
-        return "Failed to stop the workflow.";
-    }
-  }
-}
-
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2ThreadLaunchError,
-  OrchestrationV2StopWorkflowError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -3890,10 +3859,6 @@ export const OrchestrationV2RpcSchemas = {
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
-  },
-  stopWorkflow: {
-    input: OrchestrationV2StopWorkflowInput,
-    output: Schema.Void,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

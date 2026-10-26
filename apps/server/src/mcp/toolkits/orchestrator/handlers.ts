@@ -37,26 +37,6 @@ const handlers = {
       return yield* service.cancelTask(scope, input);
     }),
   ),
-  t3_workflow_stop: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
-      Effect.gen(function* () {
-        const { threads } = yield* readCaller();
-        return yield* threads.stopWorkflow(input).pipe(
-          Effect.as({}),
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorMcpFailure({
-                code:
-                  cause.reason === "unavailable" || cause.reason === "stop-failed"
-                    ? "orchestration_error"
-                    : "invalid_request",
-                message: cause.message,
-              }),
-          ),
-        );
-      }),
-  ),
   t3_background_wait: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();

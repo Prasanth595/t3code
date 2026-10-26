@@ -92,10 +92,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
-    stopWorkflow: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:orchestration:stop-workflow",
-      tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
-    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

@@ -9788,70 +9788,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         now,
       });
     }
-    if (
-      subagent === undefined ||
-      subagent.runId !== command.runId ||
-      subagent.origin !== "provider_native" ||
-      subagent.driver !== "claudeAgent" ||
-      subagent.nativeTaskRef?.strength !== "strong" ||
-      subagent.nativeTaskRef.nativeId === null
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The requested native subagent cannot be stopped on this run.",
-      });
-    }
-    if (!["pending", "running", "waiting"].includes(subagent.status)) return;
-    const providerThread = projection.providerThreads.find(
-      (candidate) => candidate.id === run?.providerThreadId,
-    );
-    const providerTurn = projection.providerTurns.findLast(
-      (candidate) => candidate.providerThreadId === providerThread?.id,
-    );
-    if (
-      providerThread?.providerSessionId == null ||
-      providerTurn === undefined ||
-      providerThread.driver !== subagent.driver ||
-      providerThread.providerInstanceId !== subagent.providerInstanceId
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The requested native subagent has no owning provider session.",
-      });
-    }
-    const providerSessionId = providerThread.providerSessionId;
-    const nativeTaskId = subagent.nativeTaskRef.nativeId;
-    const now = yield* DateTime.now;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "subagent.updated",
-      threadId: command.threadId,
-      runId: command.runId,
-      nodeId: subagent.id,
-      providerInstanceId: subagent.providerInstanceId,
-      occurredAt: now,
-      payload: { ...subagent, updatedAt: now },
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "The requested subagent cannot be stopped on this run.",
     });
-    yield* Ref.update(effects, (existing) => [
-      ...existing,
-      {
-        id: `effect:${command.commandId}:subagent.stop:${subagent.id}`,
-        commandId: command.commandId,
-        threadId: command.threadId,
-        request: {
-          type: "provider-turn.interrupt",
-          providerSessionId,
-          providerThreadId: providerThread.id,
-          providerTurnId: providerTurn.id,
-          subagent: { id: subagent.id, nativeTaskId },
-        },
-      } satisfies PendingOrchestrationEffectV2,
-    ]);
-    return;
   });
 
   const dispatchRunInterrupt = Effect.fn("Orchestrator.dispatchRunInterrupt")(function* (

@@ -12,8 +12,6 @@ import {
   type ChatAttachment,
   CommandId,
   MessageId,
-  OrchestrationV2StopWorkflowError,
-  type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
@@ -431,9 +429,6 @@ export interface ThreadManagementServiceShape {
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
-  readonly stopWorkflow: (
-    input: OrchestrationV2StopWorkflowInput,
-  ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -1030,92 +1025,6 @@ const make = Effect.gen(function* () {
     return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
   });
 
-  const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(
-    "ThreadManagementService.stopWorkflow",
-  )(
-    function* (input) {
-      const records = yield* orchestrator
-        .getThreadRecords(input.threadId, ["subagents", "runs", "providerThreads"])
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable", cause }),
-          ),
-        );
-      if (records.thread.deletedAt !== null) {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
-      }
-      // Check mode limits under the lock so users cannot raise modes between validation and Stop.
-      const limit = yield* DispatchModeLimit;
-      const exceeded =
-        limit === undefined ? undefined : exceededDispatchModeLimit(limit, records.thread);
-      if (limit !== undefined && exceeded !== undefined) {
-        if (limit.refused !== undefined) {
-          yield* Ref.set(limit.refused, {
-            threadId: input.threadId,
-            runtimeMode: records.thread.runtimeMode,
-            interactionMode: records.thread.interactionMode,
-            mode: exceeded,
-          });
-        }
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
-      }
-      const task = records.subagents.find((candidate) => candidate.id === input.subagentId);
-      if (
-        task === undefined ||
-        task.threadId !== input.threadId ||
-        task.workflow === undefined ||
-        task.status !== "running"
-      ) {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "not-running" });
-      }
-      if (task.origin !== "provider_native" || task.driver !== "claudeAgent") {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unsupported" });
-      }
-      const providerThreadId =
-        task.providerThreadId ??
-        records.runs.find((run) => run.id === task.runId)?.providerThreadId;
-      const providerThread = records.providerThreads.find(
-        (candidate) =>
-          candidate.id === providerThreadId &&
-          candidate.appThreadId === input.threadId &&
-          candidate.providerInstanceId === task.providerInstanceId &&
-          candidate.driver === task.driver,
-      );
-      const taskId = task.nativeTaskRef?.nativeId;
-      if (providerThread?.providerSessionId == null || taskId == null || taskId.length === 0) {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
-      }
-      const runtime = yield* sessions
-        .get(providerThread.providerSessionId)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable", cause }),
-          ),
-        );
-      if (Option.isNone(runtime)) {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
-      }
-      if (runtime.value.stopTask === undefined) {
-        return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unsupported" });
-      }
-      // Bounded so a provider that never answers cannot hold the thread lock.
-      yield* runtime.value.stopTask({ providerThread, taskId }).pipe(
-        Effect.timeout("15 seconds"),
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2StopWorkflowError({
-              ...input,
-              reason: "stop-failed",
-              cause,
-            }),
-        ),
-      );
-    },
-    (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
-  );
-
   const awaitBackgroundTasks: ThreadManagementServiceShape["awaitBackgroundTasks"] = Effect.fn(
     "ThreadManagementService.awaitBackgroundTasks",
   )(function* (input) {
@@ -1257,7 +1166,6 @@ const make = Effect.gen(function* () {
     settleThread,
     interruptThread,
     stopDelegatedTasks,
-    stopWorkflow,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

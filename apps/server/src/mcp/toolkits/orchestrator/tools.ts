@@ -1,7 +1,6 @@
 import {
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
-  OrchestrationV2StopWorkflowInput,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -103,18 +102,6 @@ const TaskCancelTool = Tool.make("task_cancel", {
   dependencies,
 })
   .annotate(Tool.Title, "Cancel delegated task")
-  .annotate(Tool.Destructive, true);
-
-const WorkflowStopTool = Tool.make("t3_workflow_stop", {
-  description:
-    "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `t3_thread_read` 'activity'. Stops only the workflow, not the thread.",
-  parameters: OrchestrationV2StopWorkflowInput,
-  success: Schema.Struct({}),
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Stop a workflow")
   .annotate(Tool.Destructive, true);
 
 const BackgroundWaitTool = Tool.make("t3_background_wait", {
@@ -298,7 +285,6 @@ export const OrchestratorToolkit = Toolkit.make(
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
-  WorkflowStopTool,
   BackgroundWaitTool,
   ScheduleTaskTool,
   ListScheduledTasksTool,

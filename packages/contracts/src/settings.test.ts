@@ -9,9 +9,7 @@ import {
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
-  idleCompactionPatch,
   requiredScopesForProjectMutation,
-  resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -136,20 +134,7 @@ describe("custom model settings", () => {
   });
 });
 
-describe("resolveIdleCompaction", () => {
-  it("lets an instance override the global default", () => {
-    const settings = decodeServerSettings({
-      idleCompaction: "off",
-      providerInstances: {
-        pi_work: { driver: "pi", config: { idleCompaction: "onReturn" } },
-        pi_personal: { driver: "pi" },
-      },
-    });
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi_work"))).toBe("onReturn");
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi_personal"))).toBe("off");
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi"))).toBe("off");
-  });
-
+describe("idle compaction settings", () => {
   it("reads the mode from the legacy switch, in either form servers saved it", () => {
     expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: true }))).toBe(
       "beforeCacheExpires",
@@ -168,20 +153,6 @@ describe("resolveIdleCompaction", () => {
       expect(encoded.compactIdleThreads).toBe(mode === "beforeCacheExpires");
       expect(encoded.idleCompaction).toBe(mode);
     }
-  });
-
-  it("patches the field the server reads", () => {
-    expect(
-      idleCompactionPatch({ compactIdleThreads: false, idleCompaction: "onReturn" }, "off"),
-    ).toEqual({
-      idleCompaction: "off",
-    });
-    expect(idleCompactionPatch({ compactIdleThreads: "onReturn" }, "off")).toEqual({
-      compactIdleThreads: "off",
-    });
-    expect(idleCompactionPatch({ compactIdleThreads: false }, "beforeCacheExpires")).toEqual({
-      compactIdleThreads: true,
-    });
   });
 });
 
