@@ -129,13 +129,7 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-/**
- * Appends decoded text to terminal output, keeping at most
- * `MAX_ACP_TERMINAL_OUTPUT_BYTES` by dropping whole leading characters. Only the
- * appended text and the dropped prefix are measured. Trimming copies the whole
- * retained string, so a trim drops a further `ACP_TERMINAL_OUTPUT_TRIM_BYTES`
- * and the next chunks append without another copy.
- */
+// Drop an extra batch at UTF-8 boundaries so flattening the retained string is amortized.
 function appendTerminalOutput(
   output: string,
   outputBytes: number,

@@ -1032,20 +1032,23 @@ describe("AcpRuntimeModel", () => {
     expect(trimmed.output.slice(0, 2)).toBe("aa");
     expect(trimmed.output.slice(-3)).toBe("abc");
 
-    // Later chunks fill the freed space without dropping anything.
     const appended = applyAcpAgentTerminalUpdate(trimmed, chunk("🙂"));
     expect(appended.output.slice(-5)).toBe("abc🙂");
     expect(appended.output.length).toBe(trimmed.output.length + 2);
     expect(appended.outputBytes).toBe(cap - step + 3);
 
-    // Exit flushes an incomplete trailing character.
-    const pending = applyAcpAgentTerminalUpdate(appended, chunk(Buffer.from("🙂").subarray(0, 2)));
+    expect(Buffer.byteLength(appended.output)).toBe(appended.outputBytes);
+
+    const refilled = applyAcpAgentTerminalUpdate(appended, chunk("x".repeat(step - 3)));
+    expect(refilled.outputBytes).toBe(cap);
+    const pending = applyAcpAgentTerminalUpdate(refilled, chunk(Buffer.from("🙂").subarray(0, 2)));
     const exited = applyAcpAgentTerminalUpdate(pending, {
       sessionUpdate: "terminal_update",
       terminalId: "terminal-cap",
       exitStatus: { exitCode: 1 },
     });
-    expect(exited.output.slice(-4)).toBe("c🙂\uFFFD");
+    expect(exited.output.slice(-4)).toBe("xxx\uFFFD");
+    expect(exited.outputBytes).toBe(cap - step);
     expect(exited.outputBytes).toBe(Buffer.byteLength(exited.output));
 
     const cleared = applyAcpAgentTerminalUpdate(exited, {
