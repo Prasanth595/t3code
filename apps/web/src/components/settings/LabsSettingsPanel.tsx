@@ -14,10 +14,11 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
-/** Features that are still settling in. Some are on by default; each can be turned off here. */
-export function BetaSettingsPanel() {
+/** Features still settling in, and legacy behavior kept for people who rely on it. */
+export function LabsSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
@@ -73,6 +74,7 @@ export function BetaSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
       </SettingsSection>
+      <LegacyFeaturesSection />
     </SettingsPageContainer>
   );
 }
@@ -108,8 +110,8 @@ function GuestLinksRow() {
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you
           approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
+          <Link to="/settings/access" className="underline underline-offset-2">
+            Sharing & access
           </Link>
           . While it is off, every guest link stops working.
         </>
