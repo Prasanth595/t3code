@@ -70,7 +70,8 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, onWorkEntryContentReady } =
+    use(TimelineRowCtx);
   const onToggleStandaloneEntry = (collapsed: boolean) =>
     onToggleWorkEntry(disclosureAnchorKey, collapsed);
   const nonEmptyEntries = groupedEntries.filter((entry) =>
@@ -102,6 +103,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
           workspaceRoot={workspaceRoot}
           displayLabel={displayLabel}
           onToggleEntry={onToggleStandaloneEntry}
+          onContentReady={() => onWorkEntryContentReady?.(disclosureAnchorKey)}
         />
       ))}
     </section>
@@ -143,7 +145,11 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const {
+    workGroupViewState: viewState,
+    onToggleWorkEntry,
+    onWorkEntryContentReady,
+  } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -166,6 +172,7 @@ function ExpandedWorkGroupEntries({
   const groupView = {
     state: viewState,
     onToggleEntry: (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
+    onContentReady: () => onWorkEntryContentReady?.(disclosureAnchorKey),
   };
   const updateScrollFades = () => {
     const element = listRef.current?.getScrollableNode();

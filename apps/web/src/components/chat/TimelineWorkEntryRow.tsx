@@ -145,6 +145,7 @@ type WorkEntryRowProps = {
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
+  onContentReady?: (() => void) | undefined;
 };
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
@@ -186,6 +187,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const onInitialOutputReady = groupView?.onContentReady ?? props.onContentReady;
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
@@ -526,6 +528,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <WorkLogDetails kind="panel">
           {workEntry.projectedItem && plainOutput === undefined ? (
             <V2ItemInspector
+              onInitialOutputReady={onInitialOutputReady}
               projectedItem={workEntry.projectedItem}
               environmentId={ctx.activeThreadEnvironmentId}
               cwd={ctx.markdownCwd}
@@ -543,6 +546,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               ) : null}
               {plainOutputFetches && workEntry.projectedItem ? (
                 <FetchedToolOutput
+                  onInitialOutputReady={onInitialOutputReady}
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={onImageExpand}

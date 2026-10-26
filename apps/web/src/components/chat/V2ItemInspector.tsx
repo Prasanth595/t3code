@@ -31,9 +31,10 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
-import type { TurnItemSource } from "./timelineRowContext";
+import { useInitialOutputReady, type TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
+  readonly onInitialOutputReady?: (() => void) | undefined;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly environmentId: EnvironmentId;
   readonly cwd?: string | undefined;
@@ -189,12 +190,14 @@ function ToolOutput(props: ToolOutputState) {
 }
 
 export function FetchedToolOutput(props: {
+  readonly onInitialOutputReady?: (() => void) | undefined;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly environmentId: EnvironmentId;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
 }) {
   const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId, props.source);
+  useInitialOutputReady(output.pending, props.onInitialOutputReady);
   return (
     <div className={cn("mt-1.5 space-y-1.5", monoClassName)}>
       <ToolOutput {...output} onImageExpand={props.onImageExpand} />
@@ -253,6 +256,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  useInitialOutputReady(streamsOutput || outputState.pending, props.onInitialOutputReady);
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -283,6 +287,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           outputSlot={
             streamsOutput ? (
               <CommandOutputPanel
+                onInitialOutputReady={props.onInitialOutputReady}
                 environmentId={props.environmentId}
                 threadId={props.projectedItem.sourceThreadId}
                 itemId={props.projectedItem.sourceItemId}

@@ -443,7 +443,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const disclosurePinsEndRef = useRef(false);
   const disclosureCollapsedRef = useRef(false);
-  const disclosureRevealsRowRef = useRef(false);
+  const disclosureRevealRef = useRef<{ key: string; identity: string; ready: boolean } | null>(
+    null,
+  );
+  const onTimelineNavigation = useStableCallback(() => {
+    disclosureRevealRef.current = null;
+    onManualNavigation();
+  });
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
     const element = listRef.current?.getScrollableNode();
@@ -453,15 +459,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Visible-position anchoring keeps the toggled row still, so content that
   // expands below it near the bottom would otherwise land under the composer.
   const revealExpandedDisclosure = () => {
-    const anchorKey = disclosureAnchorKeyRef.current;
-    if (
-      disclosurePinsEndRef.current ||
-      disclosureCollapsedRef.current ||
-      !disclosureRevealsRowRef.current ||
-      anchorKey === null
-    ) {
-      return;
-    }
+    const pending = disclosureRevealRef.current;
+    if (!pending || pending.identity !== listIdentityKey) return;
+    if (pending.ready) disclosureRevealRef.current = null;
+    const anchorKey = pending.key;
     const state = listRef.current?.getState();
     const element = listRef.current?.getScrollableNode();
     const index = state?.indexByKey(anchorKey);
@@ -517,8 +518,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   ) => {
     disclosureAnchorKeyRef.current = anchorKey;
     disclosureCollapsedRef.current = collapsed;
-    disclosureRevealsRowRef.current = revealsRow;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
+    disclosureRevealRef.current =
+      !collapsed && revealsRow && !disclosurePinsEndRef.current
+        ? { key: anchorKey, identity: listIdentityKey, ready: false }
+        : null;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
@@ -714,7 +718,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows,
     citationRequest,
     cancelPositionRestoreRef,
-    onManualNavigation,
+    onManualNavigation: onTimelineNavigation,
     onPositioned: setPositionedThreadKey,
   });
 
@@ -1015,6 +1019,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleAttemptFold,
     onToggleWorkGroup,
     onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onWorkEntryContentReady: (anchorKey) => {
+      const pending = disclosureRevealRef.current;
+      if (pending?.key !== anchorKey || pending.identity !== listIdentityKey) return;
+      pending.ready = true;
+      scheduleDisclosureSettle();
+    },
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
@@ -1265,7 +1275,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {
-                onManualNavigation();
+                onTimelineNavigation();
                 void listRef.current?.scrollToIndex({
                   index: item.rowIndex,
                   animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
