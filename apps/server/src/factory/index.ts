@@ -35,6 +35,7 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
+import { launchModel, type Cooldown } from "./cooldown.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
@@ -81,6 +82,7 @@ import {
   forward,
   gateSendPending,
   interrupted,
+  resumeAfterCooldown,
   timeLimit,
   watch,
   type BuildingContext,
@@ -382,6 +384,7 @@ export interface LiveShared {
   readonly brokenThreads: BrokenThreadMemo;
   readonly configSkips: Map<string, number>;
   readonly lastGood: Map<string, LastGood>;
+  readonly cooldowns: Map<string, Cooldown>;
 }
 
 /**
@@ -416,13 +419,14 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads, brokenThreads, configSkips, lastGood }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads, configSkips, lastGood, cooldowns }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
     lastGood: new Map(),
+    cooldowns: new Map(),
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const load = live.readLoad ?? readLoad;
@@ -433,6 +437,9 @@ export const liveWorld = (
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
   const tracker = (effect: Effect.Effect<unknown, GitHubError, FactoryProcess>) =>
     withProcess(effect).pipe(Effect.mapError(asPassError("tracker")));
+  // A session launched while its model cools down from a rate limit runs on the model's fallback.
+  const modelNow = (model: T3Sessions.Model) =>
+    launchModel(cooldowns, machine.modelFallbacks, model, clock()) ?? model;
   const startContext = (repo: Repo): StartContext => ({
     repo: repo.watched.repo,
     trackerUser: repo.trackerUser,
@@ -444,6 +451,7 @@ export const liveWorld = (
     ghConfigDir: machine.ghConfigDir,
     sessions,
     clock,
+    launchModel: modelNow,
   });
   // A run's steps get the repo's project with the run's own base: the one its launch recorded.
   const buildingContext = (repo: Repo, project: ProjectConfig): BuildingContext => ({
@@ -465,6 +473,7 @@ export const liveWorld = (
     ghConfigDir: machine.ghConfigDir,
     tracker: trackerFor(repo.watched),
     sessions,
+    launchModel: modelNow,
   });
   const gateContext = (repo: Repo, project: ProjectConfig): FeedbackContext => ({
     ...buildingContext(repo, project),
@@ -475,6 +484,7 @@ export const liveWorld = (
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
     feedbackSeconds: machine.feedbackSeconds,
+    launchModel: modelNow,
     gateOptions: {
       ghConfigDir: machine.ghConfigDir,
       clock,
@@ -677,6 +687,14 @@ export const liveWorld = (
       ledger(() => serverStopsForStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     interrupted: (repo, run, base, evidence) =>
       interrupted(interruptContext(repo, runProject(repo.project, base)), run, evidence),
+    resumeAfterCooldown: (repo, run, base, model) =>
+      resumeAfterCooldown(interruptContext(repo, runProject(repo.project, base)), run, model),
+    cooldowns,
+    projectModel: (repo) =>
+      sessions.findProject(repo.watched.path).pipe(
+        Effect.map((found) => found?.model ?? null),
+        Effect.mapError(asPassError("t3")),
+      ),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>
@@ -884,6 +902,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
     lastGood: new Map(),
+    cooldowns: new Map(),
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.

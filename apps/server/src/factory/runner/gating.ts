@@ -28,7 +28,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import type { FactorySessions, ThreadStatus } from "../t3/sessions.ts";
+import type { FactorySessions, Model, ThreadStatus } from "../t3/sessions.ts";
 import { isCommitId, sanitize } from "../text.ts";
 import type { BoundGitHub, IssueDetail, PullRequest } from "../tracker/github.ts";
 import {
@@ -104,6 +104,8 @@ export interface GateContext extends BuildingContext {
   readonly ghConfigDir: string;
   readonly sessions: BuildingContext["sessions"] &
     Pick<FactorySessions["Service"], "findProject" | "launch">;
+  /** As `StartContext.launchModel`, for a session the gate relaunches. */
+  readonly launchModel?: (model: Model) => Model;
 }
 
 /** The project names no gate command: nothing can pass, and the pass marker could not tell a gate command from a provision command. */

@@ -343,11 +343,10 @@ export class FactorySessions extends Context.Service<
       threadId: string,
     ) => Effect.Effect<Thread, ThreadNotFoundError | SessionsError>;
     /**
-     * Sends a follow-up message into the thread. T3 decides delivery: starts a run when idle,
-     * steers into an active run if the provider supports it, else queues. `commandId` names the
-     * message like a launch's: resent after a failure, T3 keeps one message. A refused message
-     * stays refused under its id, as `MessageRejectedError`. With `model`, the run the message
-     * starts runs on it, and so does the thread from then on.
+     * Sends a follow-up message into the thread; T3 decides delivery (start, steer or queue).
+     * `commandId` names it like a launch's: resent after a failure, T3 keeps one message, and a
+     * refused one stays refused under its id (`MessageRejectedError`). With `model`, the run it
+     * starts, and the thread from then on, run on that model.
      */
     readonly send: (
       threadId: string,

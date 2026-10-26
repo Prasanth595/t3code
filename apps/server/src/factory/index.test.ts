@@ -138,6 +138,7 @@ const freeingShared = (freed: Queue.Queue<string>): LiveShared => {
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
     lastGood: new Map(),
+    cooldowns: new Map(),
   };
 };
 
@@ -1336,6 +1337,7 @@ describe("liveWorld", () => {
         lastGood: new Map(
           withLastGood ? [[REPO.toLowerCase(), { project: timeLimitOnlyProjectConfig() }]] : [],
         ),
+        cooldowns: new Map(),
       },
     );
     return Effect.result(world.project({ repo, path: root })).pipe(
@@ -2198,6 +2200,7 @@ describe("the gate in the background", () => {
         brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
         configSkips: new Map<string, number>(),
         lastGood: new Map(),
+        cooldowns: new Map(),
       };
       const build = () =>
         liveWorld(

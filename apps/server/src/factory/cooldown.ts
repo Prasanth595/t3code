@@ -58,6 +58,12 @@ export const rateLimitOf = (text: string | null): RateLimit | null => {
 /** How a model is named in the cooldowns, the pass's lines and its attention item. */
 export const cooldownKey = (model: Model): string => `${model.instanceId} ${model.model}`;
 
+/** The model a `cooldownKey` names; null for a key that names no instance. */
+export const modelOfKey = (key: string): Model | null => {
+  const space = key.indexOf(" ");
+  return space <= 0 ? null : { instanceId: key.slice(0, space), model: key.slice(space + 1) };
+};
+
 /**
  * Records that a session on `model` ended on a rate limit at `endedMs`, seen at `nowMs`. A session
  * that ended inside the current window is part of the burst that opened it and changes nothing.

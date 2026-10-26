@@ -425,6 +425,10 @@ const feedbackItems = (data: unknown): ReadonlyArray<string> => {
   return Array.isArray(items) ? items.filter((id): id is string => typeof id === "string") : [];
 };
 
+/** The session's model after a rate-limited resume moved it to `to`, on the same instance. */
+const movedModel = (from: Model | null, to: string): Model | null =>
+  from === null ? null : { ...from, model: to };
+
 const sentInterruption = (interruption: Interruption): Interruption => ({
   ...interruption,
   sent: true,
@@ -755,7 +759,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof branch === "string") lastBranch = branch;
         if (resumes === null) break;
         const relaunch = dataField(entry.data, "relaunch") === true;
-        const movedTo = dataField(entry.data, "model");
+        const moved = dataField(entry.data, "model");
+        const movedTo = typeof moved === "string" ? moved : null;
         interruption = {
           resumes,
           relaunch,
@@ -763,9 +768,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           branch: typeof branch === "string" ? branch : null,
           sent: false,
           rateLimited: dataField(entry.data, "rate_limited") === true,
-          model: typeof movedTo === "string" ? movedTo : null,
+          model: movedTo,
         };
-        if (model !== null && typeof movedTo === "string") model = { ...model, model: movedTo };
+        model = movedTo === null ? model : movedModel(model, movedTo);
         // The resume starts a new run: the session is working until one newer than the run that
         // ended has ended. Like a forward's, only a newer run drops the wait.
         if (!relaunch && ordinal !== null) awaitRun(ordinal, true);

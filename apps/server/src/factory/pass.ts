@@ -17,6 +17,15 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
+import {
+  coolingDown,
+  cooldownKey,
+  forgetQuietCooldowns,
+  launchModel,
+  modelOfKey,
+  recordRateLimit,
+  type Cooldown,
+} from "./cooldown.ts";
 import type { FreeSpace } from "./disk.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import { overload, type Load, type Overload } from "./load.ts";
@@ -30,6 +39,7 @@ import type {
   AdvanceOutcome,
   BadEnd,
   BuildingError,
+  CooldownOutcome,
   Evidence,
   ForwardOutcome,
   InterruptOutcome,
@@ -39,7 +49,7 @@ import type {
 import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
-import type { SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
+import type { Model, SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
 import {
@@ -211,6 +221,23 @@ export interface PassWorld {
     base: string | null,
     evidence: Evidence,
   ) => Effect.Effect<InterruptOutcome, BuildingError>;
+  /**
+   * Resumes a session `advance` found rate-limited, once, moving it to `model` first when given:
+   * `resumeAfterCooldown`.
+   */
+  readonly resumeAfterCooldown: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+    model: Model | null,
+  ) => Effect.Effect<CooldownOutcome, BuildingError>;
+  /** Each model's provider rate limit, by `cooldownKey`; kept from pass to pass. */
+  readonly cooldowns: Map<string, Cooldown>;
+  /**
+   * The model a new session on the repo's T3 project runs on before any fallback, null for none:
+   * read only while a model cools down.
+   */
+  readonly projectModel: (repo: Repo) => Effect.Effect<Model | null, PassError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /**
@@ -491,6 +518,8 @@ class Pass {
   highLoad = false;
   /** A build autodeploy has waiting: nothing is claimed until it is installed. */
   draining = false;
+  /** The machine's `model_fallbacks`. */
+  fallbacks: Readonly<Record<string, string>> = {};
   readonly startedMs: number;
   private logFailed = false;
   private readonly world: PassWorld;
@@ -637,6 +666,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   out: (line: string) => void,
 ) {
   const pass = new Pass(world, out);
+  pass.fallbacks = machine.modelFallbacks;
   yield* pass.record({ event: "pass_started", data: {} });
   const listed = yield* Effect.result(world.watchedRepos);
   if (listed._tag === "Failure") {
@@ -682,6 +712,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     yield* workRuns(world, repos, known, pass);
     yield* untrackedClaims(world, repos, known, pass);
     yield* unassignedClaims(world, repos, known, pass);
+    yield* sayCooldowns(world, pass);
     yield* claim(world, repos, known, machine, pass);
     // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
     // takes a gate slot.
@@ -1638,6 +1669,9 @@ const advanceRun = Effect.fn("Pass.advanceRun")(function* (
       // Said at the decision, after every run has been through the pass.
       notes.endedBadly = advanced.success.what;
       break;
+    case "rate-limited":
+      yield* coolDown(world, repo, info, notes, pass, advanced.success);
+      break;
     case "relaunched":
       yield* relaunched(pass, notes, endedAs("thread-gone"), "", advanced.success.start);
       break;
@@ -1655,6 +1689,107 @@ const advanceRun = Effect.fn("Pass.advanceRun")(function* (
   }
   if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
   else if (wantsGate || pending) yield* startGate(world, repo, info, notes, pass);
+});
+
+/** The key of a rate limit on a session whose launch recorded no model. */
+const UNNAMED_MODEL = "a-model-the-ledger-does-not-name";
+
+/**
+ * A session `advance` found rate-limited: its model's backoff is recorded (`recordRateLimit`), and
+ * the session is resumed once in its own thread, at once on the model's fallback while that is
+ * free, else when the window is over. Until then it waits, and nothing is written.
+ */
+const coolDown = Effect.fn("Pass.coolDown")(function* (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+  limited: Extract<AdvanceOutcome, { readonly kind: "rate-limited" }>,
+) {
+  const { model } = limited;
+  const now = world.nowMs();
+  const key = model === null ? UNNAMED_MODEL : cooldownKey(model);
+  recordRateLimit(
+    world.cooldowns,
+    key,
+    model?.model ?? key,
+    limited.endedMs,
+    now,
+    limited.retryAfterMs,
+  );
+  const why = `session hit the provider's rate limit on ${plain(key)}`;
+  const cooling = coolingDown(world.cooldowns, key, now);
+  const on = model === null ? null : launchModel(world.cooldowns, pass.fallbacks, model, now);
+  if (cooling !== null && on === null) {
+    notes.parts.push(
+      `${why}; it is resumed once the cooldown ends at ${formatTs(cooling.untilMs)}`,
+    );
+    return;
+  }
+  const moveTo = cooling !== null ? on : null;
+  const resumed = yield* Effect.result(world.resumeAfterCooldown(repo, info.id, info.base, moveTo));
+  if (resumed._tag === "Failure") {
+    return pass.failed(notes, "resume after the rate limit", "advance", resumed.failure);
+  }
+  if (resumed.success.kind === "unchanged") {
+    notes.parts.push(`${why}, but ${resumed.success.why}; left alone`);
+  } else if (moveTo === null) {
+    notes.parts.push(`${why}; the cooldown is over, sent it a resume`);
+  } else {
+    notes.parts.push(`${why}; moved it to ${plain(moveTo.model)} and sent it a resume`);
+  }
+});
+
+/** The attention item of a model that keeps hitting its rate limit. */
+const cooldownItemId = (key: string) => `cooldown:${key}`;
+/** The windows in a row a model may hit before a person is told, once per streak. */
+const COOLDOWN_ATTENTION_WINDOWS = 3;
+
+/**
+ * One line per model whose rate limit cools down now, saying until when and whether new sessions
+ * go to its fallback or wait, with one `claim_skipped` when any wait (`claim` holds them back). A
+ * model past `COOLDOWN_ATTENTION_WINDOWS` windows in a row raises one item per streak; a model
+ * quiet past its window is forgotten, and its item cleared.
+ */
+const sayCooldowns = Effect.fn("Pass.sayCooldowns")(function* (world: PassWorld, pass: Pass) {
+  const now = world.nowMs();
+  for (const key of forgetQuietCooldowns(world.cooldowns, now)) {
+    yield* world.attention.clear((item) => item.id === cooldownItemId(key));
+  }
+  let held = false;
+  for (const [key, cooldown] of world.cooldowns) {
+    if (now >= cooldown.untilMs) continue;
+    const model = modelOfKey(key);
+    const on = model === null ? null : launchModel(world.cooldowns, pass.fallbacks, model, now);
+    if (model !== null && on === null) held = true;
+    const tail =
+      model === null
+        ? "its sessions wait for it to end"
+        : on === null
+          ? "no issue is claimed on it"
+          : `new sessions run on ${plain(on.model)}`;
+    pass.line(
+      `provider cooling down until ${formatTs(cooldown.untilMs)}: ${plain(key)} hit its rate limit (${cooldown.windows} ${plural(cooldown.windows, "window")} in a row); ${tail}`,
+    );
+    if (cooldown.windows > COOLDOWN_ATTENTION_WINDOWS && !cooldown.raised) {
+      cooldown.raised = true;
+      pass.report.attention += 1;
+      yield* world.attention.raise({
+        id: cooldownItemId(key),
+        kind: "attention",
+        repo: null,
+        issue: null,
+        run: null,
+        message: `${plain(key)} has hit its provider rate limit ${cooldown.windows} windows in a row; ${
+          on === null
+            ? "claims on it wait for each cooldown to end"
+            : `new sessions and rate-limited sessions run on ${plain(on.model)}`
+        }`,
+      });
+    }
+  }
+  if (held) yield* pass.record({ event: "claim_skipped", data: { reason: "cooling-down" } });
 });
 
 /**
@@ -2013,6 +2148,24 @@ const claim = Effect.fn("Pass.claim")(function* (
     // GitHub numbers go by number, which is the order they were opened in.
     const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
     queues.push({ repo, issues, held: 0 });
+  }
+  // A model whose rate limit cools down with no fallback free takes no new session: a repo whose T3
+  // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.
+  const now = world.nowMs();
+  if ([...world.cooldowns.values()].some((cooldown) => now < cooldown.untilMs)) {
+    for (const queue of queues) {
+      const read = yield* Effect.result(world.projectModel(queue.repo));
+      if (read._tag === "Failure") {
+        const what = `${queue.repo.watched.repo}: cannot read the T3 project's model: `;
+        yield* pass.fail(null, passError(read.failure.kind, what, read.failure.message));
+        queue.issues.length = 0;
+      } else if (
+        read.success !== null &&
+        launchModel(world.cooldowns, pass.fallbacks, read.success, now) === null
+      ) {
+        queue.issues.length = 0;
+      }
+    }
   }
   let active = count(known, queues);
   let late = false;

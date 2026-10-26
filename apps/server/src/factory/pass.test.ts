@@ -570,16 +570,10 @@ class Fake implements PassWorld {
 
   resumeAfterCooldown(repo: Repo, run: RunId, base: string | null, model: Model | null) {
     this.onBase("cooled_resume", run, base);
-    const on = model === null ? "" : ` on ${model.model}`;
-    return this.scripted(this.cooledResumes, "cooled_resume", repo, Number(run.issue), {
-      kind: "resumed",
-    }).pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          this.calls[this.calls.length - 1] += on;
-        }),
-      ),
-    );
+    const key = `${repo.watched.repo}#${run.issue}`;
+    this.calls.push(`cooled_resume ${key}${model === null ? "" : ` on ${model.model}`}`);
+    const answer = this.cooledResumes[key]?.shift() ?? { kind: "resumed" as const };
+    return "kind" in answer ? Effect.succeed(answer) : Effect.fail(answer);
   }
 
   /** The live threads on a broken worktree; an archived thread leaves the list. */
