@@ -1721,125 +1721,134 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect.each(["during", "after", "stale-idle-then-busy", "no-idle"] as const)(
-    "completes the turn when the session goes idle %s a rejected steer",
-    (idleTiming) =>
-      Effect.gen(function* () {
-        const nativeEvents = asyncEventStream();
-        const sessionId = `native-steer-rejected-${idleTiming}`;
-        const idle = {
-          type: "session.status",
-          properties: { sessionID: sessionId, status: { type: "idle" } },
-        };
-        const promptIds: Array<string> = [];
-        const terminal = yield* Deferred.make<void>();
-        const statusRead = promiseGate<void>();
-        let statusCalls = 0;
-        const harness = yield* makeOpenCodeRuntimeHarness(
-          `steer-rejected-${idleTiming}`,
-          sessionId,
-          {
-            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-            session: {
-              create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
-              get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
-              messages: async () => ({ data: [] }),
-              status: async () => {
-                statusCalls++;
-                statusRead.resolve();
-                return {
-                  data: {
-                    [sessionId]: {
-                      type: idleTiming === "during" || idleTiming === "no-idle" ? "idle" : "busy",
-                    },
-                  },
-                };
+  it.effect.each([
+    "during",
+    "after",
+    "stale-idle-then-busy",
+    "no-idle",
+    "idle-during-status",
+  ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = `native-steer-rejected-${idleTiming}`;
+      const idle = {
+        type: "session.status",
+        properties: { sessionID: sessionId, status: { type: "idle" } },
+      };
+      const promptIds: Array<string> = [];
+      const terminal = yield* Deferred.make<void>();
+      const statusRead = promiseGate<void>();
+      let statusCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(`steer-rejected-${idleTiming}`, sessionId, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          messages: async () => ({ data: [] }),
+          status: async () => {
+            statusCalls++;
+            statusRead.resolve();
+            if (idleTiming === "idle-during-status" && statusCalls === 1) {
+              await nativeEvents.push(idle);
+              return { data: { [sessionId]: { type: "busy" } } };
+            }
+            return {
+              data: {
+                [sessionId]: {
+                  type:
+                    idleTiming === "during" ||
+                    idleTiming === "no-idle" ||
+                    idleTiming === "idle-during-status"
+                      ? "idle"
+                      : "busy",
+                },
               },
-              promptAsync: async (input: { messageID: string }) => {
-                promptIds.push(input.messageID);
-                if (promptIds.length === 1) return { data: true };
-                if (idleTiming === "during" || idleTiming === "stale-idle-then-busy") {
-                  await nativeEvents.push(idle);
-                }
-                if (idleTiming === "stale-idle-then-busy") {
-                  await nativeEvents.push({
-                    type: "session.status",
-                    properties: { sessionID: sessionId, status: { type: "busy" } },
-                  });
-                }
-                throw new Error("steer rejected");
-              },
-              abort: async () => ({ data: true }),
-              children: async () => ({ data: [] }),
+            };
+          },
+          promptAsync: async (input: { messageID: string }) => {
+            promptIds.push(input.messageID);
+            if (promptIds.length === 1) return { data: true };
+            if (idleTiming === "during" || idleTiming === "stale-idle-then-busy") {
+              await nativeEvents.push(idle);
+            }
+            if (idleTiming === "stale-idle-then-busy") {
+              await nativeEvents.push({
+                type: "session.status",
+                properties: { sessionID: sessionId, status: { type: "busy" } },
+              });
+            }
+            throw new Error("steer rejected");
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: promptIds[0],
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
             },
           },
-        );
-        yield* harness.startTurn();
-        yield* Effect.promise(() =>
-          nativeEvents.push({
-            type: "message.updated",
-            properties: {
-              sessionID: sessionId,
-              info: {
-                id: promptIds[0],
-                sessionID: sessionId,
-                role: "user",
-                time: { created: DateTime.toEpochMillis(harness.now) },
-              },
-            },
-          }),
-        );
-        const running = yield* harness.runtime.readThreadSnapshot({
+        }),
+      );
+      const running = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      yield* harness.runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const steer = yield* Effect.exit(
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
+            text: "also cover the README",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(steer));
+      if (idleTiming === "stale-idle-then-busy") {
+        const active = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,
         });
-        yield* harness.runtime.events.pipe(
-          Stream.tap((event) =>
-            event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
-          ),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        const steer = yield* Effect.exit(
-          harness.runtime.steerTurn({
-            threadId: harness.threadId,
-            runId: harness.runId,
-            providerThread: harness.providerThread,
-            providerTurnId: running.providerTurns.at(-1)!.id,
-            message: {
-              messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
-              text: "also cover the README",
-              attachments: [],
-              createdBy: "user",
-              creationSource: "web",
-            },
-          }),
-        );
-        assert.isTrue(Exit.isFailure(steer));
-        if (idleTiming === "stale-idle-then-busy") {
-          const active = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(active.providerTurns.at(-1)?.status, "running");
-        }
-        yield* Effect.promise(() => statusRead.promise);
-        if (idleTiming === "after" || idleTiming === "stale-idle-then-busy") {
-          const active = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(active.providerTurns.at(-1)?.status, "running");
-          yield* Effect.promise(() => nativeEvents.push(idle));
-        }
-        yield* Deferred.await(terminal);
-        assert.equal(statusCalls, 1);
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+      }
+      yield* Effect.promise(() => statusRead.promise);
+      if (idleTiming === "after" || idleTiming === "stale-idle-then-busy") {
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
+      yield* Deferred.await(terminal);
+      assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
 
-        const settled = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        assert.equal(settled.providerTurns.at(-1)?.status, "completed");
-      }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-        Effect.scoped,
-      ),
+      const settled = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(settled.providerTurns.at(-1)?.status, "completed");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("interrupts an initial prompt while its SDK request is pending", () =>

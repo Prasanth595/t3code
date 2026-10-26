@@ -2115,6 +2115,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           generation: number,
         ) {
           while (promptAdmissionIsCurrent(state, turn, generation)) {
+            turn.idleDuringAdmission = false;
             const status = yield* reconcileOpenCodePromptAdmissionStatus(
               turn,
               generation,
@@ -2146,7 +2147,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* finalizeTurn(state, turn, "completed");
               return;
             }
-            if (status === "busy") return;
+            if (status === "busy") {
+              if (!turn.idleDuringAdmission) return;
+              turn.admissionPending = true;
+              continue;
+            }
             yield* Effect.sleep("250 millis");
           }
         });
