@@ -10,6 +10,7 @@ import {
 import { ManagedRelay, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { SaasAccountResponse } from "@t3tools/contracts/saas";
 import * as Effect from "effect/Effect";
+import { getRandomBytes } from "expo-crypto";
 import { fetch as expoFetch } from "expo/fetch";
 import { useSyncExternalStore } from "react";
 import { Linking } from "react-native";
@@ -63,6 +64,7 @@ const relayUrl = () =>
   );
 
 export const miraChatHistory = new ChatHistory({
+  randomBytes: getRandomBytes,
   storage: {
     load: () => AsyncStorage.getItem(STORAGE_KEY),
     save: (value) => AsyncStorage.setItem(STORAGE_KEY, value),

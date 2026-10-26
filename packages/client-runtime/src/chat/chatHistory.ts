@@ -66,10 +66,7 @@ const byNewest = (left: SaasChatConversation, right: SaasChatConversation) =>
   right.updatedAt.localeCompare(left.updatedAt);
 
 // `crypto.randomUUID` is missing over plain-HTTP LAN origins; random bytes are not.
-const randomId = () =>
-  Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+const webRandomBytes = (count: number) => globalThis.crypto.getRandomValues(new Uint8Array(count));
 
 export interface ChatHistoryOptions {
   readonly storage: ChatHistoryStorage;
@@ -78,6 +75,8 @@ export interface ChatHistoryOptions {
     deviceId: string,
   ) => Promise<ChatReplyResult>;
   readonly now?: () => string;
+  /** Hermes has no Web Crypto, so React Native passes its own source of random bytes. */
+  readonly randomBytes?: (count: number) => Uint8Array;
 }
 
 /**
@@ -86,13 +85,7 @@ export interface ChatHistoryOptions {
  */
 export class ChatHistory {
   private state: ChatHistoryState = { loaded: false, chats: [], streaming: null, error: null };
-  private stored: StoredHistory = {
-    deviceId: randomId(),
-    owner: null,
-    chats: [],
-    dirty: [],
-    synced: [],
-  };
+  private stored: StoredHistory;
   private readonly listeners = new Set<() => void>();
   private remote: ChatHistoryRemote | null = null;
   private loading: Promise<void> | null = null;
@@ -103,6 +96,12 @@ export class ChatHistory {
   constructor(options: ChatHistoryOptions) {
     this.options = options;
     this.now = options.now ?? (() => DateTime.formatIso(DateTime.nowUnsafe()));
+    this.stored = { deviceId: this.randomId(), owner: null, chats: [], dirty: [], synced: [] };
+  }
+
+  private randomId() {
+    const bytes = (this.options.randomBytes ?? webRandomBytes)(16);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   readonly subscribe = (listener: () => void) => {
@@ -221,11 +220,16 @@ export class ChatHistory {
     const content = text.trim();
     const now = this.now();
     const existing = chatId === null ? undefined : this.find(chatId);
-    const userMessage: SaasChatMessage = { id: randomId(), role: "user", content, createdAt: now };
+    const userMessage: SaasChatMessage = {
+      id: this.randomId(),
+      role: "user",
+      content,
+      createdAt: now,
+    };
     const chat: SaasChatConversation = existing
       ? { ...existing, updatedAt: now, messages: [...existing.messages, userMessage] }
       : {
-          id: randomId(),
+          id: this.randomId(),
           title: chatTitle(content),
           createdAt: now,
           updatedAt: now,
@@ -252,7 +256,7 @@ export class ChatHistory {
         updatedAt: repliedAt,
         messages: [
           ...latest.messages,
-          { id: randomId(), role: "assistant", content: result.text, createdAt: repliedAt },
+          { id: this.randomId(), role: "assistant", content: result.text, createdAt: repliedAt },
         ],
       });
       this.publish({ streaming: null });

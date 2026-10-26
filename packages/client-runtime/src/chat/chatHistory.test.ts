@@ -136,6 +136,23 @@ describe("ChatHistory", () => {
     expect(second.history.getSnapshot().chats[0]?.title).toBe("Remember me");
   });
 
+  it("starts and sends without Web Crypto when given random bytes, as on Hermes", async () => {
+    const crypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    try {
+      const history = new ChatHistory({
+        storage: memoryStorage(),
+        randomBytes: (count) => new Uint8Array(count).fill(7),
+        requestReply: async () => ({ ok: true, text: "Hi" }),
+      });
+      await history.send(null, "Hello");
+      expect(history.deviceId).toBe("07".repeat(16));
+      expect(history.getSnapshot().chats[0]?.messages).toHaveLength(2);
+    } finally {
+      if (crypto) Object.defineProperty(globalThis, "crypto", crypto);
+    }
+  });
+
   it("titles empty and long first messages", () => {
     expect(chatTitle("   ")).toBe("New chat");
     expect(chatTitle("x".repeat(100))).toHaveLength(60);
