@@ -5008,6 +5008,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: RESUME_PROMPT,
             }),
           );
+          yield* TestClock.adjust("100 millis");
           yield* harness.awaitTerminal(1);
           assert.equal(metadataRequests, 2);
           yield* Deferred.await(modelReported);
