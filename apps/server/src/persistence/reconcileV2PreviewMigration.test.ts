@@ -222,7 +222,9 @@ describe("V2 preview upgrade", () => {
       `;
       const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
       const links = yield* sql`SELECT * FROM peer_environment_links`;
-      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      const error = yield* Effect.flip(runMigrations());
+      assert.instanceOf(error, Migrator.MigrationError);
+      assert.include(error.message, "still has peer environment links");
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
         history,
