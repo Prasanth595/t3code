@@ -77,6 +77,19 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, MAX_THREAD_TITLE_CHARS - 3).trimEnd()}...`;
 }
 
+const MAX_NEXT_PROMPT_CHARS = 280;
+
+/** Null for an empty or unusable reply, so the composer shows nothing rather than a stub. */
+export function sanitizeNextPrompt(raw: string): string | null {
+  const text = raw
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .trim();
+  if (text.length === 0) return null;
+  if (text.length <= MAX_NEXT_PROMPT_CHARS) return text;
+  return `${text.slice(0, MAX_NEXT_PROMPT_CHARS - 3).trimEnd()}...`;
+}
+
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
   return `${capitalized} CLI (\`${cliName}\`)`;

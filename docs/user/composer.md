@@ -145,6 +145,19 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Next prompt suggestions
+
+After the agent finishes a reply you were watching, T3 Code can suggest your next
+message as grey text in the empty composer. Press Tab (or the right arrow) to put it
+in the composer as an editable draft, or Esc to hide it. Typing your own message
+replaces it. A suggestion is never sent for you.
+
+It is off by default. Turn it on in Settings → General → Next prompt suggestions on
+web and desktop. Each suggestion is one extra request to the text generation model,
+which uses the same provider, model, and project overrides as thread titles. Add
+instructions in the same place to shape the wording, such as "short commands only".
+Suggestions are not saved and do not appear on mobile yet.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind

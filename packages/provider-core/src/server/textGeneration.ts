@@ -72,6 +72,19 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface NextPromptGenerationInput {
+  cwd: string;
+  /** The thread's recent conversation, already trimmed to a model-sized budget. */
+  message: string;
+  instructions?: string | undefined;
+  modelSelection: ModelSelection;
+}
+
+export interface NextPromptGenerationResult {
+  /** Null when the thread has no natural next message. */
+  suggestion: string | null;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -113,6 +126,10 @@ export interface ProviderTextGeneration {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  readonly generateNextPrompt: (
+    input: NextPromptGenerationInput,
+  ) => Effect.Effect<NextPromptGenerationResult, TextGenerationError>;
 
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,

@@ -3330,6 +3330,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  suggestNextPrompt: "orchestration.suggestNextPrompt",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -3801,6 +3802,20 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 
+export const OrchestrationV2SuggestNextPromptInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The assistant message the user just watched finish; a newer message makes the suggestion stale. */
+  afterMessageId: MessageId,
+});
+export type OrchestrationV2SuggestNextPromptInput =
+  typeof OrchestrationV2SuggestNextPromptInput.Type;
+
+export const OrchestrationV2SuggestNextPromptResult = Schema.Struct({
+  suggestion: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationV2SuggestNextPromptResult =
+  typeof OrchestrationV2SuggestNextPromptResult.Type;
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -3934,6 +3949,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  suggestNextPrompt: {
+    input: OrchestrationV2SuggestNextPromptInput,
+    output: OrchestrationV2SuggestNextPromptResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

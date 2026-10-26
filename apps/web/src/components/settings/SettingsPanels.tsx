@@ -54,6 +54,7 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { NextPromptSuggestionSettings } from "./NextPromptSuggestionSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -523,6 +524,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
+    ...(settings.nextPromptSuggestionsEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.nextPromptSuggestionsEnabled
+      ? ["Next prompt suggestions"]
+      : []),
+    ...(settings.nextPromptInstructions !== DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions
+      ? ["Next prompt instructions"]
+      : []),
     ...getChangedBrowserSettingLabels(settings),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
       ? ["Agent browser access"]
@@ -629,6 +637,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
+      nextPromptSuggestionsEnabled: DEFAULT_UNIFIED_SETTINGS.nextPromptSuggestionsEnabled,
+      nextPromptInstructions: DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -1878,6 +1888,7 @@ export function GeneralSettingsPanel() {
           }
         />
         <ThreadTitleInstructionsSettings />
+        <NextPromptSuggestionSettings />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">
