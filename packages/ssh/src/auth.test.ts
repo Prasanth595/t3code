@@ -193,6 +193,26 @@ describe("ssh auth", () => {
       assert.deepStrictEqual(yield* twoOverlappingCommands, [first, first]);
       assert.equal(runtimeDirectories.length, 1);
       assert.equal(helperWrites, 2);
+
+      yield* fs.remove(first);
+      const held = {
+        arrived: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      gate = held;
+      const cancelled = yield* Effect.forkChild(askpassPath);
+      yield* Deferred.await(held.arrived);
+      const callsBeforeCancellation = fileCalls;
+      const interruption = yield* Fiber.interrupt(cancelled).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const next = yield* askpassPath.pipe(Effect.forkChild({ startImmediately: true }));
+      const callsDuringCancellation = fileCalls;
+      yield* Deferred.succeed(held.release, undefined);
+      yield* Fiber.join(interruption);
+      assert.equal(yield* Fiber.join(next), first);
+      assert.equal(callsDuringCancellation, callsBeforeCancellation);
+      assert.equal(helperWrites, 3);
       assert.include(yield* fs.readFileString(first), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),

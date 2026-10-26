@@ -164,7 +164,7 @@ const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(fu
   return descriptor.launcherPath;
 });
 
-// Serialize setup so concurrent commands cannot truncate a helper already handed to ssh.
+// Keep setup serialized through cancellation so writes finish before another command uses the helper.
 let defaultSshAskpassRuntimeDirectory: string | undefined;
 const defaultSshAskpassLock = Semaphore.makeUnsafe(1);
 
@@ -198,7 +198,7 @@ const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpa
     defaultSshAskpassRuntimeDirectory = runtimeDirectory;
     return launcherPath;
   },
-  (effect) => defaultSshAskpassLock.withPermit(effect),
+  (effect) => defaultSshAskpassLock.withPermit(Effect.uninterruptible(effect)),
 );
 
 export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnvironment")(function* (
