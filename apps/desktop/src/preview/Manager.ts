@@ -424,11 +424,7 @@ type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<vo
 // about:blank inherits relaxed guest preferences; external editor schemes must reach the OS handler.
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
-/**
- * The in-place path runs `loadURL`, a browser-initiated load, so a `data:` popup skips the check
- * that stops a page from navigating its own top frame to `data:`. The other local schemes are
- * denied too, so this does not depend on how Chromium filters them before the handler runs.
- */
+// Main-process loadURL bypasses Chromium's renderer-side restrictions on local and inline URLs.
 const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "about:",
   "chrome:",
@@ -439,14 +435,6 @@ const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "javascript:",
   "view-source:",
 ]);
-
-const urlProtocol = (rawUrl: string): string | undefined => {
-  try {
-    return new URL(rawUrl).protocol;
-  } catch {
-    return undefined;
-  }
-};
 
 /** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
 const POPUP_WINDOW_OPTIONS = {
@@ -466,7 +454,7 @@ export const previewWindowOpenAction = (details: {
   readonly disposition: Electron.HandlerDetails["disposition"];
   readonly postBody?: Electron.PostBody;
 }): "popup" | "new-tab" | "navigate" | "deny" => {
-  const protocol = urlProtocol(details.url);
+  const protocol = URL.parse(details.url)?.protocol;
   // MSAL redirects on a denied blank popup; navigating the tab would destroy that fallback.
   if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
   if (!POPUP_PROTOCOLS.has(protocol)) return "navigate";
