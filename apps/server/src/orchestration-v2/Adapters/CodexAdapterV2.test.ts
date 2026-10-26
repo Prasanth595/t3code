@@ -1372,7 +1372,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
-  it.effect.each(["root", "rerouted"] as const)(
+  it.effect.each(["root", "rerouted", "late-rerouted"] as const)(
     "learns context capacity only from eligible %s turns across sessions",
     (source) =>
       Effect.gen(function* () {
@@ -1403,22 +1403,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             turnId,
             tokenUsage: { total: usage, last: usage, modelContextWindow },
           });
+        const reroute = notification("model/rerouted", {
+          threadId: nativeThreadId,
+          turnId: nativeTurnId,
+          fromModel: selection.model,
+          toModel: "gpt-5.4-mini",
+          reason: "highRiskCyberActivity",
+        });
         const transcript = makeCodexReplayTranscript({
           scenario: `context-capacity-${source}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
-            ...(source === "rerouted"
-              ? [
-                  notification("model/rerouted", {
-                    threadId: nativeThreadId,
-                    turnId: nativeTurnId,
-                    fromModel: selection.model,
-                    toModel: "gpt-5.4-mini",
-                    reason: "highRiskCyberActivity",
-                  }),
-                ]
-              : []),
+            ...(source === "rerouted" ? [reroute] : []),
             usageReport(nativeThreadId, nativeTurnId, 400_000),
+            ...(source === "late-rerouted" ? [reroute] : []),
             ...[null, 0, -1].map((window) => usageReport(nativeThreadId, nativeTurnId, window)),
             notification("item/completed", {
               threadId: nativeThreadId,
@@ -1506,6 +1504,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         );
         assert.isUndefined(runtime.getModelContextWindow?.(selection, "/other-project"));
+        assert.isUndefined(
+          runtime.getModelContextWindow?.(
+            { ...selection, options: [{ id: "serviceTier", value: "fast" }] },
+            cwd,
+          ),
+        );
         const independent = yield* makeCodexReplayHarness(transcript);
         assert.isUndefined(independent.runtime.getModelContextWindow?.(selection, cwd));
       }).pipe(
