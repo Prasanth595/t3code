@@ -7,7 +7,7 @@ import {
   type PullRequestListResult,
   type PullRequestSummary,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   newestPullRequestObservation,
@@ -17,6 +17,7 @@ import {
   newestPullRequestSummary,
   rememberPullRequestListAnswer,
   restorePullRequestList,
+  restoredPullRequestList,
   threadPullRequestLinkToSummary,
 } from "./pullRequests";
 
@@ -288,6 +289,19 @@ describe("pull request list answers across a reload", () => {
     expect(restored?.nextCursors).toEqual({});
   });
 
+  it("falls back to a fresh read when the browser blocks storage", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+    try {
+      expect(restoredPullRequestList([{ environmentId: local, input }])).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps a page of rows and only first-page reads", () => {
     const storage = makeStorage();
     const rows = Array.from({ length: 120 }, (_, index) => listEntry(index + 1));
@@ -356,6 +370,33 @@ describe("pull request list answers across a reload", () => {
     expect(restored?.entries.map((row) => [row.environmentId, row.updatedAt])).toEqual([
       [remote, "2026-07-03T00:00:00Z"],
     ]);
+  });
+
+  it("keeps a shared repository's rows when it moves to an environment that has not answered yet", () => {
+    const storage = makeStorage();
+    const own = ProjectId.make("project-own");
+    const shared = { ...listEntry(2), projectId: ProjectId.make("project-shared") };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer([{ ...listEntry(1), projectId: own }, shared]),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: remote, input },
+      answer([listEntry(3, "2026-07-03T00:00:00Z")]),
+    );
+    // The shared repository now belongs to the remote environment, which has not answered yet.
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: { ...input, projectIds: [own] } },
+      answer([{ ...listEntry(1), projectId: own }]),
+    );
+    const restored = restorePullRequestList(storage, [
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+    expect(restored?.entries.map((row) => row.number).toSorted()).toEqual([1, 2, 3]);
   });
 
   it("does not keep grown pages", () => {

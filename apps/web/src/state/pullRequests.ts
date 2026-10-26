@@ -217,8 +217,14 @@ function observePullRequestSummary(
   );
 }
 
+// Reading localStorage throws where the browser blocks storage; that must not break the page.
 function snapshotStorage(): Storage | undefined {
-  return typeof window === "undefined" ? undefined : window.localStorage;
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 type ListAnswerStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
@@ -289,11 +295,22 @@ export function rememberPullRequestListAnswer(
   const key = listScopeKey(input);
   try {
     sweepLegacySnapshots(storage);
+    const scope = readListScope(storage, key);
+    // An answer for some projects replaces only their rows. A repository this environment no
+    // longer owns stays covered until the environment that took it over answers; the next answer
+    // for all of the environment's projects, which every cold start asks for, drops them.
+    const assigned = input.projectIds === undefined ? undefined : new Set(input.projectIds);
+    const retained =
+      assigned === undefined
+        ? []
+        : (scope[target.environmentId]?.entries ?? [])
+            .filter((entry) => !assigned.has(entry.projectId))
+            .slice(0, LIST_ANSWER_MAX_ENTRIES);
     const encoded = encodeListScope({
-      ...readListScope(storage, key),
+      ...scope,
       [target.environmentId]: {
         ...answer,
-        entries: answer.entries.slice(0, LIST_ANSWER_MAX_ENTRIES),
+        entries: [...answer.entries.slice(0, LIST_ANSWER_MAX_ENTRIES), ...retained],
         errors: [],
         nextCursors: {},
       },
