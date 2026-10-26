@@ -201,6 +201,10 @@ export function createThemeSearch(
     /** Enter or re-picking the current suggestion searches again even for the shown key. */
     searchNow() {
       if (install !== null || signal.aborted || query === "") return;
+      // A pending debounce for the same key would otherwise restart this search.
+      cancelDebounce();
+      handledKey = keyOf();
+      interrupted = false;
       view.setError(null);
       view.setIsSearching(true);
       fetchResults();

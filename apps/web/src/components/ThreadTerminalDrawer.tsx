@@ -146,7 +146,10 @@ function readDrawerLayout(column: HTMLElement | null): Omit<DrawerLayout, "compo
   };
 }
 
-function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): void {
+function writeSystemMessage(
+  terminal: Pick<GhosttyTerminalSurface, "write">,
+  message: string,
+): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
@@ -171,6 +174,24 @@ export function synchronizeTerminalOutput(
   writeTerminalOutputUpdate(terminal, update);
   terminal.clearSelection();
   return update.cursor;
+}
+
+/** Writes what changed between two session notifications: new output, then a new error. */
+export function synchronizeTerminalSession(
+  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write" | "clearSelection">,
+  previous: Pick<TerminalSessionState, "output" | "version" | "error">,
+  session: Pick<TerminalSessionState, "output" | "version" | "error">,
+  cursor: TerminalOutputCursor,
+): TerminalOutputCursor {
+  const nextCursor =
+    session.version === previous.version && session.output === previous.output
+      ? cursor
+      : synchronizeTerminalOutput(terminal, session, cursor);
+  // An attach failure can change only the error, keeping the last buffer.
+  if (session.error !== null && session.error !== previous.error) {
+    writeSystemMessage(terminal, session.error);
+  }
+  return nextCursor;
 }
 
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
@@ -691,19 +712,14 @@ function TerminalSessionViewport({
             if (nextResizeGeneration !== null) terminal.resendSize();
           }
           const previous = previousSession;
+          previousSession = session;
           synchronizeTerminalStatus(terminal, session.status, session.version);
-          if (session.version === previous.version && session.output === previous.output) {
-            return;
-          }
-          outputCursorRef.current = synchronizeTerminalOutput(
+          outputCursorRef.current = synchronizeTerminalSession(
             terminal,
+            previous,
             session,
             outputCursorRef.current,
           );
-          if (session.error !== null && session.error !== previous.error) {
-            writeSystemMessage(terminal, session.error);
-          }
-          previousSession = session;
         }),
       );
       if (

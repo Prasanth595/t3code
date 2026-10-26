@@ -128,6 +128,15 @@ describe("createThemeSearch", () => {
     expect(env.view.error).toBeNull();
   });
 
+  it("Enter during the debounce searches once", async () => {
+    using env = setup();
+    env.themeSearch.setQuery("nord");
+    env.themeSearch.searchNow();
+    await vi.advanceTimersByTimeAsync(350);
+    expect(env.requests.map((request) => request.query)).toEqual(["nord"]);
+    expect(env.requests[0]!.signal?.aborted).toBe(false);
+  });
+
   it("closing the session aborts the search, the debounce, and the install", async () => {
     using env = setup();
     env.themeSearch.setQuery("nord");
