@@ -6396,15 +6396,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const activation = { stopped: false };
             goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
-              yield* startNativeTurn(
-                turnInput,
-                command.type === "set"
-                  ? yield* toCodexInput({
-                      ...turnInput,
-                      message: { ...turnInput.message, text: command.objective },
-                    })
-                  : [],
-              );
+              // Codex reads the objective from the goal. Sent as a prompt too, the
+              // model answers it like a message and restates the goal.
+              yield* startNativeTurn(turnInput, []);
               if (activation.stopped) return;
               const { goal } = yield* client.request("thread/goal/set", {
                 threadId,
