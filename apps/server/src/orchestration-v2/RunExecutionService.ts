@@ -3,6 +3,7 @@ import { withProviderMessageOrigin } from "./providerMessageOrigin.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  parseGoalCommand,
   CommandId,
   type EventId,
   type ModelSelection,
@@ -927,13 +928,13 @@ export const layer: Layer.Layer<
               ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
             })
             .pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning(
-                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                      { runId: input.run.id },
-                    ),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (_cause) =>
+                  Effect.logWarning(
+                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                    { runId: input.run.id },
+                  ),
               ),
             );
           if (
@@ -1664,6 +1665,9 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
+        const goalCommand =
+          (input.session.driver === "codex" || input.session.driver === "claudeAgent") &&
+          parseGoalCommand(input.message) !== null;
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(
@@ -1679,7 +1683,9 @@ export const layer: Layer.Layer<
               ...turnInput,
               message: {
                 ...turnInput.message,
-                text: withProviderMessageOrigin(turnInput.message, turnInput.message.text),
+                text: goalCommand
+                  ? turnInput.message.text
+                  : withProviderMessageOrigin(turnInput.message, turnInput.message.text),
               },
             });
         yield* Effect.andThen(shouldStart, startTurn).pipe(

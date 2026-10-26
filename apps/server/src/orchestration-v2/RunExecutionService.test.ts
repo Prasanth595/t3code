@@ -1016,105 +1016,115 @@ it.effect("fails the run when its ownership check cannot be read before calling 
   }),
 );
 
-it.effect(
-  "dispatches only attachment-free compact commands through the native compaction path",
-  () =>
-    Effect.gen(function* () {
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      const calls: Array<string> = [];
-      const attachment = ChatFileAttachment.make({
-        type: "file",
-        id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1,
+it.effect("preserves native command routing before marking cross-thread message origins", () =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const calls: Array<string> = [];
+    const attachment = ChatFileAttachment.make({
+      type: "file",
+      id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    });
+    const cases = [
+      { text: " /compact ", attachments: [], expected: "compact" },
+      { text: "/compact", attachments: [attachment], expected: "prompt" },
+      { text: "/goal finish the work", attachments: [], expected: "goal" },
+      { text: "/goal finish the work", attachments: [attachment], expected: "prompt" },
+      { text: "Continue the work", attachments: [], expected: "prompt" },
+    ].flatMap((testCase) =>
+      [
+        { createdBy: "user", senderThreadId: ThreadId.make("thread:sender") },
+        { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") },
+        { createdBy: "agent" },
+      ].map((origin) => ({ ...testCase, ...origin })),
+    );
+    for (const [index, testCase] of cases.entries()) {
+      const prompts: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
+      const threadId = ThreadId.make(`thread:compact-routing:${index}`);
+      const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:compact-routing:${index}`),
+        appThread: rootAppThread(threadId),
+        providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
+        session: {
+          driver,
+          events: Stream.never,
+          startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Effect.sync(() => {
+              prompts.push(input);
+              calls.push(testCase.expected === "goal" ? "goal" : "prompt");
+            }),
+          compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Effect.sync(() => {
+              assert.equal(input.message.text, testCase.text);
+              calls.push("compact");
+            }),
+        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        run: {
+          id: RunId.make(`run:compact-routing:${index}`),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: NodeId.make(`node:compact-routing:${index}`),
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint:compact-routing:${index}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make(`message:compact-routing:${index}`),
+          text: testCase.text,
+          attachments: testCase.attachments,
+          createdBy: testCase.createdBy as "user" | "agent",
+          creationSource: "web",
+          ...(testCase.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: testCase.senderThreadId }),
+        },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
       });
-      const cases = [
-        { text: " /compact ", attachments: [], expected: "compact" },
-        { text: "/compact", attachments: [attachment], expected: "prompt" },
-        { text: "Continue the work", attachments: [], expected: "prompt" },
-      ].flatMap((testCase) =>
-        [
-          { createdBy: "user", senderThreadId: ThreadId.make("thread:sender") },
-          { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") },
-          { createdBy: "agent" },
-        ].map((origin) => ({ ...testCase, ...origin })),
-      );
-      for (const [index, testCase] of cases.entries()) {
-        const threadId = ThreadId.make(`thread:compact-routing:${index}`);
-        const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
-        yield* runExecution.startRootRun({
-          commandId: CommandId.make(`command:compact-routing:${index}`),
-          appThread: rootAppThread(threadId),
-          providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
-          session: {
-            events: Stream.never,
-            startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-              Effect.sync(() => {
-                if (testCase.createdBy === "agent" && testCase.senderThreadId !== undefined) {
-                  assert.include(input.message.text, 'thread "thread:sender"');
-                  assert.include(input.message.text, "not a message from the human user");
-                  assert.isTrue(input.message.text.endsWith(`\n\n${testCase.text}`));
-                } else {
-                  assert.equal(input.message.text, testCase.text);
-                }
-                assert.deepEqual(input.message.attachments, testCase.attachments);
-                calls.push("prompt");
-              }),
-            compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-              Effect.sync(() => {
-                assert.equal(input.message.text, testCase.text);
-                calls.push("compact");
-              }),
-          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-          run: {
-            id: RunId.make(`run:compact-routing:${index}`),
-            threadId,
-            ordinal: 1,
-            providerInstanceId: ProviderInstanceId.make("codex"),
-          } as OrchestrationV2Run,
-          rootNode: {
-            id: NodeId.make(`node:compact-routing:${index}`),
-          } as OrchestrationV2ExecutionNode,
-          checkpointScope: {
-            id: CheckpointScopeId.make(`checkpoint:compact-routing:${index}`),
-          } as OrchestrationV2CheckpointScope,
-          providerThread: {
-            id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
-            driver,
-          } as OrchestrationV2ProviderThread,
-          attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
-          attemptId,
-          providerTurnOrdinal: 1,
-          message: {
-            messageId: MessageId.make(`message:compact-routing:${index}`),
-            text: testCase.text,
-            attachments: testCase.attachments,
-            createdBy: testCase.createdBy as "user" | "agent",
-            creationSource: "web",
-            ...(testCase.senderThreadId === undefined
-              ? {}
-              : { senderThreadId: testCase.senderThreadId }),
-          },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-          runtimePolicy: {
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-            approvalPolicy: "never",
-            sandboxPolicy: {
-              type: "readOnly",
-              access: { type: "fullAccess" },
-              networkAccess: false,
-            },
-          },
-        });
+      const prompt = prompts[0];
+      if (prompt !== undefined) {
+        if (
+          testCase.expected !== "goal" &&
+          testCase.createdBy === "agent" &&
+          testCase.senderThreadId !== undefined
+        ) {
+          assert.include(prompt.message.text, 'thread "thread:sender"');
+          assert.include(prompt.message.text, "not a message from the human user");
+          assert.isTrue(prompt.message.text.endsWith(`\n\n${testCase.text}`));
+        } else {
+          assert.equal(prompt.message.text, testCase.text);
+        }
+        assert.deepEqual(prompt.message.attachments, testCase.attachments);
       }
-      assert.deepEqual(
-        calls,
-        cases.map((testCase) => testCase.expected),
-      );
-    }).pipe(Effect.provide(layerRunExecutionTest)),
+    }
+    assert.deepEqual(
+      calls,
+      cases.map((testCase) => testCase.expected),
+    );
+  }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
