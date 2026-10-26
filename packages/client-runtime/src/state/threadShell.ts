@@ -285,6 +285,11 @@ export function createEnvironmentThreadShellAtoms(input: {
     const ref = parseThreadKey(key);
     let previous: ReadonlyArray<EnvironmentThreadShell> = [];
     return Atom.make((get) => {
+      const subagentRequests = get(pendingSubagentRequestsAtom(ref.environmentId));
+      if (subagentRequests.size === 0) {
+        if (previous.length !== 0) previous = [];
+        return previous;
+      }
       const children = new Map<ThreadId, OrchestrationV2ThreadShell[]>();
       for (const thread of get(environmentThreadsAtom(ref.environmentId))) {
         const parent = thread.lineage.parentThreadId;
@@ -293,7 +298,6 @@ export function createEnvironmentThreadShellAtoms(input: {
         if (siblings) siblings.push(thread);
         else children.set(parent, [thread]);
       }
-      const subagentRequests = get(pendingSubagentRequestsAtom(ref.environmentId));
       const seen = new Set<ThreadId>([ref.threadId]);
       const pending = [ref.threadId];
       const next: EnvironmentThreadShell[] = [];
