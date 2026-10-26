@@ -383,7 +383,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           () =>
             new Promise<void>((resolve) => {
               finishWrite = resolve;
-              Deferred.doneUnsafe(started, Effect.void);
+              queueMicrotask(() => Deferred.doneUnsafe(started, Effect.void));
             }),
         );
         const write = yield* service

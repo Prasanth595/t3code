@@ -566,7 +566,6 @@ export const make = Effect.gen(function* () {
         );
         yield* Effect.tryPromise({
           // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-          // A zero-argument try keeps Effect waiting for native IO before cancellation releases the lease.
           try: () =>
             NodeFSP.writeFile(realTargetPath, input.contents, {
               flag:
@@ -584,7 +583,7 @@ export const make = Effect.gen(function* () {
               operation: "write-file",
               cause,
             }),
-        });
+        }).pipe(Effect.uninterruptible);
         yield* workspaceEntries.refresh(input.cwd);
         return { relativePath: target.relativePath };
       }),
