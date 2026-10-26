@@ -2,7 +2,12 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
+import type {
+  CodeViewItem,
+  DiffLineAnnotation,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -888,7 +893,7 @@ function PullRequestCodeTab({
   const isCurrentDraft = useStableCallback(
     (anchor: DraftAnchor) =>
       draft === anchor &&
-      canCommentOnLines &&
+      canSelectLines &&
       isCurrentFile(anchor.fileKey, anchor.contentVersion, anchor.scopeKey),
   );
   const finishSelection = (
