@@ -799,8 +799,14 @@ it.layer(
         written += yield* Queue.take(writes);
       }
       expect(written).toBeLessThan(maxBytes * 2);
-      yield* manager.close({ threadId: "thread-1" });
       const expected = "a".repeat(maxBytes - 16 * 1024) + "b".repeat(16 * 1024);
+      const persisted = yield* fs.readFileString(yield* historyLogPath(logsDir));
+      expect(Buffer.byteLength(persisted)).toBe(maxBytes + 16 * 1024);
+      const recovered = yield* createManager(5_000, { historyByteLimit: maxBytes });
+      yield* fs.makeDirectory(recovered.logsDir, { recursive: true });
+      yield* fs.writeFileString(yield* historyLogPath(recovered.logsDir), persisted);
+      expect((yield* recovered.manager.open(openInput())).history).toBe(expected);
+      yield* manager.close({ threadId: "thread-1" });
       expect((yield* manager.open(openInput())).history).toBe(expected);
       expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe(expected);
     }),

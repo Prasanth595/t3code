@@ -1022,14 +1022,14 @@ export class BoundedTerminalHistory {
       data !== undefined &&
       previous !== undefined &&
       previous.fileBytes + Buffer.byteLength(data) <= this.maxBytes * 2;
-    if (!append) data = this.value();
+    const output = append && data !== undefined ? data : this.value();
     return {
-      data: data!,
+      data: output,
       append,
       cursor: {
         generation: this.generation,
         offset,
-        fileBytes: (append ? previous!.fileBytes : 0) + Buffer.byteLength(data!),
+        fileBytes: (append ? previous.fileBytes : 0) + Buffer.byteLength(output),
       },
     };
   }
