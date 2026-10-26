@@ -217,6 +217,7 @@ function ThreadMarkdownSvg(props: {
     };
     void load()
       .then((xml) => {
+        if (controller.signal.aborted) return;
         const parsed = parse(xml);
         if (!parsed) throw new Error("SVG has no root element");
         if (controller.signal.aborted) return;
