@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import {
+  PixelRatio,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +19,7 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
@@ -31,7 +33,6 @@ const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 const INLINE_CONTROL_LABEL_ENTERING = FadeIn.duration(160);
-const INLINE_CONTROL_LABEL_DURATION = 180;
 type LabelPhase = "shown" | "hiding" | "hidden" | "showing";
 
 function slideLabel(
@@ -39,11 +40,10 @@ function slideLabel(
   target: 0 | 1,
   setPhase: (phase: LabelPhase) => void,
 ) {
-  reveal.set(
-    withTiming(target, { duration: INLINE_CONTROL_LABEL_DURATION }, (finished) => {
-      if (finished) runOnJS(setPhase)(target === 1 ? "shown" : "hidden");
-    }),
-  );
+  const slide = withTiming(target, { duration: target === 1 ? 180 : 120 }, (finished) => {
+    if (finished) runOnJS(setPhase)(target === 1 ? "shown" : "hidden");
+  });
+  reveal.set(target === 1 ? withDelay(100, slide) : slide);
 }
 export function ComposerInlineControl(props: {
   readonly size?: "regular" | "large";
@@ -89,17 +89,19 @@ export function ComposerInlineControl(props: {
     else if (phase === "shown") reveal.set(1);
     else if (phase === "hidden") reveal.set(0);
   }, [phase, reveal, revealWidth]);
-  const [iconFrame, setIconFrame] = useState({ x: 8, width: iconSize });
+  const [iconFrame, setIconFrame] = useState({ x: 8, y: 12, width: iconSize, height: iconSize });
+  const [labelBox, setLabelBox] = useState({ y: 0, height: 44 });
+  const pixelScale = PixelRatio.get();
   const [labelX, setLabelX] = useState(16 + iconSize);
   const labelGap = labelX - iconFrame.x - iconFrame.width;
-  const overlayStyle = useAnimatedStyle(() => {
-    const width = iconFrame.width + labelGap + reveal.value * revealWidth.value;
-    const rightEdge =
-      phase === "showing" ? labelX + revealWidth.value : iconFrame.x + iconFrame.width;
-    return { left: rightEdge - width, width };
-  });
+  const [chevronInset, setChevronInset] = useState(16 + chevronSize);
+  const overlayStyle = useAnimatedStyle(() => ({
+    width:
+      Math.round((iconFrame.width + reveal.value * (labelGap + revealWidth.value)) * pixelScale) /
+      pixelScale,
+  }));
   const overlayLabelStyle = useAnimatedStyle(() => ({
-    width: reveal.value * revealWidth.value,
+    width: Math.round(reveal.value * revealWidth.value * pixelScale) / pixelScale,
   }));
   const recordLabelWidth = (width: number) => {
     revealWidth.set(width);
@@ -153,8 +155,15 @@ export function ComposerInlineControl(props: {
         <View
           style={{ opacity: sliding ? 0 : 1 }}
           onLayout={(event) => {
-            const { x, width } = event.nativeEvent.layout;
-            if (x !== iconFrame.x || width !== iconFrame.width) setIconFrame({ x, width });
+            const { x, y, width, height } = event.nativeEvent.layout;
+            if (
+              x !== iconFrame.x ||
+              y !== iconFrame.y ||
+              width !== iconFrame.width ||
+              height !== iconFrame.height
+            ) {
+              setIconFrame({ x, y, width, height });
+            }
           }}
         >
           {iconNode}
@@ -165,8 +174,9 @@ export function ComposerInlineControl(props: {
             entering={animatesLabel && !revealsLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
             style={{ opacity: sliding ? 0 : 1 }}
             onLayout={(event) => {
-              const { x, width } = event.nativeEvent.layout;
+              const { x, y, width, height } = event.nativeEvent.layout;
               if (x !== labelX) setLabelX(x);
+              if (y !== labelBox.y || height !== labelBox.height) setLabelBox({ y, height });
               const firstMeasure = phase === "showing" && revealWidth.get() === 0;
               recordLabelWidth(width);
               if (firstMeasure) slideLabel(reveal, 1, setPhase);
@@ -179,16 +189,24 @@ export function ComposerInlineControl(props: {
           <Animated.View
             className="absolute top-0 bottom-0"
             pointerEvents="none"
-            style={overlayStyle}
+            style={[
+              { right: props.showChevron === false ? iconFrame.x : chevronInset },
+              overlayStyle,
+            ]}
           >
-            <View className="absolute top-0 bottom-0 left-0 justify-center">{iconNode}</View>
+            <View
+              className="absolute left-0"
+              style={{ top: iconFrame.y, width: iconFrame.width, height: iconFrame.height }}
+            >
+              {iconNode}
+            </View>
             <Animated.View
               className="absolute top-0 right-0 bottom-0 overflow-hidden"
               style={overlayLabelStyle}
             >
               <View
-                className="absolute top-0 right-0 bottom-0 flex-row items-center gap-2"
-                style={{ width: labelWidth }}
+                className="absolute right-0 flex-row items-center gap-2"
+                style={{ top: labelBox.y, height: labelBox.height, width: labelWidth }}
               >
                 {labelContent}
               </View>
@@ -196,12 +214,20 @@ export function ComposerInlineControl(props: {
           </Animated.View>
         ) : null}
         {props.showChevron === false ? null : (
-          <SymbolView
-            name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-            size={chevronSize}
-            tintColorClassName={tint}
-            type="monochrome"
-          />
+          <View
+            onLayout={(event) => {
+              const { x, width } = event.nativeEvent.layout;
+              const inset = labelGap + width + iconFrame.x;
+              if (Math.abs(inset - chevronInset) > 0.5 && x > 0) setChevronInset(inset);
+            }}
+          >
+            <SymbolView
+              name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
+              size={chevronSize}
+              tintColorClassName={tint}
+              type="monochrome"
+            />
+          </View>
         )}
       </Pressable>
     </Animated.View>

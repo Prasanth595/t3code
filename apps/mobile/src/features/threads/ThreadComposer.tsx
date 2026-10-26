@@ -145,16 +145,10 @@ export function useCompactComposerEditor(
   text: ScaledTextRole,
   value: string,
   opensOnFocus: boolean,
-  yieldsModelLabel: boolean,
 ) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactSlot, setCompactSlot] = useState({ width: 0, labelYielded: false });
-  const [labelYielded, setLabelYielded] = useState(false);
+  const [compactWidth, setCompactWidth] = useState(0);
   const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
-  const [editorLayoutWidth, setEditorLayoutWidth] = useState(0);
-  if (labelYielded && value.length === 0) setLabelYielded(false);
-  const compactWidth =
-    !yieldsModelLabel || compactSlot.labelYielded === labelYielded ? compactSlot.width : 0;
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -163,30 +157,23 @@ export function useCompactComposerEditor(
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
   const wraps = contentHeight > text.lineHeight * 1.5;
-  const wrapIsSettled =
-    !yieldsModelLabel ||
-    (labelYielded && compactSlot.labelYielded && editorLayoutWidth >= compactSlot.width - 1);
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
     opensOnFocus ||
     (value.length > 0 &&
-      ((wraps && wrapIsSettled) || (compactWidth > 0 && contentSize.width > compactWidth)));
+      (wraps || (compactWidth > 0 && contentSize.width > compactWidth - text.fontSize)));
   const visibleHeight = wraps && !isExpanded ? text.lineHeight : contentHeight;
   const height = Math.max(
     minimum,
     Math.min(text.lineHeight * 4 + 2 * inset, visibleHeight + 2 * inset),
   );
-  const nearsModelLabel =
-    yieldsModelLabel &&
-    value.length > 0 &&
-    (wraps || (compactWidth > 0 && contentSize.width > compactWidth - text.fontSize));
-  if (nearsModelLabel && !labelYielded) setLabelYielded(true);
   const compactRowHeight = Math.max(44, minimum);
   const animatedHeight = useSharedValue(height);
   const surfaceHeight = useSharedValue(compactRowHeight);
   const targetSurfaceHeight = isExpanded ? height + 52 : compactRowHeight;
   const expansion = useSharedValue(0);
+  const expansionTarget = useRef({ expanded: isExpanded, pending: false });
   useLayoutEffect(() => {
     const config = { duration: 180, reduceMotion: ReduceMotion.System };
     if (Platform.OS === "android") {
@@ -195,11 +182,20 @@ export function useCompactComposerEditor(
       expansion.set(Number(isExpanded));
       return;
     }
+    const target = expansionTarget.current;
+    if (target.expanded === isExpanded && !target.pending) {
+      animatedHeight.set(withTiming(height, config));
+      surfaceHeight.set(withTiming(targetSurfaceHeight, config));
+      return;
+    }
+    target.expanded = isExpanded;
+    target.pending = true;
     // Resolve wrapping at the destination width before animating vertically.
     // Intermediate widths otherwise produce taller measurements mid-transition.
     let nextFrame: number | undefined;
     const frame = requestAnimationFrame(() => {
       nextFrame = requestAnimationFrame(() => {
+        target.pending = false;
         animatedHeight.set(withTiming(height, config));
         surfaceHeight.set(withTiming(targetSurfaceHeight, config));
         expansion.set(withTiming(Number(isExpanded), config));
@@ -213,45 +209,56 @@ export function useCompactComposerEditor(
   const containerStyle = useAnimatedStyle(() => ({
     height: surfaceHeight.value,
   }));
-  const editorStyle = useAnimatedStyle(() => ({
+  const editorStyle = useAnimatedStyle(() => {
+    const rowLeft = editorX.value + 4;
+    const rowRight = rowWidth.value - editorX.value - editorWidth.value + 4;
+    return {
+      position: "absolute",
+      overflow: "hidden",
+      height: animatedHeight.value,
+      left: rowLeft + expansion.value * (14 - rowLeft),
+      right: rowRight + expansion.value * (14 - rowRight),
+      bottom:
+        (compactRowHeight - minimum) / 2 +
+        expansion.value * (52 - (compactRowHeight - minimum) / 2),
+    };
+  });
+  const editorContentStyle = useAnimatedStyle(() => ({
     position: "absolute",
-    overflow: "hidden",
-    height: animatedHeight.value,
-    left: isExpanded ? 14 : editorX.value + 4 + expansion.value * (10 - editorX.value),
-    right: isExpanded
-      ? 14
-      : rowWidth.value -
-        editorX.value -
-        editorWidth.value +
-        4 +
-        expansion.value * (10 - rowWidth.value + editorX.value + editorWidth.value),
-    bottom:
-      (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: Math.max(0, isExpanded ? rowWidth.value - 28 : editorWidth.value - 8),
+    transform: [
+      {
+        translateY: isExpanded
+          ? (1 - expansion.value) * ((minimum - text.lineHeight) / 2 - inset)
+          : 0,
+      },
+    ],
   }));
   return {
     isExpanded,
-    labelYielded: labelYielded && value.length > 0,
     containerStyle,
     editorStyle,
+    editorContentStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       const width = event.nativeEvent.layout.width;
       rowWidth.set(width);
       if (width !== measuredRowWidth) {
         setMeasuredRowWidth(width);
-        setCompactSlot({ width: 0, labelYielded });
+        setCompactWidth(0);
       }
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
       // The expanded toolbar gives this slot to the model control. Keep the
       // compact geometry for the return transition, rather than recording zero.
       if (!isExpanded) {
-        editorX.set(event.nativeEvent.layout.x);
-        editorWidth.set(event.nativeEvent.layout.width);
-        setCompactSlot({ width: Math.max(0, event.nativeEvent.layout.width - 8), labelYielded });
+        const { x, width } = event.nativeEvent.layout;
+        editorX.set(x);
+        editorWidth.set(width);
+        setCompactWidth(Math.max(0, width - 8));
       }
-    },
-    onEditorFrameLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      if (event.nativeEvent.layout.width > 0) setEditorLayoutWidth(event.nativeEvent.layout.width);
     },
     editorProps: {
       singleLineCentered: !isExpanded,
@@ -660,7 +667,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     bodyText,
     draftMessage,
     opensCard && compactRowWidth > 0 && !isWideRow,
-    isWideRow && stripAttachments.length === 0,
   );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
@@ -916,10 +922,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={
-          !compactEditor.isExpanded &&
-          (!isWideRow || compactEditor.labelYielded || stripAttachments.length > 0)
-        }
+        iconOnly={!compactEditor.isExpanded && (!isWideRow || stripAttachments.length > 0)}
         onPress={openSettings}
       />
     </View>
@@ -1104,146 +1107,149 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               </View>
             </ComposerDictationDraftContent>
             <Animated.View
-              onLayout={compactEditor.onEditorFrameLayout}
               style={[
                 compactEditor.editorStyle,
                 showsCompactDictation ? { display: "none" } : undefined,
               ]}
             >
-              <ComposerEditor
-                hidden={props.hidden}
-                draftKey={composerDraftKey}
-                environmentId={props.environmentId}
-                onOpenMention={(path) => {
-                  Keyboard.dismiss();
-                  if (props.isDraft) {
-                    navigation.navigate("NewTaskFile", {
-                      environmentId: String(props.environmentId),
-                      cwd: props.projectCwd ?? undefined,
-                      path: fileRoutePathSegments(path),
+              <Animated.View style={compactEditor.editorContentStyle}>
+                <ComposerEditor
+                  hidden={props.hidden}
+                  draftKey={composerDraftKey}
+                  environmentId={props.environmentId}
+                  onOpenMention={(path) => {
+                    Keyboard.dismiss();
+                    if (props.isDraft) {
+                      navigation.navigate("NewTaskFile", {
+                        environmentId: String(props.environmentId),
+                        cwd: props.projectCwd ?? undefined,
+                        path: fileRoutePathSegments(path),
+                      });
+                    } else {
+                      navigation.navigate("ThreadFile", {
+                        environmentId: String(props.environmentId),
+                        threadId: String(props.selectedThread.id),
+                        path: fileRoutePathSegments(path),
+                      });
+                    }
+                  }}
+                  onOpenAttachment={openDraftDocument}
+                  chipsInert={!isExpanded}
+                  onInertChipPress={() => inputRef.current?.focus()}
+                  ref={inputRef}
+                  multiline
+                  value={draftMessage}
+                  // The save uses a draft snapshot; further typing would be discarded on success.
+                  readOnly={isSubmissionLocked}
+                  skills={composerMenu.skills}
+                  selection={composerMenu.selection}
+                  onChangeText={(text) => {
+                    if (!isSubmissionLocked) props.onChangeDraftMessage(text);
+                  }}
+                  onSelectionChange={composerMenu.onSelectionChange}
+                  onPasteImages={(uris) => {
+                    if (isSubmissionLocked) return;
+                    pendingNativeImagePasteCountRef.current += 1;
+                    void props.onNativePasteImages(uris).finally(() => {
+                      pendingNativeImagePasteCountRef.current -= 1;
                     });
-                  } else {
-                    navigation.navigate("ThreadFile", {
-                      environmentId: String(props.environmentId),
-                      threadId: String(props.selectedThread.id),
-                      path: fileRoutePathSegments(path),
-                    });
-                  }
-                }}
-                onOpenAttachment={openDraftDocument}
-                chipsInert={!isExpanded}
-                onInertChipPress={() => inputRef.current?.focus()}
-                ref={inputRef}
-                multiline
-                value={draftMessage}
-                // The save uses a draft snapshot; further typing would be discarded on success.
-                readOnly={isSubmissionLocked}
-                skills={composerMenu.skills}
-                selection={composerMenu.selection}
-                onChangeText={(text) => {
-                  if (!isSubmissionLocked) props.onChangeDraftMessage(text);
-                }}
-                onSelectionChange={composerMenu.onSelectionChange}
-                onPasteImages={(uris) => {
-                  if (isSubmissionLocked) return;
-                  pendingNativeImagePasteCountRef.current += 1;
-                  void props.onNativePasteImages(uris).finally(() => {
-                    pendingNativeImagePasteCountRef.current -= 1;
-                  });
-                }}
-                onPasteText={(paste) => {
-                  if (isSubmissionLocked) return;
-                  const insertPaste = () => {
-                    const insertion = replaceTextSelection({
-                      value: paste.value,
-                      selection: paste.selection,
-                      text: paste.text,
-                    });
-                    const selection = { start: insertion.cursor, end: insertion.cursor };
-                    props.onChangeDraftMessage(insertion.value);
-                    composerMenu.onSelectionChange(selection);
-                  };
-                  const capabilities = props.serverConfig?.environment.capabilities;
-                  const advertisedMax =
-                    capabilities?.attachmentUploads === true
-                      ? capabilities.fileAttachments?.maxUploadBytes
-                      : undefined;
-                  const maxBytes =
-                    advertisedMax === undefined
-                      ? null
-                      : clampFileAttachmentUploadBytes(advertisedMax);
-                  const wouldExceedInputLimit =
-                    paste.value.length -
-                      Math.max(0, paste.selection.end - paste.selection.start) +
-                      paste.text.length >
-                    PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
-                  const canAttach =
-                    maxBytes !== null &&
-                    countComposerDraftAttachmentsAfterSelection(composerDraftKey, {
-                      text: paste.value,
-                      ...paste.selection,
-                    }) < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
-                    new TextEncoder().encode(paste.text).byteLength <= maxBytes;
-                  if (
-                    pastedTextDisposition({
-                      text: paste.text,
-                      wouldExceedInputLimit,
-                      canAttach: true,
-                    }) === "attachment"
-                  ) {
-                    if (canAttach) {
-                      pendingPastedTextAttachmentCountRef.current += 1;
-                      setPendingPastedTextAttachmentCount(
-                        pendingPastedTextAttachmentCountRef.current,
-                      );
-                      const finishAttachment = () => {
-                        pendingPastedTextAttachmentCountRef.current = Math.max(
-                          0,
-                          pendingPastedTextAttachmentCountRef.current - 1,
-                        );
+                  }}
+                  onPasteText={(paste) => {
+                    if (isSubmissionLocked) return;
+                    const insertPaste = () => {
+                      const insertion = replaceTextSelection({
+                        value: paste.value,
+                        selection: paste.selection,
+                        text: paste.text,
+                      });
+                      const selection = { start: insertion.cursor, end: insertion.cursor };
+                      props.onChangeDraftMessage(insertion.value);
+                      composerMenu.onSelectionChange(selection);
+                    };
+                    const capabilities = props.serverConfig?.environment.capabilities;
+                    const advertisedMax =
+                      capabilities?.attachmentUploads === true
+                        ? capabilities.fileAttachments?.maxUploadBytes
+                        : undefined;
+                    const maxBytes =
+                      advertisedMax === undefined
+                        ? null
+                        : clampFileAttachmentUploadBytes(advertisedMax);
+                    const wouldExceedInputLimit =
+                      paste.value.length -
+                        Math.max(0, paste.selection.end - paste.selection.start) +
+                        paste.text.length >
+                      PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+                    const canAttach =
+                      maxBytes !== null &&
+                      countComposerDraftAttachmentsAfterSelection(composerDraftKey, {
+                        text: paste.value,
+                        ...paste.selection,
+                      }) < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+                      new TextEncoder().encode(paste.text).byteLength <= maxBytes;
+                    if (
+                      pastedTextDisposition({
+                        text: paste.text,
+                        wouldExceedInputLimit,
+                        canAttach: true,
+                      }) === "attachment"
+                    ) {
+                      if (canAttach) {
+                        pendingPastedTextAttachmentCountRef.current += 1;
                         setPendingPastedTextAttachmentCount(
                           pendingPastedTextAttachmentCountRef.current,
                         );
-                      };
-                      void props.onNativePasteText(paste).then(finishAttachment, finishAttachment);
-                    } else if (!wouldExceedInputLimit) {
-                      insertPaste();
-                    } else {
-                      Dialog.alert(
-                        wouldExceedInputLimit
-                          ? "Pasted text is too large for this message"
-                          : "Could not attach pasted text",
-                        wouldExceedInputLimit
-                          ? "Remove some text or an attachment, then paste again."
-                          : "Remove an attachment or use a smaller paste, then try again.",
-                      );
+                        const finishAttachment = () => {
+                          pendingPastedTextAttachmentCountRef.current = Math.max(
+                            0,
+                            pendingPastedTextAttachmentCountRef.current - 1,
+                          );
+                          setPendingPastedTextAttachmentCount(
+                            pendingPastedTextAttachmentCountRef.current,
+                          );
+                        };
+                        void props
+                          .onNativePasteText(paste)
+                          .then(finishAttachment, finishAttachment);
+                      } else if (!wouldExceedInputLimit) {
+                        insertPaste();
+                      } else {
+                        Dialog.alert(
+                          wouldExceedInputLimit
+                            ? "Pasted text is too large for this message"
+                            : "Could not attach pasted text",
+                          wouldExceedInputLimit
+                            ? "Remove some text or an attachment, then paste again."
+                            : "Remove an attachment or use a smaller paste, then try again.",
+                        );
+                      }
+                      return;
                     }
-                    return;
+                    insertPaste();
+                  }}
+                  placeholder={props.placeholder}
+                  onFocus={handleFocus}
+                  onBlur={handleBlur}
+                  onSubmit={(alternate) =>
+                    void handleSend(
+                      alternate && sendPresentation.alternate !== null
+                        ? sendPresentation.alternate
+                        : undefined,
+                    )
                   }
-                  insertPaste();
-                }}
-                placeholder={props.placeholder}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                onSubmit={(alternate) =>
-                  void handleSend(
-                    alternate && sendPresentation.alternate !== null
-                      ? sendPresentation.alternate
-                      : undefined,
-                  )
-                }
-                submitTitle={sendPresentation.label}
-                alternateSubmitTitle={
-                  sendPresentation.alternate === null
-                    ? sendPresentation.label
-                    : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
-                }
-                {...compactEditor.editorProps}
-                textStyle={{
-                  ...bodyText,
-                  color: foregroundColor,
-                }}
-              />
+                  submitTitle={sendPresentation.label}
+                  alternateSubmitTitle={
+                    sendPresentation.alternate === null
+                      ? sendPresentation.label
+                      : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
+                  }
+                  {...compactEditor.editorProps}
+                  textStyle={{
+                    ...bodyText,
+                    color: foregroundColor,
+                  }}
+                />
+              </Animated.View>
             </Animated.View>
           </View>
           <Animated.View
