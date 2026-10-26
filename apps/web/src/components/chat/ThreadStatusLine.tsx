@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useClientSettings } from "~/hooks/useSettings";
 import { InlineButton } from "../ui/button";
 
 export function ThreadStatusLine(props: {
@@ -11,6 +12,7 @@ export function ThreadStatusLine(props: {
   // Set for clock-dependent labels to trigger updates.
   readonly clockMinute?: string;
 }) {
+  // Muted, the action blends into the status text; the New design gives it full color.
   return (
     <div
       data-chat-thread-status-line="true"
@@ -19,7 +21,7 @@ export function ThreadStatusLine(props: {
       {props.icon}
       <span className="min-w-0 truncate">{props.label}</span>
       <span aria-hidden="true">·</span>
-      <InlineButton tone="muted" disabled={props.actionDisabled} onClick={props.onAction}>
+      <InlineButton tone="default" disabled={props.actionDisabled} onClick={props.onAction}>
         {props.actionLabel}
       </InlineButton>
     </div>

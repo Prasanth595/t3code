@@ -3,6 +3,7 @@ import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
 import { observeResize } from "../../lib/observeResize";
+import { useClientSettings } from "~/hooks/useSettings";
 
 export function ChatCanvas({
   composerOverlayElement,
@@ -111,6 +112,7 @@ export function ChatCanvas({
       preview,
       detailsCard,
       findBar,
+      centerBesideDetails: true,
     }),
     previewKey: preview?.key ?? null,
     reportPreview,
