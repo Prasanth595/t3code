@@ -1,4 +1,0 @@
-interface:
-  display_name: "T3 Sessions"
-  short_description: "Read, message and start T3 sessions across environments"
-  default_prompt: "Use $t3-sessions to find and inspect the requested T3 conversation on its destination environment."

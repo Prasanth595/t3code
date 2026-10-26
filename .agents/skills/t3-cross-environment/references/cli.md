@@ -1,10 +1,11 @@
 # T3 CLI across environments
 
-These examples use SSH to run the CLI on the destination. For a local
-environment, run the same CLI commands directly. Replace `T3_HOST` with an
-existing SSH destination for the account owning T3, and replace the executable,
-T3 home, project path and IDs with checked destination values. Shell-quote
-replacement arguments for the destination shell; the examples use POSIX shells.
+These examples use SSH to run the CLI on the destination device, where the
+session lives or will be started. If already executing on that device, omit
+the SSH wrapper. Replace `T3_HOST` with an existing SSH destination for the
+account owning T3, and replace the executable, T3 home, project path and IDs
+with checked destination values. Shell-quote replacement arguments for the
+destination shell; the examples use POSIX shells.
 
 Use the installed launcher for that environment. Desktop installations provide
 `~/.t3/bin/t3`; another `t3` on a noninteractive PATH may belong to a different

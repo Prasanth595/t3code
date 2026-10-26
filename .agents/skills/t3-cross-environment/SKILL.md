@@ -1,9 +1,15 @@
 ---
-name: t3-sessions
-description: Find, read, message, and start T3 Code conversations, including sessions on another environment through an existing SSH connection. Use for T3 session communication, not ordinary coding or generic subagent requests.
+name: t3-cross-environment
+description: Manage T3 Code sessions across devices and environments. Use to find and inspect remote threads, exchange messages, retrieve replies, and start requested sessions or worktrees through destination MCP or an existing SSH connection.
 ---
 
-# T3 sessions
+# T3 cross-environment session management
+
+Use this skill to manage T3 sessions on another device or environment: find
+conversations, inspect their state, exchange messages, read results and start
+new sessions when requested. For example, a Linux host can coordinate work
+in a Mac-hosted conversation. Each environment is a running T3 server with its
+own projects and threads; separate environments can also run on the same device.
 
 T3 tools address the environment serving them. Seeing another environment in
 the client does not make its threads reachable through the current MCP server;
@@ -19,7 +25,7 @@ For another host without a destination MCP connection, use its supported
 `t3 thread` CLI over an existing authorized SSH route, as the account owning
 that T3 environment. Confirm the executable and T3 home, including any custom
 `--base-dir`. Read [CLI and SSH commands](references/cli.md) before using this
-route. The same CLI works locally for agents outside T3.
+route.
 
 [Outside agents](https://github.com/pingdotgg/t3code/blob/main/docs/user/outside-agents.md)
 describes supported MCP setup. Missing access, authentication or a running
