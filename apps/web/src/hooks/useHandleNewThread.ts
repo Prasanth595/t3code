@@ -29,10 +29,11 @@ import {
   useProjects,
   useQuietThreadShell,
 } from "../state/entities";
+import { resolveProjectLastUsedSettings } from "@t3tools/client-runtime/state/project-last-used-settings";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
-  resolveNewThreadModelSelectionOverride,
+  resolveNewThreadDefaults,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
@@ -102,27 +103,6 @@ export function createNewThreadHandler(router: AnyRouter) {
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
-    const carrySourceShell =
-      currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
-    const carrySourceDraft =
-      currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
-    const carrySourceComposer = currentRouteTarget
-      ? getComposerDraft(
-          currentRouteTarget.kind === "server"
-            ? currentRouteTarget.threadRef
-            : currentRouteTarget.draftId,
-        )
-      : null;
-    const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
-    const composerModelSelection = composerActiveProvider
-      ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
-      : null;
-    const carryModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
-    const carryInteractionMode =
-      carrySourceComposer?.interactionMode ??
-      carrySourceShell?.interactionMode ??
-      carrySourceDraft?.interactionMode ??
-      null;
     const project = projects.find(
       (candidate) =>
         candidate.id === projectRef.projectId &&
@@ -135,16 +115,17 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
-    const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
-    const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-    const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
-      resolveNewThreadModelSelectionOverride({
-        projectDefaultSelection: projectDefaultModelSelection ?? null,
-        carrySelection: carryModelSelection,
-        carrySourceDraftId:
-          currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
-        destinationDraftId,
-      });
+    // A new thread starts from the target project, not from whatever thread
+    // happens to be on screen. These are written to the draft session, which
+    // the composer shows until the user picks something in the composer itself.
+    const {
+      modelSelection: defaultModelSelection,
+      runtimeMode: defaultRuntimeMode,
+      interactionMode: defaultInteractionMode,
+    } = resolveNewThreadDefaults({
+      projectSettings,
+      lastUsed: resolveProjectLastUsedSettings(readThreadShells(), projectRef),
+    });
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
@@ -253,19 +234,16 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (workspaceContext) {
           setDraftThreadContext(emptyStoredDraftThread.draftId, {
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+            runtimeMode: defaultRuntimeMode,
+            interactionMode: defaultInteractionMode,
           });
         }
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
           applyStickyState(emptyStoredDraftThread.draftId);
-          const modelSelectionOverride = resolveModelSelectionOverride(
-            emptyStoredDraftThread.draftId,
-          );
-          if (modelSelectionOverride) {
-            setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride, {
+          if (defaultModelSelection) {
+            setModelSelection(emptyStoredDraftThread.draftId, defaultModelSelection, {
               replaceOptions: true,
             });
           }
@@ -278,8 +256,8 @@ export function createNewThreadHandler(router: AnyRouter) {
           {
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+            runtimeMode: defaultRuntimeMode,
+            interactionMode: defaultInteractionMode,
           },
         );
         const opened = {
@@ -372,12 +350,11 @@ export function createNewThreadHandler(router: AnyRouter) {
             newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
           }),
         runtimeMode: defaultRuntimeMode,
-        ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+        interactionMode: defaultInteractionMode,
       });
       applyStickyState(draftId);
-      const modelSelectionOverride = resolveModelSelectionOverride(draftId);
-      if (modelSelectionOverride) {
-        setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
+      if (defaultModelSelection) {
+        setModelSelection(draftId, defaultModelSelection, { replaceOptions: true });
       }
       await router.navigate({
         to: "/draft/$draftId",

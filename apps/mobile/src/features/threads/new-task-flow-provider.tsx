@@ -102,6 +102,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { resolveProjectLastUsedSettings } from "@t3tools/client-runtime/state/project-last-used-settings";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -537,9 +538,19 @@ export function NewTaskFlowProvider(
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
+  // A queued task keeps its own settings; a new one starts from the project's
+  // most recently used thread.
+  const lastUsed =
+    editingPendingTask || !selectedProject
+      ? null
+      : resolveProjectLastUsedSettings(threads, {
+          environmentId: selectedProject.environmentId,
+          projectId: selectedProject.id,
+        });
   const defaultRuntimeMode = editingPendingTask
     ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
-    : projectSettings.settings.defaultRuntimeMode;
+    : ((projectSettings.sources.defaultRuntimeMode === "project" ? null : lastUsed?.runtimeMode) ??
+      projectSettings.settings.defaultRuntimeMode);
   const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
@@ -549,9 +560,22 @@ export function NewTaskFlowProvider(
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
+  // A model configured on the project wins over its history; the
+  // environment's default only applies after the project's history.
+  const configuredDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
+    selectedProject?.id ?? null,
+  );
+  const projectDefaultModelSelection =
+    projectSettings.sources.defaultModelSelection === "environment"
+      ? null
+      : configuredDefaultModelSelection;
+  const environmentDefaultModelSelection =
+    projectDefaultModelSelection === null ? configuredDefaultModelSelection : null;
+  const lastUsedModelSelection = resolveDefaultableModelSelection(
+    selectedEnvironmentServerConfig,
+    lastUsed?.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
@@ -562,7 +586,11 @@ export function NewTaskFlowProvider(
   );
   const modelOptions = buildModelOptions(
     selectedEnvironmentServerConfig,
-    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+    draftModelSelection ??
+      projectDefaultModelSelection ??
+      lastUsedModelSelection ??
+      environmentDefaultModelSelection ??
+      stickyModelSelection,
     undefined,
     selectedProject?.id ?? null,
   );
@@ -570,6 +598,8 @@ export function NewTaskFlowProvider(
   const selectedModel = resolveNewTaskModelSelection({
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
+    lastUsedSelection: lastUsedModelSelection,
+    environmentDefaultSelection: environmentDefaultModelSelection,
     stickySelection: stickyModelSelection,
     modelOptions,
   });
@@ -590,9 +620,16 @@ export function NewTaskFlowProvider(
     ) ?? null;
   const planModeEnabled =
     legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
+  // Display and submission resolve through the same function so an untouched
+  // draft sends the mode it shows.
+  const interactionMode = resolvePendingTaskInteractionMode({
+    preferenceLoaded: planModePreferenceLoaded,
+    planModeEnabled: legacyPlanModeEnabled,
+    draftInteractionMode: selectedProjectDraft.interactionMode,
+    inheritedInteractionMode: lastUsed?.interactionMode,
+    queuedInteractionMode: editingPendingTask?.interactionMode,
+    provider: selectedProviderStatus,
+  });
   const setSelectedModelKey = (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -1005,6 +1042,7 @@ export function NewTaskFlowProvider(
         preferenceLoaded: planModePreferenceLoaded,
         planModeEnabled: legacyPlanModeEnabled,
         draftInteractionMode: draft.interactionMode,
+        inheritedInteractionMode: lastUsed?.interactionMode,
         queuedInteractionMode: editingPendingTask?.interactionMode,
         provider: selectedEnvironmentServerConfig?.providers.find(
           (candidate) => candidate.instanceId === draftModelSelection.instanceId,
