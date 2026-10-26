@@ -536,6 +536,12 @@ const rigFor = (
 };
 
 const advanceIn = (rig: Rig, run: RunId = rig.run) => advance(rig.ctx, run);
+/** The entries a ledger seeded with `events` reads back as. */
+const seededEntries = (events: ReadonlyArray<RunEvent>) => {
+  const dataDir = tempDir();
+  seed(dataDir, run10, events);
+  return readRun(dataDir, run10).entries;
+};
 const decide = (rig: Rig, ev: Evidence, run: RunId = rig.run) => interrupted(rig.ctx, run, ev);
 const forwardIn = (rig: Rig) => forward(rig.ctx, rig.run);
 /** What the pass does for a run after a resume or a relaunch that left the issue to `start`. */
@@ -2498,5 +2504,100 @@ describe("a provider rate limit", () => {
         assert.deepStrictEqual(sends(rig), [movedCall(1)]);
         assert.deepStrictEqual(linesOf(rig), [...STARTED, switched, sentStep(0)]);
       }),
+  );
+
+  it.effect("takes the provider's retry-after from the error", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.status = () =>
+        statusOf(
+          "failed",
+          "API Error: Request rejected (429) · rate_limit_error, retry-after: 120",
+          {
+            runOrdinal: 1,
+            runCompletedAt: T0 - MINUTE,
+          },
+        );
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "rate-limited",
+        endedMs: T0 - MINUTE,
+        retryAfterMs: 120_000,
+        model: OPUS,
+      });
+    }),
+  );
+
+  it.effect("is not resumed once a stop by hand is requested, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run, SONNET), {
+        kind: "unchanged",
+        why: "a stop by hand was requested",
+      });
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  it.effect(
+    "into a thread that is gone writes nothing, and its send gone leaves the resume owed",
+    () =>
+      Effect.gen(function* () {
+        const gone = rigFor();
+        threadGone(gone);
+        const before = bytesOf(gone);
+        assert.deepStrictEqual(yield* resumeAfterCooldown(gone.ctx, gone.run), {
+          kind: "unchanged",
+          why: "its thread is gone",
+        });
+        assert.strictEqual(bytesOf(gone), before);
+
+        const refused = rigFor();
+        endedAs(refused, "failed", 1, COOLING_DOWN);
+        refused.world.sendNotFound = true;
+        assert.deepStrictEqual(yield* resumeAfterCooldown(refused.ctx, refused.run), {
+          kind: "unchanged",
+          why: "its thread is gone",
+        });
+        assert.deepStrictEqual(linesOf(refused), [...STARTED, cooledLine(0, 1)]);
+      }),
+  );
+
+  it.effect("owed when its thread is gone charges the relaunch nothing", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+        cooledLine(1, 2),
+      ]);
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      const outcome = yield* decide(rig, afterOutage());
+      assert.strictEqual(outcome.kind, "relaunched");
+      // One real interruption before, and the relaunch: two, not one.
+      assert.ok(outcome.kind === "relaunched" && outcome.resumes === 2);
+    }),
+  );
+
+  it.effect("moved to another model keeps the session's provider options", () =>
+    Effect.gen(function* () {
+      const options = [{ id: "effort", value: "high" }];
+      const launched = STARTED.map((line): RunEvent =>
+        line.event === "session_launched"
+          ? ({ ...line, data: { ...line.data, model_options: options } } as RunEvent)
+          : line,
+      );
+      const moved: RunEvent = {
+        event: "session_interrupted",
+        data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" },
+      } as RunEvent;
+      assert.deepStrictEqual(readProgress(seededEntries([...launched, moved])).model, {
+        ...SONNET,
+        options,
+      });
+    }),
   );
 });

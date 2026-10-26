@@ -18,6 +18,7 @@ import {
 } from "./cooldown.ts";
 
 const MINUTE = 60_000;
+const FABLE_MODEL = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
 const T0 = 1_791_380_000_000;
 
 /** What Claude Code ended the sessions of the Trilogy Mac with. */
@@ -29,9 +30,12 @@ describe("rateLimitOf", () => {
     for (const text of [
       CLAUDE_COOLDOWN,
       'API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}',
-      "upstream answered HTTP 429",
-      "status 429 Too Many Requests",
+      "API Error: upstream answered HTTP 429",
+      "Error: status 429 Too Many Requests",
+      "API Error: rate_limit_error",
       "All credentials for model gpt-5.5 are cooling down",
+      // The session wrote first; the provider's error is its last line.
+      `Working on the runner.\n\n${CLAUDE_COOLDOWN}\n`,
     ]) {
       assert.deepStrictEqual(rateLimitOf(text), { retryAfterMs: null }, text);
     }
@@ -45,19 +49,45 @@ describe("rateLimitOf", () => {
       "Working on #429 now",
       "Fixed the 429 handling in the factory, pushed the branch",
       "the build cooled down after the tests",
+      // The session's own words, about rate limits, are not the provider's error.
+      "I added handling so the client backs off on HTTP 429 and honours Retry-After: 86400",
+      "The adapter maps rate_limit_error to (429).",
+      "Error handling now covers status 429.",
+      "API Error: 429\n\nI carried on after it and finished the step.",
     ]) {
       assert.strictEqual(rateLimitOf(text), null, String(text));
     }
   });
 
   it("takes the provider's retry-after, in seconds unless it names a unit", () => {
-    assert.deepStrictEqual(rateLimitOf("HTTP 429, retry-after: 120"), { retryAfterMs: 120_000 });
-    assert.deepStrictEqual(rateLimitOf("rate_limit_error: retry after 3 minutes"), {
+    assert.deepStrictEqual(rateLimitOf("API Error: HTTP 429, retry-after: 120"), {
+      retryAfterMs: 120_000,
+    });
+    assert.deepStrictEqual(rateLimitOf("API Error: rate_limit_error: retry after 3 minutes"), {
       retryAfterMs: 3 * MINUTE,
     });
-    assert.deepStrictEqual(rateLimitOf("rate_limit_error: please try again in 45s"), {
+    assert.deepStrictEqual(rateLimitOf("API Error: rate_limit_error: please try again in 45s"), {
       retryAfterMs: 45_000,
     });
+    assert.deepStrictEqual(rateLimitOf("API Error: 429, retry after 500ms"), { retryAfterMs: 500 });
+  });
+
+  it("caps the provider's retry-after at the longest window", () => {
+    assert.deepStrictEqual(rateLimitOf("API Error: 429, retry after 2h"), {
+      retryAfterMs: COOLDOWN_CAP_MS,
+    });
+    assert.deepStrictEqual(rateLimitOf(`API Error: 429, retry after ${"9".repeat(400)}`), {
+      retryAfterMs: COOLDOWN_CAP_MS,
+    });
+  });
+
+  it("reads the retry-after only from the error line", () => {
+    assert.deepStrictEqual(
+      rateLimitOf("Retry-After: 86400 is what upstream says.\nAPI Error: 429"),
+      {
+        retryAfterMs: null,
+      },
+    );
   });
 });
 
@@ -68,14 +98,7 @@ describe("recordRateLimit", () => {
     const lengths: Array<number> = [];
     for (let i = 0; i < 7; i++) {
       // Each session that was resumed after the window ran into the limit again.
-      recordRateLimit(
-        cooldowns,
-        "claudeAgent claude-fable-5-1",
-        "claude-fable-5-1",
-        now,
-        now,
-        null,
-      );
+      recordRateLimit(cooldowns, "claudeAgent claude-fable-5-1", FABLE_MODEL, now, now, null);
       const cooldown = cooldowns.get("claudeAgent claude-fable-5-1")!;
       lengths.push(cooldown.untilMs - now);
       assert.strictEqual(cooldown.windows, i + 1);
@@ -90,22 +113,22 @@ describe("recordRateLimit", () => {
 
   it("does not move the window for a session that ended before it was over", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, "k", "m", T0, T0, null);
+    recordRateLimit(cooldowns, "k", null, T0, T0, null);
     const first = cooldowns.get("k")!;
     // Nine more sessions of the same burst, read in the same pass and the next.
-    for (let i = 1; i < 10; i++) recordRateLimit(cooldowns, "k", "m", T0 + i, T0 + MINUTE, null);
+    for (let i = 1; i < 10; i++) recordRateLimit(cooldowns, "k", null, T0 + i, T0 + MINUTE, null);
     assert.deepStrictEqual(cooldowns.get("k"), first);
   });
 
   it("uses the provider's retry-after for the window when it gives one", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, "k", "m", T0, T0, 90 * MINUTE);
+    recordRateLimit(cooldowns, "k", null, T0, T0, 90 * MINUTE);
     assert.strictEqual(cooldowns.get("k")!.untilMs, T0 + 90 * MINUTE);
   });
 
   it("keeps each model's window apart", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, "a", "model-a", T0, T0, null);
+    recordRateLimit(cooldowns, "a", null, T0, T0, null);
     assert.isNotNull(coolingDown(cooldowns, "a", T0 + MINUTE));
     assert.isNull(coolingDown(cooldowns, "b", T0 + MINUTE));
   });
@@ -114,20 +137,20 @@ describe("recordRateLimit", () => {
 describe("coolingDown and forgetQuietCooldowns", () => {
   it("is cooling only until the window ends", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, "k", "m", T0, T0, null);
+    recordRateLimit(cooldowns, "k", null, T0, T0, null);
     assert.isNotNull(coolingDown(cooldowns, "k", T0 + 5 * MINUTE - 1));
     assert.isNull(coolingDown(cooldowns, "k", T0 + 5 * MINUTE));
   });
 
   it("forgets a model once it has been quiet past its window, so the next limit starts over", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, "k", "m", T0, T0, null);
+    recordRateLimit(cooldowns, "k", null, T0, T0, null);
     const until = cooldowns.get("k")!.untilMs;
     assert.deepStrictEqual(forgetQuietCooldowns(cooldowns, until + COOLDOWN_QUIET_MS - 1), []);
     assert.deepStrictEqual(forgetQuietCooldowns(cooldowns, until + COOLDOWN_QUIET_MS), ["k"]);
     assert.strictEqual(cooldowns.size, 0);
     const later = until + COOLDOWN_QUIET_MS + MINUTE;
-    recordRateLimit(cooldowns, "k", "m", later, later, null);
+    recordRateLimit(cooldowns, "k", null, later, later, null);
     assert.strictEqual(cooldowns.get("k")!.windows, 1);
   });
 });
@@ -151,7 +174,7 @@ describe("launchModel", () => {
 
   it("is the fallback on the same instance, with the same options, while the model cools down", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE.model, T0, T0, null);
+    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE, T0, T0, null);
     assert.deepStrictEqual(launchModel(cooldowns, FALLBACKS, FABLE, T0 + MINUTE), OPUS);
     // Back to the model once its window is over.
     assert.deepStrictEqual(launchModel(cooldowns, FALLBACKS, FABLE, T0 + 5 * MINUTE), FABLE);
@@ -159,9 +182,9 @@ describe("launchModel", () => {
 
   it("is none while the model cools down with no fallback, or a fallback that cools down too", () => {
     const cooldowns = new Map<string, Cooldown>();
-    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE.model, T0, T0, null);
+    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE, T0, T0, null);
     assert.isNull(launchModel(cooldowns, {}, FABLE, T0 + MINUTE));
-    recordRateLimit(cooldowns, cooldownKey(OPUS), OPUS.model, T0, T0, null);
+    recordRateLimit(cooldowns, cooldownKey(OPUS), OPUS, T0, T0, null);
     assert.isNull(launchModel(cooldowns, FALLBACKS, FABLE, T0 + MINUTE));
   });
 });

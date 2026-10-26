@@ -1107,6 +1107,7 @@ describe("FactorySessions.send", () => {
         yield* sessions.send(threadId, "softfac:issue-5:rate-limited:2", "carry on", {
           instanceId: "claudeAgent",
           model: "claude-opus-5-5",
+          options: [{ id: "effort", value: "high" }],
         });
       }).pipe(Effect.provide(layerSessions({}, {}, recordingDispatch(commands))));
       assert.strictEqual(commands.length, 1);
@@ -1116,6 +1117,7 @@ describe("FactorySessions.send", () => {
         assert.deepStrictEqual(command.modelSelection, {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-5-5",
+          options: [{ id: "effort", value: "high" }],
         });
       }
     }),

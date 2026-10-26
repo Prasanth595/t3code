@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 import { describe, vi } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
+import { cooldownKey, recordRateLimit, type Cooldown } from "./cooldown.ts";
 import { liveWorld } from "./index.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -16,21 +17,23 @@ import { newRunId } from "./ledger/runId.ts";
 import { T0, ticking, useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { FactoryProcess } from "./process.ts";
+import type { StartContext } from "./runner/start.ts";
 import * as Sessions from "./t3/sessions.ts";
+import { ClaimMemo } from "./tracker/github.ts";
 
 /**
  * The base each step's context carries, as `<step> <base>`. The steps are wrapped, not run: this
  * test is about the one thing `liveWorld` does for a step of a run, which is to build its context
  * for the base the pass hands it. What a step does with `ctx.project.base` is its own tests'.
  */
-const { bases, wrapped } = vi.hoisted(() => {
+const { bases, wrapped, startContexts } = vi.hoisted(() => {
   const bases: Array<string> = [];
   const wrapped = <F>(name: string): F =>
     ((ctx: { readonly project: { readonly base: string } }) => {
       bases.push(`${name} ${ctx.project.base}`);
       return Effect.void;
     }) as unknown as F;
-  return { bases, wrapped };
+  return { bases, wrapped, startContexts: [] as Array<unknown> };
 });
 
 vi.mock("./runner/building.ts", async (importOriginal) => {
@@ -42,7 +45,18 @@ vi.mock("./runner/building.ts", async (importOriginal) => {
     forward: wrapped<typeof actual.forward>("forward"),
     advance: wrapped<typeof actual.advance>("advance"),
     interrupted: wrapped<typeof actual.interrupted>("interrupted"),
+    resumeAfterCooldown: wrapped<typeof actual.resumeAfterCooldown>("resumeAfterCooldown"),
   };
+});
+
+// The claim is not run: the test is about the context `liveWorld` builds for it.
+vi.mock("./runner/start.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./runner/start.ts")>();
+  const start = (ctx: unknown) => {
+    startContexts.push(ctx);
+    return Effect.succeed({ kind: "skipped", reason: "not run" });
+  };
+  return { ...actual, start: start as unknown as typeof actual.start };
 });
 
 vi.mock("./runner/feedback.ts", async (importOriginal) => {
@@ -108,6 +122,7 @@ describe("liveWorld: a step of a run is built for the base the pass hands it", (
         yield* world.forward(repo, run, base);
         yield* world.advance(repo, run, base);
         yield* world.interrupted(repo, run, base, evidence);
+        yield* world.resumeAfterCooldown(repo, run, base, null);
         yield* world.feedback(repo, run, base);
       }
       assert.deepStrictEqual(bases, [
@@ -116,15 +131,68 @@ describe("liveWorld: a step of a run is built for the base the pass hands it", (
         "forward feature/x",
         "advance feature/x",
         "interrupted feature/x",
+        "resumeAfterCooldown feature/x",
         "feedback feature/x",
         "timeLimit main",
         "watch main",
         "forward main",
         "advance main",
         "interrupted main",
+        "resumeAfterCooldown main",
         "feedback main",
       ]);
     }),
+  );
+});
+
+describe("liveWorld: a model that cools down", () => {
+  const FABLE = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
+  const OPUS = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+
+  it.effect(
+    "new claims launch on its fallback until its window ends, from the shared cooldowns",
+    () =>
+      Effect.gen(function* () {
+        const cooldowns = new Map<string, Cooldown>();
+        let now = T0;
+        const world = liveWorld(
+          { ...machine, modelFallbacks: { "claude-fable-5-1": "claude-opus-5-5" } },
+          "/factory-test/data",
+          FactoryProcess.of({ run: () => Effect.die("no gh") }),
+          NodeServices.layer,
+          Sessions.FactorySessions.of({
+            ...stubSessions,
+            findProject: () => Effect.succeed({ id: "proj-1", model: FABLE }),
+          }),
+          () => now,
+          "mac-mini",
+          { list: () => Effect.succeed([]), raise: () => Effect.void, clear: () => Effect.void },
+          {
+            gate: { run: () => Effect.die("no gate") },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+          undefined,
+          undefined,
+          {
+            gating: new Set(),
+            claimMemo: new ClaimMemo(),
+            stuckReads: new Map(),
+            brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+            configSkips: new Map(),
+            lastGood: new Map(),
+            cooldowns,
+          },
+        );
+        assert.strictEqual(world.cooldowns, cooldowns);
+        assert.deepStrictEqual(yield* world.projectModel(repo), FABLE);
+        recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE, T0, T0, null);
+        yield* world.start(repo, 7);
+        const ctx = startContexts.at(-1) as StartContext;
+        assert.deepStrictEqual(ctx.launchModel?.(FABLE), OPUS);
+        now = T0 + 5 * 60_000;
+        assert.deepStrictEqual(ctx.launchModel?.(FABLE), FABLE);
+      }),
   );
 });
 
