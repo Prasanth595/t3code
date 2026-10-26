@@ -218,6 +218,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the description node's size, since truncation is only known after layout
   useLayoutEffect(() => {
     const el = descriptionRef.current;
     if (!props.isActive || !el) return;
