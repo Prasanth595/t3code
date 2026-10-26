@@ -495,15 +495,16 @@ describe("large text preview recovery", () => {
       expect(workers).toHaveLength(1);
       state(`${changed}#updated`, "two");
       await screen.rerender(preview("file-edit"));
+      // The prefetched first screen paints before the worker starts, so wait for the worker itself.
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
-      expect(workers).toHaveLength(2);
       await screen.rerender(preview("file-edit", 1));
       await vi.waitFor(() => expect(workers).toHaveLength(3));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
       state(`${original}#legacy`);
       await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(workers).toHaveLength(4));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
-      expect(workers).toHaveLength(4);
       assetUrlState.mockReturnValue({ _tag: "Failure" });
       await screen.rerender(preview("legacy-edit", 1));
       expect(screen.container.textContent).toContain("Unable to load file preview.");
@@ -1323,8 +1324,9 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
   return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
 }
 
-// Rendering starts a layout engine per case, which dominated this file on loaded CI
-// runners. The omission decision lives in prepareOffice, so every role is checked there.
+// Rendering starts a Word engine worker per case, which compiles about 30 MB of WebAssembly and
+// took 10-17 s per test on loaded CI runners. Omission and retention are prepareOffice decisions,
+// so they are checked there.
 it.each(EXPANDED_WORD_ROLES)(
   "keeps the body and omits expanded %s from the prepared document",
   async (role) => {
@@ -1352,38 +1354,6 @@ it.each(EXPANDED_WORD_ROLES)(
         if (!entry.dir) expect(await entry.async("string")).not.toContain("omitted payload");
     } finally {
       parse.mockRestore();
-    }
-  },
-);
-
-// Two full renders prove the engine accepts a prepared body whose parts were removed
-// (body references for notes, section references for headers and footers) and show the warning.
-it.each(["footnotes", "footer"] as const)(
-  "renders the body and warns when omitting expanded %s",
-  async (role) => {
-    const file = await expandedWordFixture(role);
-    const src = URL.createObjectURL(file);
-    try {
-      const container = document.createElement("div");
-      container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-      await using screen = await render(
-        <OfficeFilePreview src={src} name="expanded.docx" kind="docx" sizeBytes={file.size} />,
-        { container },
-      );
-      await vi.waitFor(
-        () => {
-          expect(screen.container.querySelector('[role="alert"]')?.textContent ?? "").toBe("");
-          expect(screen.container.textContent).toContain("body retained");
-        },
-        { timeout: 30_000 },
-      );
-      expect(screen.container.textContent).toContain("Preview limited");
-      expect(screen.container.textContent).not.toContain("omitted payload");
-      await vi.waitFor(() =>
-        expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
-      );
-    } finally {
-      URL.revokeObjectURL(src);
     }
   },
 );
@@ -1506,30 +1476,26 @@ it.each([
       ),
     );
   }
-  const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
-  const src = URL.createObjectURL(file);
-  try {
-    const container = document.createElement("div");
-    container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-    await using screen = await render(
-      <OfficeFilePreview src={src} name="ordinary.docx" kind="docx" />,
-      { container },
-    );
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("ordinary body"), {
-      timeout: 30_000,
-    });
-    expect(screen.container.textContent).not.toContain("Preview limited");
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
-    );
-    if (scenario === "default template styles")
-      expect(screen.container.textContent).toContain("styled cell");
-    if (ordinary) {
-      expect(screen.container.textContent).toContain("header retained");
-      expect(screen.container.textContent).toContain("footer retained");
-    }
-  } finally {
-    URL.revokeObjectURL(src);
+  const { prepareOffice } = await import("./officeArchive");
+  const prepared = await prepareOffice(
+    await archive.generateAsync({ type: "arraybuffer", compression: "DEFLATE" }),
+    "docx",
+  );
+  expect(prepared.truncated).toBe(false);
+  const bounded = await JSZip.loadAsync(prepared.bytes);
+  const markup = await bounded.file("word/document.xml")!.async("string");
+  expect(markup).toContain("ordinary body");
+  expect(markup).toContain("styled body");
+  expect(bounded.file("word/styles.xml")).not.toBeNull();
+  if (scenario === "default template styles") {
+    expect(markup).toContain("styled cell");
+    expect(await bounded.file("word/styles.xml")!.async("string")).toContain('w:styleId="Table99"');
+  }
+  if (ordinary) {
+    expect(markup).toMatch(/<w:headerReference/);
+    expect(markup).toMatch(/<w:footerReference/);
+    for (const role of ["header", "footer", "footnotes", "endnotes", "comments"])
+      expect(await bounded.file(`word/${role}.xml`)!.async("string")).toContain(`${role} retained`);
   }
 });
 
