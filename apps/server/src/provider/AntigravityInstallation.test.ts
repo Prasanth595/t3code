@@ -709,6 +709,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         ],
         ["early-exit.cmd", `exit /b\r\n"${runtimeExecutable}"`],
         ["continued-set.cmd", `set IGNORED=1^\r\n"${runtimeExecutable}"`],
+        [
+          "chained-comment.cmd",
+          `rem setup & "${managed.executablePath}"\r\n"${runtimeExecutable}"`,
+        ],
         ["chained.cmd", `"${runtimeExecutable}" --version && "%AGY_TARGET%"`],
       ] as const) {
         const uncertain = yield* writeLauncher(name, launch);
