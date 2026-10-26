@@ -40,7 +40,6 @@ import {
 } from "../../state/composer-attachment-uploads";
 import Animated, {
   FadeIn,
-  FadeOut,
   type LayoutAnimationFunction,
   ReduceMotion,
   useAnimatedStyle,
@@ -67,10 +66,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
-import {
-  ComposerAttachmentStrip,
-  ComposerAttachmentThumbnail,
-} from "../../components/ComposerAttachmentStrip";
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -563,9 +559,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
-  const [compactRowWidth, setCompactRowWidth] = useState(0);
-  const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const attachmentsHeight = useSharedValue(-1);
+  const attachmentsStyle = useAnimatedStyle(() => ({
+    height: Math.max(0, attachmentsHeight.value),
+  }));
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -723,11 +721,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const editingAttachments = hasEditingAttachments ? (
     <>
       {queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
-        <Animated.View
-          className="px-[14px] pb-2.5 pt-2"
-          entering={COMPOSER_ATTACHMENT_ENTERING}
-          exiting={FadeOut.duration(120)}
-        >
+        <Animated.View className="px-[14px] pb-2.5 pt-2" entering={COMPOSER_ATTACHMENT_ENTERING}>
           <ComposerQueuedEditAttachments
             environmentId={props.environmentId}
             attachments={queuedEdit.existingAttachments}
@@ -737,11 +731,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         </Animated.View>
       ) : null}
       {stripAttachments.length > 0 ? (
-        <Animated.View
-          className="px-[14px] pb-2.5 pt-2"
-          entering={COMPOSER_ATTACHMENT_ENTERING}
-          exiting={FadeOut.duration(120)}
-        >
+        <Animated.View className="px-[14px] pb-2.5 pt-2" entering={COMPOSER_ATTACHMENT_ENTERING}>
           <ComposerAttachmentStrip
             environmentId={props.environmentId}
             attachments={stripAttachments}
@@ -858,13 +848,25 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             paddingVertical: hasSidebarTabBar ? 9 : 2,
           }}
         >
-          {isExpanded ? editingAttachments : null}
-          <View
-            onLayout={(event) => {
-              compactEditor.onRowLayout(event);
-              setCompactRowWidth(event.nativeEvent.layout.width);
-            }}
-          >
+          <Animated.View className="overflow-hidden" style={attachmentsStyle}>
+            <View
+              className="absolute inset-x-0 bottom-0"
+              onLayout={(event) => {
+                const height = event.nativeEvent.layout.height;
+                attachmentsHeight.set(
+                  attachmentsHeight.get() < 0 || Platform.OS === "android"
+                    ? height
+                    : withTiming(height, {
+                        duration: COMPOSER_TRANSITION_DURATION_MS,
+                        reduceMotion: ReduceMotion.System,
+                      }),
+                );
+              }}
+            >
+              {editingAttachments}
+            </View>
+          </Animated.View>
+          <View onLayout={compactEditor.onRowLayout}>
             <ComposerDictationDraftContent
               className="flex-row items-end"
               compact
@@ -884,38 +886,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onLayout={compactEditor.onEditorLayout}
                 style={[
                   {
-                    minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
-                        ? 0
-                        : INLINE_EDITOR_MIN_WIDTH,
+                    minWidth: compactEditor.isExpanded ? 0 : INLINE_EDITOR_MIN_WIDTH,
                   },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
               ></Animated.View>
-              {!isExpanded && stripAttachments.length > 0 ? (
-                <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
-                  {stripAttachments.slice(0, compactAttachmentLimit).map((attachment) => (
-                    <ComposerAttachmentThumbnail
-                      environmentId={props.environmentId}
-                      key={attachment.id}
-                      attachment={attachment}
-                      size={30}
-                      borderRadius={8}
-                      compact
-                      onPressPreview={isSubmissionLocked ? undefined : onPressPreview}
-                      onPressVideo={isSubmissionLocked ? undefined : onPressVideo}
-                    />
-                  ))}
-                  {stripAttachments.length > compactAttachmentLimit ? (
-                    <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
-                      <Text className="text-foreground-muted text-2xs font-t3-bold">
-                        +{stripAttachments.length - compactAttachmentLimit}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
               <View
                 className="min-w-0 shrink flex-row items-center"
                 style={
