@@ -164,10 +164,7 @@ const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(fu
   return descriptor.launcherPath;
 });
 
-// Nothing removes the runtime directory, so every interactive ssh command shares one per
-// process. A fresh one replaces it if a temp cleaner deleted it or another user owns the path.
-// The lock publishes a directory only after its helpers exist, so one command never rewrites
-// a helper that another command has already handed to ssh.
+// Serialize setup so concurrent commands cannot truncate a helper already handed to ssh.
 let defaultSshAskpassRuntimeDirectory: string | undefined;
 const defaultSshAskpassLock = Semaphore.makeUnsafe(1);
 
@@ -176,8 +173,9 @@ const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpa
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const userId = yield* HostProcess.UserId;
-    const cached = defaultSshAskpassRuntimeDirectory;
-    if (cached !== undefined) {
+    let runtimeDirectory = defaultSshAskpassRuntimeDirectory;
+    if (runtimeDirectory !== undefined) {
+      const cached = runtimeDirectory;
       const reusable = yield* Effect.all([fs.realPath(cached), fs.stat(cached)]).pipe(
         Effect.map(
           ([resolved, info]) =>
@@ -187,13 +185,11 @@ const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpa
         ),
         Effect.orElseSucceed(() => false),
       );
-      if (reusable) {
-        return yield* ensureSshAskpassHelpers({
-          directory: path.join(cached, SSH_ASKPASS_DIR_NAME),
-        });
+      if (!reusable) {
+        runtimeDirectory = undefined;
       }
     }
-    const runtimeDirectory = yield* fs.realPath(
+    runtimeDirectory ??= yield* fs.realPath(
       yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" }),
     );
     const launcherPath = yield* ensureSshAskpassHelpers({
