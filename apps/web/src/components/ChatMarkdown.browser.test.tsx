@@ -268,9 +268,6 @@ describe("ChatMarkdown skill chips", () => {
       environmentId: EnvironmentId.make("workspace"),
       threadId: ThreadId.make("thread"),
     };
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
     await using screen = await renderText("Run $review now", {
       threadRef,
       skills: [
@@ -283,6 +280,9 @@ describe("ChatMarkdown skill chips", () => {
         },
       ],
     });
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
 
     await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
     await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
