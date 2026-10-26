@@ -1,9 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { undoLatestThreadAction, useThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
-import { shortcutLabelForCommand } from "../../keybindings";
-import { announce, cancelAnnouncement } from "../../lib/announce";
+import {
+  threadUndoLabel,
+  threadUndoNoticeSummary,
+  undoLatestThreadAction,
+  useThreadUndoNotice,
+} from "../../hooks/showThreadUndoNotice";
 import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { InlineButton } from "../ui/button";
@@ -11,19 +14,7 @@ import { InlineButton } from "../ui/button";
 export function SidebarThreadUndoNotice({ className }: { className?: string }) {
   const notice = useThreadUndoNotice((state) => state.notice);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-
-  const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  const undoLabel = shortcut ? `${shortcut} to undo` : "Undo";
-  const summary = notice
-    ? `${notice.action} ${notice.count} ${notice.action === "Discarded" ? "draft" : "thread"}${notice.count === 1 ? "" : "s"}`
-    : null;
-
-  // A live region that mounts already filled is skipped by screen readers, and settling
-  // usually moves focus to the next thread at the same moment.
-  useEffect(() => {
-    if (summary) announce(`${summary}, ${undoLabel}`, "thread-undo-notice");
-    else cancelAnnouncement("thread-undo-notice");
-  }, [summary, undoLabel]);
+  const summary = notice ? threadUndoNoticeSummary(notice) : null;
 
   // Keeps the last text on screen while it fades out, then unmounts on transitionend.
   const [shownSummary, setShownSummary] = useState(summary);
@@ -45,7 +36,8 @@ export function SidebarThreadUndoNotice({ className }: { className?: string }) {
         className,
       )}
     >
-      {text}, <InlineButton onClick={undoLatestThreadAction}>{undoLabel}</InlineButton>
+      {text},{" "}
+      <InlineButton onClick={undoLatestThreadAction}>{threadUndoLabel(keybindings)}</InlineButton>
     </div>
   );
 }
