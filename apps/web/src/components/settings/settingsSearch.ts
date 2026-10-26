@@ -510,6 +510,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["default workspace mode draft local worktree"],
   },
   {
+    id: "skip-initial-worktree-checkout",
+    title: "Skip initial worktree checkout",
+    to: "/settings/general",
+    scope: "project",
+    searchTerms: ["git no-checkout setup populate sparse assets"],
+  },
+  {
     id: "worktree-submodules",
     title: "Submodules",
     to: "/settings/general",

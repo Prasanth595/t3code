@@ -89,6 +89,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
+  const mixedSkipCheckout = useScopedSettingsMixed(["skipInitialWorktreeCheckout"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
@@ -328,6 +329,25 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
           />
           {workspaceRow}
+          {isProjectScope && (
+            <SettingsRow
+              serverScoped
+              settingKeys={["skipInitialWorktreeCheckout"]}
+              mixed={mixedSkipCheckout}
+              {...searchableSetting("skip-initial-worktree-checkout")}
+              description="Let worktree setup commands populate the checkout."
+              control={
+                <Switch
+                  aria-label="Skip initial worktree checkout"
+                  mixed={mixedSkipCheckout}
+                  checked={!mixedSkipCheckout && settings.skipInitialWorktreeCheckout}
+                  onCheckedChange={(skipInitialWorktreeCheckout) =>
+                    updateSettings({ skipInitialWorktreeCheckout })
+                  }
+                />
+              }
+            />
+          )}
           <SettingsRow
             serverScoped
             settingKeys={["worktreeSubmodules"]}

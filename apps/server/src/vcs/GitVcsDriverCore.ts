@@ -3703,6 +3703,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, "--", worktreePath, input.refName]
       : ["worktree", "add", "--", worktreePath, input.refName];
+    if (options?.skipInitialWorktreeCheckout) args.splice(2, 0, "--no-checkout");
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 

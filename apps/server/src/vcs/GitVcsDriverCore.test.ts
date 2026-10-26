@@ -3031,6 +3031,35 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect.each([undefined, false, true])(
+      "populates a new worktree unless initial checkout is skipped: %s",
+      (skipInitialWorktreeCheckout) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "checkout");
+          const created = yield* driver.createWorktree(
+            { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/checkout" },
+            skipInitialWorktreeCheckout === undefined ? {} : { skipInitialWorktreeCheckout },
+          );
+
+          assert.equal(created.worktree.path, worktreePath);
+          assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/checkout");
+          assert.equal(
+            yield* git(worktreePath, ["rev-parse", "HEAD"]),
+            yield* git(cwd, ["rev-parse", "HEAD"]),
+          );
+          assert.equal(
+            yield* fs.exists(path.join(worktreePath, "README.md")),
+            !skipInitialWorktreeCheckout,
+          );
+          assert.include(yield* git(cwd, ["worktree", "list", "--porcelain"]), worktreePath);
+        }),
+    );
+
     it.effect("uses parallel checkout without skipping filters or hooks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

@@ -744,18 +744,20 @@ export const make = Effect.gen(function* () {
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
   )(function* (input, options) {
+    const settings = yield* projectSettingsFor(input).pipe(
+      Effect.map(({ settings }) => settings),
+      Effect.orElseSucceed(() => null),
+    );
     const submodules =
       options?.submodules !== undefined
         ? options.submodules
-        : yield* projectSettingsFor(input).pipe(
-            Effect.map(({ settings }) => settings.worktreeSubmodules),
-            Effect.orElseSucceed(() => null),
-          );
+        : (settings?.worktreeSubmodules ?? null);
     const worktreesDirectory = yield* readWorktreesDirectory;
     const result = yield* gitCore.createWorktree(input, {
       worktreesDirectory,
       ...options,
       submodules,
+      skipInitialWorktreeCheckout: settings?.skipInitialWorktreeCheckout ?? false,
     });
     if (input.newRefName && input.baseRefName) {
       yield* shareBranchBase(input.cwd, input.newRefName);
@@ -2952,20 +2954,11 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree(
-        {
-          cwd: input.cwd,
-          refName: localPullRequestBranch,
-          path: null,
-        },
-        {
-          worktreesDirectory: yield* readWorktreesDirectory,
-          submodules: yield* projectSettingsFor(input).pipe(
-            Effect.map(({ settings }) => settings.worktreeSubmodules),
-            Effect.orElseSucceed(() => null),
-          ),
-        },
-      );
+      const worktree = yield* createWorktree({
+        cwd: input.cwd,
+        refName: localPullRequestBranch,
+        path: null,
+      });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 

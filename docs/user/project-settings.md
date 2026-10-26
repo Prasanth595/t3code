@@ -168,6 +168,11 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+Enable **Skip initial worktree checkout** in **Settings → General** with a project selected
+when an external setup command will populate its new worktrees. It is off by default. Configure
+that command first: the new directory may contain only Git metadata, so it must run without
+checked-out repository scripts.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
