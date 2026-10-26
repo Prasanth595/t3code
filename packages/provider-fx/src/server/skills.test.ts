@@ -7,11 +7,10 @@ import * as Path from "effect/Path";
 import { discoverFxSkills } from "./skills.ts";
 
 describe("discoverFxSkills", () => {
-  // fx 0.0.13 scans the workspace roots of each directory from the workspace
-  // up to HOME, then ~/.fx/skills, then the home compatibility roots
-  // (src/builtins/skills.zig). Its skill menu lists ~/.fx/skills first, then
-  // workspace .fx/skills and skills/, then every compatibility root in scan
-  // order (skillGroupRank in src/core/skills/skill_runtime.zig).
+  // fx 0.0.13 scans workspace roots from the workspace up to HOME, then
+  // ~/.fx/skills, then home compatibility roots (src/builtins/skills.zig), and
+  // lists ~/.fx/skills first, then workspace roots, then compatibility roots
+  // in scan order (skillGroupRank in src/core/skills/skill_runtime.zig).
   it.effect("lists skills in fx's own order", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -27,7 +27,7 @@ import {
   makeAcpReplayRuntime,
 } from "./AcpAdapterV2.testkit.ts";
 
-const DEFAULT_FX_SETTINGS = Schema.decodeUnknownSync(FxSettings)({});
+const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 const FX_INSTANCE_ID = ProviderInstanceId.make("fx");
 
 function layerFxProviderAdapterRegistryReplay(

@@ -1,11 +1,7 @@
 /**
- * Records an fx ACP replay transcript from a live `fx acp` process.
- *
- * The fixture's scenario runs through the real orchestrator and FxAdapterV2.
- * Only the ACP runtime's protocol logger is swapped for a tee. Run from
- * apps/server with fx 0.0.13 on PATH (or T3_FX_BIN). The workspace is a
- * throwaway temp dir. HOME stays the user's real login:
- *
+ * Records an fx ACP replay transcript through the real orchestrator and
+ * FxAdapterV2, teeing only the protocol logger. Run from apps/server with
+ * fx 0.0.13 on PATH (or T3_FX_BIN); HOME stays the user's real login:
  *   node scripts/record-fx-acp-replay-fixture.ts --scenario simple
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -323,7 +319,7 @@ function normalizeEntries(input: {
   });
 }
 
-const DEFAULT_FX_SETTINGS = Schema.decodeUnknownSync(FxSettings)({});
+const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
 const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: string) {
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);

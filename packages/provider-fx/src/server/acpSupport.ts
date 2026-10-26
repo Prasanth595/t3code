@@ -99,12 +99,10 @@ function fxModeId(requested: string, advertised: ReadonlyArray<string>): string 
 }
 
 /**
- * fx 0.0.13 reports `ask` on a new or loaded session while enforcing its
- * saved default until a client writes the mode, and the runtime skips a
- * write that matches the reported mode. So the first mode write after a
- * session starts or loads always goes out; later ones (a model switch
- * reconfigures the session) take the runtime's path. A mode fx does not
- * advertise fails before anything is sent.
+ * fx 0.0.13 reports `ask` on a new or loaded session but enforces its saved
+ * default until a client writes the mode, and the runtime skips writes that
+ * match the reported mode. So the first write after start or load always goes
+ * out. A mode fx does not advertise fails before anything is sent.
  */
 export function withFxSessionMode(
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -160,13 +158,10 @@ export function withFxSessionMode(
 }
 
 /**
- * fx lists its backend `provider` before `model`, both with category `model`,
- * so the write goes to config id `model`. "Default" selects the model `fx
- * status` reports, which the provider snapshot carries, when the session
- * lists it; otherwise the session keeps its model. A model the thread picked
- * is sent even when the session does not list it (a custom model): fx's
- * gateway takes any id, and its other backends refuse an unknown one with
- * their own error, so a thread never runs on a model it did not pick.
+ * Writes config id `model` (fx's `provider` option shares its category).
+ * "Default" picks the model `fx status` reports when the session lists it.
+ * An unlisted model the thread picked is still sent: fx's backends accept or
+ * refuse it themselves, so a thread never runs on a model it did not pick.
  */
 export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],

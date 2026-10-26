@@ -14,11 +14,10 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 
 /**
- * fx's menu lists its managed `~/.fx/skills` first, then a workspace's own
- * `.fx/skills` and `skills/`, then every compatibility root
- * (`skillGroupRank` in src/core/skills/skill_runtime.zig). fx follows a
- * symlinked skill folder in every root except its managed one, which it
- * fills itself.
+ * fx's menu order: managed `~/.fx/skills`, then the workspace's `.fx/skills`
+ * and `skills/`, then every compatibility root (`skillGroupRank` in
+ * src/core/skills/skill_runtime.zig). Symlinked skill folders are followed
+ * everywhere except the managed root.
  */
 type SkillRoot = {
   readonly relative: string;
@@ -52,11 +51,9 @@ const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 const lenientDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /**
- * fx works on bytes: a byte-order mark means the file does not start with
- * `---` (no frontmatter), and invalid UTF-8 in a value makes it invalid,
- * while a literal U+FFFD is valid text. So the BOM is kept, and a line with
- * invalid UTF-8 ends in a NUL, which the parser rejects in any value read
- * from that line.
+ * fx reads bytes: a BOM means no frontmatter, and invalid UTF-8 in a value
+ * makes the skill invalid while a literal U+FFFD is fine. So the BOM is kept,
+ * and a line with invalid UTF-8 ends in a NUL, which the parser rejects.
  */
 function decodeSkillFile(bytes: Uint8Array): string {
   const lines: Array<string> = [];
@@ -107,12 +104,10 @@ function recognizedValue(raw: string): string | undefined {
 }
 
 /**
- * A skill's name and description, read the way fx 0.0.13 reads SKILL.md
- * (`parseSkillFile` in src/core/skills/skill_contract.zig): a line-based
- * `name:` / `description:` header, not YAML. fx names a skill by its folder
- * only when there is no frontmatter; frontmatter it can't read (no closing
- * `---`, a missing or repeated `name`, a continued value) makes the skill
- * invalid, and fx won't load it.
+ * Reads SKILL.md the way fx 0.0.13 does (`parseSkillFile` in
+ * src/core/skills/skill_contract.zig): a line-based header, not YAML. No
+ * frontmatter names the skill by its folder; unreadable frontmatter (no
+ * closing `---`, missing or repeated `name`, a continued value) skips it.
  */
 function parseSkillMetadata(
   contents: string,
