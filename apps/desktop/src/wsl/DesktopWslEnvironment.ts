@@ -1005,10 +1005,15 @@ export const probeDistroIpv4Addresses = Effect.fn("DesktopWslEnvironment.probeDi
 );
 
 // Other VPNs share 100.64.0.0/10, so ask the distro's Tailscale rather than infer ownership.
+// The probe shell skips the login profile, which is what puts /snap/bin, where Ubuntu's
+// snap installs Tailscale, on PATH.
 export const probeDistroTailscaleIpv4Addresses = Effect.fn(
   "DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses",
 )(function* (distro: string | null) {
-  const raw = yield* runDistroShell(distro, "tailscale ip -4");
+  const raw = yield* runDistroShell(
+    distro,
+    "tailscale ip -4 2>/dev/null || /snap/bin/tailscale ip -4",
+  );
   return Option.match(raw, { onNone: (): ReadonlyArray<string> => [], onSome: parseIpv4Addresses });
 });
 
