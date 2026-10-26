@@ -730,6 +730,7 @@ export function useThreadListActions(): {
     return true;
   };
   const pinThreadAt = async (thread: EnvironmentThreadShell, orderKey: string | null) => {
+    if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
     ThreadUndo.invalidate("pin", scopedThreadKey(thread.environmentId, thread.id));
     ThreadUndo.invalidate("settle", scopedThreadKey(thread.environmentId, thread.id));
     ThreadUndo.invalidate("snooze", scopedThreadKey(thread.environmentId, thread.id));
@@ -860,6 +861,7 @@ export function useThreadListActions(): {
    * false if any write failed, leaving that thread at its last saved state. */
   const saveThreadArrangement = async (drafts: ReadonlyMap<string, ThreadArrangementPatch>) => {
     if (drafts.size === 0) return true;
+    if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
     appAtomRegistry.set(threadDropBusyAtom, true);
     try {
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);

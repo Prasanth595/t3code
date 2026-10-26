@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
@@ -171,6 +172,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
   const [drafts, setDrafts] = useState<ReadonlyMap<string, ThreadArrangementPatch>>(new Map());
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const threads = useMemo(() => withThreadDrafts(savedThreads, drafts), [savedThreads, drafts]);
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -284,19 +286,38 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   latest.current = { rows, planners };
 
   function move(thread: EnvironmentThreadShell, destination: ThreadMoveDestination) {
+    if (savingRef.current) return;
     const next = previewThreadMove(drafts, thread, destination);
     if (next !== null) setDrafts(next);
   }
 
   async function done() {
-    if (saving) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
     stop();
     setSaving(true);
     try {
       if (await saveThreadArrangement(drafts)) props.onClose();
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
+  }
+
+  function close() {
+    if (savingRef.current) return;
+    stop();
+    if (drafts.size === 0) {
+      props.onClose();
+      return;
+    }
+    Dialog.confirm({
+      title: "Discard arrangement?",
+      message: "Your unsaved changes will be lost.",
+      confirmText: "Discard",
+      destructive: true,
+      onConfirm: props.onClose,
+    });
   }
 
   function stop() {
@@ -433,8 +454,13 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
               <SheetHeader
                 presentation="inline"
                 title="Arrange threads"
-                onClose={() => void done()}
+                onClose={close}
                 dismissDisabled={saving}
+                confirm={{
+                  label: saving ? "Saving arrangement" : "Done",
+                  onPress: () => void done(),
+                  loading: saving,
+                }}
                 accessibilityLabel="Close arrange threads"
               />
               <Text className="px-5 pb-3 text-sm text-foreground-muted">

@@ -316,6 +316,7 @@ export function applyThreadMove<T extends EnvironmentThreadShell>(
           pinnedAt: null,
           pinOrderKey: null,
           activeOrderKey: null,
+          snoozedUntil: null,
         };
       if (plan.section === "pinned" && thread.pinnedAt == null)
         next = {
@@ -398,7 +399,11 @@ export function threadArrangementCommands(
 ): ThreadArrangementCommand[] {
   // Settle clears the pin and both keys; pin clears the parked states.
   if (draft.settledOverride === "settled")
-    return saved.settledOverride === "settled" ? [] : [{ type: "settle" }];
+    return saved.settledOverride === "settled" &&
+      saved.pinnedAt === draft.pinnedAt &&
+      saved.snoozedUntil === draft.snoozedUntil
+      ? []
+      : [{ type: "settle" }];
   if (draft.pinnedAt != null && saved.pinnedAt == null)
     return [{ type: "pin", orderKey: draft.pinOrderKey }];
   const commands: ThreadArrangementCommand[] = [];

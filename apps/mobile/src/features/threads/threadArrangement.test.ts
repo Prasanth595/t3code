@@ -35,6 +35,17 @@ function commandsFor(
 }
 
 describe("thread arrangement drafts", () => {
+  it.each([null, "settled"] as const)(
+    "settling clears snooze with saved override %s",
+    (settledOverride) => {
+      const saved = [thread("a", { settledOverride, snoozedUntil: "2099-01-01T00:00:00.000Z" })];
+      const draft = applyThreadMove(saved, key(saved[0]!), { section: "settled" }, NOW);
+
+      expect(draft[0]!.snoozedUntil).toBeNull();
+      expect(commandsFor(saved, draft)).toEqual({ a: [{ type: "settle" }] });
+    },
+  );
+
   it("sends one write per thread no matter how many times it moved", () => {
     const saved = [
       thread("a", { activeOrderKey: "a0" }),

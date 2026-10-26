@@ -199,6 +199,72 @@ afterEach(() => {
 });
 
 describe("thread arrangement save recovery", () => {
+  it("previews consecutive moves without writes and saves only the last position", async () => {
+    const threads = ["a", "b", "c"].map((id, index) =>
+      makeThread({
+        id: ThreadId.make(id),
+        pinnedAt: "2026-10-26T00:00:00.000Z",
+        pinOrderKey: ["g", "m", "t"][index]!,
+      }),
+    );
+    state.shells = threads;
+    const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
+    const first = previewThreadMove(new Map(), threads[0]!, "down");
+    expect(first).not.toBeNull();
+    const second = previewThreadMove(first!, threads[0]!, "down");
+    expect(second).not.toBeNull();
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+
+    expect(await saveThreadArrangement(second!)).toBe(true);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: {
+          threadId: threads[0]!.id,
+          orderKey: second!.get(scopedThreadKey(primaryEnvironmentId, threads[0]!.id))!.pinOrderKey,
+        },
+      },
+    ]);
+  });
+
+  it("rechecks permission before saving a drafted pin", async () => {
+    const thread = makeThread();
+    state.shells = [thread];
+    const { saveThreadArrangement } = useThreadListActions();
+    state.scopes.get(primaryEnvironmentId)!.clear();
+
+    expect(
+      await saveThreadArrangement(
+        new Map([
+          [
+            scopedThreadKey(thread.environmentId, thread.id),
+            { pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" },
+          ],
+        ]),
+      ),
+    ).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+  });
+
+  it.each(["saving", "pending order"])("does not overlap an existing %s", async (busy) => {
+    const thread = makeThread({ pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" });
+    state.shells = [thread];
+    state.dropBusy = busy === "saving";
+    state.pendingOrder = busy === "pending order" ? {} : null;
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(
+      await saveThreadArrangement(
+        new Map([[scopedThreadKey(thread.environmentId, thread.id), { pinOrderKey: "b" }]]),
+      ),
+    ).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(busy === "saving");
+  });
+
   it("retries failed moves without repeating confirmed moves from another environment", async () => {
     const primary = makeThread({
       pinnedAt: "2026-10-15T00:00:00.000Z",
