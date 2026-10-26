@@ -151,6 +151,7 @@ describe("AntigravityAdapterV2 compaction", () => {
             },
           }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
         defaultModel: Effect.succeed(undefined),
       });
       const session = yield* adapter.openSession({
