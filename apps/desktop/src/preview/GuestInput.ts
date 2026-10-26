@@ -93,33 +93,26 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
-/**
- * Page scripts for the app window around a guest. Chromium makes a guest the
- * window's focus for every mouse event an agent sends it, and nothing gives that
- * focus back, so the person's next keystrokes land in the page. Only the app's
- * own document knows which of its elements had focus.
- */
 const HELD_FOCUS = "Symbol.for('t3.previewHostFocus')";
-const holdHostFocusScript = (guestId: number) =>
-  `(() => { const held = (globalThis[${HELD_FOCUS}] ??= new Map()); held.set(${guestId}, document.activeElement); })()`;
-const restoreHostFocusScript = (guestId: number) =>
+const holdHostFocusScript = `globalThis[${HELD_FOCUS}] = document.activeElement; void 0`;
+const restoreHostFocusScript = (guests: Set<number>) =>
   `(() => {
-    const held = globalThis[${HELD_FOCUS}]; const previous = held?.get(${guestId}); held?.delete(${guestId});
+    const previous = globalThis[${HELD_FOCUS}]; delete globalThis[${HELD_FOCUS}];
     const current = document.activeElement;
-    if (current?.localName !== "webview" || current.getWebContentsId() !== ${guestId}) return;
+    if (current?.localName !== "webview" || !${JSON.stringify([...guests])}.includes(current.getWebContentsId())) return;
     if (previous && previous !== current && previous.isConnected) previous.focus({ preventScroll: true });
     if (document.activeElement === current) current.blur();
   })()`;
 
-/**
- * The app's focus held for a guest's agent mouse input. Overlapping events share
- * one hold: a later event would only note the guest an earlier one focused. The
- * hold stays registered while its focus is handed back, so an event arriving
- * then waits for the hand-back and takes a new hold.
- */
+// Focus belongs to the host window; overlapping guests must share its original element.
 const heldHostFocus = new WeakMap<
   Electron.WebContents,
-  { inFlight: number; readonly held: Promise<void>; restoring?: Promise<void> }
+  {
+    inFlight: number;
+    readonly held: Promise<void>;
+    readonly guests: Set<number>;
+    restoring?: Promise<void>;
+  }
 >();
 
 /** Runs an agent's mouse input in a guest the app does not have focused, then hands the app its focus back. */
@@ -132,15 +125,16 @@ const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () =>
       await host.executeJavaScript(script);
     } catch {}
   };
-  let hold = heldHostFocus.get(webContents);
+  let hold = heldHostFocus.get(host);
   while (hold?.restoring) {
     await hold.restoring;
-    hold = heldHostFocus.get(webContents);
+    hold = heldHostFocus.get(host);
   }
   if (!hold) {
-    hold = { inFlight: 0, held: inHost(holdHostFocusScript(webContents.id)) };
-    heldHostFocus.set(webContents, hold);
+    hold = { inFlight: 0, held: inHost(holdHostFocusScript), guests: new Set() };
+    heldHostFocus.set(host, hold);
   }
+  hold.guests.add(webContents.id);
   hold.inFlight += 1;
   try {
     await hold.held;
@@ -148,9 +142,9 @@ const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () =>
   } finally {
     hold.inFlight -= 1;
     if (hold.inFlight === 0) {
-      hold.restoring = inHost(restoreHostFocusScript(webContents.id));
+      hold.restoring = inHost(restoreHostFocusScript(hold.guests));
       await hold.restoring;
-      if (heldHostFocus.get(webContents) === hold) heldHostFocus.delete(webContents);
+      if (heldHostFocus.get(host) === hold) heldHostFocus.delete(host);
     }
   }
 };
@@ -170,7 +164,8 @@ export const sendPageCommand = async (
   }
   if (
     method === "Input.dispatchMouseEvent" &&
-    (!webContents.focusedFrame || heldHostFocus.has(webContents))
+    (!webContents.focusedFrame ||
+      (webContents.hostWebContents && heldHostFocus.has(webContents.hostWebContents)))
   ) {
     return keepingHostFocus(webContents, () => debuggee.sendCommand(method, params));
   }

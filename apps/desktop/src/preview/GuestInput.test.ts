@@ -48,6 +48,7 @@ const makeHost = () => {
     composer,
     search,
     webview,
+    makeElement,
     activeElement: () => state.active,
     hostWebContents: {
       isDestroyed: () => false,
@@ -64,14 +65,16 @@ const makeHost = () => {
 const makeGuest = ({
   focusedDocument = true,
   host,
+  webview = host?.webview,
 }: {
   readonly focusedDocument?: boolean;
   readonly host?: ReturnType<typeof makeHost>;
+  readonly webview?: FakeElement;
 } = {}) => {
   const sendCommand = vi.fn(
     async (method: string, params?: { expression?: string; type?: string }) => {
       if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
-        host?.webview.focus();
+        webview?.focus();
       }
       return method === "Runtime.evaluate" && params?.expression?.endsWith("!== null")
         ? { result: { value: focusedDocument } }
@@ -79,10 +82,10 @@ const makeGuest = ({
     },
   );
   const webContents = {
-    id: GUEST_ID,
+    id: webview?.getWebContentsId() ?? GUEST_ID,
     hostWebContents: host?.hostWebContents,
     get focusedFrame() {
-      return host && host.activeElement() === host.webview ? {} : null;
+      return host && host.activeElement() === webview ? {} : null;
     },
     insertText: vi.fn(async () => {}),
     sendInputEvent: vi.fn(),
@@ -162,44 +165,48 @@ describe("preview guest input", () => {
       expect(host.activeElement()).toBe(host.composer);
     });
 
-    it("hands focus back after a click that overlaps the one before it", async () => {
-      const host = makeHost();
-      host.composer.focus();
-      const guest = makeGuest({ host });
-      let finishPress = () => {};
-      let finishRelease = () => {};
-      const pressStarted = Promise.withResolvers<void>();
-      const releaseStarted = Promise.withResolvers<void>();
-      guest.sendCommand
-        .mockImplementationOnce(async () => {
+    it.each([GUEST_ID, GUEST_ID + 1])(
+      "restores focus after overlapping clicks in guest %s",
+      async (guestId) => {
+        const host = makeHost();
+        host.composer.focus();
+        const guest = makeGuest({ host });
+        const webview = guestId === GUEST_ID ? host.webview : host.makeElement("webview", guestId);
+        const other = guestId === GUEST_ID ? guest : makeGuest({ host, webview });
+        const finishPress = Promise.withResolvers<void>();
+        const finishRelease = Promise.withResolvers<void>();
+        const pressStarted = Promise.withResolvers<void>();
+        const releaseStarted = Promise.withResolvers<void>();
+        guest.sendCommand.mockImplementationOnce(async () => {
           host.webview.focus();
           pressStarted.resolve();
-          await new Promise<void>((resolve) => {
-            finishPress = resolve;
-          });
-          return { result: {} };
-        })
-        .mockImplementationOnce(async () => {
-          releaseStarted.resolve();
-          await new Promise<void>((resolve) => {
-            finishRelease = resolve;
-          });
-          // A slow page focuses itself once it handles the event, after the press is done.
-          host.webview.focus();
+          await finishPress.promise;
           return { result: {} };
         });
-      const pressing = guest.send("Input.dispatchMouseEvent", press);
-      await pressStarted.promise;
-      expect(host.activeElement()).toBe(host.webview);
-      // The relay forwards the release without waiting for the press to finish.
-      const releasing = guest.send("Input.dispatchMouseEvent", { ...press, type: "mouseReleased" });
-      await releaseStarted.promise;
-      finishPress();
-      await pressing;
-      finishRelease();
-      await releasing;
-      expect(host.activeElement()).toBe(host.composer);
-    });
+        other.sendCommand.mockImplementationOnce(async () => {
+          webview.focus();
+          releaseStarted.resolve();
+          await finishRelease.promise;
+          // A slow page focuses itself once it handles the event, after the press is done.
+          webview.focus();
+          return { result: {} };
+        });
+        const pressing = guest.send("Input.dispatchMouseEvent", press);
+        await pressStarted.promise;
+        expect(host.activeElement()).toBe(host.webview);
+        // The relay forwards the release without waiting for the press to finish.
+        const releasing = other.send("Input.dispatchMouseEvent", {
+          ...press,
+          type: "mouseReleased",
+        });
+        await releaseStarted.promise;
+        finishPress.resolve();
+        await pressing;
+        finishRelease.resolve();
+        await releasing;
+        expect(host.activeElement()).toBe(host.composer);
+      },
+    );
 
     it("holds a click that arrives while the app's focus is being handed back", async () => {
       const host = makeHost();
