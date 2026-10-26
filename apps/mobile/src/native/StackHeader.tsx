@@ -197,21 +197,25 @@ export function NativeStackScreenOptions(props: {
 
   // Stabilizing records each factory's latest closure, so it runs in the commit
   // phase: a render React discards must not leak its closures into the header.
+  // It runs before the tab check so wrappers already installed in an inactive
+  // tab's header still call the newest closures.
   useLayoutEffect(() => {
+    const normalizedOptions = normalizeScreenOptions(props.options);
+    const stableOptions = normalizedOptions
+      ? stabilizeOptionFunctions(
+          normalizedOptions,
+          "options",
+          latestOptionFunctionsRef.current,
+          optionFunctionWrappersRef.current,
+        )
+      : undefined;
     if (!tabActive) {
       lastAppliedOptionsSignatureRef.current = undefined;
       return;
     }
-    const normalizedOptions = normalizeScreenOptions(props.options);
     if (!setOptions || !normalizedOptions) {
       return;
     }
-    const stableOptions = stabilizeOptionFunctions(
-      normalizedOptions,
-      "options",
-      latestOptionFunctionsRef.current,
-      optionFunctionWrappersRef.current,
-    );
     const signature = optionsSignature([stableOptions, props.optionsVersion]);
     if (lastAppliedOptionsSignatureRef.current === signature) {
       return;

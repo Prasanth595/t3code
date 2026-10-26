@@ -14,9 +14,7 @@ const listeners = new Set<() => void>();
 let snapshot: Entries = new Map();
 
 function emit() {
-  // Re-projecting deletes and re-inserts an entry, so order by key (mount order)
-  // rather than insertion order to keep overlays stacked as they opened.
-  snapshot = new Map([...entries].sort(([left], [right]) => left - right));
+  snapshot = new Map(entries);
   for (const listener of listeners) {
     listener();
   }
@@ -43,11 +41,17 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
   useEffect(() => {
     entries.set(key, props.children);
     emit();
-    return () => {
+  });
+
+  // Removal is unmount-only: deleting on every re-projection would move the
+  // entry to the end of the map and restack it above overlays opened later.
+  useEffect(
+    () => () => {
       entries.delete(key);
       emit();
-    };
-  });
+    },
+    [key],
+  );
 
   return null;
 }

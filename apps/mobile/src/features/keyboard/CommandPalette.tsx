@@ -527,6 +527,12 @@ export function CommandPalette(props: {
     props.onClose();
     pendingAction.current?.();
   }, [props]);
+  useEffect(
+    () => () => {
+      if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
+    },
+    [],
+  );
 
   function close(run?: () => void) {
     if (closing.current) return;
