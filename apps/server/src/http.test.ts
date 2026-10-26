@@ -181,6 +181,8 @@ describe("untraced requests", () => {
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png?v=1`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
+        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
+        HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
       ]) {
         expect((yield* client.execute(request)).status).toBe(204);
       }
@@ -188,6 +190,14 @@ describe("untraced requests", () => {
 
       expect((yield* client.execute(HttpClientRequest.get("/api/environment"))).status).toBe(204);
       expect(serverSpans).toEqual(["GET"]);
+
+      for (const path of [
+        `${ASSET_ROUTE_PREFIX}-other/file`,
+        `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}-other/token`,
+      ]) {
+        expect((yield* client.execute(HttpClientRequest.get(path))).status).toBe(404);
+      }
+      expect(serverSpans).toEqual(["GET", "GET", "GET"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

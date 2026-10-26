@@ -383,20 +383,17 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
 );
 
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
-// These URLs carry a bearer token in the path, so they never reach a trace.
-const UNTRACED_REQUEST_PATH_PREFIXES = [
-  `${WEBHOOK_ROUTE_PREFIX}/`,
-  `${ASSET_ROUTE_PREFIX}/`,
-  `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`,
-];
 
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  // Signed URLs carry bearer tokens in the path, so they never reach a trace.
   return (
     UNTRACED_REQUEST_PATHS.has(path) ||
-    UNTRACED_REQUEST_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))
+    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
+    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
+    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
   );
 });
 
