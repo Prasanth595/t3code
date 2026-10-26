@@ -173,10 +173,10 @@ export function useComposerContextImport(input: {
         fail("Downloading it from the source failed.");
         return;
       }
-      // A deleted chip must not return with its download. Undo can restore it before
-      // completion, and an annotation can still own its screenshot without an image chip.
+      // Question attachments have no inline reference; annotations can own their screenshots.
       const references = new Set(collectInlineContextIds(promptRef.current));
       if (
+        !questionAttachmentTarget &&
         !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
         !(
           record.kind === "image" &&

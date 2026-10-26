@@ -46,6 +46,8 @@ it.each([
   { kind: "file", edit: "retain" },
   { kind: "file", edit: "switch" },
   { kind: "file", edit: "cached" },
+  { kind: "file", edit: "question" },
+  { kind: "image", edit: "question" },
   { kind: "image", edit: "annotation" },
   { kind: "image", edit: "delete-annotation" },
 ] as const)("settles a delayed $kind import after $edit", async ({ kind, edit }) => {
@@ -74,7 +76,7 @@ it.each([
     attachmentDraftTarget: target,
     attachmentTargetKey: target,
     attachmentTargetKeyRef: { current: target },
-    questionAttachmentTarget: null,
+    questionAttachmentTarget: edit === "question" ? target : null,
     pendingUserInputs: [],
     composerContextRecords: new Map(),
     composerImages: [],
@@ -82,7 +84,7 @@ it.each([
     pendingThreadImportsRef: { current: new Map() },
     promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
-      store.addFiles(target, files, { appendReference: true }),
+      store.addFiles(target, files, { appendReference: edit !== "question" }),
   } satisfies ImportInput & { promptRef: { current: string } };
   let importer!: Importer;
   await using _screen = await render(
@@ -142,13 +144,14 @@ it.each([
       contextId: remapped.get(annotated ? annotation.contextId : contextId)!,
       label: annotated ? "Page annotation" : "notes.txt",
     });
+    if (edit === "question") pastedPrompt = "Question answer";
     promptRef.current = pastedPrompt;
     store.setPrompt(target, pastedPrompt);
     if (edit !== "cached") await requested.promise;
   });
   if (edit !== "cached") expect(pendingDraftWork.has(target)).toBe(true);
   await act(() => {
-    if (edit !== "annotation" && edit !== "retain" && edit !== "cached") {
+    if (edit !== "annotation" && edit !== "retain" && edit !== "cached" && edit !== "question") {
       promptRef.current = "Keep this edit";
       store.setPrompt(target, promptRef.current);
     }
@@ -167,7 +170,11 @@ it.each([
   expect(draft.prompt).toBe(promptRef.current);
   const attachments = kind === "file" ? draft.files : draft.images;
   expect(attachments.map((file) => file.name)).toEqual(
-    edit === "undo" || edit === "retain" || edit === "annotation" || edit === "cached"
+    edit === "undo" ||
+      edit === "retain" ||
+      edit === "annotation" ||
+      edit === "cached" ||
+      edit === "question"
       ? ["notes.txt"]
       : [],
   );
