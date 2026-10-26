@@ -2514,7 +2514,7 @@ describe("the hand pause", () => {
 describe("draining for a deploy", () => {
   const SHA = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
   const waitingFor = (fake: Fake, ms: number) => {
-    fake.pending = { sinceMs: T0 - ms, commit: SHA };
+    fake.pending = { sinceMs: T0 - ms, commit: SHA, writtenMs: T0 };
   };
   const drainLines = (lines: ReadonlyArray<string>) =>
     lines.filter((l) => l.startsWith("draining for deploy:"));
@@ -2522,7 +2522,7 @@ describe("draining for a deploy", () => {
     `draining for deploy: build 7a70dadf1 has waited ${waited} for the runs in progress to finish; no ready issue claimed until it is installed`;
   const waitingItems = (fake: Fake) => fake.items.filter((item) => item.id === "deploy-waiting");
   const WAITING_MESSAGE =
-    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it on its next tick and the runs resume on the new build";
+    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it on its next tick unless a person's thread has an agent at work, and the runs resume on the new build";
 
   it.effect("claims nothing while a build waits, and says so once", () =>
     Effect.gen(function* () {
@@ -2586,6 +2586,57 @@ describe("draining for a deploy", () => {
       yield* pass(fake, [REPO], 5);
       assert.equal(waitingItems(fake).length, 1);
       assert.equal(waitingItems(fake)[0]!.firstSeenMs, T0);
+    }),
+  );
+
+  it.effect("deploy_wait_minutes sets when the item is raised", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.deployWaitMinutes = 30;
+      waitingFor(fake, 29 * 60_000);
+      const under = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(drainLines(under.lines), [drainLine("29m")]);
+      assert.deepEqual(waitingItems(fake), []);
+      fake.now += 60_000;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      assert.ok(waitingItems(fake)[0]!.message.includes("deploy_wait_minutes 30 "));
+    }),
+  );
+
+  it.effect("raising the limit clears an open item while the drain goes on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.deployWaitMinutes = 240;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(waitingItems(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("3h00m")]);
+    }),
+  );
+
+  it.effect("a marker autodeploy stopped rewriting holds nothing back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.pending = { sinceMs: T0 - 3 * 60 * 60_000, commit: SHA, writtenMs: T0 - 31 * 60_000 };
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("deploy-pending is stale:")),
+        [
+          "deploy-pending is stale: autodeploy last wrote it 31m ago; no build is taken to be waiting",
+        ],
+      );
+      assert.deepEqual(drainLines(lines), []);
+      assert.deepEqual(waitingItems(fake), []);
+      assert.deepEqual(fake.events.filter((e) => e.event === "claim_skipped").length, 1);
     }),
   );
 

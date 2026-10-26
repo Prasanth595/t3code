@@ -2769,6 +2769,26 @@ describe("reloading the machine config", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("the world reads the deploy-pending marker from the factory dir", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const worlds: Array<PassWorld> = [];
+        const { factoryDir } = yield* started(VALID, holdingProcess().process, quietEvents, {
+          onWorld: (world) => worlds.push(world),
+        });
+        const commit = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
+        const file = NodePath.join(factoryDir, "deploy-pending");
+        assert.strictEqual(worlds[0]!.pendingDeploy(), null);
+        NodeFS.writeFileSync(file, `1761400000 ${commit}\n`);
+        assert.deepStrictEqual(worlds[0]!.pendingDeploy(), {
+          sinceMs: 1761400000000,
+          commit,
+          writtenMs: Math.floor(NodeFS.statSync(file).mtimeMs),
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a reload's world sees the gates the world before it started", () =>
     Effect.scoped(
       Effect.gen(function* () {

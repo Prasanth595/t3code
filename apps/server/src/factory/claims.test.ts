@@ -104,20 +104,57 @@ describe("a build autodeploy has waiting", () => {
   it("reads the time in epoch seconds and the sha", () => {
     const dataDir = tempDir();
     NodeFS.writeFileSync(pendingFile(dataDir), `1761400000 ${SHA}\n`);
-    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: 1761400000000, commit: SHA });
+    NodeFS.utimesSync(pendingFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    expect(loadPendingDeploy(dataDir)).toEqual({
+      sinceMs: 1761400000000,
+      commit: SHA,
+      writtenMs: WHOLE_SECOND,
+    });
   });
 
   it("falls back to the modification time when the first word is not a number", () => {
     const dataDir = tempDir();
     NodeFS.writeFileSync(pendingFile(dataDir), `soon ${SHA}\n`);
     NodeFS.utimesSync(pendingFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
-    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: WHOLE_SECOND, commit: SHA });
+    expect(loadPendingDeploy(dataDir)).toEqual({
+      sinceMs: WHOLE_SECOND,
+      commit: SHA,
+      writtenMs: WHOLE_SECOND,
+    });
   });
 
   it("has no commit when the file holds only a time", () => {
     const dataDir = tempDir();
     NodeFS.writeFileSync(pendingFile(dataDir), "1761400000\n");
-    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: 1761400000000, commit: null });
+    NodeFS.utimesSync(pendingFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    expect(loadPendingDeploy(dataDir)).toEqual({
+      sinceMs: 1761400000000,
+      commit: null,
+      writtenMs: WHOLE_SECOND,
+    });
+  });
+
+  it("has no commit when the second word is not a sha", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pendingFile(dataDir), "1761400000 not-a-sha\n");
+    expect(loadPendingDeploy(dataDir)?.commit).toBeNull();
+  });
+
+  it("a file that cannot be opened is still pending, since its mtime", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pendingFile(dataDir), `1761400000 ${SHA}\n`);
+    NodeFS.utimesSync(pendingFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    NodeFS.chmodSync(pendingFile(dataDir), 0o000);
+    try {
+      expect(() => NodeFS.readFileSync(pendingFile(dataDir))).toThrow();
+      expect(loadPendingDeploy(dataDir)).toEqual({
+        sinceMs: WHOLE_SECOND,
+        commit: null,
+        writtenMs: WHOLE_SECOND,
+      });
+    } finally {
+      NodeFS.chmodSync(pendingFile(dataDir), 0o600);
+    }
   });
 
   it("a missing file and a symlink are nothing pending", () => {
