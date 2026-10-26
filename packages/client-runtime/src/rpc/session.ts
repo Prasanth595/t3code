@@ -301,9 +301,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             const { serverTime } = event.config;
             // Later snapshots repeat the first one's stale serverTime. Record
             // before readiness so the first timers already count on its clock.
-            if (serverTime !== undefined && !(yield* Deferred.isDone(initialConfigDeferred))) {
+            if (!(yield* Deferred.isDone(initialConfigDeferred))) {
               recordServerClock(connection.environmentId, {
-                serverTimeMs: Date.parse(serverTime),
+                serverTimeMs: serverTime === undefined ? undefined : Date.parse(serverTime),
                 requestedAtMs: configRequestedAtMs,
                 receivedAtMs: yield* Clock.currentTimeMillis,
               });
