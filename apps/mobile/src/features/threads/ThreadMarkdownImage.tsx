@@ -51,7 +51,9 @@ export function ThreadMarkdownImageView(props: {
     size: { width: number; height: number };
   } | null>(null);
   const decodedSize = decoded?.sourceKey === props.sourceKey ? decoded.size : null;
-  const [failedUri, setFailedUri] = useState<string | null>(null);
+  // A failure belongs to one URI; any URI change, including through null, retries.
+  const [failure, setFailure] = useState({ uri: props.uri, failed: false });
+  if (failure.uri !== props.uri) setFailure({ uri: props.uri, failed: false });
 
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
@@ -62,7 +64,8 @@ export function ThreadMarkdownImageView(props: {
           sourceHeight: sourceSize.height,
           availableWidth,
         });
-  const failed = props.unavailable || (props.uri !== null && failedUri === props.uri);
+  const failed =
+    props.unavailable || (props.uri !== null && failure.uri === props.uri && failure.failed);
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
   const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
@@ -125,7 +128,7 @@ export function ThreadMarkdownImageView(props: {
                   uri={props.uri}
                   format={props.format}
                   onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
-                  onError={() => setFailedUri(props.uri)}
+                  onError={() => setFailure({ uri: props.uri, failed: true })}
                 />
               </View>
             </Pressable>
