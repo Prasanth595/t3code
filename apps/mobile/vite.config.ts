@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
-import { defineConfig } from "vite-plus";
+import * as NodeURL from "node:url";
+import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
@@ -19,6 +20,7 @@ const reactTests = [
   "src/state/use-selected-thread-git-actions.test.tsx",
 ];
 
+const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
 const require = NodeModule.createRequire(import.meta.url);
 const babel: {
   transformAsync: (
@@ -53,7 +55,7 @@ export default defineConfig({
             enforce: "pre",
             async transform(code, id) {
               if (
-                !id.startsWith(new URL("./src/", import.meta.url).pathname) ||
+                !normalizePath(id).startsWith(sourceRoot) ||
                 !/\.tsx?$/.test(id) ||
                 /\.test\.tsx?$/.test(id)
               ) {
