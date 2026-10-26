@@ -323,7 +323,7 @@ const codexUpdateSnapshot = (advisory: ServerProviderVersionAdvisoryStatus) =>
     versionAdvisory: {
       status: advisory,
       currentVersion: "1.0.0",
-      latestVersion: advisory === "unknown" ? null : "2.0.0",
+      latestVersion: advisory === "unknown" ? null : advisory === "current" ? "1.0.0" : "2.0.0",
       updateCommand: null,
       canUpdate: true,
       checkedAt: "2026-06-10T00:00:00.000Z",
@@ -2021,6 +2021,8 @@ it.layer(
         { status: "unchanged", advisory: "unknown", retired: false },
         { status: "queued", advisory: "current", retired: false },
         { status: "running", advisory: "current", retired: false },
+        { status: "succeeded", advisory: "current", retired: false },
+        { status: "failed", advisory: "unknown", retired: false },
       ] as const)(
         "a $status update result is retired: $retired when a refresh reports the provider $advisory",
         ({ status, advisory, retired }) =>
@@ -2041,6 +2043,28 @@ it.layer(
               const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
 
               expect(refreshed?.updateState).toEqual(retired ? undefined : state);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
+      it.effect.each(["failed", "unchanged"] as const)(
+        "keeps a %s recommended-version install after a current refresh",
+        (status) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("current"));
+            const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const state = makeUpdateState(status);
+              const input = {
+                instanceId,
+                action: "update" as const,
+                state,
+                targetVersion: "0.9.0",
+              };
+              yield* registry.setProviderMaintenanceActionState(input);
+              const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
+              expect(refreshed?.updateState).toEqual(state);
             }).pipe(Effect.provide(runtimeServices));
           }),
       );

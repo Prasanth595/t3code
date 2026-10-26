@@ -698,6 +698,7 @@ it.effect.each([
   "verifies the $mode OpenCode update using the refreshed installation",
   ({ mode, version, installation, status }) => {
     const calls: string[] = [];
+    const targets: Array<string | undefined> = [];
     const capabilities = lifecycleFor(OPENCODE_DRIVER);
     const pinnedCapabilities = {
       ...capabilities,
@@ -722,6 +723,10 @@ it.effect.each([
       const updater = yield* makeTestRunner(
         {
           ...registry,
+          setProviderMaintenanceActionState: (input) => {
+            targets.push(input.targetVersion);
+            return registry.setProviderMaintenanceActionState(input);
+          },
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
           refreshAfterUpdate: () =>
             Effect.gen(function* () {
@@ -752,6 +757,8 @@ it.effect.each([
       assert.deepStrictEqual(calls, [
         `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
       ]);
+      assert.ok(targets.length > 0);
+      assert.ok(targets.every((target) => target === (mode === "default" ? undefined : "1.14.20")));
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
