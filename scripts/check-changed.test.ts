@@ -79,7 +79,7 @@ function fixture() {
         {
           cwd: root,
           encoding: "utf8",
-          env: { ...process.env, RECORDS: records, FAIL_STEP: failStep },
+          env: { ...process.env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
         },
       );
     },
@@ -120,7 +120,11 @@ it.each(["install", "lint"])("reports a failing %s step with its output", (step)
   const result = project.run(step);
   expect(result.status, result.stdout + result.stderr).toBe(1);
   const install = project.calls().find(({ args }) => args[0] === "install");
-  expect(install?.args).toEqual(["install", "--lockfile-only", "--ignore-scripts"]);
+  expect(install?.args, result.stdout + result.stderr).toEqual([
+    "install",
+    "--lockfile-only",
+    "--ignore-scripts",
+  ]);
   expect(install?.cwd).not.toBe(project.root);
   expect(result.stdout + result.stderr).toContain(`fixture stdout: ${step}`);
   expect(result.stdout + result.stderr).toContain(`fixture stderr: ${step}`);
