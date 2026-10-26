@@ -65,8 +65,7 @@ function DocumentWebPreview(props: { readonly uri: string }) {
         ) : null}
         <WebView
           source={{ uri: props.uri }}
-          // File screens use a transparent glass header; react-native-webview defaults to "never",
-          // so without this HTML starts under the status bar and header.
+          // iOS file screens extend beneath the transparent header.
           contentInsetAdjustmentBehavior="automatic"
           originWhitelist={["*"]}
           allowsBackForwardNavigationGestures
