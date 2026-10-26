@@ -2189,27 +2189,18 @@ export const ThreadFeed = memo(function ThreadFeed({
     markdownLinkRequest.current?.abort();
   };
   useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
-  // A preview belongs to the content it was opened from: an open one hides
-  // when the thread or its presentation changes, and a pending lookup aborts.
-  const markdownLinkScope = JSON.stringify([
-    props.environmentId,
-    props.threadId,
-    props.contentPresentation.kind,
-  ]);
-  const previousMarkdownLinkScope = useRef(markdownLinkScope);
-  useLayoutEffect(() => {
-    if (previousMarkdownLinkScope.current === markdownLinkScope) return;
-    previousMarkdownLinkScope.current = markdownLinkScope;
-    markdownLinkRequest.current?.abort();
-  }, [markdownLinkScope]);
+  // The feed remounts per thread, so within one mount a preview belongs to the presentation it was
+  // opened from: switching presentation closes it and aborts a pending lookup.
+  const markdownLinkScope = props.contentPresentation.kind;
+  useLayoutEffect(() => () => markdownLinkRequest.current?.abort(), [markdownLinkScope]);
   const [preview, setPreview] = useState<{
     readonly scope: string;
     readonly file: FilePreviewSource | null;
     readonly video: VideoPreviewSource | null;
   } | null>(null);
-  const scopedPreview = preview?.scope === markdownLinkScope ? preview : null;
-  const expandedFile = scopedPreview?.file ?? null;
-  const expandedVideo = scopedPreview?.video ?? null;
+  if (preview !== null && preview.scope !== markdownLinkScope) setPreview(null);
+  const expandedFile = preview?.scope === markdownLinkScope ? preview.file : null;
+  const expandedVideo = preview?.scope === markdownLinkScope ? preview.video : null;
   const openPreview = (
     scope: string,
     media: { file: FilePreviewSource } | { video: VideoPreviewSource },
