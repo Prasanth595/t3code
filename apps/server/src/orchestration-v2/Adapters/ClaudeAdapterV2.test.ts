@@ -7743,6 +7743,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        const terminalSubagent = yield* Queue.take(harness.subagentReceipts);
+        assert.equal(terminalSubagent.subagent.status, "cancelled");
+        assert.equal((yield* Queue.take(harness.subagentReceipts)).subagent.status, "completed");
         const latestSubagent = harness.events.findLast(
           (event) =>
             event.type === "subagent.updated" &&
