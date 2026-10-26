@@ -148,6 +148,7 @@ export function captureCollapseGhost(element: Element | null): CollapseGhost | n
   const height = reveal
     ? Math.min(element.offsetHeight, reveal.getBoundingClientRect().height)
     : element.offsetHeight;
+  if (height === 0) return null;
   nextCollapseGhostId += 1;
   return { id: nextCollapseGhostId, node, height, scrollOffsets };
 }

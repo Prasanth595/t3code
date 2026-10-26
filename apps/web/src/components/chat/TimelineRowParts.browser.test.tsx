@@ -64,4 +64,20 @@ describe("collapse ghost", () => {
 
     expect(ghost?.height).toBe(50);
   });
+
+  it("does not retain a collapse copy before an entry starts revealing", () => {
+    const reveal = document.createElement("div");
+    reveal.setAttribute(DISCLOSURE_MOTION_ATTRIBUTE, "");
+    reveal.style.cssText = "height: 0; overflow: hidden";
+    const details = document.createElement("div");
+    details.style.height = "300px";
+    reveal.append(details);
+    document.body.append(reveal);
+    const contentHeight = details.offsetHeight;
+    const ghost = captureCollapseGhost(details);
+    reveal.remove();
+
+    expect(contentHeight).toBe(300);
+    expect(ghost).toBeNull();
+  });
 });
