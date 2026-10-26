@@ -236,11 +236,7 @@ import {
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import {
-  completeSidebarRouteReveal,
-  pendingSidebarRouteReveal,
-  type SidebarRouteReveal,
-} from "./sidebar/routeReveal";
+import { type SidebarRouteReveal, useActiveRowReveal } from "./sidebar/routeReveal";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -3339,19 +3335,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   });
-  // History and the command palette can open a thread scrolled out of view,
-  // and a remount starts the list at the top, so each route change and each
-  // mount scroll to the open thread once. Its row can mount after the route
-  // does, once its environment's shells arrive, so the reveal waits for it.
-  const mountRevealOwed = useRef(true);
-  const revealActiveRow = (row: HTMLElement | null, threadKey: string) => {
-    if (row === null) return;
-    const pendingKey = pendingSidebarRouteReveal(routeReveal, threadKey);
-    if (pendingKey === null && !mountRevealOwed.current) return;
-    completeSidebarRouteReveal(routeReveal);
-    mountRevealOwed.current = false;
-    row.scrollIntoView({ block: "nearest" });
-  };
+  const revealActiveRow = useActiveRowReveal(routeReveal);
   const newThreadShortcutLabelOptions = {
     platform,
     context: {

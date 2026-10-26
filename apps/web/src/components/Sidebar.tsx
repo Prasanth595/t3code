@@ -201,10 +201,9 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
-  completeSidebarRouteReveal,
-  pendingSidebarRouteReveal,
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
+  useActiveRowReveal,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -1009,14 +1008,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKey(null);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKey]);
-  const mountRevealOwed = useRef(true);
-  const revealActiveRow = (row: HTMLElement, rowKey: string) => {
-    const pendingKey = pendingSidebarRouteReveal(routeReveal, rowKey);
-    if (pendingKey === null && !mountRevealOwed.current) return;
-    completeSidebarRouteReveal(routeReveal);
-    mountRevealOwed.current = false;
-    row.scrollIntoView({ block: "nearest" });
-  };
+  const revealActiveRow = useActiveRowReveal(routeReveal);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
@@ -1491,7 +1483,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     motion.update(false);
     return () => {
       // Search replaces this list while the Sidebar stays mounted, and a drag
-      // whose rows are gone can never drop.
+      // whose rows are gone can never drop. The compiler memoizes this callback
+      // with no deps (it reads only refs), so the cleanup runs only on unmount.
       dragSensorRef.current?.cancel();
       motion.dispose();
       if (listMotionRef.current === motion) listMotionRef.current = null;

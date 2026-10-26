@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 // AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
@@ -23,6 +25,21 @@ export function pendingSidebarRouteReveal(
 
 export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
   reveal.pendingKey = null;
+}
+
+// Each route change and each mount scroll to the open thread once: a remount
+// starts the list at the top. The row can mount after the route, once its
+// environment's shells arrive, so the active row's ref callback does the scroll.
+export function useActiveRowReveal(reveal: SidebarRouteReveal) {
+  const mountRevealOwed = useRef(true);
+  return (row: HTMLElement | null, rowKey: string) => {
+    if (row === null) return;
+    const pendingKey = pendingSidebarRouteReveal(reveal, rowKey);
+    if (pendingKey === null && !mountRevealOwed.current) return;
+    completeSidebarRouteReveal(reveal);
+    mountRevealOwed.current = false;
+    row.scrollIntoView({ block: "nearest" });
+  };
 }
 
 type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][number];

@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { render } from "../../../test/render";
+import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
+
+const ROW_HEIGHT_PX = 24;
+
+function RevealList(props: {
+  readonly reveal: SidebarRouteReveal;
+  readonly rowKeys: ReadonlyArray<string>;
+  readonly activeKey: string | null;
+}) {
+  const revealActiveRow = useActiveRowReveal(props.reveal);
+  return (
+    <ul aria-label="Threads" style={{ height: ROW_HEIGHT_PX * 4, overflowY: "auto", margin: 0 }}>
+      {props.rowKeys.map((key) => (
+        <li
+          key={key}
+          ref={key === props.activeKey ? (row) => revealActiveRow(row, key) : undefined}
+          style={{ height: ROW_HEIGHT_PX }}
+        >
+          {key}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
+const newReveal = (): SidebarRouteReveal => ({ observedKey: null, pendingKey: null });
+
+describe("useActiveRowReveal", () => {
+  it("scrolls an off-screen row into view when the route opens its thread", async () => {
+    const reveal = newReveal();
+    const keys = rowKeys(50);
+    // A bare list; the route arrives as the active key.
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-0" />,
+      { router: false },
+    );
+    const target = screen.getByText("thread-40", { exact: true });
+    await expect.element(target).not.toBeInViewport();
+
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />);
+
+    await expect.element(target).toBeInViewport();
+  });
+
+  it("reveals the active row when it mounts after the shells arrive", async () => {
+    const reveal = newReveal();
+    // The route already names the thread, but its environment's shells have not
+    // listed it yet.
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={rowKeys(5)} activeKey="thread-40" />,
+      { router: false },
+    );
+    await expect.element(screen.getByText("thread-4", { exact: true })).toBeInTheDocument();
+
+    await screen.rerender(
+      <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-40" />,
+    );
+
+    await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+  });
+
+  it("reveals the open thread again when the sidebar remounts on the same route", async () => {
+    const reveal = newReveal();
+    const keys = rowKeys(50);
+    {
+      await using screen = await render(
+        <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+        { router: false },
+      );
+      await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+    }
+
+    // A remount starts the list at the top; the record outlives it with no reveal pending.
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+      { router: false },
+    );
+    await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+  });
+});
