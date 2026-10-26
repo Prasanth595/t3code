@@ -59,7 +59,7 @@ import {
 import {
   boundText,
   completionResult,
-  fullOutputAt,
+  taskOutputAt,
   HANDOFF_SUMMARY_BYTES,
   resultContract,
   type HandoffInput,
@@ -654,9 +654,7 @@ class WorkflowSession {
         entry.result = boundText(
           result,
           HANDOFF_SUMMARY_BYTES,
-          entry.agentId === undefined
-            ? undefined
-            : fullOutputAt(`task_status taskId=${entry.agentId}`),
+          entry.agentId === undefined ? undefined : taskOutputAt(entry.agentId),
         );
       }
       this.scheduleUpdate();
