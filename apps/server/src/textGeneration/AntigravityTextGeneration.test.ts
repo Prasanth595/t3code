@@ -28,6 +28,7 @@ import {
   antigravity140Session,
   decodeAntigravity140Request,
 } from "../provider/acp/antigravity140.fixture.ts";
+import { antigravityThirdPartyAgentSource } from "../provider/acp/antigravityThirdParty.fixture.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 
 import {
@@ -357,6 +358,57 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
           ),
       ).toEqual(["session/new", "session/set_model", "session/prompt"]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["gpt-oss-120b-medium", "gemini-3.8-flash-low"])(
+    "generates a title with saved %s from a GPT-OSS default session",
+    (savedModel) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const crypto = yield* Crypto.Crypto;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3 ag title ü-" });
+        const agentPath = path.join(profileDirectory, "agent.mjs");
+        const logPath = path.join(profileDirectory, "requests.ndjson");
+        yield* fs.writeFileString(agentPath, antigravityThirdPartyAgentSource);
+        const textGeneration = yield* makeAntigravityTextGeneration({
+          profileDirectory,
+          makeRuntime: (cwd) =>
+            makeAntigravityAcpRuntime({
+              cwd,
+              clientInfo: { name: "t3-antigravity-test", version: "0.0.0" },
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath, T3_ACP_TITLE: "1" },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+        });
+        expect(
+          yield* textGeneration.generateThreadTitle({
+            cwd: profileDirectory,
+            message: "Repair login",
+            modelSelection: { ...modelSelection, model: savedModel },
+          }),
+        ).toEqual({ title: savedModel });
+        const requests = yield* Effect.forEach(
+          (yield* fs.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        expect(
+          requests
+            .map((request) => request.method)
+            .filter((method) =>
+              ["session/new", "session/resume", "session/set_model", "session/prompt"].includes(
+                method,
+              ),
+            ),
+        ).toEqual(["session/new", "session/set_model", "session/prompt"]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect(

@@ -22,6 +22,7 @@ import {
 } from "./AntigravityAcpSupport.ts";
 
 import { antigravity140Session } from "./antigravity140.fixture.ts";
+import { antigravityThirdPartySession } from "./antigravityThirdParty.fixture.ts";
 
 const modelConfig = {
   id: "model",
@@ -54,6 +55,74 @@ function makeModelRuntime(
 }
 
 describe("applyAntigravityAcpModelSelection", () => {
+  it.effect("selects GPT-OSS when only session models are advertised", () =>
+    Effect.gen(function* () {
+      const selections: string[] = [];
+      const model = "gpt-oss-120b-medium";
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime: {
+            getConfigOptions: Effect.succeed([]),
+            setModel: () => Effect.die("No model config option was advertised"),
+            setSessionModel: (value) =>
+              Effect.sync(() => {
+                selections.push(value);
+                return {};
+              }),
+          },
+          models: antigravityThirdPartySession.models,
+          model,
+          mapError: (cause) => cause,
+        }),
+      ).toBe(model);
+      expect(selections).toEqual([model]);
+    }),
+  );
+
+  it.effect.each(["gpt-oss-120b-medium", "claude-sonnet-5-5-low", "gemini-3.8-flash-low"])(
+    "selects concrete %s when the current GPT-OSS model omits thinking_level",
+    (model) =>
+      Effect.gen(function* () {
+        const selections: string[] = [];
+        const selected = yield* applyAntigravityAcpModelSelection({
+          runtime: {
+            getConfigOptions: Effect.succeed(antigravityThirdPartySession.configOptions),
+            setModel: () => Effect.die("Grouped model options are not concrete IDs"),
+            setSessionModel: (value) =>
+              Effect.sync(() => {
+                selections.push(value);
+                return {};
+              }),
+          },
+          models: antigravityThirdPartySession.models,
+          model,
+          mapError: (cause) => cause,
+        });
+        expect(selected).toBe(model);
+        expect(selections).toEqual([model]);
+      }),
+  );
+
+  it.effect("selects GPT-OSS from legacy flat and grouped model options", () =>
+    Effect.gen(function* () {
+      const option = { value: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" };
+      for (const options of [
+        [option],
+        [{ groupId: "openai", name: "OpenAI", options: [option] }],
+      ]) {
+        const { runtime, selections } = makeModelRuntime([{ ...modelConfig, options }]);
+        expect(
+          yield* applyAntigravityAcpModelSelection({
+            runtime,
+            model: option.value,
+            mapError: (cause) => cause,
+          }),
+        ).toBe(option.value);
+        expect(selections).toEqual([option.value]);
+      }
+    }),
+  );
+
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {
       const { runtime, selections } = makeModelRuntime();

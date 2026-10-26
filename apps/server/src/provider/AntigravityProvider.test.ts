@@ -29,6 +29,7 @@ import {
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
 import { antigravity140Session } from "./acp/antigravity140.fixture.ts";
+import { antigravityThirdPartySession } from "./acp/antigravityThirdParty.fixture.ts";
 
 import { antigravity141Session } from "./acp/antigravity141.fixture.ts";
 
@@ -332,6 +333,34 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             antigravity140Session.configOptions.slice(0, 1),
           );
           expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(before);
+        }),
+      ),
+  );
+
+  it.effect.each(["gpt-oss-120b-medium", "claude-sonnet-5-5-low"])(
+    "keeps every concrete family when %s omits thinking_level",
+    (currentModelId) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          yield* harness.initialize;
+          const setup = {
+            ...antigravityThirdPartySession,
+            models: { ...antigravityThirdPartySession.models, currentModelId },
+            configOptions: antigravityThirdPartySession.configOptions.map((option) => ({
+              ...option,
+              currentValue: currentModelId,
+            })),
+          };
+          yield* harness.provider.onSessionStarted({ ...started, sessionSetupResult: setup });
+          const snapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(snapshot.models.map((model) => [model.slug, model.name])).toEqual(
+            setup.models.availableModels.map((model) => [model.modelId, model.name]),
+          );
+          expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(currentModelId);
+          yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
+          yield* harness.provider.onConfigOptionsUpdated(setup.configOptions);
+          expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
         }),
       ),
   );
