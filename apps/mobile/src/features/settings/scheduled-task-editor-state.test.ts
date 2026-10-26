@@ -5,6 +5,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { createDraft } from "./scheduledTaskDraft";
 import {
   discardScheduledTaskEditor,
+  markScheduledTaskEditorSaved,
   readScheduledTaskEditor,
   scheduledTaskEditorSessionAtom,
   startScheduledTaskEditor,
@@ -91,6 +92,15 @@ describe("new scheduled task link", () => {
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
 
     discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("starts the new-task screen fresh after the edited task was saved", () => {
+    startScheduledTaskEditor(editing);
+    updateScheduledTaskEditor({ ...editing, draft: { ...editing.draft, prompt: "saved" } }, null);
+    markScheduledTaskEditorSaved();
+
+    takeScheduledTaskNewLink(newTaskLink);
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
   });
 

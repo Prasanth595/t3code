@@ -62,6 +62,18 @@ export function updateScheduledTaskEditor(
   });
 }
 
+/**
+ * A saved task is the new baseline. Without it a later new-task link reads the saved edits as
+ * unsaved, keeps them under "New", and saving there would overwrite the task.
+ */
+export function markScheduledTaskEditorSaved(): void {
+  newTaskLinkAwaitsDiscard = false;
+  const session = appAtomRegistry.get(scheduledTaskEditorSessionAtom);
+  if (session) {
+    appAtomRegistry.set(scheduledTaskEditorSessionAtom, { ...session, initial: session.current });
+  }
+}
+
 export function readScheduledTaskEditor(
   voiceOwnerKey: string,
   defaultEditor: ScheduledTaskEditor | null,

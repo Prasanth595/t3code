@@ -80,6 +80,7 @@ import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import {
   discardScheduledTaskEditor,
+  markScheduledTaskEditorSaved,
   scheduledTaskEditorSessionAtom,
 } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -589,6 +590,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
             }}
             onSaved={() => {
               saved.current = true;
+              markScheduledTaskEditorSaved();
               if (navigation.isFocused()) navigation.goBack();
             }}
             onChangeEnvironment={(target) => {

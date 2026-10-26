@@ -17,10 +17,12 @@ export function shouldHandleAppLink(url: string, cloudConfigured: boolean): bool
 
 /**
  * Screens that only exist with T3 Connect configured. A build without it has
- * no entry points to them, so a link must not open one empty.
+ * no entry points to them, so a link must not open one empty. Anchored to the
+ * app-relative path (after `exp://host/--/` in Expo Go) so a file route whose
+ * path merely ends in one of these names still opens.
  */
 const CLOUD_ONLY_LINK_PATH =
-  /(?:^[a-z][\w+.-]*:\/*|\/)(?:connect-onboarding|settings\/(?:auth|waitlist))\/*$/i;
+  /^[a-z][\w+.-]*:\/*(?:[^/]*\/--\/)?(?:connect-onboarding|settings\/(?:auth|waitlist))\/*$/i;
 
 /** Keep the published draft URLs while using the root thread screen. */
 export function restoreDraftLinkState(

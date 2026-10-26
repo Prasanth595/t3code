@@ -38,12 +38,16 @@ describe("cloud-only deep links", () => {
     expect(shouldHandleAppLink(url, true)).toBe(true);
   });
 
-  it.each(["t3code://settings", "t3code://settings/authors", "t3code://pair?next=settings/auth"])(
-    "still handles %s without cloud config",
-    (url) => {
-      expect(shouldHandleAppLink(url, false)).toBe(true);
-    },
-  );
+  it.each([
+    "t3code://settings",
+    "t3code://settings/authors",
+    "t3code://pair?next=settings/auth",
+    "t3code://threads/env/thread/files/scripts/connect-onboarding",
+    "t3code://new/draft/files/settings/auth",
+    "exp://192.168.1.2:8081/--/threads/env/thread/files/settings/waitlist",
+  ])("still handles %s without cloud config", (url) => {
+    expect(shouldHandleAppLink(url, false)).toBe(true);
+  });
 });
 
 describe("draft deep links", () => {
