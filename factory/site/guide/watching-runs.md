@@ -33,6 +33,7 @@ Below the status rows, the Factory page lists what needs a person, and the sideb
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
 - the machine config failed to load,
 - free disk space is below `min_free_gib`, so nothing is claimed or gated until there is room,
+- a build autodeploy has waiting has waited longer than `deploy_wait_minutes`, while the factory claims nothing; it clears once the build is installed,
 - three passes in a row failed,
 - a stopped session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
 

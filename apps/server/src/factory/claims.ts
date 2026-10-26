@@ -25,13 +25,18 @@ export interface HandPause {
   readonly sinceMs: number;
 }
 
+/** What a marker file holds: its text (empty when unreadable) and its modification time. */
+interface Marker {
+  readonly text: string;
+  readonly mtimeMs: number;
+}
+
 /**
- * The pause on disk: any regular file is a pause, whatever it holds; a missing file, symlink or
- * FIFO is none. Unparseable text falls back to the mtime, then to 0. A file that exists but cannot
- * be opened is still a pause: a person made it to stop claims.
+ * Reads a marker file in the data dir: a regular file only; a missing file, symlink or FIFO is
+ * null. A file that exists but cannot be opened has no text and the mtime `lstat` gives (0 when
+ * even that fails).
  */
-export const loadHandPause = (dataDir: string): HandPause | null => {
-  const path = NodePath.join(dataDir, PAUSE_FILE);
+const readMarker = (path: string): Marker | null => {
   let fd: number;
   try {
     // Without following a symlink and without blocking, so a FIFO put there cannot hang the pass.
@@ -43,33 +48,45 @@ export const loadHandPause = (dataDir: string): HandPause | null => {
     // ELOOP is a symlink refused by O_NOFOLLOW.
     const code = errnoCode(error);
     if (code === "ENOENT" || code === "ELOOP") return null;
-    return unopenedPause(path);
+    const unopened = unopenedMarker(path);
+    return unopened === null ? null : { text: "", mtimeMs: unopened.mtimeMs };
   }
   try {
     const stat = NodeFS.fstatSync(fd);
     if (!stat.isFile()) return null;
-    let parsed: number | null = null;
+    let text = "";
     try {
-      parsed = parseTs(NodeFS.readFileSync(fd, "utf8").trim());
+      text = NodeFS.readFileSync(fd, "utf8");
     } catch {
-      parsed = null;
+      text = "";
     }
-    return { sinceMs: parsed ?? Math.floor(stat.mtimeMs) };
+    return { text, mtimeMs: Math.floor(stat.mtimeMs) };
   } finally {
     NodeFS.closeSync(fd);
   }
 };
 
-/** A pause file that is there but could not be opened, by what `lstat` says of it. */
-const unopenedPause = (path: string): HandPause | null => {
+/** A marker file that is there but could not be opened, by what `lstat` says of it. */
+const unopenedMarker = (path: string): { readonly mtimeMs: number } | null => {
   let stat: NodeFS.Stats;
   try {
     stat = NodeFS.lstatSync(path);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return null;
-    return { sinceMs: 0 };
+    return { mtimeMs: 0 };
   }
-  return stat.isFile() ? { sinceMs: Math.floor(stat.mtimeMs) } : null;
+  return stat.isFile() ? { mtimeMs: Math.floor(stat.mtimeMs) } : null;
+};
+
+/**
+ * The pause on disk: any regular file is a pause, whatever it holds; a missing file, symlink or
+ * FIFO is none. Unparseable text falls back to the mtime, then to 0. A file that exists but cannot
+ * be opened is still a pause: a person made it to stop claims.
+ */
+export const loadHandPause = (dataDir: string): HandPause | null => {
+  const marker = readMarker(NodePath.join(dataDir, PAUSE_FILE));
+  if (marker === null) return null;
+  return { sinceMs: parseTs(marker.text.trim()) ?? marker.mtimeMs };
 };
 
 /** A build autodeploy has waiting, as the data dir has it. */
@@ -78,6 +95,11 @@ export interface PendingDeploy {
   readonly sinceMs: number;
   /** The newest build waiting, as a hex sha; null when the file does not name one. */
   readonly commit: string | null;
+  /**
+   * When autodeploy last wrote the file, in Unix epoch milliseconds: its modification time. The
+   * script rewrites it on every tick that reads the status, so an old one has no ticker behind it.
+   */
+  readonly writtenMs: number;
 }
 
 /**
@@ -89,37 +111,16 @@ export interface PendingDeploy {
  * opened is still pending since its mtime.
  */
 export const loadPendingDeploy = (dataDir: string): PendingDeploy | null => {
-  const path = NodePath.join(dataDir, DEPLOY_PENDING_FILE);
-  let fd: number;
-  try {
-    fd = NodeFS.openSync(
-      path,
-      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
-    );
-  } catch (error) {
-    const code = errnoCode(error);
-    if (code === "ENOENT" || code === "ELOOP") return null;
-    const unopened = unopenedPause(path);
-    return unopened === null ? null : { sinceMs: unopened.sinceMs, commit: null };
-  }
-  try {
-    const stat = NodeFS.fstatSync(fd);
-    if (!stat.isFile()) return null;
-    let words: Array<string> = [];
-    try {
-      words = NodeFS.readFileSync(fd, "utf8").trim().split(/\s+/);
-    } catch {
-      words = [];
-    }
-    const since = words[0] ?? "";
-    const sha = words[1] ?? "";
-    return {
-      sinceMs: /^[0-9]+$/.test(since) ? Number(since) * 1000 : Math.floor(stat.mtimeMs),
-      commit: /^[0-9a-f]{7,40}$/.test(sha) ? sha : null,
-    };
-  } finally {
-    NodeFS.closeSync(fd);
-  }
+  const marker = readMarker(NodePath.join(dataDir, DEPLOY_PENDING_FILE));
+  if (marker === null) return null;
+  const words = marker.text.trim().split(/\s+/);
+  const since = words[0] ?? "";
+  const sha = words[1] ?? "";
+  return {
+    sinceMs: /^[0-9]+$/.test(since) ? Number(since) * 1000 : marker.mtimeMs,
+    commit: /^[0-9a-f]{7,40}$/.test(sha) ? sha : null,
+    writtenMs: marker.mtimeMs,
+  };
 };
 
 /** What {@link pauseClaims} found. */

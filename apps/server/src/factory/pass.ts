@@ -824,6 +824,12 @@ const highLoad = Effect.fn("Pass.highLoad")(function* (
   return true;
 });
 
+/**
+ * Three ticks of the 10-minute autodeploy job: a marker not rewritten in that long belongs to an
+ * autodeploy that is not asking about runs, so it holds nothing back.
+ */
+export const PENDING_STALE_MS = 30 * 60_000;
+
 /** The machine's attention item while a build has waited past `deploy_wait_minutes`. */
 const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
 
@@ -831,9 +837,9 @@ const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
  * Whether autodeploy has a build waiting. It installs only when no run is in progress, which a
  * steady queue never allows, so the pass claims nothing until the runs end and the build is
  * installed: one line and one `claim_skipped` event a pass. Once the build has waited past
- * `deploy_wait_minutes` autodeploy installs it with runs in progress, which resume on the new
- * build, and an attention item says so until the marker is gone. Relaunches of claimed runs are
- * not held back.
+ * `deploy_wait_minutes` autodeploy installs it with factory runs in progress, which resume on the
+ * new build, and an attention item says so until the marker is gone. A marker older than
+ * {@link PENDING_STALE_MS} is nothing pending. Relaunches of claimed runs are not held back.
  */
 const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
   world: PassWorld,
@@ -843,6 +849,14 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
   const clear = world.attention.clear((item) => item.id === DEPLOY_WAITING_ITEM_ID);
   const pending = world.pendingDeploy();
   if (pending === null) {
+    yield* clear;
+    return false;
+  }
+  const age = world.nowMs() - pending.writtenMs;
+  if (age > PENDING_STALE_MS) {
+    pass.line(
+      `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting`,
+    );
     yield* clear;
     return false;
   }
@@ -864,7 +878,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     issue: null,
     run: null,
     // No figures: an open item is not raised again, so they would go stale.
-    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick and the runs resume on the new build`,
+    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it on its next tick unless a person's thread has an agent at work, and the runs resume on the new build`,
   });
   return true;
 });
