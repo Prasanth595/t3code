@@ -1391,12 +1391,12 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         const answerRefusalDialog = (requestId: string, answer: string | null) =>
           Effect.gen(function* () {
             const refusalRequestEvent = yield* runtime.events.pipe(
-              Stream.filter(
+              Stream.takeUntil(
                 (event) =>
                   event.type === "runtime_request.updated" &&
                   event.runtimeRequest.status === "pending",
               ),
-              Stream.runHead,
+              Stream.runCollect,
               Effect.forkScoped,
             );
             // @effect-diagnostics-next-line abortControllerInEffect:off - The SDK cancels this dialog independently of the test fiber.
@@ -1414,19 +1414,23 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 { signal: controller.signal, requestId },
               ),
             ).pipe(Effect.forkScoped);
-            const refusalEvent = yield* Fiber.join(refusalRequestEvent);
-            assert.isTrue(Option.isSome(refusalEvent));
-            if (
-              Option.isNone(refusalEvent) ||
-              refusalEvent.value.type !== "runtime_request.updated"
-            ) {
+            const refusalEvents = yield* Fiber.join(refusalRequestEvent);
+            assert.isFalse(
+              refusalEvents.some(
+                (event) => event.type === "node.updated" && event.node.kind === "tool_call",
+              ),
+            );
+            const refusalEvent = refusalEvents.find(
+              (event) => event.type === "runtime_request.updated",
+            );
+            if (refusalEvent?.type !== "runtime_request.updated") {
               return yield* Effect.die("missing refusal question");
             }
             if (answer === null) {
               controller.abort();
             } else {
               yield* runtime.respondToRuntimeRequest({
-                requestId: refusalEvent.value.runtimeRequest.id,
+                requestId: refusalEvent.runtimeRequest.id,
                 answers: { "Claude Opus 5.5's safeguards flagged this message.": answer },
               });
             }
