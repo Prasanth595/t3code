@@ -6,11 +6,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
-// Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeHttp from "node:http";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -28,10 +24,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
-import {
-  guardHttpResponseWriteErrors,
-  rejectRequestsUntilServing,
-} from "./httpResponseErrorGuard.ts";
+import * as HttpListener from "./httpListener.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
@@ -187,7 +180,7 @@ import * as EventStoreV2 from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
-import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
+import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -200,8 +193,6 @@ const HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-// Skip Effect's default 20 s grace; WebSocket scope finalizers already close connections gracefully.
-const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const layerResourceAttribution = ResourceAttribution.layer;
 const layerApplicationObservability = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(Observability.layer),
@@ -289,37 +280,6 @@ const layerRelayClient = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     return RelayClient.layerCloudflared({ baseDir: config.baseDir });
-  }),
-);
-
-const layerHttpServer = Layer.unwrap(
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    return NodeHttpServer.layer(
-      () => {
-        const server = rejectRequestsUntilServing(
-          guardHttpResponseWriteErrors(NodeHttp.createServer()),
-        );
-        if (config.privateNetworkOnly) {
-          server.on("connection", (socket) => {
-            if (!acceptsPrivateNetworkConnection(socket)) {
-              socket.destroy();
-            }
-          });
-        }
-        return server;
-      },
-      {
-        host: config.host ?? "127.0.0.1",
-        port: config.port,
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        // Context takeover stays enabled (ws default) so the compression
-        // window is shared across frames — that also makes small frames cheap
-        // to compress, so no size threshold is set (ws only honors
-        // `threshold` when context takeover is disabled).
-        websocket: { perMessageDeflate: true },
-      },
-    );
   }),
 );
 
@@ -775,7 +735,8 @@ const layerMakeServer = Layer.unwrap(
 
         const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
         const state = yield* makePersistedServerRuntimeState({
-          config,
+          // The listener re-provides the config with the host it actually bound.
+          config: yield* ServerConfig.ServerConfig,
           port: address.port,
           serviceManaged: launcher.managed,
         });
@@ -1062,7 +1023,7 @@ const layerMakeServer = Layer.unwrap(
       ),
       Layer.provide(layerActivation),
       Layer.provideMerge(RelayTracing.layerServerRelayBroker),
-      Layer.provideMerge(layerHttpServer),
+      Layer.provideMerge(HttpListener.layer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
