@@ -6,7 +6,14 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { PAUSE_FILE, loadHandPause, pauseClaims, resumeClaims } from "./claims.ts";
+import {
+  DEPLOY_PENDING_FILE,
+  PAUSE_FILE,
+  loadHandPause,
+  loadPendingDeploy,
+  pauseClaims,
+  resumeClaims,
+} from "./claims.ts";
 import { formatTs } from "./ledger/time.ts";
 import { T0, useTempDirs } from "./ledger/testSupport.ts";
 
@@ -87,5 +94,44 @@ describe("claims paused by hand", () => {
     const dataDir = NodePath.join(tempDir(), "missing");
     expect(() => pauseClaims(dataDir, T0)).toThrow();
     expect(NodeFS.existsSync(dataDir)).toBe(false);
+  });
+});
+
+describe("a build autodeploy has waiting", () => {
+  const pendingFile = (dataDir: string) => NodePath.join(dataDir, DEPLOY_PENDING_FILE);
+  const SHA = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
+
+  it("reads the time in epoch seconds and the sha", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pendingFile(dataDir), `1761400000 ${SHA}\n`);
+    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: 1761400000000, commit: SHA });
+  });
+
+  it("falls back to the modification time when the first word is not a number", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pendingFile(dataDir), `soon ${SHA}\n`);
+    NodeFS.utimesSync(pendingFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: WHOLE_SECOND, commit: SHA });
+  });
+
+  it("has no commit when the file holds only a time", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pendingFile(dataDir), "1761400000\n");
+    expect(loadPendingDeploy(dataDir)).toEqual({ sinceMs: 1761400000000, commit: null });
+  });
+
+  it("a missing file and a symlink are nothing pending", () => {
+    const dataDir = tempDir();
+    expect(loadPendingDeploy(dataDir)).toBeNull();
+    const target = NodePath.join(dataDir, "elsewhere");
+    NodeFS.writeFileSync(target, `1761400000 ${SHA}\n`);
+    NodeFS.symlinkSync(target, pendingFile(dataDir));
+    expect(loadPendingDeploy(dataDir)).toBeNull();
+  });
+
+  it("a FIFO is nothing pending, and does not block the read", () => {
+    const dataDir = tempDir();
+    NodeChildProcess.execFileSync("mkfifo", [pendingFile(dataDir)]);
+    expect(loadPendingDeploy(dataDir)).toBeNull();
   });
 });

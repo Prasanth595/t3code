@@ -76,6 +76,7 @@ describe("editMachineConfig", () => {
       notify: false,
       minFreeGib: 10,
       maxLoadPerCore: 1,
+      deployWaitMinutes: 120,
     });
   });
 
@@ -98,6 +99,7 @@ describe("editMachineConfig", () => {
       notify: false,
       minFreeGib: 10,
       maxLoadPerCore: 1,
+      deployWaitMinutes: 120,
     });
   });
 
@@ -167,6 +169,11 @@ describe("editMachineConfig", () => {
     it("keeps a hand-written min_free_gib through an edit", () => {
       const text = edited(COMMENTED + "min_free_gib: 25\n", { poll_seconds: 90 });
       assert.include(text, "min_free_gib: 25");
+    });
+
+    it("keeps a hand-written deploy_wait_minutes through an edit", () => {
+      const text = edited(COMMENTED + "deploy_wait_minutes: 240\n", { poll_seconds: 90 });
+      assert.include(text, "deploy_wait_minutes: 240");
     });
 
     it("keeps a hand-written max_load_per_core through an edit", () => {
