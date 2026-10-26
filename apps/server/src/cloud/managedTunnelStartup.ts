@@ -225,14 +225,9 @@ const urlOrigin = (url: string) => {
 };
 
 /**
- * The relay routes the tunnel to the origin this environment registered last.
- * Only the server that owns the T3 home runs the connector, so an ingress that
- * names any other origin is stale: a process with this environment's
- * credentials registered its own port, then went away, and every request now
- * fails with connection refused. Checks the connector's ingress every minute
- * and registers this server's origin again when it points elsewhere. While the
- * mismatch persists, each attempt doubles the wait, up to 30 minutes, so a
- * relay that cannot fix it is not asked every minute.
+ * Only this server runs the connector, so an ingress naming another origin is a dead
+ * registration. Checks every minute and re-registers this origin on a mismatch,
+ * doubling the wait (up to 30 minutes) while the relay keeps routing elsewhere.
  */
 export const watchManagedTunnelOrigin = Effect.fn("ManagedTunnelOrigin.watch")(function* <
   E,
