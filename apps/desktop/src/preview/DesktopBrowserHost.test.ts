@@ -1,11 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeEvents from "node:events";
@@ -973,7 +972,8 @@ describe("DesktopBrowserHost", () => {
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
-      const tabs = [makeDebuggee(), makeDebuggee()];
+      const tabs = [makeDebuggee({ deferFocus: true }), makeDebuggee()];
+      const send = vi.spyOn(tabs[0]!.tab.debugger, "sendCommand");
       const keys = [key, { threadId: "thread-2", tabId: "tab-2" }];
       const events = yield* Queue.unbounded<DesktopBrowserEvent>();
       yield* host.events.pipe(
@@ -996,6 +996,19 @@ describe("DesktopBrowserHost", () => {
         yield* Queue.takeN(events, 2);
       }
 
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 2,
+            method: "Target.setAutoAttach",
+            params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      yield* command(host, 3, "Page.startScreencast");
       tabs[0]!.emit("Runtime.consoleAPICalled", {
         args: Array(2048).fill("x".repeat(40 * 1024)),
       });
@@ -1004,6 +1017,20 @@ describe("DesktopBrowserHost", () => {
 
       const { type, threadId, tabId } = detached!;
       expect({ type, threadId, tabId }).toEqual({ type: "detached", ...key });
+      expect(send).toHaveBeenCalledWith("Target.setAutoAttach", {
+        autoAttach: false,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      });
+      tabs[0]!.settleFocus();
+      yield* settle;
+      expect(send).not.toHaveBeenCalledWith("Target.setAutoAttach", {
+        autoAttach: true,
+        waitForDebuggerOnStart: true,
+        flatten: true,
+      });
+      expect(send).toHaveBeenCalledWith("Page.stopScreencast");
+      expect(tabs[0]!.focusEmulation).toEqual([true, false]);
       expect(next).toMatchObject({ type: "cdp", ...keys[1] });
       expect(JSON.parse((next as { message: string }).message)).toMatchObject({
         method: "Page.loadEventFired",

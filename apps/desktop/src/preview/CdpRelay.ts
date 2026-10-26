@@ -196,6 +196,7 @@ export function createCdpRelayConnection(
 
   return {
     receive: (raw) => {
+      if (closed) return;
       let command: unknown;
       try {
         command = JSON.parse(raw);

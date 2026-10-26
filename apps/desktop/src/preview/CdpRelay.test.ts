@@ -101,9 +101,7 @@ describe("CDP relay", () => {
   it("acknowledges Playwright's focus emulation without forcing it onto the guest", async () => {
     const send = vi.fn(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
-      written.push(JSON.parse(raw)),
-    );
+    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
     relay.receive(
       JSON.stringify({
         id: 1,
@@ -239,22 +237,26 @@ describe("CDP relay payload budget", () => {
     ]);
   });
 
-  it("closes instead of dropping an oversized event", async () => {
-    const written: Array<Record<string, unknown>> = [];
-    const close = vi.fn();
-    const relay = createCdpRelayConnection(
-      makeTarget(vi.fn()),
-      (raw) => written.push(JSON.parse(raw)),
-      close,
-    );
-    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
-    await settle();
-    written.length = 0;
+  it.each([oversized, "\u0001".repeat(12 * 1024 * 1024)])(
+    "closes instead of dropping an oversized event (%#)",
+    async (args) => {
+      const written: Array<Record<string, unknown>> = [];
+      const close = vi.fn();
+      const relay = createCdpRelayConnection(
+        makeTarget(vi.fn()),
+        (raw) => written.push(JSON.parse(raw)),
+        close,
+      );
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+      await settle();
+      written.length = 0;
 
-    relay.event("Runtime.consoleAPICalled", { args: oversized }, "");
-    relay.event("Page.loadEventFired", { timestamp: 1 }, "");
+      relay.event("Runtime.consoleAPICalled", { args }, "");
+      relay.event("Page.loadEventFired", { timestamp: 1 }, "");
 
-    expect(close).toHaveBeenCalledOnce();
-    expect(written.map((message) => message["method"])).toEqual([]);
-  });
+      relay.receive(JSON.stringify({ id: 2, method: "Target.setAutoAttach" }));
+      expect(close).toHaveBeenCalledOnce();
+      expect(written.map((message) => message["method"])).toEqual([]);
+    },
+  );
 });
