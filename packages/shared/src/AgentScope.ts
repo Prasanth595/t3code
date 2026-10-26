@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
+import * as Schema from "effect/Schema";
 export class AgentScopeStopError extends Schema.TaggedError<AgentScopeStopError>()(
   "AgentScopeStopError",
   { unit: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -18,15 +18,19 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
-    /**
-     * Set for terminals, so a job the user detached (tmux, nohup) outlives a
-     * server restart. Agents leave it unset: the next server stops agents a
-     * killed server left running before it resumes their sessions.
-     */
+    /** Terminals may survive restarts; agents must remain eligible for orphan cleanup. */
     readonly survivesRestart?: boolean | undefined;
+    /**
+     * Keep a shared process running after a tool OOM when supported.
+     * Falls back to ordinary scope behavior on older systemd.
+     */
+    readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
-  /** Waits for scope cleanup, including descendants in other process groups. */
+  /**
+   * Reaps processes left after the owning agent exits, including setsid
+   * descendants outside its process group. Preserves systemd OOM diagnosis.
+   */
   readonly stop: (unit: string) => Effect.Effect<void, AgentScopeStopError>;
   /**
    * Forgets the thread's scope. The session manager calls it before it opens
@@ -37,9 +41,10 @@ export interface AgentScopeShape {
 }
 
 export interface AgentScopeCommand {
-  readonly unit?: string | undefined;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** The systemd scope the command runs in, for `stop`. */
+  readonly unit?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
@@ -62,8 +67,7 @@ export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/o
 
 const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
 
-// systemd-run needs XDG_RUNTIME_DIR to reach the user manager. Fill it in when
-// the agent environment does not carry it; it is the same user either way.
+// systemd-run needs XDG_RUNTIME_DIR to reach this user's manager.
 const SCOPED_LAUNCH_SCRIPT = [
   RAISE_OOM_SCORE_LINE,
   ': "${XDG_RUNTIME_DIR:=$1}"',
@@ -80,11 +84,7 @@ export interface AgentSystemdScope {
   readonly options: ReadonlyArray<string>;
 }
 
-/**
- * Every step `exec`s, so the spawned PID, stdio, and signals all belong to the agent itself.
- * `systemd-run --scope` registers its own PID as the scope and then runs the command, so the
- * agent and all of its children start inside the scope.
- */
+/** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */
 export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
