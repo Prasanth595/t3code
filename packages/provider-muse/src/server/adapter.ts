@@ -31,6 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -2212,13 +2213,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             )
               return yield* protocolError("This Muse turn cannot be steered");
             const parts = yield* prompt(args.message);
-            // Muse refuses a steer it will not take within milliseconds, but acks an
-            // accepted one only once its records are on disk, which a slow disk can
-            // hold past 30 s. An accepted steer survives the turn (Muse runs it as a
-            // new turn after a Stop), so an ack still pending after the wait means
-            // delivered, not a dead host. Muse also gives up on the ack itself after
-            // 30 s and still applies the steer, so a retry of that error would steer
-            // twice.
+            // Muse can apply a steer after its durable-write acknowledgement times out.
+            // Retrying can duplicate it; only other command timeouts close the host.
             const ack = yield* send("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,

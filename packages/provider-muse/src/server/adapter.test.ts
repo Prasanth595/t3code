@@ -1386,15 +1386,14 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  // Muse acks an accepted steer only once its records are on disk; a slow disk has
-  // held that ack for 33 s.
   it.effect("reports a steer delivered and keeps the host while Muse holds its ack", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       const turn = yield* startConversation(harness, fake);
       const input = yield* turnInput(harness.providerThread);
-      fake.queueResponse("turn/steer", pendingPromise<Record<string, unknown>>().promise);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("turn/steer", acknowledgement.promise);
       const steer = yield* harness.runtime.steerTurn!({
         threadId: THREAD_ID,
         runId: input.runId,
@@ -1406,14 +1405,24 @@ describe("MuseAdapterV2", () => {
       yield* TestClock.adjust("31 seconds");
       yield* Fiber.join(steer);
       assert.strictEqual(fake.closeCount(), 0);
+      acknowledgement.resolve({ turnId: turn.nativeId });
+      assert.strictEqual(fake.calls.filter((call) => call.method === "turn/steer").length, 1);
 
-      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
-      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+      fake.queueResponse("turn/interrupt", pendingPromise<Record<string, unknown>>().promise);
+      const interrupt = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* fake.takeCall("turn/interrupt");
+      yield* TestClock.adjust("31 seconds");
+      assert.strictEqual((yield* Fiber.join(interrupt))._tag, "Failure");
+      assert.strictEqual(fake.closeCount(), 1);
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "failed");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  // Muse Code 1.4.12 answers a steer whose records are not durable within 30 s with this
-  // error, then applies the steer anyway. Retrying it would deliver the steer twice.
   it.effect("reports a steer delivered when Muse times out its own ack", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
