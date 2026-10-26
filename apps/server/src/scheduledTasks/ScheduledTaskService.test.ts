@@ -925,3 +925,36 @@ it.effect("giving up on a catch-up read leaves a newer run of the same task trac
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("records the provider error for every task steered into the same run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const { task: second } = yield* service.upsert({
+        ...task,
+        id: ScheduledTaskId.make("task:second-shared-run"),
+      });
+      yield* service.runNow({ id: task.id });
+      const firstMessage = yield* Queue.take(harness.dispatched);
+      yield* service.runNow({ id: second.id });
+      const secondMessage = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        messageMovedEvent(firstMessage, "run:shared"),
+        messageMovedEvent(secondMessage, "run:shared"),
+        providerErrorEvent("run:shared", "You have reached your usage limit."),
+        runEvent(runOf("run:shared", firstMessage, "failed")),
+      ]);
+      yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((t) => t.lastRunStatus === "failed")),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      for (const settled of (yield* service.list()).tasks) {
+        assert.equal(settled.lastRunError, "You have reached your usage limit.");
+        assert.equal(settled.runCount, 1);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

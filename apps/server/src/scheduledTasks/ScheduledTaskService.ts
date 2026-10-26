@@ -777,7 +777,7 @@ export const layer = Layer.effect(
                   Effect.map(({ messages }) => messages[0]?.runId ?? null),
                   Effect.orElseSucceed(() => null),
                 );
-        if (!trackedRuns.confirmCancel(run.messageId, moved)) return;
+        if (!trackedRuns.confirmCancel(run.messageId, run.cancelledRunId, moved)) return;
       }
       yield* recordRunEnd(run).pipe(
         Effect.retry({ times: 2 }),
