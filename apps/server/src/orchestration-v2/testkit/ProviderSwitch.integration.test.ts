@@ -1182,6 +1182,132 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live.each(["an older handoff", "a missed request"] as const)(
+    "keeps the latest turn when a resume fallback also delivers %s",
+    (older) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // A run that fails before its provider turn starts is retried as a missed request.
+          const missed = older === "a missed request";
+          const name = `resume-fallback-handoff-order${missed ? "-missed" : ""}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const failStartOnce = yield* Ref.make(false);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const oldResult = `old result ${"o".repeat(2_500)}`;
+          const latestResult = `latest result ${"l".repeat(2_500)}`;
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: oldResult, 3: latestResult },
+              capturedTurns,
+              injectedHistory,
+              failResume: true,
+              ...(missed ? { failStartOnce } : { failedRunOrdinals: new Set([2]) }),
+              nativeThreadGeneration: yield* Ref.make(0),
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runAfterDetach = Effect.fn("runAfterDetach")(function* (
+              ordinal: number,
+              text: string,
+            ) {
+              const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+                .providerThreads[0]?.providerSessionId;
+              if (providerSessionId != null) {
+                yield* orchestrator.dispatch({
+                  type: "provider-session.detach",
+                  commandId: CommandId.make(`handoff-order:detach:${ordinal}`),
+                  threadId,
+                  providerSessionId,
+                });
+                yield* worker.drain();
+              }
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`handoff-order:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`handoff-order:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("handoff-order:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Resume fallback handoff order",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* runAfterDetach(1, `Original brief ${"b".repeat(9_000)}`);
+            yield* Ref.set(failStartOnce, missed);
+            yield* runAfterDetach(2, missed ? `Request 2 ${"r".repeat(6_000)}` : "Request 2");
+            yield* runAfterDetach(3, "Request 3");
+            const historyBeforeRun4 = (yield* Ref.get(injectedHistory)).length;
+            yield* runAfterDetach(4, "Request 4");
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              projection.runs.map((run) => run.status),
+              ["completed", "failed", "completed", "completed"],
+            );
+            const run4NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
+            assert.equal(
+              projection.contextHandoffs.find(
+                (handoff) => handoff.targetRunId === projection.runs[1]?.id,
+              )?.delivery?.nativeThreadId,
+              run4NativeThreadId,
+            );
+            const run4History = yield* encodeJson(
+              (yield* Ref.get(injectedHistory)).slice(historyBeforeRun4),
+            );
+            assert.include(run4History, "Original brief");
+            assert.include(run4History, latestResult);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
   it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
@@ -1281,19 +1407,20 @@ describe("orchestration v2 provider switching", () => {
   it.live.each(
     (
       [
-        ["failed", false, false, false],
-        ["failed", true, true, true],
-        ["interrupted", false, true, false],
-        ["interrupted", true, false, true],
+        ["failed", false, false, false, false],
+        ["failed", true, true, true, false],
+        ["interrupted", false, true, false, false],
+        ["interrupted", true, false, true, false],
+        ["failed", false, false, false, true],
       ] as const
     ).map(
-      ([status, queued, returning, native]) =>
+      ([status, queued, returning, native, agent]) =>
         [
-          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-          { status, queued, returning, native },
+          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}${agent ? " for an agent message" : ""}`,
+          { status, queued, returning, native, agent },
         ] as const,
     ),
-  )("hands off %s", ([, { status, queued, returning, native }]) =>
+  )("hands off %s", ([, { status, queued, returning, native, agent }]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace(`handoff-${status}-${queued}-${returning}`);
@@ -1366,7 +1493,10 @@ describe("orchestration v2 provider switching", () => {
               commandId: CommandId.make(`command:handoff:${key}`),
               threadId,
               messageId: MessageId.make(`message:handoff:${key}`),
-              createdBy: "user",
+              createdBy: key === "target" && agent ? "agent" : "user",
+              ...(key === "target" && agent
+                ? { senderThreadId: ThreadId.make("thread:agent-source") }
+                : {}),
               creationSource: "web",
               text,
               attachments: [],
@@ -1433,7 +1563,18 @@ describe("orchestration v2 provider switching", () => {
             assert.include(deliveredHistory, '"role":"user"');
             assert.equal(handoff?.delivery?.status, "injected");
           } else {
-            assert.include(delivered.text, "User message:\nContinue");
+            if (agent) {
+              assert.include(
+                delivered.text,
+                "Agent message:\n[Message from another thread's agent",
+              );
+              assert.notInclude(
+                delivered.text,
+                "User message:\n[Message from another thread's agent",
+              );
+            } else {
+              assert.include(delivered.text, "User message:\nContinue");
+            }
             assert.equal(handoff?.delivery?.status, "inline");
           }
           assert.notInclude(deliveredHistory, "Earlier successful request.");
