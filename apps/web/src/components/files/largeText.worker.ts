@@ -182,6 +182,7 @@ self.addEventListener("message", (event: MessageEvent<TextPreviewRequest>) => {
   ).catch((cause: unknown) =>
     reply({
       type: "error",
+      operation: input.type,
       message: cause instanceof Error ? cause.message : "Could not read this file.",
     }),
   );

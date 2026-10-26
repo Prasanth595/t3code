@@ -90,10 +90,9 @@ export default function LargeTextViewer(props: {
           copyPending.current?.resolve(result.text);
           copyPending.current = null;
         } else if (result.type === "error") {
-          if (copyPending.current) {
-            copyPending.current.reject(new Error(result.message));
-            copyPending.current = null;
-          } else setError(result.message);
+          copyPending.current?.reject(new Error(result.message));
+          copyPending.current = null;
+          if (result.operation !== "copy") setError(result.message);
         } else if (result.type === "meta") {
           indexed = true;
           if (prefetched) {
@@ -123,9 +122,11 @@ export default function LargeTextViewer(props: {
           });
         }
       });
-      engine.addEventListener("error", () =>
-        setError("Could not load the text viewer. Close the file and try again."),
-      );
+      engine.addEventListener("error", () => {
+        copyPending.current?.reject(new Error("The text viewer stopped."));
+        copyPending.current = null;
+        setError("Could not load the text viewer. Close the file and try again.");
+      });
       engine.postMessage(
         {
           type: "open",
