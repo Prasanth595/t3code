@@ -40,7 +40,6 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
           pendingApproval: null,
         },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 0 } }],
     });
 
     const outcome = yield* waitForRun(tools, threadId, runId);
@@ -49,8 +48,8 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 600_000 },
-        { threadId, runId, timeoutMs: 600_000 },
+        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000 },
       ],
     );
   }),
@@ -100,7 +99,6 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
           pendingApproval: null,
         },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), {

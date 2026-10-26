@@ -873,7 +873,10 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const target = yield* getProjectThreadRecords(input, ["runs", "nodes", "runtimeRequests"]);
+    const fields = input.terminalOnly
+      ? (["runs"] as const)
+      : (["runs", "nodes", "runtimeRequests"] as const);
+    const target = yield* getProjectThreadRecords(input, fields);
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
@@ -962,24 +965,27 @@ const make = Effect.gen(function* () {
     // A declined continuation records no event, so its effect settling wakes
     // the wait too.
     const wait = Stream.merge(
-      Stream.merge(
-        orchestrator.streamStoredEventsFrom({
-          threadId: input.threadId,
-          afterSequence,
-          eventType: "run.updated",
-        }),
-        Stream.merge(
+      Stream.mergeAll(
+        [
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "run.updated",
+          }),
           orchestrator.streamStoredEventsFrom({
             threadId: input.threadId,
             afterSequence,
             eventType: "thread.deleted",
           }),
-          orchestrator.streamStoredEventsFrom({
-            threadId: input.threadId,
-            afterSequence,
-            eventType: "runtime-request.updated",
-          }),
-        ),
+          input.terminalOnly
+            ? Stream.empty
+            : orchestrator.streamStoredEventsFrom({
+                threadId: input.threadId,
+                afterSequence,
+                eventType: "runtime-request.updated",
+              }),
+        ],
+        { concurrency: "unbounded" },
       ).pipe(
         Stream.mapError(loadError),
         Stream.filter(
@@ -993,11 +999,7 @@ const make = Effect.gen(function* () {
         ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
         : Stream.empty,
     ).pipe(
-      Stream.mapEffect(() =>
-        getProjectThreadRecords(input, ["runs", "nodes", "runtimeRequests"]).pipe(
-          Effect.flatMap(outcome),
-        ),
-      ),
+      Stream.mapEffect(() => getProjectThreadRecords(input, fields).pipe(Effect.flatMap(outcome))),
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
@@ -1015,9 +1017,7 @@ const make = Effect.gen(function* () {
     // The run may have reached a terminal status while the timeout was
     // winning the race; the final projection read decides what actually
     // happened, so only a still-active run counts as timed out.
-    const final = yield* outcome(
-      yield* getProjectThreadRecords(input, ["runs", "nodes", "runtimeRequests"]),
-    );
+    const final = yield* outcome(yield* getProjectThreadRecords(input, fields));
     return {
       threadId: input.threadId,
       run: final.run,

@@ -32,7 +32,7 @@ import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
-const WAIT_SLICE_MS = 600_000;
+const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
 const TITLE_MAX_CHARS = 80;
 

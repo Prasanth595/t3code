@@ -349,6 +349,8 @@ describe("OrchestratorMcpService", () => {
               threadId: childThreadId,
               run: childRun() as unknown as OrchestrationV2ThreadProjection["runs"][number],
               timedOut: !finished,
+              hasPendingQuestion: false,
+              pendingApproval: null,
             }),
           dispatch: () => Effect.succeed({} as never),
         }),
