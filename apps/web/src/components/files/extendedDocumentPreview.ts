@@ -237,8 +237,16 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
   let children = "";
   for (const child of node.children) children += await epubHtml(child, archive, base);
   if (!HTML_TAGS.has(tag)) return children;
-  reserveMarkup(tag.length * 2 + 5);
-  return `<${tag}>${children}</${tag}>`;
+  const spans =
+    tag === "td" || tag === "th"
+      ? ["colspan", "rowspan"]
+          .map((name) =>
+            /^\d{1,4}$/.test(node.attrs[name] ?? "") ? ` ${name}="${node.attrs[name]}"` : "",
+          )
+          .join("")
+      : "";
+  reserveMarkup(tag.length * 2 + spans.length + 5);
+  return `<${tag}${spans}>${children}</${tag}>`;
 }
 async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   if (node.name === "#text") return boundedMarkup(escape(text(node)));
