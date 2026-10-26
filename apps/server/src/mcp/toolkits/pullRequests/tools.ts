@@ -38,15 +38,19 @@ export const PullRequestTargetInput = Schema.Struct({
       description: "Thread. Default: this thread.",
     }),
   ),
-  url: Schema.optional(TrimmedNonEmptyString),
+  url: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "HTTP(S) review URL. For unrecognised formats, also pass repository and number.",
+    }),
+  ),
   repository: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "With `number`, when no `url`.",
+      description: "With `number`, when `url` is absent or unrecognised.",
     }),
   ),
   number: Schema.optional(
     PositiveInt.annotate({
-      description: "With `repository`, when no `url`.",
+      description: "With `repository`, when `url` is absent or unrecognised.",
     }),
   ),
   host: Schema.optional(
@@ -62,7 +66,7 @@ export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUr
   {},
 ) {
   override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
+    return "This is not a recognised pull request URL. For other HTTP(S) URLs, also pass repository and number.";
   }
 }
 
