@@ -23,7 +23,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { MAX_TERMINALS_PER_GROUP } from "../../types";
-import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
+import {
+  type RightPanelSurface,
+  resolveRightPanelTerminalToggle,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import { openUrlInPreview } from "../../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
@@ -43,6 +48,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useClientSettings } from "~/hooks/useSettings";
 import { previewEnvironment } from "../../state/preview";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -114,6 +120,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const terminalActions = useThreadTerminalActions(activeThreadRef);
+  const terminalLocation = useClientSettings((settings) => settings.terminalLocation);
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -328,6 +335,25 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     void launched.result;
   };
   const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
+  const toggleRightPanelTerminal = () => {
+    if (!activeThreadRef) return false;
+    const panel = useRightPanelStore.getState();
+    const toggle = resolveRightPanelTerminalToggle(
+      selectThreadRightPanelState(panel.byThreadKey, activeThreadRef),
+    );
+    if (toggle.kind === "hide") {
+      panel.setMaximized(activeThreadRef, false);
+      return void panel.close(activeThreadRef);
+    }
+    if (toggle.kind === "create") {
+      if (!hasTerminalWriteAccess()) return false;
+      return void addTerminalSurface();
+    }
+    if (!readEnvironmentScope(environmentId, AuthTerminalReadScope) && !hasTerminalWriteAccess())
+      return false;
+    panel.activateSurface(activeThreadRef, toggle.surfaceId);
+    focusActivePanelTerminal(activeThreadRef);
+  };
   const splitPanelTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (
       !activeThreadRef ||
@@ -403,6 +429,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   // A focused right-panel terminal takes the split/new/close chords; otherwise they act on the drawer.
   const shortcuts = {
     "terminal.toggle": () => {
+      if (terminalLocation === "right-panel") return toggleRightPanelTerminal();
       if (
         !terminalUiState.terminalOpen &&
         !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&

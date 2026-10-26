@@ -143,6 +143,11 @@ a shortcut.
 
 ## Commands with special behavior
 
+`terminal.toggle` (`mod+j` by default) opens and closes the bottom terminal drawer. To open
+terminals in the right panel instead, set **Settings → General → Terminal location** to
+**Right panel**. The shortcut then shows the right panel's terminal tab, creating one if
+needed, and hides the panel when that tab is already showing.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 

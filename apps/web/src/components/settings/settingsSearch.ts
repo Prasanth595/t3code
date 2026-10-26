@@ -451,6 +451,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "terminal-location",
+    title: "Terminal location",
+    to: "/settings/general",
+    searchTerms: ["terminal shortcut drawer bottom right panel side mod+j cmd+j"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/general",
