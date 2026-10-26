@@ -760,8 +760,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         handleTermination(() => {
           const ended = new AcpError.AcpInputStreamEndedError({});
           if (!options.terminationError) return Effect.succeed(ended);
-          // An agent can close stdout and keep running. Bound the wait for its
-          // exit status, on the live clock so a test clock cannot stall it.
+          // Stdout can close without process exit; use a live-clock diagnostic grace period.
           return options.terminationError.pipe(
             Effect.timeoutOption("250 millis"),
             Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
