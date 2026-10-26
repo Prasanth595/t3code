@@ -659,7 +659,9 @@ export const make = Effect.gen(function* () {
     setMode,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
-    setWslPrimary: (wsl) => Ref.set(wslPrimaryRef, wsl),
+    setWslPrimary: Effect.fn("DesktopServerExposure.setWslPrimary")((wsl) =>
+      Ref.set(wslPrimaryRef, wsl),
+    ),
   });
 });
 
