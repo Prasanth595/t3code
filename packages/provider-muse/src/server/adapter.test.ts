@@ -2035,49 +2035,53 @@ describe("MuseAdapterV2", () => {
         );
       }
 
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId, providerTurn } = yield* startConversation(harness, fake);
-      yield* fake.emit("item/started", {
-        turnId: nativeId,
-        item: toolCall(nativeId, "background-1", 1, "inProgress", { background: true }),
-      });
-      const interrupt = yield* harness.runtime
-        .interruptTurn({
-          providerThread: harness.providerThread,
-          providerTurnId: providerTurn.id,
-        })
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* fake.takeCall("turn/interrupt");
-      fake.queueResponse("task/list", pendingPromise<Record<string, unknown>>().promise);
-      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "cancelled" });
-      yield* fake.takeCall("task/list");
-      const resume = yield* harness.runtime
-        .resumeThread({
-          providerThread: harness.providerThread,
-        })
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* TestClock.adjust("31 seconds");
-      assert.strictEqual((yield* Fiber.join(resume))._tag, "Success");
-      assert.strictEqual((yield* Fiber.join(interrupt))._tag, "Success");
-      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
-      assert.isTrue(
-        yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
-      );
-      fake.queueResponse("task/list", new Error("Muse is still busy"));
-      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
-      assert.strictEqual(fake.closeCount(), 0);
-      yield* fake.emit("item/completed", {
-        turnId: nativeId,
-        item: toolCall(nativeId, "background-1", 2, "completed"),
-      });
-      yield* harness.takeEvent(
-        "turn_item.updated",
-        (event) =>
-          event.turnItem.nativeItemRef?.nativeId === "background-1" &&
-          event.turnItem.status === "completed",
-      );
-      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      for (const nextAction of ["resume", "start"] as const) {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId, providerTurn } = yield* startConversation(harness, fake);
+        yield* fake.emit("item/started", {
+          turnId: nativeId,
+          item: toolCall(nativeId, "background-1", 1, "inProgress", { background: true }),
+        });
+        const interrupt = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: providerTurn.id,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* fake.takeCall("turn/interrupt");
+        fake.queueResponse("task/list", pendingPromise<Record<string, unknown>>().promise);
+        yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "cancelled" });
+        yield* fake.takeCall("task/list");
+        const admission =
+          nextAction === "resume"
+            ? harness.runtime.resumeThread({ providerThread: harness.providerThread })
+            : harness.runtime.startTurn(
+                yield* turnInput(harness.providerThread, 2, harness.policy),
+              );
+        const resume = yield* admission.pipe(Effect.exit, Effect.forkScoped);
+        yield* TestClock.adjust("31 seconds");
+        assert.strictEqual((yield* Fiber.join(resume))._tag, "Success");
+        assert.strictEqual((yield* Fiber.join(interrupt))._tag, "Success");
+        assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
+        assert.isTrue(
+          yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+        );
+        fake.queueResponse("task/list", new Error("Muse is still busy"));
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        assert.strictEqual(fake.closeCount(), 0);
+        yield* fake.emit("item/completed", {
+          turnId: nativeId,
+          item: toolCall(nativeId, "background-1", 2, "completed"),
+        });
+        yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) =>
+            event.turnItem.nativeItemRef?.nativeId === "background-1" &&
+            event.turnItem.status === "completed",
+        );
+        assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      }
 
       const completionOrders = yield* Effect.forEach(scenarios, ({ fake, harness, observed }) =>
         Effect.gen(function* () {

@@ -2033,6 +2033,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         compact = false,
       ) {
+        if (active && Option.isSome(yield* Deferred.poll(active.done)))
+          yield* eventPermit.withPermits(1)(Effect.void);
         if (!validateThread(turnInput.providerThread) || broken || closed)
           return yield* protocolError("Muse thread is not attached to this host");
         if (active)
