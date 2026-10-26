@@ -3335,7 +3335,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   });
-  const revealActiveRow = useActiveRowReveal(routeReveal);
+  const revealActiveRow = useActiveRowReveal(routeReveal, routeThreadKey);
   const newThreadShortcutLabelOptions = {
     platform,
     context: {

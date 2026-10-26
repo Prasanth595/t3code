@@ -1008,7 +1008,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKey(null);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKey]);
-  const revealActiveRow = useActiveRowReveal(routeReveal);
+  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,

@@ -1324,6 +1324,22 @@ describe("resolveSidebarRouteReveal", () => {
     ).toEqual({ pendingKey: null, widensScope: false });
   });
 
+  it("widens again for a thread reopened before the thread between them listed its row", () => {
+    // The user scoped away from the open thread, then went to a thread whose row
+    // never mounted, then came back.
+    const reveal = { observedKey: hiddenKey, pendingKey: null };
+    const resolve = (routeKey: string) =>
+      resolveSidebarRouteReveal({
+        reveal,
+        routeKey,
+        isSearching: false,
+        scopedProjectKeys,
+        findThread,
+      });
+    resolve("environment-test:unlisted");
+    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
   it("holds a pending reveal without widening while searching", () => {
     expect(
       resolveSidebarRouteReveal({

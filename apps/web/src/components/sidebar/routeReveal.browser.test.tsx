@@ -10,7 +10,7 @@ function RevealList(props: {
   readonly rowKeys: ReadonlyArray<string>;
   readonly activeKey: string | null;
 }) {
-  const revealActiveRow = useActiveRowReveal(props.reveal);
+  const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey);
   return (
     <ul aria-label="Threads" style={{ height: ROW_HEIGHT_PX * 4, overflowY: "auto", margin: 0 }}>
       {props.rowKeys.map((key) => (
@@ -61,6 +61,25 @@ describe("useActiveRowReveal", () => {
     );
 
     await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+  });
+
+  it("reveals a thread reopened after a thread whose row never mounted", async () => {
+    const reveal = newReveal();
+    const keys = rowKeys(50);
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />,
+      { router: false },
+    );
+    const target = screen.getByText("thread-40", { exact: true });
+    await expect.element(target).toBeInViewport();
+    screen.getByRole("list", { name: "Threads" }).element().scrollTop = 0;
+    await expect.element(target).not.toBeInViewport();
+
+    // The route moves to a thread the list does not hold yet, then back.
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-99" />);
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />);
+
+    await expect.element(target).toBeInViewport();
   });
 
   it("reveals the open thread again when the sidebar remounts on the same route", async () => {
