@@ -189,9 +189,7 @@ export function isSameOriginRendererNavigation(input: {
   try {
     const applicationUrl = new URL(input.applicationUrl);
     const navigationUrl = new URL(input.navigationUrl);
-    // Node does not know the app's custom schemes are standard, so their
-    // `origin` is "null", the same as data:, file: and other custom URLs.
-    // Compare scheme and authority instead.
+    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
     return (
       applicationUrl.host !== "" &&
       navigationUrl.protocol === applicationUrl.protocol &&
