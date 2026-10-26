@@ -921,7 +921,9 @@ const make = Effect.gen(function* () {
           runs
             .filter(
               (candidate) =>
-                !isTerminalRunStatus(candidate.status) && candidate.ordinal <= run.ordinal,
+                !isTerminalRunStatus(candidate.status) &&
+                (candidate.ordinal <= run.ordinal ||
+                  (run.status === "queued" && candidate.status !== "queued")),
             )
             .map((candidate) => candidate.id),
         );

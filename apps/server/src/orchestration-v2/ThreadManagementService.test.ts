@@ -211,6 +211,13 @@ it.effect.each([
   },
   {
     kind: "user_input",
+    capability: "live",
+    requestOrdinal: 2,
+    selectedStatus: "queued",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
     capability: "message",
     requestOrdinal: 1,
     selectedStatus: "running",
