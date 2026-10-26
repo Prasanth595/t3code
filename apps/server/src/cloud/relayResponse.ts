@@ -2,7 +2,6 @@ import { RelayProtectedError } from "@t3tools/contracts/relay";
 import { clockSkewFromDateHeader, describeClockSkew } from "@t3tools/shared/clockSkew";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -186,22 +185,25 @@ export const filterRelayClient = (client: HttpClient.HttpClient, timing?: RelayR
   HttpClient.transformResponse(client, (response) =>
     Effect.gen(function* () {
       const startedAtMillis = timing?.startedAtMillis ?? (yield* Clock.currentTimeMillis);
-      const [duration, result] = yield* response.pipe(Effect.timed);
-      const elapsedMillis =
-        timing === undefined
-          ? Duration.toMillis(duration)
-          : Number((yield* Clock.monotonicTimeNanos) - timing.startedAtNanos) / 1_000_000;
+      const startedAtNanos = timing?.startedAtNanos ?? (yield* Clock.monotonicTimeNanos);
+      const result = yield* response;
+      const checkClock = Effect.gen(function* () {
+        const elapsedMillis =
+          Number((yield* Clock.monotonicTimeNanos) - startedAtNanos) / 1_000_000;
+        if (
+          (result.status === 400 || result.status === 401) &&
+          Math.abs((yield* Clock.currentTimeMillis) - startedAtMillis - elapsedMillis) > 60_000
+        ) {
+          return yield* new RelayRequestError({
+            rejection: "unavailable",
+            description:
+              "The host clock changed during the T3 Connect proof request. T3 Connect will retry with a fresh proof.",
+          });
+        }
+        return elapsedMillis;
+      });
+      const elapsedMillis = yield* checkClock;
       const now = yield* Clock.currentTimeMillis;
-      if (
-        (result.status === 400 || result.status === 401) &&
-        Math.abs(now - startedAtMillis - elapsedMillis) > 60_000
-      ) {
-        return yield* new RelayRequestError({
-          rejection: "unavailable",
-          description:
-            "The host clock changed during the T3 Connect proof request. T3 Connect will retry with a fresh proof.",
-        });
-      }
       let measuredClockSkewSeconds: number | undefined;
       if (
         (result.status === 400 || result.status === 401) &&
@@ -220,9 +222,10 @@ export const filterRelayClient = (client: HttpClient.HttpClient, timing?: RelayR
         }
         measuredClockSkewSeconds = measurement.clockSkewSeconds ?? undefined;
       }
+      const totalElapsedMillis = yield* checkClock;
       return yield* filterRelayResponse(
         result,
-        elapsedMillis,
+        totalElapsedMillis,
         startedAtMillis,
         measuredClockSkewSeconds,
       );
