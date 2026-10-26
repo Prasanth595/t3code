@@ -95,16 +95,12 @@ export function ConnectionsNewRouteScreen({
   }, [connectionPairingUrl]);
 
   useEffect(() => {
-    if (pairAgainHost !== null) {
-      setHostInput(pairAgainHost);
-      setCodeInput("");
-      return;
-    }
-    if (routePairingUrl.length === 0) {
+    if (routePairingUrl.length === 0 && pairAgainHost === null) {
       return;
     }
 
-    const { host, code } = parsePairingUrl(routePairingUrl);
+    const { host, code } =
+      pairAgainHost === null ? parsePairingUrl(routePairingUrl) : { host: pairAgainHost, code: "" };
     // oxlint-disable-next-line react/set-state-in-effect -- A pairing URL from the route reseeds the editable host and code fields.
     setHostInput(host);
     setCodeInput(code);
