@@ -11,6 +11,8 @@ vi.mock(import("../state/server"), async () => {
   publishedThemes.atom = Atom.make<ReadonlyArray<EnvironmentTheme>>([]);
   return { primaryServerEnvironmentThemesAtom: publishedThemes.atom } as never;
 });
+const refreshTheme = vi.hoisted(() => vi.fn());
+vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
@@ -118,5 +120,18 @@ describe("environment themes", () => {
       invalidateCustomThemes();
     }
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+  });
+
+  it("repaints when the environment publishes themes nothing has read yet", async () => {
+    vi.resetModules();
+    const { appAtomRegistry: registry } = await import("../rpc/atomRegistry");
+    const { startEnvironmentThemeRepaint } = await import("./useEnvironmentTheme");
+    const stop = startEnvironmentThemeRepaint();
+    try {
+      registry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
+      expect(refreshTheme).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
   });
 });
