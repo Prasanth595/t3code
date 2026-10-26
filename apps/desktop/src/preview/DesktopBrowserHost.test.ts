@@ -577,6 +577,12 @@ describe("DesktopBrowserHost", () => {
       yield* turn(false);
       yield* settle;
       expect(painting).toEqual([true, false]);
+
+      // The first answers late; the second still goes in turn, but holds nothing.
+      debuggee.releaseFirst();
+      yield* settle;
+      expect(debuggee.sent).toEqual([1, 2]);
+      expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
     }).pipe(Effect.scoped),

@@ -138,29 +138,33 @@ export const make = Effect.gen(function* () {
     tab: AttachedTab,
     relay: CdpRelayConnection,
     ownerLive: () => boolean,
-    /** Sends only while `current` holds, which focus emulation may outlast. */
-    capture: (current: () => boolean) => Promise<unknown>,
+    /** Sends only while `current` holds; holds focus and painting only while `held`. */
+    capture: (current: () => boolean, held: boolean) => Promise<unknown>,
   ) =>
     new Promise<unknown>((resolve, reject) => {
       const live = () => tab.relay === relay && ownerLive();
-      const start = () => {
-        if (!live()) {
-          reject(new Error("The preview connection that asked for this screenshot closed."));
-          nextScreenshot(tab);
-          return;
-        }
-        const turn = {};
-        tab.screenshotTurn = turn;
-        capture(() => tab.screenshotTurn === turn && live())
-          .finally(() => {
-            if (tab.screenshotTurn === turn) nextScreenshot(tab);
-          })
-          .then(resolve, reject);
+      const waiting = {
+        start: () => {
+          if (!live()) {
+            reject(new Error("The preview connection that asked for this screenshot closed."));
+            nextScreenshot(tab);
+            return;
+          }
+          const turn = {};
+          tab.screenshotTurn = turn;
+          capture(() => tab.screenshotTurn === turn && live(), waiting.held)
+            .finally(() => {
+              if (tab.screenshotTurn === turn) nextScreenshot(tab);
+            })
+            .then(resolve, reject);
+        },
+        live,
+        held: true,
       };
-      if (tab.screenshotTurn === null) start();
+      if (tab.screenshotTurn === null) waiting.start();
       else {
         // The one ahead may be abandoned mid-capture; it needs frames to finish and free its turn.
-        tab.waitingScreenshots.push({ start, live, held: true });
+        tab.waitingScreenshots.push(waiting);
         setFocusEmulation(tab, true);
         syncPainting(tab);
       }
@@ -257,7 +261,6 @@ export const make = Effect.gen(function* () {
    */
   const dropFocusHolds = (tab: AttachedTab) => {
     tab.focusPending.clear();
-    for (const waiting of tab.waitingScreenshots) waiting.held = false;
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
   };
@@ -289,6 +292,8 @@ export const make = Effect.gen(function* () {
     for (const tab of tabs.values()) {
       if (tab.key.threadId !== threadId) continue;
       tab.agentUsed = false;
+      // Still sent in turn, so the queue keeps moving, but no longer kept painting.
+      for (const waiting of tab.waitingScreenshots) waiting.held = false;
       dropFocusHolds(tab);
     }
   };
@@ -334,7 +339,8 @@ export const make = Effect.gen(function* () {
                 tab,
                 relay,
                 () => owner === undefined || !detachedOwners.has(owner),
-                (current) => holdFocus(tab, method, owner, () => forward(current)),
+                (current, held) =>
+                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
