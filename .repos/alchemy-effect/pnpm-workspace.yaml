@@ -248,6 +248,7 @@ overrides:
   mysql2: 3.24.2
   zod: 4.5.4
   rolldown: 1.2.5
+  '@simple-git/argv-parser': '2.0.1'
 patchedDependencies:
   "@astrojs/starlight@0.42.0": patches/@astrojs%2Fstarlight@0.42.0.patch
   starlight-blog@0.29.0: patches/starlight-blog@0.29.0.patch
