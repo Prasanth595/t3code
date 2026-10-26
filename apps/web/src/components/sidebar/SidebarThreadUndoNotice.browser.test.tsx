@@ -12,7 +12,7 @@ const spoken = () =>
 describe("SidebarThreadUndoNotice", () => {
   it("speaks the notice, and drops it when the notice clears before it is spoken", async () => {
     using _notice = { [Symbol.dispose]: () => useThreadUndoNotice.setState({ notice: null }) };
-    await using _screen = await render(<SidebarThreadUndoNotice />);
+    await using _screen = await render(<SidebarThreadUndoNotice onBackdrop={false} />);
     using _timers = fakeTimers();
     const showSettled = () =>
       act(async () =>
