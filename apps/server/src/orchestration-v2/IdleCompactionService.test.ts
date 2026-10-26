@@ -26,6 +26,7 @@ function compactedThread(threadId: string, lastVisitedAt: DateTime.Utc | null) {
       ordinal,
       userMessageId,
       status: "completed",
+      requestedAt: DateTime.subtract(completedAt, { minutes: 1 }),
       completedAt,
     }) as unknown as OrchestrationV2Run;
   const previous = run(1, "message", at(0));
@@ -48,6 +49,7 @@ it.effect("marks a caught-up thread read when its automatic compaction completes
     const threads = [
       compactedThread("unseen", null),
       compactedThread("behind", at(-1)),
+      compactedThread("marked-unread", DateTime.subtract(at(58), { milliseconds: 1 })),
       compactedThread("caught-up", at(1)),
     ];
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();

@@ -105,7 +105,8 @@ export const make = Effect.gen(function* () {
       if (
         thread.lastVisitedAt === null ||
         previous?.completedAt == null ||
-        DateTime.isGreaterThan(previous.completedAt, thread.lastVisitedAt)
+        DateTime.isGreaterThan(previous.completedAt, thread.lastVisitedAt) ||
+        !DateTime.isLessThan(thread.lastVisitedAt, run.requestedAt)
       )
         return;
       yield* orchestrator.dispatch({
