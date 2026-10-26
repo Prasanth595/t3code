@@ -80,12 +80,13 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
   });
   return ProviderLatestVersions.of({
     cached,
-    invalidate: (key) =>
-      Ref.update(entries, (current) => {
+    invalidate: Effect.fn("ProviderLatestVersions.invalidate")(function (key) {
+      return Ref.update(entries, (current) => {
         const next = new Map(current);
         next.delete(key);
         return next;
-      }),
+      });
+    }),
   });
 });
 
