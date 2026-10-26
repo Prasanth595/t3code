@@ -585,13 +585,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Head lookups to one host under one credential share aliased documents: the resolver batches by
-   * the host's endpoint and `batchKey`. Each lookup has its own `repository` root, so lookups on
-   * different repositories may share a document, and a repository GitHub cannot find fails only
-   * its own. Interactive and background lookups never share one, since they use separate
-   * resolvers, so a document is sent under one reserve setting.
-   */
+  // Batch by host/credential; isolate missing repositories and interactive/background reserves.
   const headResolver = GraphQLResolver.aliased(client.PullRequestsByHead, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT));

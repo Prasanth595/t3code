@@ -129,7 +129,7 @@ export function environmentToken(
   return variable === null ? null : (env[variable]?.trim() ?? null);
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
