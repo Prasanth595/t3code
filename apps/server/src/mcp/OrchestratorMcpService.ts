@@ -2581,7 +2581,7 @@ const make = Effect.gen(function* () {
         effect.pipe(
           Effect.catch((error) => {
             targetBlockers.push(`${label}: ${error.message}`);
-            return Effect.succeed(undefined);
+            return Effect.undefined;
           }),
         ),
     );
