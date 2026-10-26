@@ -1447,6 +1447,36 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
   });
 
+  it.effect("lets the browser retry host media the host refused", () => {
+    const url =
+      "https://dev.azure.com/acme/_api/_common/identityImage?id=15f0488e-b980-68ca-9d71-8a387c166d09";
+    const media = sourceControlDefinitions.mediaUrl(url)!;
+    const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
+      {
+        driver: { kind: media.definition.kind, definition: media.definition },
+        instance: fakeSourceControlDriverInstance(media.definition.kind, {
+          pullRequests: null,
+          fetchMedia: (request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                HttpClientRequest.get(request.url),
+                new Response(null, { status: 404 }),
+              ),
+            ),
+        }),
+      },
+    ]);
+    return Effect.gen(function* () {
+      // A host that refused before sign-in serves the media right after it.
+      const response = yield* sourceControlMediaResponse(
+        { url: media.fetchUrl, expiresAt: Date.UTC(2100, 0, 1) },
+        {},
+      );
+      expect(response.status).toBe(404);
+      expect(response.headers["cache-control"]).toBe("private, no-store");
+    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+  });
+
   it.effect("signs host media a client asks for without a repository", () =>
     Effect.gen(function* () {
       // A pull request list draws avatars with no repository at hand.
