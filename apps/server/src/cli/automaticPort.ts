@@ -11,12 +11,6 @@ const KERNEL_RELEASE_PATH = "/proc/sys/kernel/osrelease";
 const WINDOWS_NETSTAT_PATH = String.raw`C:\Windows\System32\netstat.exe`;
 const FALLBACK_ATTEMPTS = 8;
 
-export type WindowsHostListeners =
-  | { readonly kind: "known"; readonly ports: ReadonlySet<number> }
-  | { readonly kind: "unavailable" };
-
-const UNAVAILABLE: WindowsHostListeners = { kind: "unavailable" };
-
 /**
  * Picks the startup port when none was configured. Under WSL's default NAT networking, Windows
  * reaches the server through localhost forwarding, which fails for a port a Windows process
@@ -43,32 +37,29 @@ export const make = Effect.gen(function* () {
     });
     const netstatPath = netstat.stdout.trim();
     if ((netstat.code !== null && netstat.code !== 0) || netstatPath.length === 0) {
-      return UNAVAILABLE;
+      return null;
     }
     const listeners = yield* queryWindowsTcpListeners(processRunner, netstatPath);
-    if (listeners === null) return UNAVAILABLE;
-    return {
-      kind: "known",
-      ports: new Set(listeners.map((listener) => listener.port)),
-    } satisfies WindowsHostListeners;
-  }).pipe(Effect.orElseSucceed(() => UNAVAILABLE));
+    if (listeners === null) return null;
+    return new Set(listeners.map((listener) => listener.port));
+  }).pipe(Effect.orElseSucceed(() => null));
 
   return Effect.fn("automaticPort.select")(function* (preferred: number) {
     if (!(yield* isWsl)) return yield* net.findAvailablePort(preferred);
     const windows = yield* readWindowsHostListeners;
-    if (windows.kind === "unavailable") {
+    if (windows === null) {
       yield* Effect.logWarning(
         "Could not list Windows TCP listeners from WSL; Windows may be unable to reach the selected port. Pass --port to choose one.",
       );
       return yield* net.findAvailablePort(preferred);
     }
-    if (!windows.ports.has(preferred) && (yield* net.isPortAvailableOnLoopback(preferred))) {
+    if (!windows.has(preferred) && (yield* net.isPortAvailableOnLoopback(preferred))) {
       return preferred;
     }
     // Linux and Windows ephemeral ranges overlap, so fallback ports can collide too.
     for (let attempt = 0; attempt < FALLBACK_ATTEMPTS; attempt += 1) {
       const port = yield* net.reserveLoopbackPort();
-      if (!windows.ports.has(port)) return port;
+      if (!windows.has(port)) return port;
     }
     return yield* new CliError.UserError({
       cause:

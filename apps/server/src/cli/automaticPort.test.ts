@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
+import * as CliError from "effect/cli/CliError";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -117,6 +118,20 @@ describe("automatic port selection", () => {
         reservedPorts: [50_001, 50_002],
       });
       expect(result.port).toBe(50_002);
+    }),
+  );
+
+  it.effect("fails with an actionable error when every fallback belongs to Windows", () =>
+    Effect.gen(function* () {
+      const ports = Array.from({ length: 8 }, (_, index) => 50_001 + index);
+      const error = yield* select({
+        kernelRelease: WSL_KERNEL,
+        windowsPorts: [3773],
+        windowsPortsV6: ports,
+        reservedPorts: ports,
+      }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(CliError.UserError);
+      expect(error.cause).toContain("--port");
     }),
   );
 
