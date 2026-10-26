@@ -675,14 +675,15 @@ export const make = Effect.gen(function* () {
         ],
       }).pipe(Effect.asVoid);
     }),
-    getIdentityAvatar: (input) =>
-      Cache.get(avatarCache, {
+    getIdentityAvatar: Effect.fn("AzureDevOpsCli.getIdentityAvatar")(function (input) {
+      return Cache.get(avatarCache, {
         cwd: input.cwd,
         identity: {
           organizationUrl: input.identity.organizationUrl,
           identityId: input.identity.identityId,
         },
-      }),
+      });
+    }),
   });
 });
 
