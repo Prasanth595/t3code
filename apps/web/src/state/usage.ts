@@ -12,7 +12,7 @@ import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -82,7 +82,7 @@ export interface UsageView {
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly isPending: boolean;
   readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
-  readonly isPartial: boolean;
+  readonly isWaitingLong: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
@@ -105,6 +105,19 @@ export function mergeAnsweredUsage(
         ],
   );
   return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+}
+
+const SETTLE_WINDOW_MS = 300;
+
+function useHeldFor(active: boolean, key: string) {
+  const [elapsedKey, setElapsedKey] = useState<string | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- the settle window is wall-clock time
+  useEffect(() => {
+    if (!active) return;
+    const timeout = setTimeout(() => setElapsedKey(key), SETTLE_WINDOW_MS);
+    return () => clearTimeout(timeout);
+  }, [active, key]);
+  return active && elapsedKey === key;
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
@@ -202,6 +215,10 @@ export function useUsage(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
+  const selectionKey =
+    selectedEnvironmentIds === null ? "all" : [...selectedEnvironmentIds].toSorted().join(",");
+  const isWaitingLong = useHeldFor(stillReporting > 0, `${windowKey}|${selectionKey}`);
+  const settled = answeredCount > 0 && (stillReporting === 0 || isWaitingLong);
 
   const [lastAnswered, setLastAnswered] = useState<
     | (NonNullable<UsageView["shown"]> & {
@@ -211,7 +228,7 @@ export function useUsage(
     | null
   >(null);
   if (
-    answeredCount > 0 &&
+    settled &&
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
       lastAnswered.selection !== selectedEnvironmentIds ||
@@ -228,10 +245,9 @@ export function useUsage(
     lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
       ? lastAnswered
       : null;
-  const shown =
-    answeredCount > 0
-      ? { window: input, merged }
-      : (kept ?? (isPending ? null : { window: input, merged }));
+  const shown = settled
+    ? { window: input, merged }
+    : (kept ?? (stillReporting > 0 ? null : { window: input, merged }));
 
   return {
     merged,
@@ -239,7 +255,7 @@ export function useUsage(
     selectedEnvironments,
     isPending,
     shown,
-    isPartial: answeredCount > 0 && stillReporting > 0,
+    isWaitingLong,
     refresh,
   };
 }
