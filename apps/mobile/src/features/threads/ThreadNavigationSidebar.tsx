@@ -753,8 +753,7 @@ function ThreadNavigationSidebarPane(
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
-                // The v5 stack lays the list out under its header even when the
-                // pre-iOS 26 header looks opaque; the safe-area inset clears it.
+                // The v5 header overlays the list even when it looks opaque before iOS 26.
                 automaticallyAdjustsScrollIndicatorInsets
                 contentInsetAdjustmentBehavior="automatic"
                 contentContainerStyle={[
