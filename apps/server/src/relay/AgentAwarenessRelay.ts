@@ -410,11 +410,10 @@ export const make = Effect.gen(function* () {
   // earlier alert time. Kept across clears, tombstones and relinks for that reason.
   const latestAlertAtByThread = new Map<ThreadId, DateTime.Utc>();
   const recordAlertAt = (threadId: ThreadId, updatedAt: string) => {
-    const previous = latestAlertAtByThread.get(threadId);
     const next = DateTime.makeUnsafe(updatedAt);
     latestAlertAtByThread.set(
       threadId,
-      previous === undefined ? next : DateTime.max(previous, next),
+      DateTime.max(latestAlertAtByThread.get(threadId) ?? next, next),
     );
   };
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
@@ -742,8 +741,6 @@ export const make = Effect.gen(function* () {
     return current?.id ?? null;
   });
 
-  // A subagent's request changes its top-level thread's row, so that row is
-  // republished whenever the child's request appears, changes or clears.
   const trackSubagentRequest = Effect.fnUntraced(function* (
     threadId: ThreadId,
     threadShell: OrchestrationV2ThreadShell | null,
@@ -773,8 +770,6 @@ export const make = Effect.gen(function* () {
     yield* enqueueTopLevelPublish(topLevelThreadId);
   });
 
-  // A child that starts waiting while publishing is paused must still count
-  // when its parent is next published.
   const trackSubagentWhilePaused = Effect.fnUntraced(function* (threadId: ThreadId) {
     if (!hasPublished) return;
     yield* trackSubagentRequest(threadId, yield* threads.getThreadShell(threadId));
@@ -785,7 +780,7 @@ export const make = Effect.gen(function* () {
   const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
     let pending: SubagentRequestAwareness | null = null;
     let pendingChangeOrder = 0;
-    for (const [childId, entry] of [...subagentRequests]) {
+    for (const [childId, entry] of subagentRequests) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* threads.getThreadShell(childId);
       const request =
@@ -846,8 +841,6 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
-  // A child's new request is fresh activity for its parent, so it gets a fresh
-  // retry budget like any other event.
   enqueueTopLevelPublish = enqueueThreadPublish;
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
