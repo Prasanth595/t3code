@@ -12268,7 +12268,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-    if (plan.events.length === 0 && plan.effects.length === 0) {
+    if (plan.events.length === 0 && plan.effects.length === 0 && cancelledTask === undefined) {
       // A settle that ended nothing still records its receipt: a replayed Stop
       // effect then finds it instead of settling work that appeared since.
       const { resultSequence, inserted } = yield* Effect.gen(function* () {
@@ -12671,16 +12671,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null;
         // Descendant refusal must not publish a successful cancellation of this task.
         yield* input.stopDescendants;
-        const now = yield* DateTime.now;
-        const cancelledRun = followUpRun ?? progressAfterTurn(child).resultRun ?? child.runs.at(-1);
-        const cancelledTask =
-          task !== undefined && unsettled && cancelledRun !== undefined
-            ? { ...task, cancelledRunId: cancelledRun.id, updatedAt: now }
-            : undefined;
-        // The marker, Stop receipt and interrupt outbox commit together under both locks.
         yield* threadDispatch.withLock(
           command.threadId,
-          dispatchWithReceiptEffect(command, cancelledTask),
+          Effect.gen(function* () {
+            const child = yield* projectionStore
+              .getThreadRecords(
+                command.threadId,
+                ["runs", "messages", "subagents", "providerThreads"],
+                { messageRoles: ["user"] },
+              )
+              .pipe(mapDispatchError(command));
+            const followUpRun = child.runs
+              .filter((run) => run.delegatedTaskId === input.taskId)
+              .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+            const monitorRunIds = new Set(
+              child.messages
+                .filter((message) => message.notification?.source.kind === "monitor")
+                .map((message) => message.runId),
+            );
+            const activeRun = child.runs
+              .filter((run) => isLiveRun(run) && !monitorRunIds.has(run.id))
+              .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+            const cancelledRun = followUpRun ?? activeRun ?? progressAfterTurn(child).resultRun;
+            const now = yield* DateTime.now;
+            const cancelledTask =
+              task !== undefined && unsettled && cancelledRun !== undefined
+                ? { ...task, cancelledRunId: cancelledRun.id, updatedAt: now }
+                : undefined;
+            // The marker, Stop receipt and interrupt outbox commit together under both locks.
+            yield* dispatchWithReceiptEffect(command, cancelledTask);
+          }),
         );
         yield* finalizeAppOwnedSubagent(command.threadId).pipe(mapDispatchError(command));
       }),

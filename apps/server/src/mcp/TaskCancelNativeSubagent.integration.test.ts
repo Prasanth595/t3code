@@ -289,6 +289,41 @@ const cancelBackgroundOnlyTask = (
           createdBy: "agent",
           creationSource: "mcp",
         });
+        if (cancelAt === "turn") {
+          const pendingTask = (yield* orchestrator.getThreadProjection(parentThreadId))
+            .subagents[0]!;
+          const { runs } = yield* orchestrator.getThreadProjection(pendingTask.childThreadId!);
+          const now = yield* DateTime.now;
+          const current = runs[0]!;
+          const previous = {
+            ...current,
+            id: RunId.make("run:before-continuation"),
+            ordinal: 1,
+            status: "completed" as const,
+            startedAt: now,
+            completedAt: now,
+          };
+          const at = { threadId: current.threadId, occurredAt: now };
+          yield* eventSink.write({
+            commandId: CommandId.make("command:runtime-reconcile:continuation"),
+            events: [
+              {
+                ...at,
+                runId: current.id,
+                id: EventId.make("event:continuation"),
+                type: "run.updated",
+                payload: { ...current, ordinal: 2, restartContinuationOfRunId: previous.id },
+              },
+              {
+                ...at,
+                runId: previous.id,
+                id: EventId.make("event:previous"),
+                type: "run.updated",
+                payload: previous,
+              },
+            ],
+          });
+        }
         yield* worker.drain();
         yield* Fiber.join(childRunning);
         const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
@@ -530,6 +565,7 @@ const cancelBackgroundOnlyTask = (
           clientRequestId: "cancel-task",
         });
         assert.equal(cancelled.status, "cancel_requested");
+        assert.equal((yield* parentTask)?.cancelledRunId, child.turn.runId);
         // The turn completes normally after Stop, before its interrupt reaches the provider.
         if (cancelAt === "turn") yield* endTurn;
         yield* worker.drain();
@@ -555,7 +591,7 @@ const cancelBackgroundOnlyTask = (
         );
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
-        assert.equal(childAfter.runs.length, cancelAt === "monitor" ? 2 : 1);
+        assert.equal(childAfter.runs.length, cancelAt === "monitor" || cancelAt === "turn" ? 2 : 1);
         assert.equal(childAfter.runs[0]!.status, "completed");
         assert.deepEqual(
           childAfter.runtimeRequests.map((request) => [request.id, request.status]),
