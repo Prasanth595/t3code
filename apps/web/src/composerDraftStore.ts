@@ -51,6 +51,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "./terminalUiStateStore";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1368,6 +1369,15 @@ function draftThreadHasOpenPreview(draftThread: DraftThreadState | undefined): b
   return Object.keys(readThreadPreviewState(ref).sessions).length > 0;
 }
 
+function draftThreadHasOpenTerminal(draftThread: DraftThreadState | undefined): boolean {
+  if (draftThread === undefined) return false;
+  const ref = scopeThreadRef(draftThread.environmentId, draftThread.threadId);
+  return (
+    selectThreadTerminalUiState(useTerminalUiStateStore.getState().terminalUiStateByThreadKey, ref)
+      .terminalIds.length > 0
+  );
+}
+
 function isComposerThreadKeyInUse(mappings: Record<string, string>, threadKey: string): boolean {
   return Object.values(mappings).includes(threadKey);
 }
@@ -1982,7 +1992,8 @@ export function partializeComposerDraftStoreState(
           mappedDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
-          draftThreadHasOpenPreview(draftThread),
+          draftThreadHasOpenPreview(draftThread) ||
+          draftThreadHasOpenTerminal(draftThread),
       )
       .map(([threadKey]) => threadKey),
   );
@@ -2566,7 +2577,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               !composerDraftHasUserContent(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               ) &&
-              !draftThreadHasOpenPreview(previousDraftThread)
+              !draftThreadHasOpenPreview(previousDraftThread) &&
+              !draftThreadHasOpenTerminal(previousDraftThread)
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {

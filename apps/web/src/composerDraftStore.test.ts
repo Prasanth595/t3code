@@ -98,6 +98,7 @@ import {
 import { formatTerminalContextReference, type TerminalContextDraft } from "./lib/terminalContext";
 import { createDeferredStorage } from "./lib/storage";
 import { applyPreviewServerSnapshot, resetPreviewStateForTests } from "./previewStateStore";
+import { useTerminalUiStateStore } from "./terminalUiStateStore";
 
 function makeImage(input: {
   id: string;
@@ -927,6 +928,26 @@ describe("composerDraftStore project draft thread mapping", () => {
       expect(persisted.draftThreadsByThreadKey[draftId]?.threadId).toBe(threadId);
     } finally {
       resetPreviewStateForTests();
+    }
+  });
+
+  it("keeps a draft with an open terminal when remapping a project to a new draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    useTerminalUiStateStore
+      .getState()
+      .newTerminal(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "terminal-1");
+    try {
+      store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
+      const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+      expect(persisted.draftThreadsByThreadKey[draftId]?.threadId).toBe(threadId);
+    } finally {
+      useTerminalUiStateStore.setState({
+        terminalUiStateByThreadKey: {},
+        suppressedTerminalIdsByThreadKey: {},
+      });
     }
   });
 

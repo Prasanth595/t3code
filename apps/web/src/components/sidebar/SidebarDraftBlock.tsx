@@ -7,6 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
@@ -19,11 +20,12 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
-  composer: ComposerThreadDraftState;
+  composer: ComposerThreadDraftState | null;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   isActive: boolean;
@@ -32,22 +34,26 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
-  const promptPreview =
-    replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
-      .trim()
-      .split("\n", 1)[0] ?? "";
+  const promptPreview = composer
+    ? (replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
+        .trim()
+        .split("\n", 1)[0] ?? "")
+    : "";
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
-  const attachmentCount =
-    Math.max(composer.images.length, composer.persistedAttachments.length) +
-    composer.files.length +
-    composer.terminalContexts.length +
-    composer.previewAnnotations.length +
-    composer.reviewComments.length;
+  const attachmentCount = composer
+    ? Math.max(composer.images.length, composer.persistedAttachments.length) +
+      composer.files.length +
+      composer.terminalContexts.length +
+      composer.previewAnnotations.length +
+      composer.reviewComments.length
+    : 0;
   const preview =
     promptPreview.length > 0
       ? promptPreview
-      : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+      : attachmentCount > 0
+        ? `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+        : "Terminal open";
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
     statusLabel: "Unsent draft",
@@ -134,7 +140,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
 interface SidebarDraftRowData {
   draftId: DraftId;
   session: DraftSessionState;
-  composer: ComposerThreadDraftState;
+  composer: ComposerThreadDraftState | null;
 }
 
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
@@ -147,6 +153,17 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
+  const terminalUiStateByThreadKey = useTerminalUiStateStore(
+    (store) => store.terminalUiStateByThreadKey,
+  );
+  // A script run from a draft opens a terminal without touching the composer;
+  // hiding that draft would leave its process running with no way back to it.
+  const isListed = (session: DraftSessionState, composer: ComposerThreadDraftState | undefined) =>
+    composerDraftHasUserContent(composer) ||
+    selectThreadTerminalUiState(
+      terminalUiStateByThreadKey,
+      scopeThreadRef(session.environmentId, session.threadId),
+    ).terminalIds.length > 0;
   const [frozenActive, setFrozenActive] = useState<{
     routeDraftId: string | null;
     row: SidebarDraftRowData | null;
@@ -158,8 +175,8 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       const session = draftThreadsByThreadKey[draftId];
       const composer = draftsByThreadKey[draftId];
       row =
-        session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
-          ? { draftId, session, composer }
+        session && session.promotedTo == null && isListed(session, composer)
+          ? { draftId, session, composer: composer ?? null }
           : null;
     }
     setFrozenActive({ routeDraftId: props.routeDraftId, row });
@@ -183,10 +200,14 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         continue;
       }
       const composer = draftsByThreadKey[draftKey];
-      if (!composer || !composerDraftHasUserContent(composer)) {
+      if (!isListed(session, composer)) {
         continue;
       }
-      rows.push({ draftId: DraftId.make(draftKey), session, composer });
+      rows.push({
+        draftId: DraftId.make(draftKey),
+        session,
+        composer: composer ?? null,
+      });
     }
     rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
     return rows;

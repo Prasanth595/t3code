@@ -8,7 +8,9 @@ import { useThreadUndoNotice } from "../hooks/showThreadUndoNotice";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 import { discardComposerDraft } from "./discardComposerDraft";
 
-vi.mock("./attachmentUploadQueue", () => ({ releaseDraftAttachments: vi.fn() }));
+vi.mock("./attachmentUploadQueue", () => ({
+  releaseDraftAttachments: vi.fn(),
+}));
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectRef = scopeProjectRef(environmentId, ProjectId.make("project-1"));
@@ -56,6 +58,17 @@ describe("discardComposerDraft", () => {
     );
     vi.runAllTimers();
     expect(releaseDraftAttachments).not.toHaveBeenCalled();
+  });
+
+  it("discards and restores a new-thread draft with no composer content", async () => {
+    useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+    const session = useComposerDraftStore.getState().getDraftSession(draftId);
+
+    discardComposerDraft(draftId);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+
+    await undoNotice().undo();
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toEqual(session);
   });
 
   it("keeps text typed after the discard and releases the old uploads", async () => {
