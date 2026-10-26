@@ -6,6 +6,8 @@ import {
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
 import { fileIconPathForMimeType } from "@t3tools/shared/mediaPreview";
 
+import type { ContextChipAccentKind } from "~/lib/contextChipAccents";
+
 export interface PierreIconResolution {
   name: string;
   token?: string;
@@ -244,9 +246,17 @@ export function resolvePierreIconForEntry(
     : icon;
 }
 
-export function documentIconColorForFileName(fileName: string) {
+const DOCUMENT_CHIP_KINDS: Readonly<Record<string, ContextChipAccentKind>> = {
+  "t3-file-icon-pdf": "doc-pdf",
+  "t3-file-icon-word": "doc-word",
+  "t3-file-icon-spreadsheet": "doc-spreadsheet",
+  "t3-file-icon-slides": "doc-slides",
+  "t3-file-icon-epub": "doc-epub",
+};
+
+export function documentChipKindForFileName(fileName: string) {
   const icon = resolvePierreIconForEntry(fileName, "file");
-  return icon ? DOCUMENT_ICON_COLORS[icon.name] : undefined;
+  return icon ? DOCUMENT_CHIP_KINDS[icon.name] : undefined;
 }
 
 export function hasSpecificPierreIconForFileName(fileName: string): boolean {

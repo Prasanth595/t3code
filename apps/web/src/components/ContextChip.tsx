@@ -28,6 +28,11 @@ const contextChipVariants = cva(
         skill: "[--context-chip-accent:var(--context-chip-skill)]",
         thread: "[--context-chip-accent:var(--context-chip-thread)]",
         citation: "[--context-chip-accent:var(--context-chip-citation)]",
+        "doc-pdf": "[--context-chip-accent:var(--context-chip-doc-pdf)]",
+        "doc-word": "[--context-chip-accent:var(--context-chip-doc-word)]",
+        "doc-spreadsheet": "[--context-chip-accent:var(--context-chip-doc-spreadsheet)]",
+        "doc-slides": "[--context-chip-accent:var(--context-chip-doc-slides)]",
+        "doc-epub": "[--context-chip-accent:var(--context-chip-doc-epub)]",
       },
       state: {
         unresolved: "data-[state=unresolved]:[--context-chip-accent:currentColor]",

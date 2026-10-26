@@ -15,6 +15,11 @@ export const CONTEXT_CHIP_ACCENTS = {
   skill: "oklch(0.62 0.16 322)",
   thread: "oklch(0.62 0.12 190)",
   citation: "oklch(0.62 0.16 259)",
+  "doc-pdf": "oklch(0.62 0.16 24)",
+  "doc-word": "oklch(0.62 0.136 248)",
+  "doc-spreadsheet": "oklch(0.62 0.134 148)",
+  "doc-slides": "oklch(0.62 0.134 56)",
+  "doc-epub": "oklch(0.62 0.16 291)",
 } as const;
 
 export type ContextChipAccentKind = keyof typeof CONTEXT_CHIP_ACCENTS;
