@@ -24,7 +24,7 @@ import {
 } from "../persistence/schema.ts";
 import * as SaasCrypto from "./SaasCrypto.ts";
 
-export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+export const DEFAULT_DEEPSEEK_MODEL = "deepseek-flash";
 const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_MODEL_SETTING = "deepseek_model";
 const ANONYMOUS_CHAT_LIMIT_SETTING = "anonymous_daily_chat_limit";

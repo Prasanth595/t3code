@@ -129,8 +129,8 @@ export const layer = Api.make(
       },
       // Requests run several Postgres queries in sequence. At the user's edge
       // each one paid the round trip to the database (~300 ms from JNB); next
-      // to PlanetScale `us-west` the request pays that distance once.
-      placement: { region: "aws:us-west-2" },
+      // to the database the request pays that distance once. Keep it in the Neon project's region.
+      placement: { region: "aws:eu-central-1" },
       domain: relayPublicDomain,
     })),
     Effect.orDie,
