@@ -53,3 +53,32 @@ describe("Bitbucket remotes", () => {
     expect(recognize("https://notbitbucket.example.com/workspace/repo.git")).toBeNull();
   });
 });
+
+describe("Bitbucket Downloads media", () => {
+  it("canonicalizes Cloud web and API downloads for signed media", () => {
+    for (const source of [
+      "https://bitbucket.org/workspace/repo/downloads/clip%20one.mp4#t=2",
+      "https://www.bitbucket.org/workspace/repo/downloads/clip%20one.mp4",
+      "https://api.bitbucket.org/2.0/repositories/workspace/repo/downloads/clip%20one.mp4",
+    ]) {
+      expect(definition.mediaUrl?.(new URL(source))).toEqual({
+        fetchUrl:
+          "https://api.bitbucket.org/2.0/repositories/workspace/repo/downloads/clip%20one.mp4",
+        fileName: "clip one.mp4",
+      });
+    }
+  });
+
+  it("does not claim other hosts, protocols, or non-download endpoints", () => {
+    for (const source of [
+      "http://bitbucket.org/workspace/repo/downloads/clip.mp4",
+      "https://bitbucket.example.com/workspace/repo/downloads/clip.mp4",
+      "https://api.bitbucket.org/2.0/user",
+      "https://bitbucket.org/workspace/repo/src/main/clip.mp4",
+      "https://bitbucket.org/workspace/repo/downloads/",
+      "https://bitbucket.org:444/workspace/repo/downloads/clip.mp4",
+      "https://user:pass@bitbucket.org/workspace/repo/downloads/clip.mp4",
+    ])
+      expect(definition.mediaUrl?.(new URL(source)) ?? null).toBeNull();
+  });
+});

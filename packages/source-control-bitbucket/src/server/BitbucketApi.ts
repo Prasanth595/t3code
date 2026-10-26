@@ -15,7 +15,8 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import type { SourceControlDriverInstance } from "@t3tools/source-control-core/server/driver";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
@@ -328,6 +329,7 @@ export class BitbucketApi extends Context.Service<
   BitbucketApi,
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
+    readonly fetchMedia: NonNullable<SourceControlDriverInstance["fetchMedia"]>;
 
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
@@ -986,6 +988,31 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
+    fetchMedia: Effect.fn("BitbucketApi.fetchMedia")(function* (input) {
+      const client = HttpClient.withScope(httpClient);
+      let target = input.url;
+      for (let hop = 0; ; hop += 1) {
+        const url = new URL(target);
+        if (url.protocol !== "https:" || url.username || url.password) return null;
+        const request = HttpClientRequest.get(target).pipe(
+          HttpClientRequest.setHeaders({ ...input.headers, "accept-encoding": "identity" }),
+        );
+        // Reauthorize each target so object-store redirects never receive the API credential.
+        const authorized = originOf(target) === apiOrigin ? yield* withAuth(request) : request;
+        const response = yield* client
+          .execute(authorized)
+          .pipe(
+            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+            Effect.timeoutOption(BITBUCKET_API_REQUEST_TIMEOUT),
+          );
+        if (Option.isNone(response)) return null;
+        const value = response.value;
+        if (value.status < 300 || value.status >= 400) return value;
+        const location = value.headers.location;
+        if (!location || hop >= MAX_REDIRECTS || !URL.canParse(location, target)) return null;
+        target = new URL(location, target).toString();
+      }
+    }),
     probeAuth: executeJson(
       "probeAuth",
       HttpClientRequest.get(apiUrl("/user")),

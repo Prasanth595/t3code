@@ -1,3 +1,6 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { MarkdownMediaLocation } from "./markdownImageGallery";
+import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
@@ -75,6 +78,7 @@ export const MarkdownLinkContext = createContext(false);
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
   alt: string,
+  mediaLocation?: MarkdownMediaLocation,
 ) {
   if (!onImageExpand) return {};
   const previewName = alt.trim() || "image";
@@ -83,7 +87,7 @@ function expandableMarkdownImageProps(
     event.preventDefault();
     event.stopPropagation();
     const item = markdownImageItems.get(event.currentTarget);
-    if (item) onImageExpand(markdownImageGallery(event.currentTarget, item));
+    if (item) onImageExpand(markdownImageGallery(event.currentTarget, item, mediaLocation));
   };
   return {
     role: "button" as const,
@@ -166,6 +170,7 @@ export function ChatMarkdownImage(props: {
   readonly actionsSource: MediaActionSource;
   readonly originalUrl?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly mediaLocation?: MarkdownMediaLocation | undefined;
 }) {
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -178,6 +183,7 @@ export function ChatMarkdownImage(props: {
     if (image.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
     markdownImageItems.set(image, {
       src,
+      ...(src ? { srcFragment: markdownImageSourceFragment(src) } : {}),
       name: props.alt.trim() || "image",
       actionsSource: props.actionsSource,
       ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
@@ -212,7 +218,7 @@ export function ChatMarkdownImage(props: {
             props.onImageExpand && "cursor-zoom-in",
           )}
           style={props.style}
-          {...expandableMarkdownImageProps(props.onImageExpand, props.alt)}
+          {...expandableMarkdownImageProps(props.onImageExpand, props.alt, props.mediaLocation)}
           {...imageEvents(src)}
         />
       </MediaActions>
@@ -336,6 +342,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
+  readonly mediaLocation?: MarkdownMediaLocation | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const resource = props.resource;
@@ -408,7 +415,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        onRetry={
+          fallbackSrc === undefined ||
+          !props.originalUrl ||
+          sourceControlClients.mediaUrl(props.originalUrl)?.definition.kind !== "bitbucket"
+            ? refreshAssetUrl
+            : async () => undefined
+        }
         actionsSource={actionsSource}
       />
     );
@@ -416,6 +429,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
 
   return (
     <ChatMarkdownImage
+      mediaLocation={props.mediaLocation}
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}

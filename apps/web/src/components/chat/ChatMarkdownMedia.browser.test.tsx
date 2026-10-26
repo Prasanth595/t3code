@@ -84,3 +84,57 @@ describe("ChatMarkdownAssetImage", () => {
     expect(assetQuery.mints).toBe(2);
   });
 });
+
+it("keeps image fragments and signs gallery links independently of public thumbnails", async () => {
+  const onImageExpand = vi.fn();
+  const mediaLocation = { environmentId: EnvironmentId.make("environment-1"), cwd: "/repo" };
+  const src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#icon";
+  const { ChatMarkdownImage } = await import("./ChatMarkdownMedia");
+  await using screen = await render(
+    <div data-image-gallery style={{ display: "flex", gap: 16 }}>
+      <ChatMarkdownImage
+        src={src}
+        style={{ width: 64, height: 64 }}
+        alt="first"
+        copyMarkdown={undefined}
+        standalone={false}
+        actionsSource={{ kind: "image", name: "first", src }}
+        onImageExpand={onImageExpand}
+        mediaLocation={mediaLocation}
+      />
+      <a href="https://bitbucket.org/acme/web/downloads/full.png#view">
+        <ChatMarkdownImage
+          src={src}
+          style={{ width: 64, height: 64 }}
+          alt="thumbnail"
+          copyMarkdown={undefined}
+          standalone={false}
+          actionsSource={{ kind: "image", name: "thumbnail", src }}
+          onImageExpand={onImageExpand}
+          mediaLocation={mediaLocation}
+        />
+      </a>
+    </div>,
+  );
+  await screen.getByRole("button", { name: "Preview first" }).click();
+  expect(onImageExpand).toHaveBeenCalledOnce();
+  expect(onImageExpand.mock.calls[0]?.[0]).toMatchObject({
+    index: 0,
+    images: [
+      { srcFragment: "#icon" },
+      {
+        srcFragment: "#view",
+        actionsSource: {
+          asset: {
+            environmentId: mediaLocation.environmentId,
+            resource: {
+              _tag: "github-media",
+              cwd: "/repo",
+              url: "https://api.bitbucket.org/2.0/repositories/acme/web/downloads/full.png",
+            },
+          },
+        },
+      },
+    ],
+  });
+});

@@ -1,3 +1,5 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 import type { SnapShotSource } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
@@ -40,6 +42,8 @@ export interface ExpandedImagePreview {
 
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
+  environmentId?: EnvironmentId | undefined;
+  sourceControlMedia?: boolean | undefined;
   resolvedFilePath?: string | undefined;
   cwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
@@ -61,21 +65,38 @@ export async function resolveMarkdownMediaPreview(input: {
 
   let src: string;
   let asset: MediaActionSource["asset"];
-  if (media.access === "direct") {
+  const bitbucketUrl =
+    input.sourceControlMedia && media.access === "direct"
+      ? sourceControlClients.mediaUrl(resolveProtocolRelativeMediaUrl(media.uri))
+      : null;
+  const pullRequestResource =
+    bitbucketUrl?.definition.kind === "bitbucket" && input.cwd
+      ? { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: input.cwd, url: bitbucketUrl.fetchUrl }
+      : null;
+  if (media.access === "direct" && pullRequestResource === null) {
     src = resolveProtocolRelativeMediaUrl(media.uri);
   } else {
-    if (media.access === "unavailable" || !input.threadRef || !input.httpBaseUrl) {
-      throw new Error("Reconnect to this environment and open the media again.");
+    const environmentId = input.environmentId ?? input.threadRef?.environmentId;
+    const resource =
+      pullRequestResource ?? (media.access === "environment" ? media.resource : null);
+    try {
+      if (resource === null || environmentId === undefined || !input.httpBaseUrl) {
+        throw new Error("Reconnect to this environment and open the media again.");
+      }
+      asset = { environmentId, resource };
+      const result = await input.createAssetUrl({
+        environmentId: asset.environmentId,
+        input: { resource: asset.resource },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      const assetUrl = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
+      if (assetUrl === null) throw new Error("The environment returned an invalid media URL.");
+      src = assetUrl + media.srcFragment;
+    } catch (error) {
+      if (pullRequestResource === null || media.access !== "direct") throw error;
+      asset = undefined;
+      src = resolveProtocolRelativeMediaUrl(media.uri);
     }
-    asset = { environmentId: input.threadRef.environmentId, resource: media.resource };
-    const result = await input.createAssetUrl({
-      environmentId: asset.environmentId,
-      input: { resource: asset.resource },
-    });
-    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    const assetUrl = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
-    if (assetUrl === null) throw new Error("The environment returned an invalid media URL.");
-    src = assetUrl + media.srcFragment;
   }
   return {
     images: [

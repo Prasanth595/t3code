@@ -1,3 +1,4 @@
+import { mediaPreviewUri } from "../lib/mediaPreviewUri";
 import * as Dialog from "./ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -44,6 +45,7 @@ function PreviewItemResolver(props: {
   const refreshAssetUrl = useRefreshAssetUrl(
     environmentId,
     "resource" in source ? source.resource : null,
+    source.fallbackUri,
   );
   // Resolve once per presentation; background URL refreshes must not reopen the native viewer.
   const [uri, setUri] = useState<string | null>("uri" in source ? source.uri : null);
@@ -62,7 +64,7 @@ function PreviewItemResolver(props: {
       .then((url) => {
         if (cancelled) return;
         if (!url) throw new Error("Reconnect to this environment and try again.");
-        setUri(url + (source.srcFragment ?? ""));
+        setUri(mediaPreviewUri(url, source.srcFragment));
       })
       .catch((error: unknown) => {
         if (cancelled) return;

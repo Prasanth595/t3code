@@ -65,6 +65,24 @@ export type BitbucketSettings = typeof settings.Type;
 
 export const definition = defineSourceControl({
   kind: KIND,
+  mediaUrl: (url) => {
+    if (url.protocol !== "https:" || url.port || url.username || url.password) return null;
+    const download =
+      url.hostname === "bitbucket.org" || url.hostname === "www.bitbucket.org"
+        ? /^\/([^/]+)\/([^/]+)\/downloads\/([^/]+)$/u.exec(url.pathname)
+        : url.hostname === "api.bitbucket.org"
+          ? /^\/2\.0\/repositories\/([^/]+)\/([^/]+)\/downloads\/([^/]+)$/u.exec(url.pathname)
+          : null;
+    if (!download) return null;
+    let fileName = download[3]!;
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch {}
+    return {
+      fetchUrl: `https://api.bitbucket.org/2.0/repositories/${download[1]}/${download[2]}/downloads/${download[3]}`,
+      fileName: fileName.replace(/[\p{Cc}\\/]/gu, "") || "bitbucket-media",
+    };
+  },
   label: "Bitbucket",
   pickerLabel: "Bitbucket",
   icon,

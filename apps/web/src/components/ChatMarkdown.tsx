@@ -513,6 +513,8 @@ function useChatMarkdownState({
   ) => {
     const requestId = ++mediaRequestId.current;
     void resolveMarkdownMediaPreview({
+      environmentId: environmentId ?? undefined,
+      sourceControlMedia,
       source,
       resolvedFilePath,
       cwd,
@@ -531,7 +533,11 @@ function useChatMarkdownState({
           const selected = preview.images[preview.index];
           expandMedia(
             selected && selected.type !== "video" && markdownRef.current
-              ? markdownImageGallery(clickedImage ?? markdownRef.current, selected)
+              ? markdownImageGallery(
+                  clickedImage ?? markdownRef.current,
+                  selected,
+                  sourceControlMedia && environmentId && cwd ? { environmentId, cwd } : undefined,
+                )
               : preview,
           );
         }
@@ -1424,6 +1430,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     ) {
       return (
         <ChatMarkdownAssetImage
+          mediaLocation={
+            sourceControlMedia && environmentId && cwd ? { environmentId, cwd } : undefined
+          }
           environmentId={environmentId}
           resource={{ _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: hostMediaUrl }}
           alt={altText}
@@ -1436,7 +1445,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={hostMediaUrl}
+          fallbackSrc={
+            sourceControlClients.mediaUrl(hostMediaUrl)?.definition.kind === "bitbucket"
+              ? resolveProtocolRelativeMediaUrl(directUri).split("#", 1)[0]
+              : hostMediaUrl
+          }
           onImageExpand={imageExpand}
         />
       );
@@ -1466,6 +1479,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       return (
         <ChatMarkdownImage
+          mediaLocation={
+            sourceControlMedia && environmentId && cwd ? { environmentId, cwd } : undefined
+          }
           key={mediaSrc}
           src={mediaSrc}
           alt={altText}
