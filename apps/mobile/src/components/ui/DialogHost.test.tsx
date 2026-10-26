@@ -7,7 +7,18 @@ vi.mock("react-native", () => {
   return {
     Alert: { alert: vi.fn() },
     KeyboardAvoidingView: Slot,
-    Modal: Slot,
+    Modal: (props: {
+      readonly children?: ReactNode;
+      readonly visible: boolean;
+      readonly onDismiss?: () => void;
+      readonly onRequestClose?: () => void;
+    }) => (
+      <div>
+        {props.visible ? props.children : null}
+        <button onClick={props.onDismiss}>Dismiss modal</button>
+        <button onClick={props.onRequestClose}>Request close</button>
+      </div>
+    ),
     ScrollView: Slot,
     View: Slot,
     useWindowDimensions: () => ({ width: 390, height: 844 }),
@@ -66,7 +77,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-it("confirms the edited value exactly once", () => {
+it("confirms the edited value exactly once after native dismissal", () => {
   const { container } = mountHost();
   const onConfirm = vi.fn();
   promptRename(onConfirm);
@@ -82,6 +93,12 @@ it("confirms the edited value exactly once", () => {
     rename.click();
   });
 
+  expect(onConfirm).not.toHaveBeenCalled();
+  const dismiss = button(container, "Dismiss modal");
+  act(() => {
+    dismiss.click();
+    dismiss.click();
+  });
   expect(onConfirm).toHaveBeenCalledExactlyOnceWith("new");
   expect(container.textContent).toBe("");
 });
@@ -100,3 +117,37 @@ it("presents from a mounted sheet host, then falls back to the root host", () =>
   promptRename(vi.fn());
   expect(app.container.textContent).toContain("Rename thread");
 });
+
+it.each(["Cancel", "Request close"])(
+  "waits for dismissal before %s opens another dialog",
+  (action) => {
+    const { container } = mountHost();
+    const onCancel = vi.fn(() =>
+      Dialog.prompt({
+        title: "Second prompt",
+        initialValue: "",
+        confirmText: "Save",
+        onConfirm: vi.fn(),
+      }),
+    );
+    act(() =>
+      Dialog.prompt({
+        title: "First prompt",
+        initialValue: "",
+        confirmText: "Save",
+        onConfirm: vi.fn(),
+        onCancel,
+      }),
+    );
+    act(() => button(container, action).click());
+    expect(onCancel).not.toHaveBeenCalled();
+    const dismiss = button(container, "Dismiss modal");
+    act(() => {
+      dismiss.click();
+      dismiss.click();
+    });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Second prompt");
+    expect(container.textContent).not.toContain("First prompt");
+  },
+);

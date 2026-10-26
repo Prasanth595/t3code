@@ -14,12 +14,12 @@ import { Button } from "./Button";
 import { registerPromptPresenter, type TextInputDialogRequest } from "./Dialog";
 import { GlassSurface } from "./GlassSurface";
 
-/** iOS presenter for Dialog.prompt; alerts and confirms are presented directly by React Native. */
 export function DialogHost() {
   const [presented, setPresented] = useState<
     (TextInputDialogRequest & { readonly id: number }) | null
   >(null);
   const nextPresentationId = useRef(0);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Register the native prompt presenter for this host's lifetime.
   useEffect(() => {
     const present = (request: TextInputDialogRequest) =>
       setPresented({ ...request, id: ++nextPresentationId.current });
@@ -46,13 +46,20 @@ function PromptDialog(props: {
   const stackActions = fontScale > 1.3;
   const { themeVariables } = useAppearancePreferences();
   const inputRef = useRef<TextInputInstance>(null);
-  const settled = useRef(false);
+  const pendingAction = useRef<(() => void) | null>(null);
+  const [visible, setVisible] = useState(true);
   const [value, setValue] = useState(request.initialValue);
-  // A second tap can land before the modal unmounts; only the first one counts.
   const settle = (run: () => void) => {
-    if (settled.current) return;
-    settled.current = true;
+    if (pendingAction.current) return;
+    pendingAction.current = run;
+    setVisible(false);
+  };
+  const dismissed = () => {
+    const run = pendingAction.current;
+    if (!run) return;
+    pendingAction.current = null;
     props.onClose();
+    // Callbacks can present another native alert or sheet only after UIKit dismisses this modal.
     run();
   };
   const cancel = () => settle(() => request.onCancel?.());
@@ -60,11 +67,12 @@ function PromptDialog(props: {
 
   return (
     <Modal
-      visible
+      visible={visible}
       transparent
       animationType="fade"
       onShow={() => inputRef.current?.focus()}
       onRequestClose={cancel}
+      onDismiss={dismissed}
     >
       <KeyboardAvoidingView
         behavior="padding"
