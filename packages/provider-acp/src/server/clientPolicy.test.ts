@@ -89,6 +89,23 @@ describe("acpPermissionDisposition", () => {
     assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");
   });
 
+  it("always asks before a mode switch, even when tools are auto-approved", () => {
+    const bypass: AcpRuntimePolicy = {
+      runtimeMode: "full-access",
+      cwd,
+      sandboxPolicy: { type: "dangerFullAccess" },
+    };
+    assert.equal(acpPermissionDisposition(bypass, permissionRequest("switch_mode")), "ask");
+    assert.equal(acpPermissionDisposition(policy, permissionRequest("switch_mode")), "ask");
+    assert.equal(
+      acpPermissionDisposition(
+        { runtimeMode: "approval-required", cwd },
+        permissionRequest("switch_mode"),
+      ),
+      "ask",
+    );
+  });
+
   it("auto-accept-edits approves file changes without locations and asks for the rest", () => {
     const autoAcceptEdits: AcpRuntimePolicy = { runtimeMode: "auto-accept-edits", cwd };
     for (const kind of ["edit", "delete", "move"] as const) {
