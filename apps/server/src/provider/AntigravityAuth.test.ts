@@ -62,6 +62,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly authorizationUrls?: ReadonlyArray<string>;
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
+    readonly beforeSignInClose?: Effect.Effect<void>;
     readonly credentialFileSystem?: FileSystem.FileSystem;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
   } = {},
@@ -112,6 +113,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
         events.push("process-open");
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            if (input.onAuthorizationUrl) yield* options.beforeSignInClose ?? Effect.void;
             if (tokenPath) tokensAtClose.push(yield* readToken);
             events.push("process-close");
             yield* Deferred.succeed(closed, undefined);
@@ -370,7 +372,14 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     return { fs, profileDirectory, directory, tokenPath };
   });
 
-  it.effect.each(["success", "cancel", "auth failure", "model failure"] as const)(
+  const credentialOutcomes = [
+    "success",
+    "cancel",
+    "cancel after sign-in",
+    "auth failure",
+    "model failure",
+  ] as const;
+  it.effect.each(credentialOutcomes)(
     "changes Google accounts without losing credentials on %s",
     (outcome) =>
       Effect.gen(function* () {
@@ -413,12 +422,15 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         ]);
         assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
 
-        const savedNewToken = outcome === "success" || outcome === "model failure";
+        const savedNewToken =
+          outcome === "success" ||
+          outcome === "model failure" ||
+          outcome === "cancel after sign-in";
         if (savedNewToken) {
           yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
           yield* Deferred.succeed(harness.authenticated, undefined);
         }
-        if (outcome === "cancel") {
+        if (outcome === "cancel" || outcome === "cancel after sign-in") {
           yield* harness.auth.controller.cancel(owner, state.flowId!);
         } else {
           if (outcome === "success") {
@@ -538,6 +550,38 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
           assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
         }
       }),
+  );
+
+  it.effect("signs out when authentication fails while its runtime is closing", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeCredentialProfile;
+      const closing = yield* Deferred.make<void>();
+      const continueClose = yield* Deferred.make<void>();
+      const signingOut = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        profileDirectory: profile.profileDirectory,
+        beforeSignInClose: Deferred.succeed(closing, undefined).pipe(
+          Effect.andThen(Deferred.await(continueClose)),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        AcpErrors.AcpRequestError.internalError("Rejected"),
+      );
+      yield* Deferred.await(closing);
+      const logout = yield* harness.auth.controller
+        .logout(Deferred.succeed(signingOut, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(signingOut);
+      yield* Deferred.succeed(continueClose, undefined);
+      yield* Fiber.join(logout);
+      assert.include(harness.events, "logout");
+      assert.deepEqual(harness.catalog(), []);
+      assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+      assert.deepEqual(yield* profile.fs.readDirectory(profile.directory), []);
+    }),
   );
 
   it.effect("leaves saved credentials available for non-browser authentication", () =>

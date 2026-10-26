@@ -46,15 +46,13 @@ const make = Effect.fn("AntigravityCredentials.make")(function* (profileDirector
   );
   const recover = Effect.gen(function* () {
     if (!(yield* fs.exists(backupPath))) return;
-    if (!(yield* fs.exists(tokenPath))) {
-      // Both names share a directory. A hard link installs atomically without replacing a native writer.
-      yield* fs.link(backupPath, tokenPath).pipe(
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
-        }),
-      );
-    }
+    // Both names share a directory. A hard link installs atomically without replacing a native writer.
+    yield* fs.link(backupPath, tokenPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
+      }),
+    );
     yield* fs.remove(backupPath, { force: true });
   }).pipe(
     Effect.mapError(

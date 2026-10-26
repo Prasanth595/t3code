@@ -544,7 +544,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               if (
                 signInResult &&
                 Exit.isFailure(signInResult) &&
-                !Cause.hasInterruptsOnly(signInResult.cause)
+                Option.exists(
+                  Cause.findErrorOption(signInResult.cause),
+                  (error) => isSetupError(error) && error.operation === "credentials",
+                )
               ) {
                 return yield* new ProviderSetupError({
                   instanceId: options.instanceId,

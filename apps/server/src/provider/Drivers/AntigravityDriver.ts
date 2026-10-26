@@ -372,7 +372,7 @@ export const AntigravityDriver: ProviderDriver<
               Effect.fail(
                 new ProviderSetupError({
                   instanceId,
-                  operation: "start",
+                  operation: "credentials",
                   detail: "Could not update the saved Google sign-in. Try again.",
                   cause,
                 }),
