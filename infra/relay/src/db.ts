@@ -51,7 +51,6 @@ export const NeonDatabase = Effect.gen(function* () {
     ? yield* Neon.Branch("RelayNeonBranch", {
         project,
         name: "relay",
-        protected: true,
         migrations,
       }).pipe(RemovalPolicy.retain())
     : yield* Neon.Branch("RelayNeonStageBranch", {
