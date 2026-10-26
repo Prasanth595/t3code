@@ -139,36 +139,24 @@ describe("terminalUiStateStore actions", () => {
     ]);
   });
 
-  it("keeps the split's tab active after closing one of its panes", () => {
+  it.each([
+    ["terminal-3", "terminal-3", DEFAULT_THREAD_TERMINAL_ID],
+    [DEFAULT_THREAD_TERMINAL_ID, DEFAULT_THREAD_TERMINAL_ID, "terminal-3"],
+    ["terminal-3", DEFAULT_THREAD_TERMINAL_ID, "terminal-3"],
+  ])("keeps the split's tab when %s is active and %s closes", (activeId, closedId, nextId) => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);
     store.newTerminal(THREAD_REF, "terminal-2");
     store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
     store.splitTerminal(THREAD_REF, "terminal-3");
-    store.closeTerminal(THREAD_REF, "terminal-3");
+    store.setActiveTerminal(THREAD_REF, activeId);
+    store.closeTerminal(THREAD_REF, closedId);
 
     const terminalUiState = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       THREAD_REF,
     );
-    expect(terminalUiState.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
-    expect(terminalUiState.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
-  });
-
-  it("activates the remaining split pane after closing the first pane", () => {
-    const store = useTerminalUiStateStore.getState();
-    store.setTerminalOpen(THREAD_REF, true);
-    store.newTerminal(THREAD_REF, "terminal-2");
-    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
-    store.splitTerminal(THREAD_REF, "terminal-3");
-    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
-    store.closeTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
-
-    const terminalUiState = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-    expect(terminalUiState.activeTerminalId).toBe("terminal-3");
+    expect(terminalUiState.activeTerminalId).toBe(nextId);
     expect(terminalUiState.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
 

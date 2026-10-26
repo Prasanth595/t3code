@@ -413,17 +413,14 @@ function closeThreadTerminal(
   }
 
   const closedTerminalIndex = normalized.terminalIds.indexOf(terminalId);
-  // A closed split pane hands focus to a pane beside it, keeping its tab in view.
-  const closedGroupTerminalIds =
+  const groupTerminalIds =
     normalized.terminalGroups.find((group) => group.terminalIds.includes(terminalId))
       ?.terminalIds ?? [];
-  const closedGroupIndex = closedGroupTerminalIds.indexOf(terminalId);
-  const remainingGroupTerminalIds = closedGroupTerminalIds.filter((id) => id !== terminalId);
+  const groupIndex = groupTerminalIds.indexOf(terminalId);
   const nextActiveTerminalId =
     normalized.activeTerminalId === terminalId
-      ? (remainingGroupTerminalIds[
-          Math.min(closedGroupIndex, remainingGroupTerminalIds.length - 1)
-        ] ??
+      ? (groupTerminalIds[groupIndex + 1] ??
+        groupTerminalIds[groupIndex - 1] ??
         remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
         remainingTerminalIds[0] ??
         "")
