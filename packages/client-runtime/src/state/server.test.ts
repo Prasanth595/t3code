@@ -229,8 +229,12 @@ describe("accepted server update recovery", () => {
     { loss: "server_error", resumes: false },
     { loss: "no_progress", resumes: false },
     { loss: "cancel", resumes: false },
-  ] as const)("handles $loss after update progress with recovery=$resumes", ({ loss, resumes }) =>
+    { loss: "socket", method: "respawn", resumes: true },
+    { loss: "socket", method: "desktop-managed", resumes: false },
+  ] as const)("handles $loss with $method and recovery=$resumes", (scenario) =>
     Effect.gen(function* () {
+      const { loss, resumes } = scenario;
+      const method = "method" in scenario ? scenario.method : "boot-service";
       const observing = yield* Deferred.make<void>();
       const cancelFiber = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
       const oldReadyObserved = yield* Deferred.make<void>();
@@ -241,7 +245,7 @@ describe("accepted server update recovery", () => {
         environment: {
           ...CONFIG.environment,
           serverVersion: "0.0.30",
-          capabilities: { serverSelfUpdate: "boot-service", serverSelfUpdateProgress: true },
+          capabilities: { serverSelfUpdate: method, serverSelfUpdateProgress: true },
         },
       } as ServerConfig;
       const client = {

@@ -916,9 +916,7 @@ export function createServerEnvironmentAtoms<R, E>(
                       Effect.exit,
                     );
                   const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
-                  // Progress proves the server started the update. If its transport
-                  // disappears, confirm the outcome through target ready.
-                  // Desktop preparation still needs its terminal commit token.
+                  // Desktop preparation needs its terminal commit token.
                   const accepted =
                     receivedProgress &&
                     (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")

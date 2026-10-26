@@ -155,8 +155,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
                   Effect.exit,
                 );
                 const selfUpdateMethod = capabilities.serverSelfUpdate;
-                // Progress confirms the update started. After transport loss,
-                // wait for the compatible host; desktop still needs its commit token.
+                // Desktop preparation needs its terminal commit token.
                 const accepted =
                   receivedProgress &&
                   (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
