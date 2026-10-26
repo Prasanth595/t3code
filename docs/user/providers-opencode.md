@@ -22,10 +22,10 @@ started on 1.x continue on 2.x.
 
 ## Plan mode
 
-Switch a thread to plan mode to use OpenCode's `plan` agent. Its final plan appears as
-a plan card in the thread. A plan
-that was cut off by a failure or interruption is not offered for implementation. To
-implement a plan, switch the thread out of plan mode.
+Switch a thread to plan mode to use OpenCode's `plan` agent. On OpenCode 2, its final
+plan appears as a plan card in the thread. A plan that was cut off by a failure or
+interruption is not offered for implementation. To implement a plan, switch the thread
+out of plan mode.
 
 ## Local or external server
 
