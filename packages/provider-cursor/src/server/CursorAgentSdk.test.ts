@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -118,7 +118,7 @@ vi.mock("./sdk.ts", () => ({
   SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen },
 }));
 
-const layerTest = CursorAgentSdk.layer.pipe(
+const layerRunner = CursorAgentSdk.layer.pipe(
   Layer.provide(
     Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
       native: {
@@ -139,11 +139,13 @@ const layerTest = CursorAgentSdk.layer.pipe(
     }),
   ),
   Layer.provide(CursorSdk.layer),
-  Layer.provide(NodeServices.layer),
 );
 
 const layerOn = (platform: NodeJS.Platform) =>
-  layerTest.pipe(Layer.provide(Layer.succeed(HostProcess.Platform, platform)));
+  layerRunner.pipe(
+    Layer.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+    Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+  );
 
 describe("CursorAgentSdkRunner", () => {
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>

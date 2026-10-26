@@ -18,11 +18,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as ScopedCache from "effect/ScopedCache";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Cursor state roots follow Windows path rules on any host.
-import * as NodePath from "node:path";
 
 import * as CursorSdk from "./CursorSdk.ts";
 import { getDefaultSdkStateRoot } from "./sdk.ts";
@@ -334,6 +333,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 ) {
   const { Agent, createAgentPlatform, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
   const platform = yield* HostProcess.Platform;
+  const path = yield* Path.Path;
 
   // SQLite cannot open the SDK's default per-agent store.db once its path passes MAX_PATH,
   // even with LongPathsEnabled. A \\?\ root keeps the same files reachable. Like the SDK's
@@ -345,7 +345,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           try: () =>
             SqliteLocalAgentStore.open({
               workspaceRef: cwd,
-              stateRoot: NodePath.win32.toNamespacedPath(getDefaultSdkStateRoot(cwd)),
+              stateRoot: path.toNamespacedPath(getDefaultSdkStateRoot(cwd)),
             }),
           catch: (cause) => runnerError(cause, "store.open"),
         }),
