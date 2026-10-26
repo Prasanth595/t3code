@@ -1006,7 +1006,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               : "abandoned",
         );
       }
-      if (split !== null && split.prose.length === 0) return;
+      if (split !== null && split.prose.trim().length === 0) return;
       const text = split?.prose ?? entry.text;
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;

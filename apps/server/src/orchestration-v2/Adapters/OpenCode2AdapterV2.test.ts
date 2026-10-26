@@ -2542,6 +2542,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("leaves no assistant message for whitespace streamed before a plan", () =>
+    Effect.gen(function* () {
+      const delta = (text: string) =>
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_plan_assistant",
+          ordinal: 0,
+          delta: text,
+        });
+      const { plans, messages } = yield* planTurn([
+        delta("\n"),
+        delta("<proposed_plan>\n# Plan\n</proposed_plan>"),
+        textEnded("\n<proposed_plan>\n# Plan\n</proposed_plan>"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.deepEqual(messages, []);
+      assert.equal(plans.at(-1)?.status, "active");
+    }),
+  );
+
   it.effect("supersedes a plan left unclosed by a failed turn", () =>
     Effect.gen(function* () {
       const { plans, planItems } = yield* planTurn([
