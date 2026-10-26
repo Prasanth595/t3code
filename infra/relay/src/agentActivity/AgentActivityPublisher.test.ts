@@ -140,6 +140,47 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("restores the replaced row when delivery fails so the retry still alerts", () => {
+    const upserts: string[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      const exit = yield* Effect.exit(
+        publisher.publish({
+          environmentId: state.environmentId,
+          environmentPublicKey: "key",
+          threadId: state.threadId,
+          state: { ...state, phase: "completed" },
+        }),
+      );
+      expect(exit._tag).toBe("Failure");
+      expect(upserts).toEqual(["completed", "running"]);
+    }).pipe(
+      Effect.provide(
+        layerPublisher.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  upsert: (input) =>
+                    Effect.sync(() => void upserts.push(input.state.phase)).pipe(Effect.as(state)),
+                }),
+              ),
+              Layer.succeed(
+                EnvironmentLinks.EnvironmentLinks,
+                makeEnvironmentLinks({
+                  listDeliveryUsersForEnvironment: () => Effect.die("offline"),
+                }),
+              ),
+              Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+              Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries()),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("does not notify again when a publish repeats the stored phase", () => {
     const renamed = { ...state, phase: "completed" as const, threadTitle: "Renamed" };
     const sends: string[] = [];

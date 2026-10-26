@@ -213,15 +213,13 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      let repeatsAlert = false;
+      let previous: RelayAgentActivityState | null = null;
       if (input.state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        const previous = yield* rows.upsert({
+        previous = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
         });
-        // Same-phase publishes such as renames or restart snapshots are not new alerts.
-        repeatsAlert = previous?.phase === input.state.phase;
       } else {
         yield* rows.remove({
           environmentId: input.environmentId,
@@ -229,11 +227,22 @@ export const make = Effect.gen(function* () {
           threadId: input.threadId,
         });
       }
+      // Same-phase publishes such as renames or restart snapshots are not new alerts.
+      const repeatsAlert = previous !== null && previous.phase === input.state?.phase;
+      // The environment retries failed publishes; restore the row so the retry still alerts.
+      const restorePrevious =
+        input.state === null || repeatsAlert
+          ? Effect.void
+          : previous === null
+            ? rows.remove(input)
+            : rows.upsert({ environmentPublicKey: input.environmentPublicKey, state: previous });
 
-      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
-        environmentId: input.environmentId,
-        environmentPublicKey: input.environmentPublicKey,
-      });
+      const deliveryUsers = yield* links
+        .listDeliveryUsersForEnvironment({
+          environmentId: input.environmentId,
+          environmentPublicKey: input.environmentPublicKey,
+        })
+        .pipe(Effect.onError(() => Effect.ignore(restorePrevious)));
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
@@ -245,7 +254,7 @@ export const make = Effect.gen(function* () {
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },
-      );
+      ).pipe(Effect.onError(() => Effect.ignore(restorePrevious)));
       const deliveries = deliveriesByUser.flat();
       return {
         ok: true,
