@@ -120,44 +120,45 @@ describe("resolveDraftProjectSelection", () => {
 });
 
 describe("newTaskDestination", () => {
-  // The draft screen opens the picker for a draft without a project when more than one is selectable.
   const projects = [makeProject("first"), makeProject("current", "other-environment")];
   const scopes = projects.map((project) => makeScope([project], project.id));
-  const openFromNewThread = (current: EnvironmentProject | undefined) => {
-    const { draft } = newTaskDestination(current, "request");
-    return {
-      draft,
-      selection: resolveDraftProjectSelection(null, projects, scopes),
-      pickerScopes: orderSuggestedProjectFirst(scopes, draft.suggestedProjectKey),
-    };
-  };
 
-  it("asks for a project with a thread open, listing its project first", () => {
-    const opened = openFromNewThread(projects[1]);
-    expect(opened.draft).toEqual({
-      requestId: "request",
-      suggestedProjectKey: "other-environment:current",
+  it("asks for a project before opening a draft, listing the current project first", () => {
+    const destination = newTaskDestination(scopes, "other-environment:current", "request");
+    expect(destination).toEqual({
+      kind: "pick",
+      picker: { requestId: "request", suggestedProjectKey: "other-environment:current" },
     });
-    expect(opened.selection).toEqual({ kind: "pick" });
-    expect(opened.pickerScopes.map((scope) => scope.key)).toEqual(["current", "first"]);
+    expect(
+      orderSuggestedProjectFirst(scopes, "other-environment:current").map((scope) => scope.key),
+    ).toEqual(["current", "first"]);
   });
 
-  it("asks for a project in the existing order with no thread open", () => {
-    const opened = openFromNewThread(undefined);
-    expect(opened.draft).toEqual({ requestId: "request" });
-    expect(opened.selection).toEqual({ kind: "pick" });
-    expect(opened.pickerScopes).toBe(scopes);
+  it("asks for a project in the existing order with nothing open", () => {
+    expect(newTaskDestination(scopes, undefined, "request")).toEqual({
+      kind: "pick",
+      picker: { requestId: "request" },
+    });
+    expect(orderSuggestedProjectFirst(scopes, undefined)).toBe(scopes);
   });
 
   it("opens the draft directly in the only selectable project", () => {
     const only = makeProject("only");
-    expect(newTaskDestination(only, "request").draft).toEqual({
-      requestId: "request",
-      suggestedProjectKey: "environment:only",
+    expect(newTaskDestination([makeScope([only])], undefined, "request")).toEqual({
+      kind: "draft",
+      draft: { requestId: "request", environmentId: "environment", projectId: "only" },
     });
-    expect(resolveDraftProjectSelection(null, [only], [makeScope([only])])).toEqual({
-      kind: "select",
-      project: only,
+  });
+
+  it("keeps the current workspace when the only project spans environments", () => {
+    const scope = makeScope([makeProject("t3code", "mac"), makeProject("t3code", "server")]);
+    expect(newTaskDestination([scope], "server:t3code", "request")).toEqual({
+      kind: "draft",
+      draft: { requestId: "request", environmentId: "server", projectId: "t3code" },
+    });
+    expect(newTaskDestination([scope], undefined, "request")).toEqual({
+      kind: "draft",
+      draft: { requestId: "request", environmentId: "mac", projectId: "t3code" },
     });
   });
 
@@ -165,16 +166,10 @@ describe("newTaskDestination", () => {
     const mac = makeProject("t3code", "mac");
     const server = makeProject("t3code", "server");
     const scope = makeScope([mac, server]);
-    const { draft } = newTaskDestination(server, "request");
-    expect(
-      orderSuggestedProjectFirst(
-        [makeScope([projects[0]!], "first"), scope],
-        draft.suggestedProjectKey,
-      )[0],
-    ).toBe(scope);
-    expect(
-      getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), draft.suggestedProjectKey),
-    ).toBe(server);
+    expect(orderSuggestedProjectFirst([scopes[0]!, scope], "server:t3code")[0]).toBe(scope);
+    expect(getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), "server:t3code")).toBe(
+      server,
+    );
   });
 });
 

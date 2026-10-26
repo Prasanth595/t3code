@@ -438,9 +438,15 @@ export function NewTaskFlowProvider(
             : selectedProjectDraftKey
               ? `draft-task:${selectedProjectDraftKey}`
               : null;
+  const activeProjectKey = selectedProject
+    ? scopedProjectKey(selectedProject.environmentId, selectedProject.id)
+    : null;
   const activeNewTask = React.useMemo(
-    () => (props.active === false ? null : { pendingKey: activePendingKey }),
-    [props.active, activePendingKey],
+    () =>
+      props.active === false
+        ? null
+        : { pendingKey: activePendingKey, projectKey: activeProjectKey },
+    [props.active, activePendingKey, activeProjectKey],
   );
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;

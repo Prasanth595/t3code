@@ -9,8 +9,6 @@ export type NewTaskDraftRouteParams = {
   readonly pendingTaskId?: string | string[];
   readonly draftId?: string | string[];
   readonly incomingShareId?: string | string[];
-  /** Listed first when the draft opens the project picker. */
-  readonly suggestedProjectKey?: string;
 };
 
 export function isDraftThreadRoute(

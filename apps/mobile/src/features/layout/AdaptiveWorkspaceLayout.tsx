@@ -41,9 +41,10 @@ import {
   isWorkspaceListPath,
   type WorkspaceAuxiliaryPaneRole,
 } from "../../lib/layout";
-import { scopedThreadKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useActiveNewTask } from "../../state/active-new-task";
 import { useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
@@ -69,6 +70,7 @@ import {
 import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
@@ -510,6 +512,7 @@ function AdaptiveWorkspaceLayoutContent(
     handleSelectDetail({ name: "Thread", params });
 
   const projects = useProjects();
+  const activeNewTask = useActiveNewTask();
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
@@ -531,16 +534,24 @@ function AdaptiveWorkspaceLayoutContent(
           candidate.environmentId === first(params?.environmentId) &&
           candidate.id === first(params?.threadId),
       );
-    const draft = params?.draft;
-    const draftEnvironmentId = first(draft?.environmentId);
-    const draftProjectId = first(draft?.projectId);
-    const currentProject = thread
-      ? { environmentId: thread.environmentId, id: thread.projectId }
-      : projects.find(
-          (project) =>
-            project.environmentId === draftEnvironmentId && project.id === draftProjectId,
-        );
-    handleSelectThreadRoute(newTaskDestination(currentProject, uuidv4()));
+    // An open draft's route may not name the project it shows, so read the draft's selection.
+    const currentProjectKey = thread
+      ? scopedProjectKey(thread.environmentId, thread.projectId)
+      : params?.draft
+        ? (activeNewTask?.projectKey ?? undefined)
+        : undefined;
+    const destination = newTaskDestination(
+      buildHomeProjectScopes({ projects, environmentId: null, projectGroupingMode }),
+      currentProjectKey,
+      uuidv4(),
+    );
+    if (destination.kind === "draft") {
+      handleSelectThreadRoute({ draft: destination.draft });
+      return;
+    }
+    // The picker opens over the current page, so backing out of it returns there.
+    if (layout.primarySidebarOverlaysContent) setPrimarySidebarVisible(false);
+    navigation.navigate("NewTaskProject", destination.picker);
   };
 
   useHardwareKeyboardCommand("newTask", () => {

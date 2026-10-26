@@ -50,6 +50,8 @@ type NewTaskRouteParams = {
   readonly pr?: string | string[];
   readonly provider?: string | string[];
   readonly model?: string | string[];
+  /** Set by a global "New thread": the chosen project opens a new draft with this request. */
+  readonly requestId?: string;
   readonly suggestedProjectKey?: string;
 };
 
@@ -237,7 +239,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       : navigation.getParent();
     const rootState = root?.getState();
     const threadRoute = rootState?.routes[rootState.index - 1];
-    if (isDraftThreadRoute(threadRoute)) {
+    const requestId = route.params?.requestId;
+    if (!requestId && isDraftThreadRoute(threadRoute)) {
       setProject(project);
       root?.goBack();
       return;
@@ -246,6 +249,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       name: "Thread",
       params: {
         draft: {
+          requestId,
           environmentId: String(project.environmentId),
           projectId: String(project.id),
           incomingShareId: incomingShare?.id,

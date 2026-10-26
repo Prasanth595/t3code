@@ -107,18 +107,31 @@ export function resolveDraftProjectSelection(
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }
 
-/** The project-less draft for a global "New thread"; the picker lists the current project first. */
+/**
+ * Where a global "New thread" goes: a draft in the only selectable project, keeping the current
+ * project's workspace, or else the picker, which lists the current project first and opens the
+ * draft only once a project is chosen.
+ */
 export function newTaskDestination(
-  currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
+  projectScopes: ReadonlyArray<HomeProjectScope>,
+  currentProjectKey: string | undefined,
   requestId: string,
 ) {
+  const onlyScope = projectScopes.length === 1 ? projectScopes[0] : undefined;
+  if (onlyScope) {
+    const project = getProjectScopeSelectionTarget(onlyScope, null, currentProjectKey);
+    return {
+      kind: "draft" as const,
+      draft: {
+        requestId,
+        environmentId: String(project.environmentId),
+        projectId: String(project.id),
+      },
+    };
+  }
   return {
-    draft: {
-      requestId,
-      ...(currentProject
-        ? { suggestedProjectKey: scopedProjectKey(currentProject.environmentId, currentProject.id) }
-        : {}),
-    },
+    kind: "pick" as const,
+    picker: { requestId, ...(currentProjectKey ? { suggestedProjectKey: currentProjectKey } : {}) },
   };
 }
 
