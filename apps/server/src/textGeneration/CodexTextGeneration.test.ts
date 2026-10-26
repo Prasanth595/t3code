@@ -342,7 +342,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       {
         output: JSON.stringify({ title: "Hookless title" }),
         launchArgs:
-          "--config features.codex_hooks=true --config features.hooks=true --enable hooks --enable=hooks",
+          "--config features.codex_hooks=true --config features.hooks=true --enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks",
         requireHooksDisabled: true,
       },
       (textGeneration) =>
