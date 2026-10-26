@@ -658,6 +658,13 @@ describe("list navigation commands", () => {
       "chat.new",
     );
   });
+
+  it("derives list focus from the target, not from caller context", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(ctrlN(), rebound, { platform: "Linux", context: { listFocus: true } }),
+      "chat.new",
+    );
+  });
 });
 
 describe("resolveShortcutCommand", () => {

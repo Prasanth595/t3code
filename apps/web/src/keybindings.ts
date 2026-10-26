@@ -191,7 +191,7 @@ export function resolveShortcutCommand(
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
   /** Every listener sees list focus, so a key bound to a list command inside a list never resolves to its other command. */
-  const context = { listFocus: isListFocusTarget(event.target), ...resolveContext(options) };
+  const context = { ...resolveContext(options), listFocus: isListFocusTarget(event.target) };
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];

@@ -27,6 +27,10 @@ import { CommandPalette } from "./CommandPalette";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { Combobox, ComboboxInput, ComboboxItem, ComboboxList, ComboboxPopup } from "./ui/combobox";
 
+function setup() {
+  state.navigate.mockClear();
+}
+
 function highlightedText(): string | null {
   return document.querySelector("[data-highlighted]")?.textContent ?? null;
 }
@@ -34,7 +38,7 @@ function highlightedText(): string | null {
 describe("rebound list navigation", () => {
   // Linux, where Ctrl+N and Ctrl+P are also chat.new and filePicker.toggle.
   it("moves the command palette highlight without running other commands", async () => {
-    state.navigate.mockClear();
+    setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     using _commands = { [Symbol.dispose]: registerListNavigationCommands() };
@@ -53,6 +57,7 @@ describe("rebound list navigation", () => {
   });
 
   it("moves the combobox highlight", async () => {
+    setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     await using screen = await render(
       <Combobox items={["alpha", "beta", "gamma"]} open>
@@ -79,6 +84,7 @@ describe("rebound list navigation", () => {
   });
 
   it("reaches the composer only while its suggestion menu is open", async () => {
+    setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const onCommandKeyDown = vi.fn((_key: string, _event: KeyboardEvent) => false);
     const composer = (suggestionsOpen: boolean) => (
