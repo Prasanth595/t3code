@@ -92,6 +92,49 @@ describe("snapshot deadline diagnostics", () => {
     });
   });
 
+  it("omits a timed-out stage after it succeeds on retry", async () => {
+    let attempts = 0;
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    expect(
+      await stalledSnapshot({
+        page: {
+          ariaSnapshot: async () => {
+            if (attempts++ === 0) throw timedOut;
+            return "";
+          },
+        },
+        advanceMs: 10_000,
+      }),
+    ).toMatchObject({ detail: { timeoutMs: 10_000, pendingStages: ["screenshot"] } });
+  });
+
+  it.each(["elementHandle", "contentFrame"] as const)(
+    "identifies stalled iframe %s lookup",
+    async (stage) => {
+      const main = {};
+      const child = { evaluate: never, parentFrame: () => main };
+      const captured = await stalledSnapshot({
+        page: {
+          mainFrame: () => main,
+          frames: () => [main, child],
+          context: () => ({
+            newCDPSession: () =>
+              Promise.reject(new Error("Only this preview tab's page can be attached")),
+          }),
+          ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+          locator: () => ({
+            elementHandle:
+              stage === "elementHandle" ? never : async () => ({ contentFrame: never }),
+          }),
+        },
+        advanceMs: 10_000,
+      });
+      expect(captured).toMatchObject({
+        detail: { timeoutMs: 10_000, pendingStages: expect.arrayContaining(["frames"]) },
+      });
+    },
+  );
+
   it("reports a frame that didn't answer as the frame's own timeout", async () => {
     const main = {};
     // A desktop tab refuses frame sessions, so the frame is read in its own world.

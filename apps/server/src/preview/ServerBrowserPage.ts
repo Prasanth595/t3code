@@ -555,7 +555,9 @@ const capture = async (
   const track = async <A>(stage: SnapshotStage, operation: () => Promise<A>) => {
     running.set(stage, (running.get(stage) ?? 0) + 1);
     try {
-      return await operation();
+      const result = await operation();
+      stages.timedOut.delete(stage);
+      return result;
     } catch (cause) {
       if (isTimeout(cause)) stages.timedOut.add(stage);
       throw cause;
@@ -610,9 +612,11 @@ const capture = async (
   const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
   const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
   for (const [, ref] of unread.length ? tree.matchAll(filled) : []) {
-    const iframe = await input.page.locator(`aria-ref=${ref}`).elementHandle({ timeout: 2_000 });
+    const iframe = await track("frames", () =>
+      input.page.locator(`aria-ref=${ref}`).elementHandle({ timeout: 2_000 }),
+    );
     if (!iframe) throw pageChanged();
-    const frame = await iframe.contentFrame();
+    const frame = await track("frames", () => iframe.contentFrame());
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw frameUnanswered();
   }
