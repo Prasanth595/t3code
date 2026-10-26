@@ -295,6 +295,8 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const namedDownloads = new WeakSet<Electron.DownloadItem>();
+
 export const downloadUrl = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DOWNLOAD_URL_CHANNEL,
   payload: Schema.Struct({ url: Schema.String, fileName: Schema.String }),
@@ -307,15 +309,38 @@ export const downloadUrl = DesktopIpc.makeIpcMethod({
       // downloadURL cannot suggest a name, and asset URLs end in an opaque id.
       // The name can come from chat alt text, so keep only its last segment.
       const name = fileName.split(/[\\/]/).at(-1) ?? "";
-      if (/\.\w+$/.test(name)) {
-        const suggestName = (_event: Electron.Event, item: Electron.DownloadItem) => {
-          if (item.getURLChain()[0] !== href) return;
-          contents.session.off("will-download", suggestName);
-          item.setSaveDialogOptions({ defaultPath: name });
-        };
-        contents.session.on("will-download", suggestName);
+      if (!/\.\w+$/.test(name)) {
+        contents.downloadURL(href);
+        return;
       }
-      contents.downloadURL(href);
+      const cleanup = () => {
+        clearTimeout(timeout);
+        contents.session.off("will-download", suggestName);
+        contents.off("destroyed", cleanup);
+      };
+      const suggestName = (
+        _event: Electron.Event,
+        item: Electron.DownloadItem,
+        source: Electron.WebContents,
+      ) => {
+        if (source !== contents || item.getURLChain()[0] !== href || namedDownloads.has(item))
+          return;
+        namedDownloads.add(item);
+        cleanup();
+        item.setSaveDialogOptions({ defaultPath: name });
+      };
+      // Failed requests may never emit will-download.
+      // @effect-diagnostics-next-line globalTimersInEffect:off -- The Electron listener outlives the IPC effect.
+      const timeout = setTimeout(cleanup, 30_000);
+      timeout.unref();
+      contents.session.on("will-download", suggestName);
+      contents.once("destroyed", cleanup);
+      try {
+        contents.downloadURL(href);
+      } catch (cause) {
+        cleanup();
+        throw cause;
+      }
     }),
 });
 
