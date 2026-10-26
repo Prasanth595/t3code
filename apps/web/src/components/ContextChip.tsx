@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const contextChipVariants = cva(
-  "inline-flex max-w-full items-center gap-[0.2em] font-medium text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-accent)] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-none disabled:cursor-default",
+  "inline-flex max-w-full items-center gap-[0.2em] font-medium text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-accent)] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
   {
     defaultVariants: { kind: "neutral" },
     variants: {
@@ -67,7 +67,7 @@ function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">)
   return (
     <span
       className={cn(
-        "-my-[0.25em] block min-w-0 self-baseline truncate py-[0.25em] underline decoration-transparent decoration-1 underline-offset-[0.2em] transition-colors motion-reduce:transition-none [:focus-visible>&]:decoration-current [:is(button:enabled,a):hover>&]:decoration-current",
+        "-my-[0.25em] block min-w-0 self-baseline truncate py-[0.25em] underline decoration-transparent decoration-1 underline-offset-[0.2em] transition-colors motion-reduce:transition-none [:is(button:enabled,a):hover>&]:decoration-current",
         className,
       )}
       data-slot="context-chip-label"
