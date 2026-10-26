@@ -22,7 +22,6 @@ import type { SaasAccountResponse } from "@t3tools/contracts/saas";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
@@ -104,14 +103,7 @@ export function WelcomeWizard({
       <WizardPopup size="wide" bottomStickOnMobile={false}>
         <WizardHeader
           title="Set up Mira"
-          identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
-              <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
-            </div>
-          }
+          identity={<span className="text-2xl font-semibold tracking-tight">Mira</span>}
         >
           <WizardSteps
             steps={ONBOARDING_STAGES}
@@ -239,7 +231,7 @@ function AgentsStep({
   return (
     <StepShell
       title="Connect the Mira model"
-      description="Pi comes with T3 Code. Each computer runs it on your Mira account's model."
+      description="Pi comes with Mira. Each computer runs it on your Mira account's model."
     >
       <div className="mt-5 space-y-1.5">
         {environmentIds.map((environmentId) => (
