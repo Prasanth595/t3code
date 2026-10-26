@@ -1,5 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,6 +20,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type ServerProviderUsageLimits,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -6281,6 +6284,45 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           checkedAt: DateTime.formatIso(checkedAt),
           windows: [{ id: "five_hour", kind: "session" as const, label: "5h", usedPercent }],
         });
+        const sweep = (
+          usageLimits: ServerProviderUsageLimits,
+          instanceId = shell.providerInstanceId,
+        ) =>
+          Effect.scoped(
+            Layer.build(
+              UsageLimitRecoveryWorker.layer.pipe(
+                Layer.provide([
+                  Layer.succeed(ProjectionStore.ProjectionStoreV2, projections),
+                  Layer.succeed(Orchestrator.OrchestratorV2, orchestrator),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    dispatch: orchestrator.dispatch,
+                  }),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([
+                      {
+                        instanceId,
+                        driver,
+                        enabled: true,
+                        installed: true,
+                        version: null,
+                        status: "ready",
+                        auth: { status: "authenticated" },
+                        checkedAt: usageLimits.checkedAt,
+                        models: [],
+                        slashCommands: [],
+                        skills: [],
+                        usageLimits,
+                      },
+                    ]),
+                  }),
+                  Layer.mock(Scheduler.Scheduler)({
+                    register: (_name, work) => Effect.orDie(work),
+                  }),
+                ]),
+              ),
+            ),
+          );
         const armed = (yield* projections.getLimitRecoveryCandidates({
           now: checkedNow,
           autoResume: true,
@@ -6291,9 +6333,34 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         // Readings from before the failure, or ones that still show the limit, keep waiting.
         assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(now, 0)));
         assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(checkedNow, 100)));
-        const resume = limitRecoveryCommand(armed!, true, nowMs, false, reading(checkedNow, 0));
-        assert(resume?.type === "message.dispatch");
-        yield* orchestrator.dispatch(resume);
+        yield* sweep(reading(now, 0));
+        yield* sweep(reading(checkedNow, 100));
+        yield* sweep(reading(checkedNow, 0), alternateInstanceId);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        const staleResume = limitRecoveryCommand(
+          armed!,
+          true,
+          nowMs,
+          false,
+          reading(checkedNow, 0),
+        );
+        assert(staleResume?.type === "message.dispatch");
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("recovery:cancel:early-reset"),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: false },
+        });
+        yield* orchestrator.dispatch(staleResume);
+        yield* sweep(reading(checkedNow, 0));
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("recovery:rearm:early-reset"),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* sweep(reading(checkedNow, 0));
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(resumed.runs, 2);
         assert.equal(resumed.runs[1]?.status, "starting");
@@ -6360,6 +6427,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           snooze: false,
         })).find((row) => row.id === threadId)!;
         assert.equal(rearmed.limitRecovery?.waitForReset, true);
+        yield* sweep(reading(laterNow, 0));
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
         assert.isNull(
           limitRecoveryCommand(
             rearmed,
@@ -6372,6 +6441,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const onTime = limitRecoveryCommand(rearmed, true, Date.parse(resetAt));
         assert(onTime?.type === "message.dispatch");
         assert.isUndefined(onTime.usageLimitClearedAt);
+        yield* TestClock.setTime(Date.parse(resetAt));
+        yield* orchestrator.dispatch(onTime);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
       }),
   );
 
