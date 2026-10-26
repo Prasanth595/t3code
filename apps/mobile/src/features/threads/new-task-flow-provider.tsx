@@ -418,13 +418,14 @@ export function NewTaskFlowProvider(
     ) {
       return;
     }
+    const draftKey = createNewTaskDraft({
+      environmentId: selectedProject.environmentId,
+      projectId: selectedProject.id,
+    });
+    // The draft screen's setProject runs earlier in this commit and may already have created the
+    // route project's draft; this effect still sees the selection from before it, so keep that key.
     // oxlint-disable-next-line react/set-state-in-effect -- Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
-    setActiveDraftKey(
-      createNewTaskDraft({
-        environmentId: selectedProject.environmentId,
-        projectId: selectedProject.id,
-      }),
-    );
+    setActiveDraftKey((current) => current ?? draftKey);
   }, [activeDraftKey, editingPendingTask, selectedProject, props.active]);
   const activePendingKey =
     props.active === false
