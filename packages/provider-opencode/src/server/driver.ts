@@ -226,8 +226,7 @@ export const OpenCodeDriver: ProviderDriver<
           Option.isNone(generation)
             ? Effect.succeed(noUpdate)
             : isExternalServer
-              ? // A configured URL does not establish ownership of its server installation,
-                // even on loopback: it can be a desktop bundle or a forwarded remote server.
+              ? // Even loopback URLs can point to another installation or a forwarded server.
                 openCodeUpdateFor(generation.value).resolve(null)
               : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
                   binaryPath: effectiveConfig.binaryPath,
