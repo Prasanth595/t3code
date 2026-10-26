@@ -232,8 +232,8 @@ export const HTML_RENDER_THEME_GUIDE = [
 export const HTML_RENDER_LAYOUT_GUIDE = [
   `Frame width is reply width (${HTML_RENDER_COLUMN_WIDTH}px desktop, about 360px phones), on the thread background.`,
   "Leave html, body, and the outer element with no background color, no outer card, border, banner title, or side padding. This wins over any rule that sets a page background.",
-  "Use container-relative widths (%, auto, max-width), not viewport units, window.innerWidth, document.documentElement.clientWidth, or a fixed pixel width. Standalone pages add a 16px gutter on every side, so viewport-wide content overflows.",
-  "Only for intentional edge-to-edge standalone pages, remove the gutter with an unlayered html{padding:0} rule; @layer rules, including Tailwind v4 classes, lose to it. Avoid html in resets such as html,body{margin:0;padding:0}; reset body alone or use *{margin:0;padding:0} to preserve the gutter.",
+  "Standalone pages add a 16px gutter. Use container-relative widths (%, auto, max-width); viewport widths (vw and variants, innerWidth, clientWidth) and fixed widths can overflow.",
+  "Reset body or * rather than html to preserve the gutter. Only intentional edge-to-edge pages should remove it with unlayered html{padding:0}; @layer rules cannot override it.",
   "A box that needs its own background gets 16px padding and var(--radius) corners. Give charts fixed pixel heights.",
   "Let content set the height. Do not use vh units or height:100% on html or body. Both are rejected or loop.",
 ].join(" ");
@@ -342,10 +342,7 @@ export function htmlRenderResult(id: string | number) {
 
 const THEME_FRAGMENT_KEY = "t3-theme";
 
-/**
- * The mobile WebView adds this to its user agent, so every page it loads,
- * reloads included, counts as hosted and skips the standalone gutter.
- */
+// A WebView user-agent token survives reloads without changing page-owned name or state.
 export const HTML_RENDER_WEBVIEW_APP_NAME = "T3CodeHtmlRender";
 
 export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
@@ -367,9 +364,7 @@ const BASE_CSS =
   ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}" +
   ":where(img:not(a[href] img,button img)){cursor:zoom-in}";
 
-// Standalone pages lack client gutters. Keep this unlayered so ordinary `*`
-// resets preserve it, and use border-box so a 100%-wide root still fits.
-// The mobile UA survives reloads without changing page-owned name or state.
+// Unlayered html padding survives * resets; border-box keeps a 100%-wide root inside the viewport.
 const STANDALONE_CSS = "html{box-sizing:border-box;padding:16px}";
 
 function rootRule(theme: HtmlRenderTheme): string {

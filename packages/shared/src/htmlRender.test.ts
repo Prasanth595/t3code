@@ -19,29 +19,26 @@ const themed = htmlRenderThemeFragment({
   variables: { "--background": "#000" },
 });
 
-// Loads the bootstrap the way a browser runs it, top-level unless framed.
 function openPage(options: {
   readonly framed?: boolean;
   readonly hash?: string;
   readonly userAgent?: string;
-  readonly name?: string;
-  readonly state?: unknown;
 }) {
   const style = { textContent: "" };
   const history: { state: unknown; replaceState: (state: unknown) => void } = {
-    state: options.state ?? null,
+    state: "tab2",
     replaceState(state: unknown) {
       history.state = state;
     },
   };
-  const window = { name: options.name ?? "", parent: {}, addEventListener() {} };
+  const window = { name: '{"key":"t3-hosted:"}', parent: {}, addEventListener() {} };
   if (!options.framed) window.parent = window;
   NodeVM.runInNewContext(bootstrap, {
     window,
     history,
     navigator: { userAgent: options.userAgent ?? "Mozilla/5.0" },
     location: { hash: options.hash ?? "", pathname: "/page.html", search: "" },
-    document: { getElementById: () => style, addEventListener() {}, documentElement: {} },
+    document: { getElementById: () => style, addEventListener() {} },
   });
   return { window, history, padded: () => style.textContent.includes("padding:16px") };
 }
@@ -57,14 +54,8 @@ describe("html render bootstrap", () => {
       padded: false,
     },
   ])("gives only a page opened on its own the gutter: $page", ({ options, padded }) => {
-    expect(openPage(options).padded()).toBe(padded);
-  });
-
-  it.each([
-    { page: "standalone", options: {} },
-    { page: "top-level themed", options: { hash: themed } },
-  ])("leaves a $page page's window.name and history.state alone", ({ options }) => {
-    const page = openPage({ ...options, name: '{"key":"t3-hosted:"}', state: "tab2" });
+    const page = openPage(options);
+    expect(page.padded()).toBe(padded);
     expect(page.window.name).toBe('{"key":"t3-hosted:"}');
     expect(page.history.state).toBe("tab2");
   });
