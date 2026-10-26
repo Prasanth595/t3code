@@ -4336,6 +4336,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     { localBranch: "ahead", expectedHead: "local", isOnPullRequestHead: false },
     { localBranch: "behind", expectedHead: "pull request", isOnPullRequestHead: true },
     { localBranch: "rewritten", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "wrong-ref", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "stale-head", expectedHead: "local", isOnPullRequestHead: false },
+    { localBranch: "checkout-race", expectedHead: "pull request", isOnPullRequestHead: true },
   ] as const)(
     "moves an existing PR branch into a new worktree only when nothing is lost ($localBranch)",
     ({ localBranch, expectedHead, isOnPullRequestHead }) =>
@@ -4354,7 +4357,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
           yield* runGit(repoDir, ["add", "mine.txt"]);
           yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
-        } else if (localBranch === "behind") {
+        } else if (localBranch !== "rewritten") {
           yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
           NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
           yield* runGit(repoDir, ["add", "authored.txt"]);
@@ -4389,7 +4392,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ])).stdout.split("\t")[0];
         yield* runGit(repoDir, ["checkout", "main"]);
 
+        if (localBranch === "wrong-ref") {
+          yield* runGit(repoDir, ["push", "origin", "main:refs/pull/88/head"]);
+        }
+        const gate = {
+          matches: (args: ReadonlyArray<string>) =>
+            args[0] === "fetch" &&
+            args.some((arg) => arg.startsWith("+refs/heads/feature/pr-existing:")),
+          reached: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
         const { manager } = yield* makeManager({
+          ...(localBranch === "checkout-race" ? { gitSpawnGate: gate } : {}),
           providerScenario: {
             pullRequest: {
               number: 88,
@@ -4398,6 +4412,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               baseRefName: "main",
               headRefName: "feature/pr-existing",
               state: "open",
+              headSha: localBranch === "stale-head" ? localHead : pullHead,
               isCrossRepository: false,
               headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
               headRepositoryOwnerLogin: "pingdotgg",
@@ -4408,11 +4423,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           },
         });
 
-        const result = yield* preparePullRequestThread(manager, {
-          cwd: repoDir,
-          reference: "88",
-          mode: "worktree",
-        });
+        const preparing = yield* Effect.forkChild(
+          preparePullRequestThread(manager, {
+            cwd: repoDir,
+            reference: "88",
+            mode: "worktree",
+          }),
+        );
+        if (localBranch === "checkout-race") {
+          yield* Deferred.await(gate.reached);
+          const checkout = yield* runGit(repoDir, ["checkout", "feature/pr-existing"], true);
+          yield* Deferred.succeed(gate.release, undefined);
+          expect(checkout.exitCode).not.toBe(0);
+          expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        }
+        const result = yield* Fiber.join(preparing);
 
         const head = expectedHead === "local" ? localHead : pullHead;
         expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-existing"])).stdout.trim()).toBe(
@@ -4473,6 +4498,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             pullRequest: {
               number: 89,
               title: "Submodule PR",
+              headSha: pullHead,
               url: "https://github.com/pingdotgg/codething-mvp/pull/89",
               baseRefName: "main",
               headRefName: "feature/pr-existing",

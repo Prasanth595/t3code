@@ -2902,82 +2902,58 @@ export const make = Effect.gen(function* () {
         return null;
       });
 
-      // A branch no worktree has checked out can still carry commits nothing else holds, so it
-      // takes the head only where refreshCheckedOutBranch would move a checkout. It moves before
-      // its worktree exists because `git worktree add` checks out submodules for the commit it
-      // starts at, and a later move would leave them at the old commit's.
-      const moveIdleBranchToPullRequestHead = Effect.fn("moveIdleBranchToPullRequestHead")(
-        function* (branch: string) {
-          const { commitSha: branchCommit } = yield* gitCore.resolveCommit({
-            cwd: input.cwd,
-            revision: `refs/heads/${branch}`,
-          });
-          // Read before the upstream fetch, for the same reason as in reuseExistingWorktree.
-          const upstreamCommitBeforeFetch = yield* gitCore
-            .resolveCommit({ cwd: input.cwd, revision: `${branch}@{upstream}` })
-            .pipe(
-              Effect.map((resolved) => resolved.commitSha),
-              Effect.orElseSucceed(() => null),
-            );
-
-          yield* configurePullRequestHeadUpstream(input.cwd, pullRequestWithRemoteInfo, branch);
-
-          const { commitSha: targetCommit } = yield* changeRequestHeadRef(
-            input.cwd,
-            pullRequest.number,
-          ).pipe(
-            Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd: input.cwd, ref })),
-            Effect.catch(() =>
-              Effect.gen(function* () {
-                const merge = yield* gitCore.readConfigValue(input.cwd, `branch.${branch}.merge`);
-                if (merge !== `refs/heads/${pullRequest.headBranch}`) {
-                  return yield* new GitManagerError({
-                    operation: "preparePullRequestThread",
-                    cwd: input.cwd,
-                    detail: "The pull request head could not be resolved for this branch.",
-                  });
-                }
-                return yield* gitCore.resolveCommit({
-                  cwd: input.cwd,
-                  revision: `${branch}@{upstream}`,
-                });
-              }),
-            ),
+      // Claim the branch before refreshing, but initialize submodules only after selecting its head.
+      const refreshNewWorktree = Effect.fn("refreshNewWorktree")(function* (cwd: string) {
+        const upstreamCommitBeforeFetch = yield* gitCore
+          .resolveCommit({ cwd, revision: "@{upstream}" })
+          .pipe(
+            Effect.map((resolved) => resolved.commitSha),
+            Effect.orElseSucceed(() => null),
           );
-          if (targetCommit === branchCommit) {
-            return true;
-          }
+        yield* configurePullRequestHeadUpstream(
+          cwd,
+          pullRequestWithRemoteInfo,
+          localPullRequestBranch,
+        );
+        const target = yield* changeRequestHeadRef(cwd, pullRequest.number).pipe(
+          Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd, ref })),
+          Effect.filterOrFail(
+            (resolved) =>
+              pullRequestSummary.headSha === undefined ||
+              resolved.commitSha === pullRequestSummary.headSha,
+            () =>
+              new GitManagerError({
+                operation: "preparePullRequestThread",
+                cwd,
+                detail: "The fetched ref does not match the pull request head.",
+              }),
+          ),
+          Effect.catch(() =>
+            gitCore.resolveCommit({ cwd, revision: "@{upstream}" }).pipe(
+              Effect.filterOrFail(
+                (resolved) => resolved.commitSha === pullRequestSummary.headSha,
+                () =>
+                  new GitManagerError({
+                    operation: "preparePullRequestThread",
+                    cwd,
+                    detail: "The configured upstream does not match the pull request head.",
+                  }),
+              ),
+            ),
+          ),
+        );
+        return yield* gitCore
+          .refreshCheckedOutBranch({
+            cwd,
+            targetCommit: target.commitSha,
+            resetWhenHeadCommit: upstreamCommitBeforeFetch,
+          })
+          .pipe(Effect.map((result) => result.onTarget));
+      });
 
-          const isAncestor = yield* gitCore
-            .execute({
-              operation: "GitManager.preparePullRequestThread.isAncestor",
-              cwd: input.cwd,
-              args: ["merge-base", "--is-ancestor", branchCommit, targetCommit],
-              allowNonZeroExit: true,
-            })
-            .pipe(Effect.map((result) => result.exitCode === 0));
-          if (!isAncestor && branchCommit !== upstreamCommitBeforeFetch) {
-            return false;
-          }
-          if (!isAncestor) {
-            // As refreshCheckedOutBranch does, so the rewritten-away commit stays findable.
-            yield* gitCore.execute({
-              operation: "GitManager.preparePullRequestThread.keepPrevious",
-              cwd: input.cwd,
-              args: ["update-ref", "refs/t3code/pre-refresh", branchCommit],
-            });
-          }
-          // The old value makes git refuse the move if the branch changed since it was read.
-          yield* gitCore.execute({
-            operation: "GitManager.preparePullRequestThread.moveBranch",
-            cwd: input.cwd,
-            args: ["update-ref", `refs/heads/${branch}`, targetCommit, branchCommit],
-          });
-          return true;
-        },
-      );
-
-      const createPullRequestWorktree = Effect.fn("createPullRequestWorktree")(function* () {
+      const createPullRequestWorktree = Effect.fn("createPullRequestWorktree")(function* (
+        onWorktreeClaimed?: (path: string) => Effect.Effect<void>,
+      ) {
         return yield* gitCore.createWorktree(
           {
             cwd: input.cwd,
@@ -2985,6 +2961,7 @@ export const make = Effect.gen(function* () {
             path: null,
           },
           {
+            ...(onWorktreeClaimed ? { progress: { onWorktreeClaimed } } : {}),
             worktreesDirectory: yield* readWorktreesDirectory,
             submodules: yield* projectSettingsFor(input).pipe(
               Effect.map(({ settings }) => settings.worktreeSubmodules),
@@ -3017,17 +2994,26 @@ export const make = Effect.gen(function* () {
       }
       // Materializing would force this branch onto the head.
       if (existingBranchBeforeFetch !== null) {
-        const isOnPullRequestHead = yield* moveIdleBranchToPullRequestHead(
-          localPullRequestBranch,
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("GitManager.preparePullRequestThread existing branch move failed", {
-              localBranch: localPullRequestBranch,
-              cause: error,
-            }).pipe(Effect.as(false)),
+        let isOnPullRequestHead = false;
+        const worktree = yield* createPullRequestWorktree((cwd) =>
+          refreshNewWorktree(cwd).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "GitManager.preparePullRequestThread existing branch refresh failed",
+                {
+                  localBranch: localPullRequestBranch,
+                  cause: error,
+                },
+              ).pipe(Effect.as(false)),
+            ),
+            Effect.tap((onTarget) =>
+              Effect.sync(() => {
+                isOnPullRequestHead = onTarget;
+              }),
+            ),
+            Effect.asVoid,
           ),
         );
-        const worktree = yield* createPullRequestWorktree();
         yield* maybeRunSetupScript(worktree.worktree.path);
         return {
           pullRequest,
