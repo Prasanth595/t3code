@@ -742,10 +742,15 @@ describe("AcpAdapterV2", () => {
       const threadId = ThreadId.make("thread-acp-prompt-usage-late");
       const dispatched = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
+      const wireSettled = yield* Deferred.make<void>();
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          afterPromptWireSettled: () =>
+            Deferred.succeed(wireSettled, undefined).pipe(Effect.asVoid),
+        },
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
@@ -806,18 +811,16 @@ describe("AcpAdapterV2", () => {
               : Effect.void;
           }),
       ).pipe(Effect.forkScoped);
-      const turnFiber = yield* runtime
-        .startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now: yield* DateTime.now,
-            messageText: "Say hi.",
-          }),
-        )
-        .pipe(Effect.exit, Effect.forkScoped);
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "Say hi.",
+        }),
+      );
       yield* Deferred.await(dispatched);
       const providerTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
@@ -845,8 +848,7 @@ describe("AcpAdapterV2", () => {
       });
       // The response lands now; the finalized turn must not adopt its counters.
       yield* Deferred.succeed(gate, undefined);
-      // Joining proves the prompt chain (and its usage tap) actually ran.
-      yield* Fiber.join(turnFiber);
+      yield* Deferred.await(wireSettled);
       assert.deepEqual(usageAt(), {
         usageScope: "main_agent",
         usageStatus: "unavailable",
