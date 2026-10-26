@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as RelayClientLedger from "./RelayClientLedger.ts";
 
@@ -102,6 +103,30 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
       expect(yield* orphan.exited).toBe("SIGTERM");
       expect(processExists(orphan.pid)).toBe(false);
       expect(yield* fs.readDirectory(path.join(stateDir, "relay-clients"))).toEqual([]);
+    }).pipe(provideHost),
+  );
+
+  it.live("keeps the record when the orphan cannot be signalled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-ledger-" });
+      const orphan = yield* spawnProcess;
+      yield* recordFromDeadServer(stateDir, orphan);
+      const kill = process.kill.bind(process);
+      using _kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === orphan.pid && signal !== 0)
+          throw Object.assign(new Error("denied"), { code: "EPERM" });
+        return kill(pid, signal);
+      });
+
+      const restarted = yield* RelayClientLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(processExists(orphan.pid)).toBe(true);
+      expect(yield* fs.exists(path.join(stateDir, "relay-clients", `${orphan.pid}.json`))).toBe(
+        true,
+      );
     }).pipe(provideHost),
   );
 

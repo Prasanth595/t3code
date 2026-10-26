@@ -605,9 +605,7 @@ export const make = Effect.gen(function* () {
 
     const http2 = yield* Ref.get(http2Ref);
     const connectorScope = yield* Scope.make("sequential");
-    // Added before the spawn so it runs after the spawner's finalizer stops the
-    // client (finalizers run in reverse order): the ledger keeps the client
-    // recorded until it is actually stopped.
+    // Finalizers run in reverse order; forget only after the spawner stops the client.
     let forgetRelayClient: Effect.Effect<void> = Effect.void;
     yield* Scope.addFinalizer(
       connectorScope,
@@ -678,8 +676,6 @@ export const make = Effect.gen(function* () {
 
     if (!("status" in child)) {
       if (Option.isSome(relayClientLedger)) {
-        // Recorded so the next server stops it if this one dies without
-        // running finalizers; forgotten when the connector scope closes.
         forgetRelayClient = yield* relayClientLedger.value.track({ pid: Number(child.pid) });
       }
       const connector = {
