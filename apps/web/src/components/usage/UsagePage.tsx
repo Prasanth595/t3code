@@ -412,7 +412,7 @@ export function UsagePage() {
           value={[String(windowDays)]}
           disabled={showingLimits}
           // Limits are always current; the New design hides the period instead of greying it.
-          className={showingLimits ? "redesign:hidden" : undefined}
+          className={showingLimits ? "redesign:invisible" : undefined}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -469,7 +469,7 @@ export function UsagePage() {
             aria-label="Usage period"
             size="compact"
             variant="ghost"
-            className={cn("w-auto min-w-0", showingLimits && "redesign:hidden")}
+            className={cn("w-auto min-w-0", showingLimits && "redesign:invisible")}
           >
             <SelectValue>
               {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
