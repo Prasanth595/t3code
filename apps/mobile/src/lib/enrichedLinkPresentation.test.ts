@@ -1,10 +1,10 @@
+import { markdownWithInlineFileLinks, parseMarkdownDocument } from "./markdownDocument";
 import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
   enrichedThreadLinkPresentation,
-  ENRICHED_INLINE_FILE_LINK_REGEX,
   threadChipTargets,
 } from "./enrichedLinkPresentation";
 
@@ -17,7 +17,12 @@ describe("Enriched link presentation", () => {
       "C:\\repo\\app.tsx",
       "app.tsx:12:3",
     ]) {
-      expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
+      expect(
+        parseMarkdownDocument(markdownWithInlineFileLinks("`" + path + "`")),
+        path,
+      ).toMatchObject({
+        children: [{ type: "paragraph", children: [{ type: "link", url: path }] }],
+      });
     }
     for (const text of [
       "npm run dev",
@@ -29,7 +34,7 @@ describe("Enriched link presentation", () => {
       "README.md",
       "/app/settings",
     ]) {
-      expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
+      expect(markdownWithInlineFileLinks("`" + text + "`"), text).toBe("`" + text + "`");
     }
   });
 

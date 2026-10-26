@@ -1,4 +1,4 @@
-import { inlineCodeFilePathCandidate } from "@t3tools/shared/markdownLinks";
+import { inlineCodeFilePathCandidate, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
@@ -284,20 +284,20 @@ export function markdownWithHtml(markdown: string): string {
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
-export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdown, fileLink, false);
+export function markdownWithInlineFileLinks(markdown: string): string {
+  return transformNativeMarkdown(markdown, true, false);
 }
 
 function transformNativeMarkdown(
   markdown: string,
-  fileLink: RegExp | undefined,
+  linkInlineFiles: boolean,
   tableBreaks: boolean,
 ): string {
   const breakTables = tableBreaks && mayHaveTableUnderText(markdown);
   let linkFiles = false;
-  if (fileLink) {
+  if (linkInlineFiles) {
     for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
+      if (parseMarkdownFileLink(inlineCodeFilePathCandidate(code!.trim()) ?? "") !== null) {
         linkFiles = true;
         break;
       }
@@ -315,8 +315,7 @@ function transformNativeMarkdown(
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink?.test(node.value) &&
-        inlineCodeFilePathCandidate(node.value) !== null &&
+        parseMarkdownFileLink(inlineCodeFilePathCandidate(node.value) ?? "") !== null &&
         !/[<>]/.test(node.value)
       ) {
         const edit = {
@@ -381,16 +380,16 @@ function mayHaveTableUnderText(markdown: string): boolean {
 
 /** md4c starts tables only at paragraph starts; insert breaks to match GFM. */
 export function markdownWithTableBreaks(markdown: string): string {
-  return transformNativeMarkdown(markdown, undefined, true);
+  return transformNativeMarkdown(markdown, false, true);
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
 
-export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
+export function markdownForNativeRendering(markdown: string): string {
   // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-  return transformNativeMarkdown(markdownWithHtml(markdown), fileLink, true);
+  return transformNativeMarkdown(markdownWithHtml(markdown), true, true);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */

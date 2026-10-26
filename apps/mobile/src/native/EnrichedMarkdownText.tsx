@@ -28,7 +28,6 @@ import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
-  ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
@@ -161,14 +160,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: markdownForNativeRendering(props.markdown),
         fileHrefs: new Set<string>(),
       };
     }
-    const content = markdownWithInlineFileLinks(
-      markdownWithHtml(props.markdown),
-      ENRICHED_INLINE_FILE_LINK_REGEX,
-    );
+    const content = markdownWithInlineFileLinks(markdownWithHtml(props.markdown));
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
   }, [props.markdown, fileEmbedLabel]);
