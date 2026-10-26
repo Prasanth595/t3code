@@ -1,7 +1,7 @@
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 
 const savedSecret = {
@@ -11,35 +11,45 @@ const savedSecret = {
   valueRedacted: true,
 } as const;
 
-const input = (label: string) =>
-  document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
-const lockButton = (name: string) =>
-  document.querySelector<HTMLButtonElement>(
-    `button[aria-label="Mark environment variable ${name} as sensitive"]`,
-  )!;
-
 describe("ProviderEnvironmentSection saved secrets", () => {
-  it("keeps a saved secret's name and sensitivity until a new value replaces it", async () => {
+  it("requires a replacement before renaming or unlocking a stored secret", async () => {
     const onChange = vi.fn();
-    await using _screen = await render(
+    await using screen = await render(
       <ProviderEnvironmentSection environment={[savedSecret]} onChange={onChange} />,
     );
+    const name = screen.getByRole("textbox", { name: "Environment variable name 1" });
+    const value = screen.getByLabelText("Environment variable value 1");
+    const lock = screen.getByRole("button", {
+      name: "Mark environment variable FAKE_API_KEY as sensitive",
+    });
 
-    // Either edit would publish a row whose stored value the server then deletes.
-    expect(input("Environment variable name 1").disabled).toBe(true);
-    await act(async () => lockButton("FAKE_API_KEY").click());
+    await expect.element(name).toBeDisabled();
+    await expect.element(lock).toBeDisabled();
+    await userEvent.fill(value, "unused-draft");
+    await userEvent.clear(value);
+    await userEvent.tab();
     expect(onChange).not.toHaveBeenCalled();
+    await expect.element(name).toBeDisabled();
+    await expect.element(lock).toBeDisabled();
 
-    await userEvent.fill(input("Environment variable value 1"), "fake-replacement");
-    await act(async () => input("Environment variable value 1").blur());
+    await userEvent.fill(value, "fake-replacement");
+    await userEvent.tab();
     expect(onChange).toHaveBeenLastCalledWith([
-      { name: "FAKE_API_KEY", value: "fake-replacement", sensitive: true, valueRedacted: false },
+      { ...savedSecret, value: "fake-replacement", valueRedacted: false },
     ]);
-
-    expect(input("Environment variable name 1").disabled).toBe(false);
-    await act(async () => lockButton("FAKE_API_KEY").click());
+    await expect.element(name).toBeEnabled();
+    await expect.element(lock).toBeEnabled();
+    await userEvent.fill(name, "RENAMED_KEY");
+    await userEvent.tab();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Mark environment variable RENAMED_KEY as sensitive" }),
+    );
     expect(onChange).toHaveBeenLastCalledWith([
-      { name: "FAKE_API_KEY", value: "fake-replacement", sensitive: false, valueRedacted: false },
+      { name: "RENAMED_KEY", value: "fake-replacement", sensitive: false, valueRedacted: false },
     ]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove environment variable RENAMED_KEY" }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith([]);
   });
 });
