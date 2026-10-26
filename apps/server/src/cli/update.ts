@@ -191,7 +191,7 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
 });
 
 /** npm's `t3` keeps starting the runtime its package version names, not the one just downloaded. */
-export const resolveNextStep = Effect.fn("cli.update.resolve_next_step")(function* (input: {
+const resolveNextStep = Effect.fn("cli.update.resolve_next_step")(function* (input: {
   readonly repointed: boolean;
   readonly entryPath: string;
   readonly targetVersion: string;
