@@ -41,6 +41,11 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import { type ClaudeOAuthUsage, ClaudeOAuthUsageError } from "./claudeResetCredits.ts";
+import {
+  claudeOAuthUsageToResponse,
+  claudeRateLimitEventToUpdate,
+  makeClaudeScopedLimitNames,
+} from "./claudeUsageLimits.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -2411,6 +2416,7 @@ it.layer(
 
     it.effect("reads usage and resets directly for subscription logins", () =>
       Effect.gen(function* () {
+        const names = yield* makeClaudeScopedLimitNames;
         const sdkUsage = {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 10, resets_at: null } },
@@ -2439,7 +2445,7 @@ it.layer(
             undefined,
             undefined,
             undefined,
-            undefined,
+            names,
             () => oauthUsage,
           );
         const oauthUsage = {
@@ -2488,6 +2494,39 @@ it.layer(
           [10],
         );
         assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
+
+        const scopedUsage = (models: Array<string>) =>
+          claudeOAuthUsageToResponse({
+            limits: models.map((display_name) => ({
+              kind: "weekly_scoped",
+              percent: 7,
+              scope: { model: { display_name } },
+            })),
+          });
+        const direct = { usage: scopedUsage(["Other", "Fable"]), resetCredits: undefined };
+        const scoped = yield* check(
+          { subscriptionType: "max" },
+          Effect.succeed(direct),
+          scopedUsage(["Fable"]),
+        );
+        assert.deepStrictEqual(
+          scoped.usageLimits?.windows.map((window) => window.id),
+          ["seven_day_fable", "seven_day_other"],
+        );
+        const event = {
+          status: "allowed",
+          rateLimitType: "seven_day_overage_included" as never,
+          utilization: 0.5,
+        } as const;
+        assert.strictEqual(
+          claudeRateLimitEventToUpdate(event, yield* Ref.get(names))?.windows[0]?.id,
+          "seven_day_fable",
+        );
+        yield* check({ subscriptionType: "max" }, Effect.succeed(direct), {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
+        assert.strictEqual(claudeRateLimitEventToUpdate(event, yield* Ref.get(names)), undefined);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

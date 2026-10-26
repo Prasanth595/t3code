@@ -154,12 +154,6 @@ export const ClaudeOAuthUsage = Schema.Struct({
   extra_usage: Schema.optional(Schema.Unknown),
 });
 
-/**
- * Rebuilds the `get_usage` response the CLI derives from this body, which it
- * returns empty when nonessential traffic is disabled. The spend fields are
- * decoded by `claudeUsageResponseToLimits`, so a malformed one drops only the
- * monthly row.
- */
 export function claudeOAuthUsageToResponse(
   usage: typeof ClaudeOAuthUsage.Type,
 ): Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits"> {

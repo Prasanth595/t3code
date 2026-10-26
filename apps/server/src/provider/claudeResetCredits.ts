@@ -158,10 +158,6 @@ export class ClaudeOAuthUsageError extends Schema.TaggedError<ClaudeOAuthUsageEr
   { cause: Schema.Defect() },
 ) {}
 
-/**
- * One read serves both the usage windows and the reset credits, and works when
- * the CLI's own `get_usage` is off because nonessential traffic is disabled.
- */
 export const readClaudeOAuthUsage = Effect.fn("readClaudeOAuthUsage")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);

@@ -643,15 +643,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const usage = oauthUsage?.usage ?? capabilities.usage;
   const usageCheckedAt = oauthUsage ? checkedAt : (capabilities.usageCheckedAt ?? checkedAt);
   const usageFailed = oauthResult && Result.isFailure(oauthResult) && !usage?.rate_limits_available;
+  // Only the SDK's filtered model list identifies the streamed overage bucket.
+  if (scopedLimitNames && capabilities.usage) {
+    yield* recordClaudeUsageResponse(scopedLimitNames, {
+      response: capabilities.usage,
+      checkedAt: usageCheckedAt,
+    });
+  }
   const usageLimits =
     !usage || usageFailed
       ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-      : scopedLimitNames
-        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-            response: usage,
-            checkedAt: usageCheckedAt,
-          })
-        : claudeUsageResponseToLimits({ response: usage, checkedAt: usageCheckedAt }).limits;
+      : claudeUsageResponseToLimits({ response: usage, checkedAt: usageCheckedAt }).limits;
   const resetCredits = oauthUsage?.resetCredits;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
