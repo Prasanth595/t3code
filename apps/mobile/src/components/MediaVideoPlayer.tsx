@@ -61,7 +61,7 @@ function LoadedMediaVideo(props: {
       playback.pause();
       previousPlaybackRequested.current = false;
     };
-  }, [player, playback]);
+  }, [active, fullscreen, player, playback]);
   const { status } = useEvent(player, "statusChange", { status: player.status });
   const loadSource = useEffectEvent(async (signal: AbortSignal) => {
     const playIfUninterrupted = createPlayRequest();
