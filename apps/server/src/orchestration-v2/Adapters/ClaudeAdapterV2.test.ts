@@ -4024,20 +4024,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
 
   it.effect.each([
-    { failure: "authentication_failed", apiErrorStatus: undefined, opensFreshProcess: true },
-    { failure: "server_error", apiErrorStatus: undefined, opensFreshProcess: false },
-    { failure: "authentication_failed", apiErrorStatus: 403, opensFreshProcess: false },
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: undefined,
+      opensFreshProcess: true,
+      backgroundShell: false,
+    },
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: undefined,
+      opensFreshProcess: true,
+      backgroundShell: true,
+    },
+    {
+      failure: "server_error",
+      apiErrorStatus: undefined,
+      opensFreshProcess: false,
+      backgroundShell: false,
+    },
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: 403,
+      opensFreshProcess: false,
+      backgroundShell: false,
+    },
   ] as const)(
-    "after a turn fails with $failure (API status: $apiErrorStatus), the next turn opens a fresh process: $opensFreshProcess",
-    ({ failure, apiErrorStatus, opensFreshProcess }) =>
+    "after a turn fails with $failure (API status: $apiErrorStatus), the next turn opens a fresh process: $opensFreshProcess (background shell: $backgroundShell)",
+    ({ failure, apiErrorStatus, opensFreshProcess, backgroundShell }) =>
       Effect.gen(function* () {
         let closeCount = 0;
         const harness = yield* makeWakeHarnessWithOptions({
           freshQueueOnReopen: true,
-          close: () =>
+          close: (messages) =>
             Effect.sync(() => {
               closeCount += 1;
-            }),
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
         });
         const now = yield* DateTime.now;
         const startTurn = (attempt: string, text: string) =>
@@ -4053,6 +4074,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
 
         yield* startTurn("attempt-claude-relogin-1", "Continue.");
+        if (backgroundShell) yield* harness.offerAndWait(wakeTaskStarted);
         yield* Queue.offerAll(harness.sdkMessages, [
           makeAssistantErrorFrame({ uuid: "00000000-0000-4000-8000-000000000611", error: failure }),
           makeResultFrame({
@@ -4066,6 +4088,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const failed = yield* Queue.take(harness.terminalReceipts);
         assert.equal(failed.status, "failed");
 
+        if (backgroundShell) {
+          const refused = yield* startTurn("attempt-claude-relogin-blocked", "Try again.").pipe(
+            Effect.result,
+          );
+          assert.equal(refused._tag, "Failure");
+          if (refused._tag === "Failure") {
+            assert.instanceOf(
+              refused.failure.cause,
+              ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+            );
+          }
+          assert.lengthOf(harness.processQueues, 1);
+          assert.equal(closeCount, 0);
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: failed.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        }
         yield* startTurn("attempt-claude-relogin-2", "Try again.");
         assert.equal(harness.processQueues.length, opensFreshProcess ? 2 : 1);
         assert.equal(closeCount, opensFreshProcess ? 1 : 0);
