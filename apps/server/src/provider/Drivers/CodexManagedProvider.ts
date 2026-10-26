@@ -14,7 +14,6 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
-import { codexChatGptProfileKey } from "../CodexChatGptAuth.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
@@ -125,10 +124,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       label: "ChatGPT",
       ...(saved.value.email?.trim() ? { email: saved.value.email.trim() } : {}),
     };
-    const savedProfileKey = codexChatGptProfileKey(saved.value);
-    return yield* runtime.auth.controller.withAccess!(
-      runtime.resolveForProfile(savedProfileKey),
-    ).pipe(
+    return yield* runtime.auth.controller.withAccess!(runtime.resolve).pipe(
       Effect.flatMap((effective) =>
         Effect.gen(function* () {
           const draft = yield* checkCodexProviderStatus(
@@ -137,10 +133,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
-          const credentials = yield* runtime.auth.accessForProfile(effective.revision);
+          const credentials = yield* runtime.auth.access;
+          // Another server can replace the saved profile while the native probe runs.
+          // Never send that account's token with the launch profile's catalog labels.
           if (
-            codexChatGptProfileKey(credentials) !== effective.revision ||
-            savedProfileKey !== effective.revision
+            (yield* runtime.auth.profileKey(credentials)) !== effective.revision ||
+            (yield* runtime.auth.profileKey(saved.value)) !== effective.revision
           )
             return yield* new ProviderSetupError({
               instanceId,
@@ -150,16 +148,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           const models = yield* chatGptModels(credentials.accessToken, draft.models).pipe(
             Effect.provideService(HttpClient.HttpClient, http),
           );
-          const current = yield* runtime.auth.read;
-          if (
-            Option.isNone(current) ||
-            codexChatGptProfileKey(current.value) !== effective.revision
-          )
-            return yield* new ProviderSetupError({
-              instanceId,
-              operation: "models",
-              detail: "The ChatGPT connection changed while checking Codex. Retry.",
-            });
           return { ...draft, models };
         }),
       ),
@@ -247,13 +235,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   );
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
-    // Sign-out closes the scope of an in-flight probe, which fails that refresh
-    // with an interrupt. Keep listening so the sign-out's own idle still refreshes.
+    // Sign-out interrupts in-flight probes; keep listening for its subsequent idle refresh.
     Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
     Effect.forkScoped,
   );
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
-  // Launch settings resolve per session from the signed-in token. The registry
+  // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
@@ -313,10 +300,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       enabled
         ? resolveRuntime.pipe(
             Effect.matchEffect({
-              // Signed out or not set up, there is nothing to scan with and the
-              // machine snapshot's empty inventory says as much. Otherwise the
-              // runtime failed for a signed-in account (a token refresh or
-              // reconnect) or before the first check, and the scan failed.
+              // Signed-out snapshots have an empty inventory; a signed-in runtime failure must fail the scan.
               onFailure: (cause) =>
                 snapshot.getSnapshot.pipe(
                   Effect.filterOrFail(
@@ -339,8 +323,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             }),
             Effect.scoped,
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            // Fail rather than return the machine snapshot: the registry
-            // publishes any returned snapshot as this workspace's inventory.
+            // Fail instead of returning machine inventory, which the registry would publish as workspace inventory.
             Effect.mapError(
               (cause) =>
                 new ProviderDriverError({

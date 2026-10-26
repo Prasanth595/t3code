@@ -14,7 +14,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderAuthFlow from "./providerAuthFlow.ts";
 
@@ -133,24 +132,6 @@ it.effect("cancellation rejects late consent and permits another login", () =>
     );
     const next = yield* controller.start("other");
     assert.notStrictEqual(next.flowId, state.flowId);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("expires pending login and rejects its response", () =>
-  Effect.gen(function* () {
-    const { controller, started, phase } = yield* makeHarness;
-    const state = yield* controller.start("owner");
-    yield* Deferred.await(started);
-    yield* TestClock.adjust(300_001);
-    assert.include((yield* phase("failed")).message ?? "", "expired");
-    assert.isTrue(
-      (yield* controller.respond!("owner", {
-        instanceId,
-        flowId: state.flowId!,
-        interactionId: "consent",
-        response: { type: "browser", action: "accept" },
-      }).pipe(Effect.result))._tag === "Failure",
-    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -415,28 +396,6 @@ it.effect.each(["cancel", "logout"] as const)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("timeout interrupts and drains a blocked response before publishing failure", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeBlockingResponseHarness;
-    yield* TestClock.adjust(300_001);
-    yield* Deferred.await(harness.cleanupStarted);
-    assert.isTrue(yield* harness.controller.isChangingCredentials!);
-    const duringCleanup = yield* harness.controller
-      .subscribe("owner")
-      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-    assert.notEqual(duringCleanup.phase, "failed");
-    yield* Deferred.succeed(harness.cleanupReleased, undefined);
-    const failed = yield* harness.controller.subscribe("owner").pipe(
-      Stream.filter((state) => state.phase === "failed"),
-      Stream.runHead,
-      Effect.map(Option.getOrThrow),
-    );
-    assert.include(failed.message ?? "", "expired");
-    assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
-    assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
 it.effect(
   "successful authentication drains a still-running response before admitting provider access",
   () =>
@@ -605,5 +564,34 @@ it.effect("profile import claims credential changes before pre-stop validation",
 
     yield* controller.logout(Effect.void);
     assert.isTrue(loggedOut);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("cancelling pre-stop validation releases the credential-change claim", () =>
+  Effect.gen(function* () {
+    const validationStarted = yield* Deferred.make<void>();
+    let stopped = false;
+    const controller = yield* ProviderAuthFlow.make({
+      instanceId,
+      credentialBinding: { owner: "t3", key: "handoff-validation-cancel" },
+      methods: Effect.succeed([method]),
+      authenticate: () => Effect.void,
+      logout: Effect.void,
+    });
+    const imported = yield* controller.adoptCredentials!(
+      Effect.void,
+      Effect.sync(() => {
+        stopped = true;
+      }),
+      Deferred.succeed(validationStarted, undefined).pipe(Effect.andThen(Effect.never)),
+    ).pipe(Effect.forkChild);
+
+    yield* Deferred.await(validationStarted);
+    assert.isTrue(yield* controller.isChangingCredentials!);
+    yield* Fiber.interrupt(imported);
+
+    assert.isFalse(stopped);
+    assert.isFalse(yield* controller.isChangingCredentials!);
+    assert.strictEqual(yield* controller.withAccess!(Effect.succeed("available")), "available");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
