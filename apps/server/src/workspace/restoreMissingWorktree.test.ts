@@ -4,7 +4,6 @@ import { ProjectId, TerminalCwdNotFoundError, ThreadId } from "@t3tools/contract
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -34,7 +33,7 @@ const harness = (worktreePath: string | null) =>
             } as never),
           }),
           Layer.mock(ProjectService.ProjectService)({
-            getById: () => Effect.succeed(Option.some({ workspaceRoot: "/repo" } as never)),
+            getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
           }),
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             pruneWorktrees: () => Effect.void,
@@ -87,6 +86,37 @@ it.layer(layer)("makeRetryAfterRestoringWorktree", (it) => {
 
       assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
       assert.deepEqual(created, []);
+    }),
+  );
+  it.effect("does not restore a worktree for an unrelated missing cwd", () =>
+    Effect.gen(function* () {
+      const { worktreesDir } = yield* ServerConfig.ServerConfig;
+      const worktreePath = (yield* Path.Path).join(worktreesDir, "project", "unrelated");
+      const { retry, created } = yield* harness(worktreePath);
+      const error = new TerminalCwdNotFoundError({ cwd: "/missing-project" });
+      const result = yield* retry("thread-1", Effect.fail(error)).pipe(Effect.flip);
+      assert.strictEqual(result, error);
+      assert.deepEqual(created, []);
+    }),
+  );
+
+  it.effect("retries the launch only once", () =>
+    Effect.gen(function* () {
+      const { worktreesDir } = yield* ServerConfig.ServerConfig;
+      const cwd = (yield* Path.Path).join(worktreesDir, "project", "retry-once");
+      const { retry, created } = yield* harness(cwd);
+      let attempts = 0;
+      const error = new TerminalCwdNotFoundError({ cwd });
+      const result = yield* retry(
+        "thread-1",
+        Effect.suspend(() => {
+          attempts++;
+          return Effect.fail(error);
+        }),
+      ).pipe(Effect.flip);
+      assert.strictEqual(result, error);
+      assert.equal(attempts, 2);
+      assert.deepEqual(created, [cwd]);
     }),
   );
 });
