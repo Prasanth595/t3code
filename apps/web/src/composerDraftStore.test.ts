@@ -1382,6 +1382,13 @@ describe("composerDraftStore draft promotion", () => {
         backgroundSubmissionPending: false,
       }),
     ).toBeNull();
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef: threadRef,
+        serverThread: { latestRun: null, latestUserMessageAt: null },
+        backgroundSubmissionPending: false,
+      }),
+    ).toBeNull();
     const persisted = { latestRun: preparingRun, latestUserMessageAt: "2026-03-29T00:00:00.000Z" };
     expect(
       resolveDraftPromotionNavigationTarget({
@@ -1430,14 +1437,33 @@ describe("composerDraftStore draft promotion", () => {
     useComposerDraftStore.setState({ promotedDraftRedirects: { [draftId]: threadRef } });
     const store = useComposerDraftStore.getState();
 
-    store.retainPromotedDraftRedirectsForRoute({ kind: "draft", draftId });
-    store.retainPromotedDraftRedirectsForRoute({ kind: "server", threadRef });
+    store.retainPromotedDraftRedirectsForRoute({
+      modalPage: false,
+      target: { kind: "draft", draftId },
+    });
+    store.retainPromotedDraftRedirectsForRoute({
+      modalPage: false,
+      target: { kind: "server", threadRef },
+    });
     expect(useComposerDraftStore.getState().getPromotedDraftIdByRef(threadRef)).toBe(draftId);
 
-    store.retainPromotedDraftRedirectsForRoute({ kind: "server", threadRef: otherRef });
+    store.retainPromotedDraftRedirectsForRoute({
+      modalPage: false,
+      target: { kind: "server", threadRef: otherRef },
+    });
     expect(useComposerDraftStore.getState().promotedDraftRedirects).toEqual({});
     // A later visit renders the shared unkeyed ChatView.
     expect(useComposerDraftStore.getState().getPromotedDraftIdByRef(threadRef)).toBeNull();
+  });
+
+  it("keeps a promotion redirect while Settings or Usage is open over its draft", () => {
+    useComposerDraftStore.setState({ promotedDraftRedirects: { [draftId]: threadRef } });
+    const store = useComposerDraftStore.getState();
+
+    // Each settings section is its own route with no thread target; closing returns to the draft.
+    store.retainPromotedDraftRedirectsForRoute({ modalPage: true, target: null });
+    store.retainPromotedDraftRedirectsForRoute({ modalPage: true, target: null });
+    expect(useComposerDraftStore.getState().getPromotedDraftRedirect(draftId)).toEqual(threadRef);
   });
 
   it("holds a background submission on its draft until the send settles", async () => {

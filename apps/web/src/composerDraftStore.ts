@@ -440,7 +440,10 @@ interface ComposerDraftStoreState {
   getDraftIdByRef: (threadRef: ScopedThreadRef) => DraftId | null;
   getPromotedDraftRedirect: (draftId: DraftId) => ScopedThreadRef | null;
   getPromotedDraftIdByRef: (threadRef: ScopedThreadRef) => DraftId | null;
-  retainPromotedDraftRedirectsForRoute: (route: ThreadRouteTarget | null) => void;
+  retainPromotedDraftRedirectsForRoute: (route: {
+    modalPage: boolean;
+    target: ThreadRouteTarget | null;
+  }) => void;
   getDraftThreadByRef: (threadRef: ScopedThreadRef) => DraftThreadState | null;
   getDraftThread: (threadRef: ComposerThreadTarget) => DraftThreadState | null;
   listDraftThreadKeys: () => string[];
@@ -2493,13 +2496,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           return null;
         },
-        retainPromotedDraftRedirectsForRoute: (route) => {
+        retainPromotedDraftRedirectsForRoute: ({ modalPage, target }) => {
+          // Settings and Usage render over the draft and close back to it, so it still needs its redirect.
+          if (modalPage) return;
           set((state) => {
             const entries = Object.entries(state.promotedDraftRedirects);
             const retained = entries.filter(([draftId, promotedTo]) =>
-              route?.kind === "draft"
-                ? route.draftId === draftId
-                : route?.kind === "server" && scopedThreadRefsEqual(promotedTo, route.threadRef),
+              target?.kind === "draft"
+                ? target.draftId === draftId
+                : target?.kind === "server" && scopedThreadRefsEqual(promotedTo, target.threadRef),
             );
             return retained.length === entries.length
               ? state

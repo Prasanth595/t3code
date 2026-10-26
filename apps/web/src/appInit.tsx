@@ -15,7 +15,7 @@ import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToas
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
-import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
+import { isAppModalPage, startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
 import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
 import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
@@ -155,7 +155,10 @@ function startDraftThreadPromotion(router: AppRouter): void {
   });
   router.subscribe("onResolved", () => {
     const target = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
-    useComposerDraftStore.getState().retainPromotedDraftRedirectsForRoute(target);
+    useComposerDraftStore.getState().retainPromotedDraftRedirectsForRoute({
+      modalPage: isAppModalPage(router.state.location.pathname),
+      target,
+    });
   });
 }
 
