@@ -2918,162 +2918,172 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("replaces the ACP session and clears conversation state on rollback", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const path = yield* Path.Path;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const instanceId = ProviderInstanceId.make("acp-test-rollback-session");
-      const rollbackThreadId = ThreadId.make("thread-acp-rollback-session-target");
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
-        environmentId: EnvironmentId.make("environment-acp-rollback-session-target"),
-        threadId: rollbackThreadId,
-        providerSessionId: "mcp-session-acp-rollback-session-target",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43124/mcp",
-        authorizationHeader: "Bearer rollback-target-token",
-        browserToolsAvailable: false,
-      });
-      const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
-      const makeRuntime = makeMockRuntime({
-        childProcessSpawner,
-        mockAgentPath,
-        environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
-      });
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: (runtimeInput) =>
-            Effect.sync(() => runtimeInputs.push(runtimeInput)).pipe(
-              Effect.andThen(makeRuntime(runtimeInput)),
-            ),
-        },
-        selfInvocation,
-      });
-      const threadId = ThreadId.make("thread-acp-rollback-session");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-rollback-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.isTrue(runtime.providerSession.capabilities.threads.canRollbackThread);
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
-      );
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const firstSessionId = providerThread.nativeThreadRef?.nativeId;
-      yield* runtime.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
-          instanceId,
-          runtimePolicy,
-          now: yield* DateTime.now,
-        }),
-      );
-      const activeRollback = yield* runtime
-        .rollbackThread({
-          providerThread,
-          providerThreadTurns: [],
-          target: {
-            type: "thread_start",
-            checkpointId: CheckpointId.make("checkpoint-acp-active-rollback"),
-            appRunOrdinal: 0,
-          },
-        })
-        .pipe(Effect.result);
-      assert.equal(activeRollback._tag, "Failure");
-      if (activeRollback._tag === "Failure") {
-        assert.include(String(activeRollback.failure.cause), "while turn");
-      }
-      const firstProviderTurnId = idAllocator.derive.providerTurn({
-        driver: ACP_TEST_DRIVER,
-        nativeTurnId: acpScopedNativeId(instanceId, `${firstSessionId}:turn:1`),
-      });
-      while (true) {
-        const event = yield* Queue.take(events);
-        if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) break;
-      }
-      const snapshotBeforeRollback = yield* runtime.readThreadSnapshot({ providerThread });
-
-      const rolledBack = yield* runtime.rollbackThread({
-        providerThread: { ...providerThread, appThreadId: rollbackThreadId },
-        providerThreadTurns: snapshotBeforeRollback.providerTurns,
-        target: {
-          type: "thread_start",
-          checkpointId: CheckpointId.make("checkpoint-acp-rollback-session"),
-          appRunOrdinal: 0,
-        },
-      });
-      assert.isString(rolledBack.providerThread.nativeThreadRef?.nativeId);
-      assert.deepEqual(rolledBack.providerTurns, []);
-      assert.equal(
-        runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION,
-        "Bearer rollback-target-token",
-      );
-      const replacementMcpServer = runtimeInputs[1]?.mcpServers[0];
-      const replacementMcpEnvironment =
-        replacementMcpServer !== undefined &&
-        "env" in replacementMcpServer &&
-        Array.isArray(replacementMcpServer.env)
-          ? replacementMcpServer.env
-          : undefined;
-      assert.equal(
-        replacementMcpEnvironment?.find((variable) => variable.name === "T3_ACP_MCP_AUTHORIZATION")
-          ?.value,
-        "Bearer rollback-target-token",
-      );
-      const snapshotAfterRollback = yield* runtime.readThreadSnapshot({
-        providerThread: rolledBack.providerThread,
-      });
-      assert.deepEqual(snapshotAfterRollback.providerTurns, []);
-      assert.deepEqual(snapshotAfterRollback.messages, []);
-
-      yield* runtime.startTurn(
-        makeTurnInput({
+  it.effect.each(["rollback", "fresh"] as const)(
+    "replaces the ACP session and clears conversation state on %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-rollback-session");
+        const rollbackThreadId = ThreadId.make("thread-acp-rollback-session-target");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-acp-rollback-session-target"),
           threadId: rollbackThreadId,
-          providerThread: rolledBack.providerThread,
+          providerSessionId: "mcp-session-acp-rollback-session-target",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43124/mcp",
+          authorizationHeader: "Bearer rollback-target-token",
+          browserToolsAvailable: false,
+        });
+        const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+        const makeRuntime = makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
+        });
+        const adapter = yield* makeAcpAdapterV2({
           instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: (runtimeInput) =>
+              Effect.sync(() => runtimeInputs.push(runtimeInput)).pipe(
+                Effect.andThen(makeRuntime(runtimeInput)),
+              ),
+          },
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-rollback-session");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-rollback-session"),
+          initialNativeThreadId: "persisted-session",
+          initialProviderItemIdentityVersion: 2,
+          modelSelection,
           runtimePolicy,
-          now: yield* DateTime.now,
-          ordinal: 2,
-        }),
-      );
-      const secondProviderTurnId = idAllocator.derive.providerTurn({
-        driver: ACP_TEST_DRIVER,
-        nativeTurnId: acpScopedNativeId(
-          instanceId,
-          `${rolledBack.providerThread.nativeThreadRef?.nativeId}:turn:2`,
-        ),
-      });
-      let secondStatus: string | null = null;
-      while (secondStatus === null) {
-        const event = yield* Queue.take(events);
-        if (event.type === "turn.terminal" && event.providerTurnId === secondProviderTurnId) {
-          secondStatus = event.status;
+        });
+        assert.isTrue(runtime.providerSession.capabilities.threads.canRollbackThread);
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const firstSessionId = providerThread.nativeThreadRef?.nativeId;
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const replace = () =>
+          operation === "fresh"
+            ? runtime
+                .ensureThread({
+                  threadId: rollbackThreadId,
+                  modelSelection,
+                  runtimePolicy,
+                  existingProviderThread: { ...providerThread, nativeThreadRef: null },
+                  forceNewNativeThread: true,
+                })
+                .pipe(
+                  Effect.map((replacement) => ({ providerThread: replacement, providerTurns: [] })),
+                )
+            : runtime.rollbackThread({
+                providerThread: { ...providerThread, appThreadId: rollbackThreadId },
+                providerThreadTurns: [],
+                target: {
+                  type: "thread_start",
+                  checkpointId: CheckpointId.make("checkpoint-acp-rollback"),
+                  appRunOrdinal: 0,
+                },
+              });
+        const activeRollback = yield* replace().pipe(Effect.result);
+        assert.equal(activeRollback._tag, "Failure");
+        if (activeRollback._tag === "Failure") {
+          assert.include(String(activeRollback.failure.cause), "while turn");
         }
-      }
-      assert.equal(secondStatus, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        const firstProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, `${firstSessionId}:turn:1`),
+        });
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) break;
+        }
+
+        const rolledBack = yield* replace();
+        assert.isString(rolledBack.providerThread.nativeThreadRef?.nativeId);
+        assert.notEqual(rolledBack.providerThread.nativeThreadRef?.nativeId, firstSessionId);
+        assert.equal(rolledBack.providerThread.id, providerThread.id);
+        assert.deepEqual(rolledBack.providerTurns, []);
+        assert.equal(
+          runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION,
+          "Bearer rollback-target-token",
+        );
+        const replacementMcpServer = runtimeInputs[1]?.mcpServers[0];
+        const replacementMcpEnvironment =
+          replacementMcpServer !== undefined &&
+          "env" in replacementMcpServer &&
+          Array.isArray(replacementMcpServer.env)
+            ? replacementMcpServer.env
+            : undefined;
+        assert.equal(
+          replacementMcpEnvironment?.find(
+            (variable) => variable.name === "T3_ACP_MCP_AUTHORIZATION",
+          )?.value,
+          "Bearer rollback-target-token",
+        );
+        const snapshotAfterRollback = yield* runtime.readThreadSnapshot({
+          providerThread: rolledBack.providerThread,
+        });
+        assert.deepEqual(snapshotAfterRollback.providerTurns, []);
+        assert.deepEqual(snapshotAfterRollback.messages, []);
+
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId: rollbackThreadId,
+            providerThread: rolledBack.providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+          }),
+        );
+        const secondProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(
+            instanceId,
+            `${rolledBack.providerThread.nativeThreadRef?.nativeId}:turn:2`,
+          ),
+        });
+        let secondStatus: string | null = null;
+        while (secondStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === secondProviderTurnId) {
+            secondStatus = event.status;
+          }
+        }
+        assert.equal(secondStatus, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("quarantines callbacks from a failed rollback replacement before retrying", () =>

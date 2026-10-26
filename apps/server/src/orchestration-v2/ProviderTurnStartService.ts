@@ -724,7 +724,12 @@ export const layer: Layer.Layer<
           ),
           createdAt,
         });
-        return { transferId, createdAt, handoff };
+        const handoffs = [
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
+          handoff,
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
+        ];
+        return { transferId, createdAt, handoff, handoffs };
       });
       type PreparedReplacementHandoff = Effect.Success<
         ReturnType<typeof prepareReplacementHandoff>
@@ -744,6 +749,7 @@ export const layer: Layer.Layer<
               ? {}
               : { errorTag: replacementInput.errorTag }),
           });
+          if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
           const replacement = yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
@@ -751,13 +757,14 @@ export const layer: Layer.Layer<
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               providerSessionId,
+              forceNewNativeThread: true,
               // Keep the durable row but force the adapter to bind fresh native state.
               existingProviderThread: { ...providerThread, nativeThreadRef: null },
             }),
           );
           if (replacement === undefined) return undefined;
           if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-          const { transferId, createdAt, handoff } =
+          const { transferId, createdAt, handoff, handoffs } =
             replacementInput.prepared ?? (yield* prepareReplacementHandoff());
           const replacementWrite = yield* eventSink.writeIfRunCurrent({
             threadId: projection.thread.id,
@@ -803,14 +810,7 @@ export const layer: Layer.Layer<
             ],
           });
           if (!replacementWrite.committed) return undefined;
-          // Delivery ranks later handoffs as newer history. Pending handoffs from
-          // earlier runs predate this summary; handoffs for this run (provider-switch
-          // delta, merge-back) are newer and must stay last.
-          effectiveHandoffs = [
-            ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
-            handoff,
-            ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
-          ];
+          effectiveHandoffs = handoffs;
           resumeFellBack = true;
           return replacement;
         },
@@ -984,6 +984,13 @@ export const layer: Layer.Layer<
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
+      const settledHandoffsFor = (nativeThreadId: string | undefined) =>
+        projection.contextHandoffs.filter(
+          (handoff) =>
+            handoff.toProviderThreadId === providerThread.id &&
+            handoff.delivery?.nativeThreadId === nativeThreadId &&
+            handoff.delivery?.status !== "pending",
+        );
       const providerSwitchHandoff = effectiveHandoffs.some(
         (handoff) =>
           handoff.targetRunId === run.id &&
@@ -992,15 +999,15 @@ export const layer: Layer.Layer<
             handoff.strategy === "full_thread_summary"),
       );
       const compact = isCompactionCommandMessage(message);
-      const deliveredAttemptIdsAtStart = new Set(
+      const deliveredAttemptIds = new Set(
         projection.providerTurns.map((turn) => turn.runAttemptId),
       );
-      const hasMissedProviderInput = projection.runs.some(
+      const missedRuns = projection.runs.filter(
         (source) =>
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIdsAtStart.has(source.activeAttemptId),
+          !deliveredAttemptIds.has(source.activeAttemptId),
       );
       if (
         providerSwitchHandoff &&
@@ -1010,7 +1017,7 @@ export const layer: Layer.Layer<
         !goalCommand &&
         !noteContinuation &&
         restartNote === "" &&
-        !hasMissedProviderInput
+        missedRuns.length === 0
       ) {
         const budget = handoffBudget({
           tokenCap,
@@ -1023,7 +1030,11 @@ export const layer: Layer.Layer<
         const deliveryInput = {
           handoffs: effectiveHandoffs,
           providerThread: loadedProviderThread,
-          alreadyDeliveredItemIds: new Set<string>(),
+          alreadyDeliveredItemIds: new Set(
+            settledHandoffsFor(loadedProviderThread.nativeThreadRef?.nativeId).flatMap(
+              (handoff) => handoff.delivery?.itemIds ?? [],
+            ),
+          ),
         };
         if (planContextHandoffDelivery({ ...deliveryInput, budget }).status === "overflow") {
           const prospectiveUsageState = usageStateFor({
@@ -1044,7 +1055,7 @@ export const layer: Layer.Layer<
           });
           const prepared = yield* prepareReplacementHandoff();
           const prospectivePlan = planContextHandoffDelivery({
-            handoffs: [prepared.handoff, ...effectiveHandoffs],
+            handoffs: prepared.handoffs,
             providerThread: {
               ...loadedProviderThread,
               nativeThreadRef: null,
@@ -1053,7 +1064,14 @@ export const layer: Layer.Layer<
             budget: freshBudget,
             alreadyDeliveredItemIds: new Set<string>(),
           });
-          if (prospectivePlan.status === "ready") {
+          if (
+            prospectivePlan.status === "ready" &&
+            !(yield* (
+              session.hasPendingBackgroundWorkForThread?.(loadedProviderThread) ??
+                session.hasPendingBackgroundWork ??
+                Effect.succeed(false)
+            ))
+          ) {
             const replacement = yield* replaceNativeThread({
               reason: "handoff_overflow",
               prepared,
@@ -1192,12 +1210,7 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const settledHandoffs = projection.contextHandoffs.filter(
-        (handoff) =>
-          handoff.toProviderThreadId === providerThread.id &&
-          handoff.delivery?.nativeThreadId === runningProviderThread.nativeThreadRef?.nativeId &&
-          handoff.delivery?.status !== "pending",
-      );
+      const settledHandoffs = settledHandoffsFor(runningProviderThread.nativeThreadRef?.nativeId);
       const deliveredItemIds = new Set(
         settledHandoffs.flatMap((handoff) => handoff.delivery?.itemIds ?? []),
       );
@@ -1205,9 +1218,6 @@ export const layer: Layer.Layer<
         ...deliveredItemIds,
         ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
       ]);
-      const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
-      );
       const acceptedAttempts = projection.attempts.filter(
         (source) =>
           source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
@@ -1278,15 +1288,7 @@ export const layer: Layer.Layer<
       };
       // The resume fallback summary already covers every earlier run in order. A
       // retry copy after it would rank older missed requests as the newest history.
-      const missedRuns = projection.runs.filter(
-        (source) =>
-          !resumeFellBack &&
-          source.ordinal < run.ordinal &&
-          source.providerThreadId === providerThread.id &&
-          (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIds.has(source.activeAttemptId),
-      );
-      const missedRunIds = new Set(missedRuns.map((source) => source.id));
+      const missedRunIds = new Set(resumeFellBack ? [] : missedRuns.map((source) => source.id));
       const missedItems =
         missedRunIds.size === 0
           ? []

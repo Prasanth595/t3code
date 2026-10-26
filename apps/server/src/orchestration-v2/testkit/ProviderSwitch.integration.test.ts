@@ -103,6 +103,7 @@ function makeTestAdapter(input: {
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
+  readonly hasPendingBackgroundWork?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
@@ -145,6 +146,7 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          hasPendingBackgroundWork: Effect.succeed(input.hasPendingBackgroundWork ?? false),
           ...(input.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: input.getModelContextWindow }),
@@ -413,6 +415,8 @@ describe("orchestration v2 provider switching", () => {
     "screenshot-reported-capacity-native",
     "screenshot-option-change-retry-native",
     "prior-images-reasoning-change-overflow-native",
+    "prior-images-reasoning-change-overflow-inline",
+    "prior-images-reasoning-change-overflow-background-native",
     "prior-images-reasoning-change-overflow-oversized-native",
     "reasoning-change-overflow-prospective-payload-native",
     "turn-usage-model-change-overflow-unknown-window-native",
@@ -467,6 +471,7 @@ describe("orchestration v2 provider switching", () => {
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: {},
+            hasPendingBackgroundWork: scenario.includes("overflow-background"),
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
             ...(replaceNative
@@ -765,6 +770,7 @@ describe("orchestration v2 provider switching", () => {
             const replaced = yield* orchestrator.getThreadProjection(threadId);
             if (
               scenario.includes("overflow-oversized") ||
+              scenario.includes("overflow-background") ||
               scenario.includes("prospective-payload") ||
               scenario.includes("unknown-window")
             ) {
@@ -790,8 +796,10 @@ describe("orchestration v2 provider switching", () => {
             const accepted = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.equal(accepted.driver, CLAUDE_DRIVER);
             assert.equal(accepted.nativeThreadId?.endsWith(":1"), true);
-            assert.equal(accepted.text, "Continue work");
-            const history = yield* encodeJson(yield* Ref.get(injectedHistory));
+            assert.include(accepted.text, "Continue work");
+            const history = scenario.endsWith("-native")
+              ? yield* encodeJson(yield* Ref.get(injectedHistory))
+              : accepted.text;
             assert.include(history, "Original request with constraints");
             assert.include(history, "New source constraint");
             return;
