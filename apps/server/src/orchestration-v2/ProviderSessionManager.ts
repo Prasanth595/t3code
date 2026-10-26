@@ -199,6 +199,7 @@ interface LiveSessionEntry {
     ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
   >;
   readonly requestEventPermit: Semaphore.Semaphore;
+  readonly instructionInvalidations: Map<ProviderThreadId, OrchestrationV2ProviderThread>;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
@@ -1626,6 +1627,7 @@ export const layerWithOptions = (
 
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
+          providerSessionId: ProviderSessionId,
           subscribers: Ref.Ref<
             ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
           >,
@@ -1637,20 +1639,29 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(subscriberId);
-            return [true, updated] as const;
-          }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-                : Effect.void,
-            ),
-          );
+          const close = Effect.gen(function* () {
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+            const release = Effect.gen(function* () {
+              const removed = yield* Ref.modify(subscribers, (current) => {
+                if (!current.has(subscriberId)) return [false, current] as const;
+                const updated = new Map(current);
+                updated.delete(subscriberId);
+                return [true, updated] as const;
+              });
+              if (!removed) return;
+              yield* Queue.clear(queue);
+              yield* Queue.end(queue);
+              // Completion can restore its cached receipt after an idle invalidation was persisted.
+              if (entry !== undefined) {
+                yield* Effect.forEach(
+                  entry.instructionInvalidations.values(),
+                  (offered) => persistInstructionInvalidation(entry, offered),
+                  { discard: true },
+                );
+              }
+            });
+            yield* entry === undefined ? release : entry.requestEventPermit.withPermits(1)(release);
+          }).pipe(Effect.orDie);
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
@@ -1670,7 +1681,7 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
-        const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const subscribeEvents = makeEventSubscription(providerSessionId, eventSubscribers);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -1959,18 +1970,6 @@ export const layerWithOptions = (
               ),
               Effect.andThen(
                 Effect.gen(function* () {
-                  if (event.type === "provider_thread.updated") {
-                    yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderAdapter.ProviderAdapterEventStreamError({
-                            driver: entry.runtime.driver,
-                            providerSessionId: entry.runtime.providerSessionId,
-                            cause,
-                          }),
-                      ),
-                    );
-                  }
                   if (
                     event.type === "provider_thread.updated" &&
                     event.providerThread.status === "error"
@@ -1989,6 +1988,33 @@ export const layerWithOptions = (
                         loadedProviderThreadKeyByThread,
                       });
                     });
+                  }
+                  if (
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.nativeMetadata?.acpInstructions !== undefined
+                  ) {
+                    yield* Effect.gen(function* () {
+                      if (event.providerThread.nativeMetadata?.acpInstructions === null) {
+                        entry.instructionInvalidations.set(
+                          event.providerThread.id,
+                          event.providerThread,
+                        );
+                      } else {
+                        entry.instructionInvalidations.delete(event.providerThread.id);
+                      }
+                      yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderAdapter.ProviderAdapterEventStreamError({
+                              driver: entry.runtime.driver,
+                              providerSessionId: entry.runtime.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      );
+                      yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                    }).pipe(entry.requestEventPermit.withPermits(1));
+                    return;
                   }
                   // Some providers can block before a run subscriber exists
                   // (project trust, login, or session-switch hooks). Persist
@@ -2232,6 +2258,7 @@ export const layerWithOptions = (
                 exposedRuntime,
                 eventSubscribers,
                 requestEventPermit: yield* Semaphore.make(1),
+                instructionInvalidations: new Map(),
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),

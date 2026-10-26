@@ -2900,7 +2900,7 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
   }),
 );
 
-it.effect.each(["current", "newer-run", "newer-session"] as const)(
+it.effect.each(["current", "queued-completion", "newer-run", "newer-session"] as const)(
   "ProviderSessionManagerV2 persists instruction invalidation only for its owner (%s)",
   (owner) =>
     Effect.gen(function* () {
@@ -2966,14 +2966,36 @@ it.effect.each(["current", "newer-run", "newer-session"] as const)(
             nativeMetadata: { title: "stale title", acpInstructions: null },
           },
         });
-        yield* subscription.events.pipe(Stream.runHead);
+        const completionEventId = yield* idAllocator.allocate.event({
+          threadId,
+          providerSessionId,
+        });
+        yield* subscription.events.pipe(
+          Stream.tap(() =>
+            owner === "queued-completion"
+              ? eventSink.write({
+                  events: [
+                    {
+                      id: completionEventId,
+                      type: "provider-thread.updated",
+                      threadId,
+                      driver: CODEX_DRIVER,
+                      occurredAt: now,
+                      payload: before,
+                    },
+                  ],
+                })
+              : Effect.void,
+          ),
+          Stream.runHead,
+        );
         const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
         const updated = projection.providerThreads.find(
           (candidate) => candidate.id === providerThread.id,
         );
         assert.deepEqual(
           updated,
-          owner === "current"
+          owner === "current" || owner === "queued-completion"
             ? {
                 ...before,
                 nativeMetadata: { ...before.nativeMetadata, acpInstructions: null },
