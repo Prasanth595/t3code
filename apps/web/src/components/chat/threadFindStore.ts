@@ -132,10 +132,18 @@ export function closeThreadFind(): void {
   useThreadFindStore.setState(CLOSED_THREAD_FIND);
 }
 
-/** Find belongs to the thread it was opened in; any route away from it closes it. */
-export function retainThreadFindForThread(ref: ScopedThreadRef | null): void {
+/**
+ * Find belongs to the thread it was opened in: a route showing anything else
+ * closes it. Settings and Usage draw over the thread, so they keep it.
+ */
+export function retainThreadFindForRoute(route: {
+  readonly modalPage: boolean;
+  readonly threadRef: ScopedThreadRef | null;
+}): void {
+  if (route.modalPage) return;
   const { threadKey } = useThreadFindStore.getState();
-  if (threadKey !== null && threadKey !== (ref ? scopedThreadKey(ref) : null)) closeThreadFind();
+  const shownKey = route.threadRef ? scopedThreadKey(route.threadRef) : null;
+  if (threadKey !== null && threadKey !== shownKey) closeThreadFind();
 }
 
 /** Whether find is open in `thread`, as long as find is available there. */

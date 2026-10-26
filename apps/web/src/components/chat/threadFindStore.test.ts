@@ -8,7 +8,7 @@ import {
   findForMessageMatch,
   openThreadFind,
   openThreadFindOnQuery,
-  retainThreadFindForThread,
+  retainThreadFindForRoute,
   setThreadFindQuery,
   useThreadFindStore,
 } from "./threadFindStore";
@@ -59,13 +59,19 @@ describe("thread find store", () => {
     detach();
   });
 
-  it("closes find once the route leaves its thread", () => {
+  it("keeps find over Settings and Usage, and closes it on any other route", () => {
     setup();
     openThreadFindOnQuery(threadKey, { query: "x" });
-    retainThreadFindForThread(threadRef);
-    expect(useThreadFindStore.getState().threadKey).toBe(threadKey);
-    retainThreadFindForThread(otherRef);
+    retainThreadFindForRoute({ modalPage: false, threadRef });
+    retainThreadFindForRoute({ modalPage: true, threadRef: null });
+    expect(useThreadFindStore.getState()).toMatchObject({ threadKey, query: "x" });
+
+    retainThreadFindForRoute({ modalPage: false, threadRef: otherRef });
     expect(useThreadFindStore.getState()).toMatchObject({ threadKey: null, query: "" });
+
+    openThreadFindOnQuery(threadKey, { query: "x" });
+    retainThreadFindForRoute({ modalPage: false, threadRef: null });
+    expect(useThreadFindStore.getState().threadKey).toBeNull();
   });
 });
 
