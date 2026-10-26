@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import type * as EffectAcpSchema from "effect-acp/compat";
+import * as EffectAcpSchema from "effect-acp/compat";
+import { antigravity140Session } from "./antigravity140.fixture.ts";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
@@ -13,6 +14,7 @@ import {
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
+  normalizeAntigravityResponseLine,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
@@ -21,6 +23,12 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+
+import {
+  antigravity141ConfigResponse,
+  antigravity141Initialize,
+  antigravity141Session,
+} from "./antigravity141.fixture.ts";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -463,5 +471,94 @@ describe("Antigravity tool results", () => {
       mergeToolCallState(running, parseToolUpdate(commandCompleted).toolCall),
     );
     expect(isAntigravityOpenCommand(completed)).toBe(false);
+  });
+});
+
+const decodeNewSessionAdvertisement = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...AcpWireSchema.NewSessionResponse.fields,
+    models: EffectAcpSchema.SessionModelState,
+  }),
+);
+const decodeResumeSessionAdvertisement = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...AcpWireSchema.ResumeSessionResponse.fields,
+    models: EffectAcpSchema.SessionModelState,
+  }),
+);
+const decodeNativeInitialize = Schema.decodeSync(AcpWireSchema.InitializeResponse);
+const decodeNativeModelState = Schema.decodeSync(EffectAcpSchema.SessionModelState);
+const decodeNativeNewSession = Schema.decodeSync(AcpWireSchema.NewSessionResponse);
+const decodeNativeConfigResponse = Schema.decodeSync(AcpWireSchema.SetSessionConfigOptionResponse);
+
+describe("synthetic ACP 1.4.0 advertisement decoding", () => {
+  it.each(["new", "resume"])("accepts missing currentModelId and extra fields on %s", (method) => {
+    const { currentModelId: _current, ...models } = antigravity140Session.models;
+    const response = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ...antigravity140Session,
+        futureField: { enabled: true },
+        models: {
+          ...models,
+          futureModelsField: 1,
+          availableModels: models.availableModels.map((model) => ({
+            ...model,
+            futureModelField: "ignored",
+          })),
+        },
+      },
+    };
+    const normalized = JSON.parse(normalizeAntigravityResponseLine(JSON.stringify(response)));
+    const decoded = (
+      method === "new" ? decodeNewSessionAdvertisement : decodeResumeSessionAdvertisement
+    )(normalized.result);
+    expect(decoded.models?.currentModelId).toBe("");
+    expect(decoded.models?.availableModels).toEqual(models.availableModels);
+    expect(normalized.result.futureField).toEqual({ enabled: true });
+  });
+
+  it("accepts an empty availableModels array without inventing a model", () => {
+    const decoded = decodeNewSessionAdvertisement({
+      ...antigravity140Session,
+      models: { ...antigravity140Session.models, availableModels: [] },
+      futureField: true,
+    });
+    expect(decoded.models?.availableModels).toEqual([]);
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ jsonrpc: "2.0", id: 2, result: { models: null } }),
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      result: { models: { currentModelId: 12, availableModels: [] } },
+    }),
+  ])("preserves unrelated or malformed lines: %s", (line) => {
+    expect(normalizeAntigravityResponseLine(line)).toBe(line);
+  });
+});
+
+describe("real Linux ACP 1.4.1 advertisement decoding", () => {
+  it("decodes the native config response with Low/High only for Gemini Pro", () => {
+    const response = decodeNativeConfigResponse(antigravity141ConfigResponse);
+    expect(response.configOptions).toEqual(antigravity141ConfigResponse.configOptions);
+    expect(
+      antigravity141ConfigResponse.configOptions
+        .find((option) => option.id === "thinking_level")
+        ?.options.map((choice) => choice.value),
+    ).toEqual(["low", "high"]);
+  });
+
+  it("decodes initialize and concrete model state without a version-specific adaptation", () => {
+    expect(decodeNativeInitialize(antigravity141Initialize).agentInfo?.version).toBe("1.4.1");
+    expect(decodeNativeModelState(antigravity141Session.models)).toEqual(
+      antigravity141Session.models,
+    );
+    expect(decodeNativeNewSession(antigravity141Session).configOptions).toEqual(
+      antigravity141Session.configOptions,
+    );
   });
 });

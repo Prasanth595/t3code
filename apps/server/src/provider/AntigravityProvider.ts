@@ -31,7 +31,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
-import { antigravitySessionModels } from "./acp/AntigravityAcpSupport.ts";
+import { antigravityModelConfig, antigravitySessionModels } from "./acp/AntigravityAcpSupport.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -50,7 +50,7 @@ export function buildAntigravityModelsFromSession(
 ): ReadonlyArray<ServerProviderModel> {
   const config = antigravitySessionModels(setup)
     ? undefined
-    : setup.configOptions?.find((option) => option.id === "model" || option.category === "model");
+    : antigravityModelConfig(setup.configOptions ?? []);
   const currentValue =
     config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
   const entries =

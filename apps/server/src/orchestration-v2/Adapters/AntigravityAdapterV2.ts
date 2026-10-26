@@ -174,6 +174,7 @@ export function makeAntigravityAcpAdapterFlavor(
       runtime,
       modelSelection,
       startResult,
+      allowUnavailableModel,
     }) {
       const defaultModel = yield* options.defaultModel;
       return yield* applyAntigravityAcpModelSelection({
@@ -182,6 +183,7 @@ export function makeAntigravityAcpAdapterFlavor(
         model:
           modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
         defaultModel,
+        allowUnavailableModel,
         mapError: (cause) => cause,
       });
     }),

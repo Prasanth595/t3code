@@ -372,3 +372,26 @@ export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | 
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
 }
+
+const decodeResponseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject));
+
+export function normalizeAntigravityResponseLine(line: string): string {
+  const decoded = decodeResponseJson(line);
+  const message = Option.getOrUndefined(decoded);
+  if (message === undefined) return line;
+  const result: unknown = message.result;
+  if (!Predicate.isObject(result)) return line;
+  const models = result.models;
+  if (!Predicate.isObject(models)) return line;
+  if (models.currentModelId !== undefined || !Array.isArray(models.availableModels)) return line;
+  // Preserve an unknown current model without weakening the shared ACP schema.
+  return (
+    JSON.stringify({
+      ...message,
+      result: {
+        ...result,
+        models: { ...models, currentModelId: "" },
+      },
+    }) + (line.endsWith("\n") ? "\n" : "")
+  );
+}

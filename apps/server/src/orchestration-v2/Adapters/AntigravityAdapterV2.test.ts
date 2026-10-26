@@ -35,6 +35,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
   antigravity140AgentSource,
+  antigravity140Session,
   decodeAntigravity140Request,
 } from "../../provider/acp/antigravity140.fixture.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -45,6 +46,8 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
+
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -134,6 +137,158 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 ACP 1.4 models", () => {
+  it.effect.each(["removed", "renamed", "display-renamed", "missing-current", "empty"])(
+    "synthetic ACP 1.4.0 resumes after catalog change: %s",
+    (change) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ag-synthetic-resume-" });
+        const agentPath = path.join(workspace, "agent.mjs");
+        const logPath = path.join(workspace, "requests.ndjson");
+        const low = "gemini-3.8-flash-low";
+        const high = "gemini-3.8-flash-high";
+        const availableModels =
+          change === "empty"
+            ? []
+            : antigravity140Session.models.availableModels.flatMap((model) =>
+                model.modelId !== low
+                  ? [model]
+                  : change === "removed"
+                    ? []
+                    : [
+                        {
+                          ...model,
+                          modelId: change === "renamed" ? "replacement-low" : model.modelId,
+                          name: change === "display-renamed" ? "Renamed Low" : model.name,
+                        },
+                      ],
+              );
+        // Keep the fresh session equal to the real capture, then change only the resumed catalog.
+        const resumedSetup = {
+          ...antigravity140Session,
+          models: {
+            ...(change === "missing-current" ? {} : { currentModelId: high }),
+            availableModels,
+          },
+        };
+        const source = antigravity140AgentSource
+          .replace("const setup =", "let setup =")
+          .replace(
+            "result = { ...setup, configOptions: configOptions() };",
+            'sessionId = "synthetic-" + process.pid; result = { ...setup, sessionId, configOptions: configOptions() };',
+          )
+          .replace(
+            "sessionId = request.params.sessionId;",
+            `setup = ${JSON.stringify(resumedSetup)}; sessionId = request.params.sessionId;`,
+          );
+        yield* fs.writeFileString(agentPath, source);
+        const instanceId = ProviderInstanceId.make("antigravity-synthetic-resume");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd: workspace,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.succeed(high),
+        });
+        const open = {
+          threadId: ThreadId.make("thread-synthetic-resume"),
+          providerSessionId: ProviderSessionId.make("session-synthetic-resume"),
+          modelSelection: { instanceId, model: low },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: workspace,
+          }),
+        };
+        const freshScope = yield* Scope.fork(yield* Effect.scope);
+        const session = yield* adapter
+          .openSession(open)
+          .pipe(Effect.provideService(Scope.Scope, freshScope));
+        const thread = yield* session.ensureThread(open);
+        yield* Scope.close(freshScope, Exit.void);
+        const resumed = yield* adapter.openSession({
+          ...open,
+          initialNativeThreadId: thread.nativeThreadRef!.nativeId!,
+        });
+        assert.isDefined(yield* resumed.ensureThread(open));
+        const now = yield* DateTime.now;
+        for (const [ordinal, interactionMode] of [
+          [1, "default"],
+          [2, "plan"],
+        ] as const) {
+          const completed = yield* resumed.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            ),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* resumed.startTurn(
+            makeTurnInput({
+              threadId: open.threadId,
+              providerThread: thread,
+              instanceId,
+              now,
+              ordinal,
+              messageText: "Report selected model",
+              modelSelection: open.modelSelection,
+              runtimePolicy: { ...open.runtimePolicy, interactionMode },
+            }),
+          );
+          const events = yield* Fiber.join(completed);
+          const output = events
+            .filter(
+              (event) => event.type === "message.updated" && event.message.role === "assistant",
+            )
+            .map((event) => (event.type === "message.updated" ? event.message.text : undefined))
+            .at(-1);
+          assert.equal(
+            output,
+            change === "removed" || change === "renamed" || change === "empty" ? high : low,
+          );
+        }
+        // Also exercise activation in a process initially opened on a different native thread.
+        const activated = yield* adapter.openSession({
+          ...open,
+          providerSessionId: ProviderSessionId.make("activation-synthetic-resume"),
+        });
+        yield* activated.resumeThread({ providerThread: thread });
+        const requests = yield* Effect.forEach(
+          (yield* fs.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        assert.deepEqual(
+          requests
+            .filter((request) => request.method === "session/set_model")
+            .map((request) => request.params?.modelId),
+          [
+            low,
+            ...(change === "empty"
+              ? []
+              : Array(2).fill(change === "removed" || change === "renamed" ? high : low)),
+            low,
+            ...(change === "empty"
+              ? []
+              : [change === "removed" || change === "renamed" ? high : low]),
+          ],
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
   it.effect(
     "uses concrete models for fresh and resumed chat and restores the default after thinking changes",
     () =>

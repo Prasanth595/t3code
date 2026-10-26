@@ -23,7 +23,10 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
+import {
+  normalizeAntigravityResponseLine,
+  normalizeAntigravitySessionUpdate,
+} from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
@@ -64,9 +67,15 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
         },
         terminal: false,
       },
-      transformStdout: makeAntigravityStdoutTransform(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
-      ),
+      transformStdout: (stdout) =>
+        stdout.pipe(
+          makeAntigravityStdoutTransform(
+            input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
+          ),
+          Stream.map((line) =>
+            Buffer.from(normalizeAntigravityResponseLine(Buffer.from(line).toString("utf8"))),
+          ),
+        ),
       onStderr: makeAntigravityStderrHandler(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
@@ -92,10 +101,18 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+export function antigravityModelConfig(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+) {
+  return configOptions.find(
+    (option) => option.type === "select" && (option.id === "model" || option.category === "model"),
+  );
+}
+
 function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
-  const model = configOptions.find((option) => option.id === "model");
+  const model = antigravityModelConfig(configOptions);
   if (model?.type !== "select") return [];
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
@@ -104,13 +121,25 @@ export function antigravitySessionModels(setup: {
   readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
   readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
 }) {
-  // ACP 1.4 session models contain concrete IDs; config options split family and thinking level.
-  return setup.configOptions?.some((option) => option.id === "thinking_level")
-    ? (setup.models ?? null)
+  const models = setup.models;
+  if (!models) return null;
+  const configOptions = setup.configOptions ?? [];
+  const choices = antigravityModelOptions(configOptions);
+  const hasModelConfig = antigravityModelConfig(configOptions) !== undefined;
+  // A single-level family can omit thinking_level. Compare advertised IDs, never infer suffixes.
+  const hasFamilies =
+    models.availableModels.length > 0 &&
+    choices.some(
+      (choice) => !models.availableModels.some((model) => model.modelId === choice.value),
+    );
+  return !hasModelConfig ||
+    hasFamilies ||
+    configOptions.some((option) => option.id === "thinking_level")
+    ? models
     : null;
 }
 
-/** Never replace a saved selection with the default returned by a cold resume. */
+/** Restore saved IDs while allowing expired catalog choices to fall back on resume. */
 export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpModelSelection")(
   function* <E>(input: {
     readonly runtime: Pick<
@@ -120,26 +149,30 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
     readonly model: string | null | undefined;
     readonly defaultModel?: string | undefined;
+    readonly allowUnavailableModel?: boolean;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
     const configOptions = yield* input.runtime.getConfigOptions;
-    const modelConfig = configOptions.find((option) => option.id === "model");
+    const modelConfig = antigravityModelConfig(configOptions);
     const models = antigravitySessionModels({ configOptions, models: input.models });
-    const current = models
+    const options = models
+      ? models.availableModels.map((model) => ({ value: model.modelId }))
+      : antigravityModelOptions(configOptions);
+    const isAvailable = (id: string | null | undefined): id is string =>
+      typeof id === "string" &&
+      id.trim().length > 0 &&
+      options.some((option) => option.value === id);
+    const reportedCurrent = models
       ? models.currentModelId
       : modelConfig?.type === "select"
         ? modelConfig.currentValue
         : undefined;
-    const options = models
-      ? models.availableModels.map((model) => ({ value: model.modelId }))
-      : antigravityModelOptions(configOptions);
+    const current = isAvailable(reportedCurrent) ? reportedCurrent : undefined;
     const explicitModel =
       input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL ? input.model : undefined;
-    const resolved =
-      explicitModel ??
-      (input.defaultModel && options.some((option) => option.value === input.defaultModel)
-        ? input.defaultModel
-        : current);
+    const requested =
+      input.allowUnavailableModel && !isAvailable(explicitModel) ? undefined : explicitModel;
+    const resolved = requested ?? (isAvailable(input.defaultModel) ? input.defaultModel : current);
     // Setup can predate thinking-level changes, so reapply even the current concrete model.
     if (resolved === undefined || (!models && !explicitModel && resolved === current))
       return current;

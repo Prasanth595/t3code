@@ -6,6 +6,9 @@ import {
   type ChatAttachment,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -17,6 +20,8 @@ import {
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
+
+import { antigravity140Session } from "./antigravity140.fixture.ts";
 
 const modelConfig = {
   id: "model",
@@ -139,6 +144,279 @@ describe("applyAntigravityAcpModelSelection", () => {
 
       expect(model).toBe("gemini-saved");
       expect(selections).toEqual(["gemini-saved"]);
+    }),
+  );
+});
+
+// Synthetic variants of the captured 1.4.0 advertisement, not 1.4.1 captures.
+describe("synthetic ACP 1.4.0 selection edges", () => {
+  const high = antigravity140Session.models.currentModelId;
+  const low = "gemini-3.8-flash-low";
+
+  it.effect.each([
+    {
+      name: "family without thinking",
+      configOptions: antigravity140Session.configOptions.slice(0, 1),
+    },
+    {
+      name: "thinking without family",
+      configOptions: antigravity140Session.configOptions.slice(1),
+    },
+    { name: "session models without config", configOptions: [] },
+  ])("selects concrete IDs for $name", ({ configOptions }) =>
+    Effect.gen(function* () {
+      const selections: string[] = [];
+      const model = yield* applyAntigravityAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed(configOptions),
+          setModel: () => Effect.die("Concrete IDs must use session/set_model"),
+          setSessionModel: (id) =>
+            Effect.sync(() => {
+              selections.push(id);
+              return {};
+            }),
+        },
+        models: antigravity140Session.models,
+        model: low,
+        mapError: (cause) => cause,
+      });
+      expect(model).toBe(low);
+      expect(selections).toEqual([low]);
+    }),
+  );
+
+  it.effect("selects only Medium for a synthetic GPT-OSS single-level advertisement", () =>
+    Effect.gen(function* () {
+      const id = "gpt-oss-120b-medium";
+      const { runtime, selections } = makeModelRuntime([
+        {
+          ...antigravity140Session.configOptions[0]!,
+          currentValue: id,
+          options: [{ value: id, name: "GPT-OSS 120B (Medium)" }],
+        },
+      ]);
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models: {
+            currentModelId: id,
+            availableModels: [{ modelId: id, name: "GPT-OSS 120B (Medium)" }],
+          },
+          model: id,
+          mapError: (cause) => cause,
+        }),
+      ).toBe(id);
+      expect(selections).toEqual([id]);
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime,
+          model: "gpt-oss-120b-high",
+          mapError: (cause) => cause,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ code: -32602 });
+    }),
+  );
+
+  it.effect("selects Low but never invents Medium for a synthetic Gemini Pro family", () =>
+    Effect.gen(function* () {
+      const low = "gemini-3.1-pro-low";
+      const models = {
+        currentModelId: "gemini-3.1-pro-high",
+        availableModels: [
+          { modelId: "gemini-3.1-pro-high", name: "Pro High" },
+          { modelId: low, name: "Pro Low" },
+        ],
+      };
+      const selections: string[] = [];
+      const runtime = {
+        getConfigOptions: Effect.succeed([
+          {
+            ...antigravity140Session.configOptions[0]!,
+            currentValue: "gemini-3.1-pro",
+            options: [{ value: "gemini-3.1-pro", name: "Pro" }],
+          },
+        ]),
+        setModel: () => Effect.die("Do not select a family"),
+        setSessionModel: (id: string) =>
+          Effect.sync(() => {
+            selections.push(id);
+            return {};
+          }),
+      };
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models,
+          model: low,
+          mapError: (cause) => cause,
+        }),
+      ).toBe(low);
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models,
+          model: "gemini-3.1-pro-medium",
+          mapError: (cause) => cause,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ code: -32602 });
+      expect(selections).toEqual([low]);
+    }),
+  );
+
+  it.effect.each([
+    { suffix: "missing", defaultModel: low, expected: low },
+    { suffix: "renamed-id", defaultModel: low, expected: low },
+    { suffix: "missing-default", defaultModel: "removed-default", expected: high },
+    { suffix: "no-default", defaultModel: undefined, expected: high },
+  ])("falls back on resume when the saved ID is $suffix", ({ suffix, defaultModel, expected }) =>
+    Effect.gen(function* () {
+      const selections: string[] = [];
+      const result = yield* applyAntigravityAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed(antigravity140Session.configOptions),
+          setModel: () => Effect.die("Do not select a family"),
+          setSessionModel: (id) =>
+            Effect.sync(() => {
+              selections.push(id);
+              return {};
+            }),
+        },
+        models: antigravity140Session.models,
+        model: `saved-${suffix}`,
+        allowUnavailableModel: true,
+        defaultModel,
+        mapError: (cause) => cause,
+      });
+      expect(result).toBe(expected);
+      expect(selections).toEqual([expected]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "unknown current",
+      models: { ...antigravity140Session.models, currentModelId: "removed" },
+    },
+    { name: "empty catalog", models: { ...antigravity140Session.models, availableModels: [] } },
+    { name: "blank current", models: { ...antigravity140Session.models, currentModelId: "" } },
+  ])("leaves the native default alone for $name", ({ models }) =>
+    Effect.gen(function* () {
+      const result = yield* applyAntigravityAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed(antigravity140Session.configOptions),
+          setModel: () => Effect.die("No valid selection"),
+          setSessionModel: () => Effect.die("No valid selection"),
+        },
+        models,
+        model: ANTIGRAVITY_DEFAULT_MODEL,
+        mapError: (cause) => cause,
+      });
+      expect(result).toBeUndefined();
+    }),
+  );
+
+  it.effect("does not suppress an unavailable explicit selection on a fresh session", () =>
+    Effect.gen(function* () {
+      const { runtime } = makeModelRuntime(antigravity140Session.configOptions);
+      const error = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        models: antigravity140Session.models,
+        model: "removed",
+        mapError: (cause) => cause,
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ code: -32602 });
+    }),
+  );
+
+  it.effect("keeps duplicate IDs and renamed display names out of selection semantics", () =>
+    Effect.gen(function* () {
+      const selections: string[] = [];
+      const result = yield* applyAntigravityAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed(antigravity140Session.configOptions),
+          setModel: () => Effect.die("Do not select a family"),
+          setSessionModel: (id) =>
+            Effect.sync(() => {
+              selections.push(id);
+              return {};
+            }),
+        },
+        models: {
+          ...antigravity140Session.models,
+          availableModels: [
+            ...antigravity140Session.models.availableModels,
+            { modelId: low, name: "Renamed Low" },
+          ],
+        },
+        model: low,
+        mapError: (cause) => cause,
+      });
+      expect(result).toBe(low);
+      expect(selections).toEqual([low]);
+    }),
+  );
+
+  it.effect.each([
+    EffectAcpErrors.AcpRequestError.invalidParams("Agent rejected the advertised ID"),
+    new EffectAcpErrors.AcpTransportError({
+      detail: "Connection lost",
+      cause: new Error("Disconnected"),
+    }),
+  ])("does not turn an agent or transport failure into a resume fallback: %s", (failure) =>
+    Effect.gen(function* () {
+      const result = yield* applyAntigravityAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed(antigravity140Session.configOptions),
+          setModel: () => Effect.die("Do not select a family"),
+          setSessionModel: () => Effect.fail(failure),
+        },
+        models: antigravity140Session.models,
+        model: low,
+        allowUnavailableModel: true,
+        mapError: (cause) => cause,
+      }).pipe(Effect.flip);
+      expect(result).toBe(failure);
+    }),
+  );
+
+  it.effect("reapplies the reported current concrete model across an in-flight config update", () =>
+    Effect.gen(function* () {
+      const config = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>(
+        antigravity140Session.configOptions,
+      );
+      const selecting = yield* Deferred.make<void>();
+      const updated = yield* Deferred.make<void>();
+      const selections: string[] = [];
+      const runtime = {
+        getConfigOptions: Ref.get(config),
+        setModel: () => Effect.die("Do not select a family"),
+        setSessionModel: (id: string) =>
+          Effect.gen(function* () {
+            selections.push(id);
+            yield* Deferred.succeed(selecting, undefined);
+            yield* Deferred.await(updated);
+            return {};
+          }),
+      };
+      const pending = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        models: antigravity140Session.models,
+        model: high,
+        mapError: (cause) => cause,
+      }).pipe(Effect.forkChild);
+      yield* Effect.raceFirst(Deferred.await(selecting), Fiber.join(pending));
+      yield* Ref.set(config, antigravity140Session.configOptions.slice(0, 1));
+      yield* Deferred.succeed(updated, undefined);
+      expect(yield* Fiber.join(pending)).toBe(high);
+      expect(
+        yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models: antigravity140Session.models,
+          model: high,
+          mapError: (cause) => cause,
+        }),
+      ).toBe(high);
+      expect(selections).toEqual([high, high]);
     }),
   );
 });

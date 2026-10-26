@@ -30,6 +30,8 @@ import {
 } from "./AntigravityProvider.ts";
 import { antigravity140Session } from "./acp/antigravity140.fixture.ts";
 
+import { antigravity141Session } from "./acp/antigravity141.fixture.ts";
+
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
 const driver = ProviderDriverKind.make("antigravity");
@@ -179,6 +181,69 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
+  it("preserves every concrete ID in the real Linux ACP 1.4.1 API-key advertisement", () => {
+    const models = buildAntigravityModelsFromSession(antigravity141Session);
+    expect(models.map((model) => model.slug)).toEqual(
+      antigravity141Session.models.availableModels.map((model) => model.modelId),
+    );
+    expect(models).toHaveLength(14);
+    expect(models.find((model) => model.isDefault)?.slug).toBe("gemini-3.8-flash-high");
+  });
+
+  it.each([
+    {
+      name: "family without thinking",
+      configOptions: antigravity140Session.configOptions.slice(0, 1),
+    },
+    {
+      name: "thinking without family",
+      configOptions: antigravity140Session.configOptions.slice(1),
+    },
+    { name: "no config", configOptions: [] },
+  ])("synthetic ACP 1.4.0 catalog: $name", ({ configOptions }) => {
+    const models = buildAntigravityModelsFromSession({ ...antigravity140Session, configOptions });
+    expect(models.map((model) => model.slug)).toEqual(
+      antigravity140Session.models.availableModels.map((model) => model.modelId),
+    );
+  });
+
+  it("synthetic ACP 1.4.0 catalog deduplicates IDs, ignores blanks, and keeps renamed display names", () => {
+    const models = buildAntigravityModelsFromSession({
+      ...antigravity140Session,
+      models: {
+        currentModelId: "removed",
+        availableModels: [
+          { modelId: "gemini-3.8-flash-low", name: "Renamed Low" },
+          ...antigravity140Session.models.availableModels,
+          { modelId: " ", name: "Blank" },
+        ],
+      },
+    });
+    expect(models.map((model) => model.slug)).toEqual([
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+    ]);
+    expect(models[0]?.name).toBe("Renamed Low");
+    expect(models.some((model) => model.isDefault)).toBe(false);
+    expect(
+      buildAntigravityModelsFromSession({
+        ...antigravity140Session,
+        models: { ...antigravity140Session.models, availableModels: [] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("synthetic ACP 1.4.0 ignores non-select options in the model category", () => {
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        { id: "other", name: "Other", type: "boolean", category: "model", currentValue: false },
+        modelConfig,
+      ],
+    });
+    expect(models.map((model) => model.slug)).toEqual(modelOptions.map((model) => model.value));
+  });
+
   it("uses legacy session models only when model config is absent", () => {
     const fromLegacy = buildAntigravityModelsFromSession({
       models: sessionSetupResult.models,
@@ -249,6 +314,26 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect((yield* harness.provider.snapshot.getSnapshot).models).toHaveLength(1);
       }),
     ),
+  );
+
+  it.effect(
+    "synthetic ACP 1.4.0 cache keeps the catalog when thinking disappears during selection",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          yield* harness.initialize;
+          yield* harness.provider.onSessionStarted({
+            ...started,
+            sessionSetupResult: antigravity140Session,
+          });
+          const before = (yield* harness.provider.snapshot.getSnapshot).models;
+          yield* harness.provider.onConfigOptionsUpdated(
+            antigravity140Session.configOptions.slice(0, 1),
+          );
+          expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(before);
+        }),
+      ),
   );
 
   it.effect("does not restore removed concrete models after a session refresh", () =>
