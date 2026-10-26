@@ -18,6 +18,7 @@ describe("ExecutionEnvironmentDescriptor", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [
       { kind: "npx" },
+      { kind: "unknown", subcommand: "serve" },
       { kind: "npx", subcommand: "serve", systemdUnit: { name: "t3.service", scope: "user" } },
       { kind: "npm-global", prefix: "/opt/node" },
     ]) {

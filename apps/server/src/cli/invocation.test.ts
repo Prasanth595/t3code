@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import packageJson from "../../package.json" with { type: "json" };
 import {
   parseSystemdUnit,
+  systemdUnitLaunchesT3,
   resolveHostCliCommand,
   resolveRootCliCommand,
   resolveServerInstallation,
@@ -34,6 +35,40 @@ it("names only the service unit that would restart a stopped server", () => {
     ["0::/", null],
   ] as const) {
     expect(parseSystemdUnit(cgroup)).toEqual(expected);
+  }
+});
+
+it("offers service restarts only for units that launch t3", () => {
+  const entry = "/opt/node/lib/node_modules/t3/bin/t3.mjs";
+  for (const command of [
+    "/usr/bin/npx -y t3@0.1.0 serve --no-browser",
+    "/usr/bin/pnpm dlx t3@nightly serve",
+    "/usr/bin/bunx t3 serve",
+    "/usr/local/bin/t3 serve",
+    `/usr/bin/node ${entry} serve`,
+  ]) {
+    expect(
+      systemdUnitLaunchesT3(
+        `{ path=ignored ; argv[]=${command} ; ignore_errors=no }`,
+        entry,
+        "/usr/bin/node",
+      ),
+    ).toBe(true);
+  }
+  for (const command of [
+    "/usr/bin/code-server --bind-addr 127.0.0.1:8080",
+    "/bin/bash /opt/start-server.sh",
+    "/usr/bin/node /opt/editor.js",
+    "/usr/bin/npx code-server",
+    "/usr/bin/code-server /home/user/t3",
+  ]) {
+    expect(
+      systemdUnitLaunchesT3(
+        `{ path=ignored ; argv[]=${command} ; ignore_errors=no }`,
+        entry,
+        "/usr/bin/node",
+      ),
+    ).toBe(false);
   }
 });
 

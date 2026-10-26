@@ -9,6 +9,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ProcessRunner from "../processRunner.ts";
 
 export type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
@@ -107,10 +108,49 @@ export function parseSystemdUnit(cgroup: string): ServerSystemdUnit | null {
   return { name, scope: /\/user@\d+\.service\//.test(path) ? "user" : "system" };
 }
 
+export function systemdUnitLaunchesT3(
+  execStart: string,
+  entry: string,
+  executable: string,
+): boolean {
+  const command = /(?:^| )argv\[\]=(.+?) ;/.exec(execStart)?.[1];
+  if (command === undefined) return false;
+  if (
+    [entry, `${executable} ${entry}`].some(
+      (launch) => command === launch || command.startsWith(`${launch} `),
+    )
+  )
+    return true;
+  return /^(?:\S*\/)?(?:t3(?: |$)|(?:npx|bunx)(?: -y| --yes)* t3(?:@[\w.+-]+)?(?: |$)|pnpm dlx t3(?:@[\w.+-]+)?(?: |$))/.test(
+    command,
+  );
+}
+
 export const resolveSystemdUnit = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return null;
   const fs = yield* FileSystem.FileSystem;
-  return parseSystemdUnit(yield* fs.readFileString("/proc/self/cgroup"));
+  const unit = parseSystemdUnit(yield* fs.readFileString("/proc/self/cgroup"));
+  if (unit === null) return null;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* runner.run({
+    command: "systemctl",
+    args: [
+      ...(unit.scope === "user" ? ["--user"] : []),
+      "show",
+      "--property=ExecStart",
+      "--value",
+      "--",
+      unit.name,
+    ],
+    timeout: "2 seconds",
+    env: yield* HostProcess.Environment,
+    maxOutputBytes: 16 * 1024,
+  });
+  // An IDE terminal can inherit its editor's service cgroup without being launched by the unit.
+  return result.code === 0 &&
+    systemdUnitLaunchesT3(result.stdout, yield* resolveEntryPath, yield* HostProcess.ExecutablePath)
+    ? unit
+    : null;
 }).pipe(Effect.orElseSucceed(() => null));
 
 /** The original package spec is unavailable at startup; infer its channel from the version. */

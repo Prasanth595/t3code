@@ -69,7 +69,10 @@ const serverLaunchFields = {
 };
 
 export const ServerInstallation = Schema.Union([
-  Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx"]), ...serverLaunchFields }),
+  Schema.Struct({
+    kind: Schema.Literals(["npx", "pnpm-dlx", "bunx", "unknown"]),
+    ...serverLaunchFields,
+  }),
   Schema.Struct({
     kind: Schema.Literal("npm-global"),
     prefix: TrimmedNonEmptyString,

@@ -140,7 +140,7 @@ export function manualServerUpdate(
     command: installation?.subcommand ? `${launch} ${installation.subcommand}` : launch,
     label: "Copy relaunch command",
     title: "Relaunch command copied",
-    description: `On ${serverLabel}, stop t3 (Ctrl+C where it runs) and wait for it to exit, then run the command, adding any options you started it with. This does not update an installed t3 command.`,
+    description: `On ${serverLabel}, stop t3 (Ctrl+C where it runs) and wait for it to exit, then run the command with the same subcommand and options. If a service manages t3, update its launch command and restart that service instead. This does not update an installed t3 command.`,
   };
 }
 

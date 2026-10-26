@@ -197,7 +197,10 @@ export const make = Effect.gen(function* () {
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
   });
-  const installation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
+  const installation =
+    serverSelfUpdate === null
+      ? ((yield* resolveServerInstallation) ?? { kind: "unknown" as const })
+      : null;
   const systemdUnit = installation === null ? null : yield* resolveSystemdUnit;
   const serverInstallation =
     installation === null

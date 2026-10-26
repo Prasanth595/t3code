@@ -35,6 +35,8 @@ describe("versionSkew", () => {
 
   it("relaunches with the subcommand the server runs", () => {
     expect(command()).toBe("npx t3@0.0.45");
+    expect(manualServerUpdate("0.0.45", "vm").description).toContain("same subcommand and options");
+    expect(command({ kind: "unknown", subcommand: "serve" })).toBe("npx t3@0.0.45 serve");
     expect(command({ kind: "bunx", subcommand: "serve" })).toBe("bunx t3@0.0.45 serve");
   });
 
