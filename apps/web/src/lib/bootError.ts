@@ -64,7 +64,9 @@ function describeOne(value: unknown) {
     const header = value.message ? `${value.name}: ${value.message}` : value.name;
     // V8 stacks start with the header; Safari and Firefox stacks do not.
     const stack = typeof value.stack === "string" ? value.stack : "";
-    return stack.startsWith(header) ? stack : [header, stack].filter(Boolean).join("\n");
+    return stack === header || stack.startsWith(`${header}\n`)
+      ? stack
+      : [header, stack].filter(Boolean).join("\n");
   }
   if (typeof value === "string") return value;
   try {
@@ -212,8 +214,9 @@ function mountUpdateButton(
     if (action?.kind === "downloading")
       button.textContent = `Downloading update (${action.percent}%)`;
     if (action?.kind === "install") button.textContent = "Restart to update";
-    const failure =
-      state.errorContext === "download"
+    const failure = !action
+      ? ""
+      : state.errorContext === "download"
         ? UPDATE_DOWNLOAD_FAILED
         : state.errorContext === "install"
           ? UPDATE_INSTALL_FAILED
@@ -263,9 +266,11 @@ export function showBootError(error: unknown) {
   const status = element("span", { className: "boot-error-sr" });
   status.setAttribute("aria-live", "polite");
   // Clearing first makes screen readers announce a repeated message.
+  let announcement: ReturnType<typeof setTimeout> | undefined;
   const announce = (text: string) => {
+    clearTimeout(announcement);
     status.textContent = "";
-    setTimeout(() => (status.textContent = text), 100);
+    announcement = setTimeout(() => (status.textContent = text), 100);
   };
 
   const message = element("div", {}, [

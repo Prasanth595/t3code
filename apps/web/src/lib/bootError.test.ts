@@ -86,12 +86,15 @@ describe("buildErrorReport", () => {
     expect(report).toContain("Version: 0.1.3-nightly.20261026.3707");
   });
 
-  it("keeps the message when a Firefox stack frame starts with the error name", () => {
+  it("keeps the header when a Firefox stack frame starts with the error name", () => {
     const error = new Error("boot failed");
     error.stack = "ErrorBoundary@/assets/main.js:1:2";
     expect(buildErrorReport(error, environment)).toMatch(
       /^Error: boot failed\nErrorBoundary@\/assets\/main.js:1:2\n/,
     );
+    const unnamed = new Error();
+    unnamed.stack = "ErrorBoundary@/assets/main.js:1:2";
+    expect(buildErrorReport(unnamed, environment)).toMatch(/^Error\nErrorBoundary@/);
   });
 
   it("stops at cause cycles and survives values that are not errors", () => {
