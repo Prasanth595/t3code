@@ -172,16 +172,21 @@ read_deploy_limit() {
 # Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
 # and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
 # person, including one whose file cannot be read), a pass running, a thread with an agent at
-# work, or a status it cannot read.
+# work, or a status it cannot read. The pending marker is written once the status has been read,
+# busy or not, so the server drains through the build too, and removed when it cannot be: a tick
+# that cannot ask about runs never installs, and the server must not drain for a deploy that
+# cannot happen.
 factory_idle() {
   local body busy
   if [[ -z $token ]]; then
+    clear_pending
     say "not deploying $short: T3FAC_AUTODEPLOY_TOKEN is not set in $env_file"
     return 1
   fi
   # The header goes on stdin, so the token never shows in ps.
   if ! body=$(curl -fsS -m 10 -H @- "http://127.0.0.1:$port/api/factory/status" \
     <<< "Authorization: Bearer $token" 2> /dev/null); then
+    clear_pending
     say "not deploying $short: cannot read http://127.0.0.1:$port/api/factory/status"
     return 1
   fi
@@ -192,9 +197,11 @@ factory_idle() {
     then "a factory run is in progress"
     elif .threads != null and .threads.running != 0 then "an agent is at work in a thread"
     else "" end' <<< "$body" 2> /dev/null); then
+    clear_pending
     say "not deploying $short: cannot read the factory status"
     return 1
   fi
+  mark_pending
   if [[ -n $busy ]]; then
     local since="" now waited
     read -r since _ 2> /dev/null < "$pending_file" || true
@@ -308,7 +315,6 @@ prune_versions() {
   done
 }
 
-mark_pending
 factory_idle || exit 0
 
 # deploy.sh's install.sh reloads every timer job; T3FAC_SKIP_RELOAD keeps it from booting this
