@@ -20,6 +20,7 @@ import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { ThreadWorkflowReview } from "./thread-workflow-review";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
   WorktreeWorkingHeader,
@@ -194,6 +195,7 @@ import {
   isContextHandoffActivityGroup,
   isLinkRequestActivityGroup,
   isSecretRequestActivityGroup,
+  isWorkflowReviewActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
   messageFoldRunId,
@@ -1869,7 +1871,7 @@ function renderFeedEntry(
     );
   }
 
-  return (
+  const workLog = (
     <ThreadWorkLog
       key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
       activities={entry.activities}
@@ -1891,6 +1893,17 @@ function renderFeedEntry(
       onPressPreview={props.onPressPreview}
     />
   );
+  if (entry.type === "activity-group" && isWorkflowReviewActivityGroup(entry)) {
+    // The person decides on the reviewed graph here; a review the card cannot read keeps the row.
+    return (
+      <ThreadWorkflowReview
+        environmentId={props.environmentId}
+        projectedItem={entry.activities[0]!.projectedItem}
+        fallback={workLog}
+      />
+    );
+  }
+  return workLog;
 }
 
 function TurnDiffStat(props: {

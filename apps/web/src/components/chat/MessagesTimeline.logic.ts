@@ -4,6 +4,7 @@ import {
   isAppWorkflowTurnItem,
   isLiveSubagentTurnItem,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isWorkflowReviewItem } from "@t3tools/client-runtime/state/workflowReview";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
@@ -266,6 +267,14 @@ export function liveWorkEntryLabel(
     return `${verb} ${commandProgramName(command) ?? "command"}`;
   }
   return workEntryDisplayLabel(entry, workspaceRoot);
+}
+
+/**
+ * The coordinator's reviewed graph. It stays a row of its own and is never folded into a turn's
+ * summary, because the person decides on it there: a folded review is one they cannot approve.
+ */
+function workEntryIsWorkflowReview(entry: WorkLogEntry): boolean {
+  return entry.projectedItem !== undefined && isWorkflowReviewItem(entry.projectedItem.item);
 }
 
 export function workEntryIsVisibleInGroup(
@@ -1130,7 +1139,12 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
-      if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      if (
+        entry.kind === "work" &&
+        (entry.entry.itemType === "notification" || workEntryIsWorkflowReview(entry.entry))
+      ) {
+        continue;
+      }
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
     }
@@ -1525,6 +1539,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
+        workEntryIsWorkflowReview(entry.entry) ||
         entry.entry.questionAnswer !== undefined ||
         isPendingApproval(entry.entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
@@ -1817,6 +1832,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
         timelineEntry.entry.itemType === "notification" ||
+        workEntryIsWorkflowReview(timelineEntry.entry) ||
         timelineEntry.entry.questionAnswer !== undefined
       ) {
         nextRows.push({
@@ -1840,6 +1856,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
           nextEntry.entry.itemType === "notification" ||
+          workEntryIsWorkflowReview(nextEntry.entry) ||
           nextEntry.entry.questionAnswer !== undefined ||
           isPendingApproval(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
