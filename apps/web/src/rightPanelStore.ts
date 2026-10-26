@@ -1179,6 +1179,24 @@ export function selectActiveRightPanel(
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId)?.kind ?? null;
 }
 
+export type RightPanelTerminalToggle =
+  | { readonly kind: "hide" }
+  | { readonly kind: "show"; readonly surfaceId: string }
+  | { readonly kind: "create" };
+
+/** What the terminal shortcut does when terminals open in the right panel. */
+export function resolveRightPanelTerminalToggle(
+  state: ThreadRightPanelState,
+): RightPanelTerminalToggle {
+  const selected = state.surfaces.find((surface) => surface.id === state.activeSurfaceId);
+  if (state.isOpen && selected?.kind === "terminal") return { kind: "hide" };
+  const terminal =
+    selected?.kind === "terminal"
+      ? selected
+      : state.surfaces.findLast((surface) => surface.kind === "terminal");
+  return terminal ? { kind: "show", surfaceId: terminal.id } : { kind: "create" };
+}
+
 export function selectActiveRightPanelSurface(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,

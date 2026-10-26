@@ -8,6 +8,7 @@ import {
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
+  resolveRightPanelTerminalToggle,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelVisibility,
@@ -134,6 +135,30 @@ describe("rightPanelStore", () => {
       { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
     ]);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
+  });
+
+  it("toggles a right-panel terminal for the terminal shortcut", () => {
+    const store = useRightPanelStore.getState();
+    const resolve = () =>
+      resolveRightPanelTerminalToggle(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+      );
+    expect(resolve()).toEqual({ kind: "create" });
+    store.open(refA, "diff");
+    expect(resolve()).toEqual({ kind: "create" });
+
+    store.openTerminal(refA, "term-1");
+    store.openTerminal(refA, "term-2");
+    expect(resolve()).toEqual({ kind: "hide" });
+    store.close(refA);
+    expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-2" });
+
+    store.activateSurface(refA, "terminal:term-1");
+    store.close(refA);
+    expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-1" });
+
+    store.toggle(refA, "diff");
+    expect(resolve()).toEqual({ kind: "show", surfaceId: "terminal:term-2" });
   });
 
   it("gives each host/device its own tab and preserves renamed tabs", () => {

@@ -1169,6 +1169,7 @@ export default function ChatView(props: ChatViewProps) {
   const canChangeEnvironment =
     hasMultipleEnvironments && !envLocked && draftId !== null && !draftThread?.promotedTo;
 
+  const terminalLocation = useClientSettings((settings) => settings.terminalLocation);
   const loadBalancingSettings = useClientSettings((settings) => ({
     loadBalancingEnabled: settings.loadBalancingEnabled,
     loadBalancingWeights: settings.loadBalancingWeights,
@@ -3076,7 +3077,10 @@ export default function ChatView(props: ChatViewProps) {
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
-    terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
+    terminalShortcutLabel:
+      terminalLocation === "drawer"
+        ? shortcutLabelForCommand(keybindings, "terminal.toggle")
+        : null,
     threadPanelOpen,
     threadPanelPresentation,
     threadPanelPopoverHandle,

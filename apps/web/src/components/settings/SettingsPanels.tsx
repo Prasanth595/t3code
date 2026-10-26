@@ -20,6 +20,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  type TerminalLocation,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
@@ -126,6 +127,11 @@ const TIMESTAMP_FORMAT_LABELS = {
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
+};
+
+const TERMINAL_LOCATION_LABELS: Record<TerminalLocation, string> = {
+  drawer: "Bottom drawer",
+  "right-panel": "Right panel",
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -472,6 +478,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Proactive panels"]
       : []),
+    ...(settings.terminalLocation !== DEFAULT_UNIFIED_SETTINGS.terminalLocation
+      ? ["Terminal location"]
+      : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
@@ -595,6 +604,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+      terminalLocation: DEFAULT_UNIFIED_SETTINGS.terminalLocation,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1346,6 +1356,43 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Proactive panels"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("terminal-location")}
+          description="Choose where the terminal shortcut opens terminals. The drawer button in the header always opens the bottom drawer."
+          resetAction={
+            settings.terminalLocation !== DEFAULT_UNIFIED_SETTINGS.terminalLocation ? (
+              <SettingResetButton
+                label="terminal location"
+                onClick={() =>
+                  updateSettings({ terminalLocation: DEFAULT_UNIFIED_SETTINGS.terminalLocation })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.terminalLocation}
+              onValueChange={(value) => {
+                if (value === "drawer" || value === "right-panel") {
+                  updateSettings({ terminalLocation: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Terminal location">
+                <SelectValue>{TERMINAL_LOCATION_LABELS[settings.terminalLocation]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="drawer">
+                  {TERMINAL_LOCATION_LABELS.drawer}
+                </SelectItem>
+                <SelectItem hideIndicator value="right-panel">
+                  {TERMINAL_LOCATION_LABELS["right-panel"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
