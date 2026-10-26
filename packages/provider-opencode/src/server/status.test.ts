@@ -96,7 +96,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
 );
 
 it.effect(
-  "uses the selected public Console key for Go limits, falling back only on auth rejection",
+  "uses the selected public Console credential for Go limits, falling back only on auth rejection",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -195,6 +195,15 @@ it.effect(
         { active: null, requested: ["console-key"] },
         // OpenCode 2 uses its stored Go key; auth.json keeps only the stale imported copy.
         { consoleRow: null, storedGo: goRow, requested: ["db-go-key"] },
+        {
+          consoleRow: { ...consoleLogin, metadata: { server: "invalid-url" } },
+          storedGo: goRow,
+          requested: ["db-go-key"],
+        },
+        {
+          storedGo: { ...goRow, metadata: { server: "invalid-url" } },
+          requested: ["console-key"],
+        },
         {
           consoleRow: null,
           storedGo: goRow,

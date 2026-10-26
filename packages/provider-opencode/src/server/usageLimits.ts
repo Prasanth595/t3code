@@ -76,8 +76,8 @@ const readStoredCredential = (database: NodeSqlite.DatabaseSync, integrationId: 
   // OpenCode sends a credential without a server string to the public Console,
   // and service-account keys never store one.
   if (typeof server === "string") {
-    const url = new URL(server);
-    if (!PUBLIC_CONSOLE_SERVERS.has(`${url.origin}${url.pathname.replace(/\/+$/, "")}`))
+    const url = URL.parse(server);
+    if (!url || !PUBLIC_CONSOLE_SERVERS.has(`${url.origin}${url.pathname.replace(/\/+$/, "")}`))
       return undefined;
   }
   if (stored.type === "key") return { token: stored.key.trim() };
