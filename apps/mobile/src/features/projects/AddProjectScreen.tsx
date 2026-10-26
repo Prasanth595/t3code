@@ -28,6 +28,7 @@ import {
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
+  sourceControlRepositoryErrorMessage,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -800,11 +801,20 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lookupGeneration = useRef(0);
+
+  const updateRepositoryInput = (nextInput: string) => {
+    lookupGeneration.current += 1;
+    setIsSubmitting(false);
+    setError(null);
+    setRepositoryInput(nextInput);
+  };
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
+    const startedGeneration = ++lookupGeneration.current;
     const provider = addProjectRemoteSourceProvider(source);
     if (!provider) {
       const remoteUrl = normalizePastedCloneUrl(repositoryInput);
@@ -828,8 +838,11 @@ export function AddProjectRepositoryScreen(props: {
         repository: repositoryInput.trim(),
       },
     });
+    if (startedGeneration !== lookupGeneration.current) return;
+    setIsSubmitting(false);
+    if (!navigation.isFocused()) return;
     if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
+      setError(sourceControlRepositoryErrorMessage(Cause.squash(result.cause)));
     } else {
       const repository = result.value;
       navigation.dispatch(
@@ -842,7 +855,6 @@ export function AddProjectRepositoryScreen(props: {
         }),
       );
     }
-    setIsSubmitting(false);
   };
 
   return (
@@ -853,7 +865,7 @@ export function AddProjectRepositoryScreen(props: {
           <TextInput
             className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
             value={repositoryInput}
-            onChangeText={setRepositoryInput}
+            onChangeText={updateRepositoryInput}
             autoCapitalize="none"
             autoCorrect={false}
             placeholder={

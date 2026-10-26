@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -249,6 +250,51 @@ const githubContext = (host: string) => ({
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
+  it.effect("exposes fixed repository guidance without upstream diagnostics", () =>
+    Effect.gen(function* () {
+      const context = { host: "private.example.test", operation: "getRepository" };
+      for (const [cause, expected] of [
+        [
+          new GitHubRequestPolicy.GitHubApiNotFoundError(context),
+          "Repository not found. Check the owner and name and try again.",
+        ],
+        [
+          new GitHubCredentials.GitHubNotSignedInError({ ...context, account: "private-account" }),
+          "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
+        ],
+        [
+          new GitHubCredentials.GitHubCliMissingError(context),
+          "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
+        ],
+        [
+          new GitHubRequestPolicy.GitHubApiAuthenticationError(context),
+          "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
+        ],
+        [
+          new GitHubRequestPolicy.GitHubApiRateLimitError(context),
+          "GitHub API rate limit exceeded. Requests resume when the limit resets.",
+        ],
+        [
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            ...context,
+            status: 422,
+            githubErrors: [
+              "Repository not found. Check the owner and name and try again. token=secret",
+            ],
+          }),
+          undefined,
+        ],
+      ] as const) {
+        const provider = yield* makeProvider({ rest: () => Effect.fail(cause) });
+        const error = yield* provider
+          .getRepositoryCloneUrls({ cwd: "/repo", repository: "octocat/missing" })
+          .pipe(Effect.flip);
+        assert.strictEqual(userFacingSourceControlDetail(error.cause), expected);
+        assert.propertyVal(error.cause, "cause", cause);
+      }
+    }),
+  );
+
   it.effect("reads the repository gh would pick from the remotes", () => {
     const paths: string[] = [];
     const { layer } = harness({
@@ -480,6 +526,10 @@ describe("GitHubSourceControlProvider writes", () => {
       for (const repository of ["me/", "/notes", "a/b/c/d", "", "two words"]) {
         const error = yield* Effect.flip(gh.getRepositoryCloneUrls({ cwd: "/repo", repository }));
         assert.include(error.message, "Repositories are named owner/name.");
+        assert.strictEqual(
+          userFacingSourceControlDetail(error.cause),
+          "Repositories are named owner/name.",
+        );
       }
       assert.strictEqual(requests.length, 2);
     });
