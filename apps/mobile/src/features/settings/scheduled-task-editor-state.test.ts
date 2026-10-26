@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { createDraft } from "./scheduledTaskDraft";
 import {
+  discardScheduledTaskEditor,
   readScheduledTaskEditor,
   scheduledTaskEditorSessionAtom,
   startScheduledTaskEditor,
@@ -79,6 +80,24 @@ describe("new scheduled task link", () => {
     startScheduledTaskEditor(editing);
     expect(takeScheduledTaskNewLink(newTaskLink)).toBe(newTaskLink);
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("keeps unsaved changes until the editor's removal guard discards them", () => {
+    startScheduledTaskEditor(editing);
+    const edited = { ...editing, draft: { ...editing.draft, prompt: "unsaved" } };
+    updateScheduledTaskEditor(edited, null);
+
+    takeScheduledTaskNewLink(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
+
+    discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("closes a discarded editor as empty when no new-task link is waiting", () => {
+    startScheduledTaskEditor(editing);
+    discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBeNull();
   });
 
   it("keeps the editor for links to other screens", () => {

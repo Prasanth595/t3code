@@ -78,7 +78,10 @@ import {
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
-import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
+import {
+  discardScheduledTaskEditor,
+  scheduledTaskEditorSessionAtom,
+} from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
   formatNextScheduledTaskRun,
@@ -460,15 +463,8 @@ export function SettingsScheduledTaskEditRouteScreen() {
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
-  const {
-    editor,
-    voiceOwnerKey,
-    readEditor,
-    setEditor,
-    startEditor,
-    hasChanges,
-    draftForEnvironment,
-  } = useScheduledTaskEditor();
+  const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
+    useScheduledTaskEditor();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -530,7 +526,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         style: "destructive",
         onPress: () => {
           if (voiceInput.isBusy) voiceInput.cancel();
-          startEditor(null);
+          discardScheduledTaskEditor();
           navigation.dispatch(data.action);
         },
       },

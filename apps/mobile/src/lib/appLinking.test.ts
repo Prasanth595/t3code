@@ -30,6 +30,7 @@ describe("cloud-only deep links", () => {
   it.each([
     "t3code://connect-onboarding",
     "t3code-dev://connect-onboarding/?source=x",
+    "t3code://settings/waitlist",
     "t3code://settings/auth",
     "exp://192.168.1.2:8081/--/settings/auth",
   ])("ignores %s without cloud config", (url) => {

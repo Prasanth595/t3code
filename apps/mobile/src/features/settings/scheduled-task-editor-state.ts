@@ -5,7 +5,7 @@ import { Atom } from "effect/reactivity";
 import { findLinkedRoute } from "../../lib/appLinking";
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import type { ScheduledTaskDraft } from "./scheduledTaskDraft";
+import { hasScheduledTaskDraftChanges, type ScheduledTaskDraft } from "./scheduledTaskDraft";
 
 export type ScheduledTaskEditor = {
   readonly environmentId: EnvironmentId;
@@ -23,8 +23,22 @@ export const scheduledTaskEditorSessionAtom = Atom.make<ScheduledTaskEditorSessi
   null,
 ).pipe(Atom.keepAlive);
 let nextEditorId = 0;
+let newTaskLinkAwaitsDiscard = false;
+
+export function scheduledTaskEditorHasChanges(
+  initial: ScheduledTaskEditor | null,
+  current: ScheduledTaskEditor | null,
+): boolean {
+  return Boolean(
+    initial &&
+    current &&
+    (initial.environmentId !== current.environmentId ||
+      hasScheduledTaskDraftChanges(initial.draft, current.draft)),
+  );
+}
 
 export function startScheduledTaskEditor(next: ScheduledTaskEditor | null): void {
+  newTaskLinkAwaitsDiscard = false;
   appAtomRegistry.set(scheduledTaskEditorSessionAtom, {
     id: ++nextEditorId,
     initial: next,
@@ -58,15 +72,30 @@ export function readScheduledTaskEditor(
 }
 
 /**
- * A link to the new-task screen starts a fresh editor, like the in-app "New
- * task" action. Without this a warm app would reopen the last edited task's
- * draft under the "New" title and save over that task.
+ * A new-task link starts a fresh editor, or a warm app reopens the last task's draft under
+ * "New" and saves over it. Links parse before the open editor's removal guard runs, so
+ * unsaved changes stay until the user discards them there.
  */
 export function takeScheduledTaskNewLink(
   state: PartialState<NavigationState> | undefined,
 ): PartialState<NavigationState> | undefined {
   if (findLinkedRoute(state, ["SettingsScheduledTaskNew"])) {
-    appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
+    const session = appAtomRegistry.get(scheduledTaskEditorSessionAtom);
+    if (session && scheduledTaskEditorHasChanges(session.initial, session.current)) {
+      newTaskLinkAwaitsDiscard = true;
+    } else {
+      appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
+    }
   }
   return state;
+}
+
+/** Drops unsaved changes; a new-task link that waited on them then opens a fresh editor. */
+export function discardScheduledTaskEditor(): void {
+  if (newTaskLinkAwaitsDiscard) {
+    newTaskLinkAwaitsDiscard = false;
+    appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
+    return;
+  }
+  startScheduledTaskEditor(null);
 }
