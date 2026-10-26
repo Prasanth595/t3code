@@ -4925,6 +4925,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
 
   it.effect.each([
+    { status: "interrupted", hasOutput: true },
+    { status: "interrupted", hasOutput: false },
+    { status: "failed", hasOutput: true },
+    { status: "failed", hasOutput: false },
+  ] as const)("resumes after $status turns with root output $hasOutput", ({ status, hasOutput }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const head = "00000000-0000-4000-8000-000000000650";
+      const providerThread = {
+        ...harness.providerThread,
+        nativeThreadRef: {
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeId: WAKE_NATIVE_SESSION,
+          strength: "strong",
+        },
+        nativeConversationHeadRef: {
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeId: head,
+          strength: "weak",
+        },
+      } satisfies OrchestrationV2ProviderThread;
+      const turnInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-after-rollback"),
+        text: "Continue.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      assert.equal(harness.getOpenedOptions()?.resumeSessionAt, head);
+      if (hasOutput) {
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000651",
+            text: "Working on it.",
+          }),
+        );
+      }
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${turnInput.attemptId}`,
+      });
+      if (status === "interrupted") {
+        yield* harness.runtime.interruptTurn({ providerThread, providerTurnId });
+      } else {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000652",
+            result: "Execution failed.",
+            subtype: "error_during_execution",
+            isError: true,
+          }),
+        );
+      }
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, status);
+      const updated = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(updated?.type, "provider_thread.updated");
+      if (updated?.type !== "provider_thread.updated") return;
+      assert.equal(
+        updated.providerThread.nativeConversationHeadRef?.nativeId ?? null,
+        hasOutput ? null : head,
+      );
+      if (status === "failed") {
+        yield* harness.runtime.interruptTurn({
+          providerThread: updated.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        });
+      }
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        attemptId: RunAttemptId.make("attempt-after-unsuccessful-turn"),
+        providerThread: updated.providerThread,
+        providerTurnOrdinal: 2,
+      });
+      assert.equal(harness.processQueues.length, 2);
+      assert.equal(harness.getOpenedOptions()?.resumeSessionAt, hasOutput ? undefined : head);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
     { kind: "fork with inherited head", fork: true, headMessageId: "remapped-inherited-head" },
     { kind: "fork without recorded head", fork: true, headMessageId: undefined },
     { kind: "ordinary thread", fork: false, headMessageId: undefined },
