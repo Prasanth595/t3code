@@ -24,6 +24,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
+  workEntryRowLabel,
   threadFeedCompactionLabels,
   createThreadFeedCache,
   deriveThreadFeedPresentation,
@@ -664,9 +665,14 @@ describe("buildThreadFeed", () => {
     expect(activities.at(-1)?.prominent).toBe(true);
   });
 
-  it.each(["local", "inherited", "synthetic"] as const)(
-    "labels a %s fork row without exposing its target ID as the label",
-    (visibility) => {
+  it.each([
+    ["local", undefined],
+    ["inherited", undefined],
+    ["synthetic", undefined],
+    ["synthetic", "Forked from conversation"],
+  ] as const)(
+    "labels a %s fork row with title %s without exposing its target ID",
+    (visibility, title) => {
       const { providerThreadId: _providerThreadId, ...forkBase } = base(
         "item-fork",
         "2026-06-20T00:00:03.000Z",
@@ -677,6 +683,7 @@ describe("buildThreadFeed", () => {
           {
             ...forkBase,
             type: "fork",
+            title,
             source: { type: "run", threadId: sourceThreadId, runId },
             targetThreadId: threadId,
           },
@@ -685,8 +692,8 @@ describe("buildThreadFeed", () => {
         ),
       ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))[0]!;
 
-      expect(workEntryRowLabel(activity.workEntry)).toBe("Thread forked");
-      expect(workEntryRowLabel(activity.workEntry, true)).toBe("Thread forked");
+      expect(workEntryRowLabel(activity.workEntry)).toBe(title ?? "Thread forked");
+      expect(workEntryRowLabel(activity.workEntry, true)).toBe(title ?? "Thread forked");
       expect(activity.canExpand).toBe(true);
       expect(activity.getFullDetail()).toContain(threadId);
     },
