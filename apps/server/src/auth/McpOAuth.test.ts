@@ -621,13 +621,14 @@ it.live(
                   { ...authorizeParams(clientId), resource },
                   { _tag: "pairing-code", access: "read-only", code: pairing.credential },
                 );
-                return new URL(approved.redirectTo!).searchParams.get("code")!;
+                const callback = new URL(approved.redirectTo!);
+                expect(callback.searchParams.get("iss")).toBe(ORIGIN);
+                return callback.searchParams.get("code")!;
               });
-            const exchange = (code: string, resource?: string) =>
+            const exchange = (code: string, resource?: string, origin = ORIGIN) =>
               handler(
-                at(
-                  "/oauth/mcp/token",
-                  form({
+                at("/oauth/mcp/token", {
+                  ...form({
                     grant_type: "authorization_code",
                     code,
                     redirect_uri: authorizeParams(clientId).redirect_uri,
@@ -635,7 +636,11 @@ it.live(
                     code_verifier: verifier,
                     ...(resource === undefined ? {} : { resource }),
                   }),
-                ),
+                  headers: {
+                    "content-type": "application/x-www-form-urlencoded",
+                    host: new URL(origin).host,
+                  },
+                }),
               );
 
             const token = yield* exchange(yield* signIn(tunnel), tunnel).pipe(
@@ -648,6 +653,41 @@ it.live(
             );
             expect(client.access).toBe("read-only");
             expect((yield* exchange(yield* signIn(tunnel))).status).toBe(200);
+            expect((yield* exchange(yield* signIn(`${ORIGIN}/mcp`), `${ORIGIN}/mcp`)).status).toBe(
+              200,
+            );
+            const otherOrigin = "https://other.example";
+            for (const origin of [ORIGIN, otherOrigin]) {
+              const onOrigin = (path: string) =>
+                at(path, { headers: { host: new URL(origin).host } });
+              const metadata = yield* handler(
+                onOrigin("/.well-known/oauth-protected-resource/mcp"),
+              ).pipe(Effect.flatMap(json<unknown>));
+              expect(metadata).toMatchObject({
+                resource: `${origin}/mcp`,
+                authorization_servers: [origin],
+              });
+              const server = yield* handler(
+                onOrigin("/.well-known/oauth-authorization-server"),
+              ).pipe(Effect.flatMap(json<unknown>));
+              expect(server).toMatchObject({
+                issuer: origin,
+                authorization_endpoint: `${origin}/oauth/mcp/authorize`,
+                token_endpoint: `${origin}/oauth/mcp/token`,
+                registration_endpoint: `${origin}/oauth/mcp/register`,
+              });
+            }
+            expect((yield* exchange(yield* signIn(tunnel), tunnel, otherOrigin)).status).toBe(200);
+            expect((yield* exchange(yield* signIn(tunnel), undefined, otherOrigin)).status).toBe(
+              200,
+            );
+            expect(
+              (yield* exchange(yield* signIn(`${ORIGIN}/mcp`), `${ORIGIN}/mcp`, otherOrigin))
+                .status,
+            ).toBe(400);
+            expect(
+              (yield* exchange(yield* signIn(`${ORIGIN}/mcp`), undefined, otherOrigin)).status,
+            ).toBe(400);
             for (const other of [`${ORIGIN}/mcp`, otherTunnel, `${tunnel}?tenant=other`]) {
               expect((yield* exchange(yield* signIn(tunnel), other)).status).toBe(400);
             }
