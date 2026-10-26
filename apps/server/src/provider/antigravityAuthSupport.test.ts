@@ -677,10 +677,13 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
       const sdkConfig = path.join(userHome, "sdk-config");
       yield* fs.makeDirectory(sdkConfig);
       yield* fs.makeDirectory(path.join(userHome, ".config", "gcloud"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(userHome, ".config", "gcloud", "application_default_credentials.json"),
-        "{}",
+      const adcPath = path.join(
+        userHome,
+        ".config",
+        "gcloud",
+        "application_default_credentials.json",
       );
+      yield* fs.writeFileString(adcPath, "{}");
       const auth: AntigravityAuthConfig = {
         authMethod: "agent-platform",
         apiKey: "",
@@ -699,12 +702,13 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
           onGoogleCloud: Effect.succeed(onGoogleCloud),
         });
 
-      // CLOUDSDK_CONFIG replaces ~/.config/gcloud, as it does for gcloud.
+      // The bundled Go harness ignores CLOUDSDK_CONFIG when finding ADC.
+      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toBeNull();
+      yield* fs.writeFileString(path.join(sdkConfig, "application_default_credentials.json"), "{}");
+      yield* fs.remove(adcPath);
       expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toContain(
         "gcloud auth application-default login",
       );
-      yield* fs.writeFileString(path.join(sdkConfig, "application_default_credentials.json"), "{}");
-      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toBeNull();
       expect(
         yield* issueWith({
           CLOUDSDK_CONFIG: path.join(userHome, "missing"),
@@ -722,6 +726,7 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
         ),
       ).toBeNull();
 
+      yield* fs.writeFileString(adcPath, "{}");
       // Windows reads %APPDATA%\gcloud and never the POSIX path.
       expect(yield* issueWith({ APPDATA: userHome }, "win32")).toContain(
         "gcloud auth application-default login",
@@ -733,6 +738,7 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
       );
       expect(yield* issueWith({ APPDATA: userHome }, "win32")).toBeNull();
 
+      yield* fs.remove(adcPath);
       // A metadata server supplies credentials without any local file.
       const missing = { CLOUDSDK_CONFIG: path.join(userHome, "missing") };
       expect(yield* issueWith(missing, "linux")).toContain("gcloud auth application-default login");

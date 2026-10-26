@@ -158,10 +158,9 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const gcloudDirectory =
-    host.environment.CLOUDSDK_CONFIG ||
-    (host.platform === "win32"
+    host.platform === "win32"
       ? host.environment.APPDATA && path.join(host.environment.APPDATA, "gcloud")
-      : path.join(host.userHome, ".config", "gcloud"));
+      : path.join(host.userHome, ".config", "gcloud");
   if (
     gcloudDirectory &&
     (yield* fs
