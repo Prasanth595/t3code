@@ -159,22 +159,28 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const realPrefix = yield* fs.realPath(prefix);
       const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
 
-      for (const [launcher, expected] of [
+      for (const [launcher, targetVersion, expected] of [
         [
           npmGlobal,
+          "9.9.9",
           `${stillRuns} Run \`npm install --global --prefix ${realPrefix} t3@9.9.9\` to move to 9.9.9.`,
         ],
-        [npx, `${stillRuns} Run \`npx t3@9.9.9\` to move to 9.9.9.`],
+        [npx, "9.9.9", `${stillRuns} Run \`npx t3@9.9.9\` to move to 9.9.9.`],
         [
           projectLocal,
+          "9.9.9",
           `${stillRuns} Update it to t3@9.9.9 with the package manager that installed it.`,
         ],
-        [undefined, "Run /runtime/versions/9.9.9/t3"],
+        [undefined, "9.9.9", "Run /runtime/versions/9.9.9/t3"],
+        [npmGlobal, packageJson.version, `Run /runtime/versions/${packageJson.version}/t3`],
+        [npx, packageJson.version, `Run /runtime/versions/${packageJson.version}/t3`],
+        [projectLocal, packageJson.version, `Run /runtime/versions/${packageJson.version}/t3`],
+        [undefined, packageJson.version, `Run /runtime/versions/${packageJson.version}/t3`],
       ] as const) {
         const nextStep = yield* resolveNextStep({
           repointed: false,
-          entryPath: "/runtime/versions/9.9.9/t3",
-          targetVersion: "9.9.9",
+          entryPath: `/runtime/versions/${targetVersion}/t3`,
+          targetVersion,
         }).pipe(
           Effect.provideService(HostProcess.ExecutablePath, executable),
           Effect.provideService(HostProcess.Arguments, [executable, executable]),

@@ -197,6 +197,7 @@ export const resolveNextStep = Effect.fn("cli.update.resolve_next_step")(functio
   readonly targetVersion: string;
 }) {
   if (input.repointed) return "Run t3 to get started.";
+  if (input.targetVersion === packageJson.version) return `Run ${input.entryPath}`;
   const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
   const installation = yield* resolveServerInstallation;
   if (installation !== null) {
