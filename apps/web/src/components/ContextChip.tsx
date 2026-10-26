@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const contextChipVariants = cva(
-  "inline-flex max-w-full items-center gap-[0.2em] font-medium text-(--context-chip-accent) [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-none disabled:cursor-default",
+  "inline-flex max-w-full items-center gap-[0.2em] font-medium text-(--context-chip-accent) [--document-icon-stroke:currentColor] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-none disabled:cursor-default",
   {
     defaultVariants: { kind: "neutral" },
     variants: {
