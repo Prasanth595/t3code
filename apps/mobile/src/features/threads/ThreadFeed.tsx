@@ -2189,9 +2189,13 @@ export const ThreadFeed = memo(function ThreadFeed({
     markdownLinkRequest.current?.abort();
   };
   useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
-  // The feed remounts per thread, so within one mount a preview belongs to the presentation it was
-  // opened from: switching presentation closes it and aborts a pending lookup.
-  const markdownLinkScope = props.contentPresentation.kind;
+  // A preview belongs to the thread and presentation it was opened from: a change closes it and
+  // aborts a pending lookup.
+  const markdownLinkScope = JSON.stringify([
+    props.environmentId,
+    props.threadId,
+    props.contentPresentation.kind,
+  ]);
   useLayoutEffect(() => () => markdownLinkRequest.current?.abort(), [markdownLinkScope]);
   const [preview, setPreview] = useState<{
     readonly scope: string;

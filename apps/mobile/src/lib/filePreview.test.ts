@@ -1362,7 +1362,12 @@ describe("ThreadFeed previews", () => {
       });
       return null;
     }
-    const element = (threadId: ThreadId) =>
+    const element = (
+      threadId: ThreadId,
+      contentPresentation: Parameters<typeof ThreadFeed>[0]["contentPresentation"] = {
+        kind: "ready",
+      },
+    ) =>
       createElement(
         Fragment,
         null,
@@ -1375,7 +1380,7 @@ describe("ThreadFeed previews", () => {
           queuedMessages: [],
           dispatchingMessageId: null,
           onEditPendingMessage: null,
-          contentPresentation: { kind: "ready" },
+          contentPresentation,
           agentLabel: "agent",
           latestRun: null,
           activeWorkStartedAt: null,
@@ -1399,6 +1404,15 @@ describe("ThreadFeed previews", () => {
       committedPreviews.length = 0;
       await act(async () => root.render(element(ThreadId.make("thread-2"))));
       expect(committedPreviews[0]).toBeNull();
+
+      // A preview hidden by a presentation change stays closed when the content comes back.
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
+      );
+      expect(container.querySelector('[data-file-preview="report.pdf"]')).not.toBeNull();
+      await act(async () => root.render(element(ThreadId.make("thread-2"), { kind: "loading" })));
+      await act(async () => root.render(element(ThreadId.make("thread-2"))));
+      expect(container.querySelector("[data-file-preview]")).toBeNull();
     } finally {
       await act(async () => root.unmount());
     }
