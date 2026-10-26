@@ -214,7 +214,7 @@ export function listenForComposerScrollGestures({
   const targetsTimeline = (target: EventTarget | null, scrollNode: HTMLElement) =>
     isTimelineScrollTarget(target, scrollNode, -1) && isTimelineScrollTarget(target, scrollNode, 1);
   const handleTimelinePointerDown = (event: PointerEvent) => {
-    endMiddleClickAutoscroll();
+    if (endMiddleClickAutoscroll()) return;
     const scrollNode = getTimelineScrollableNode();
     if (!scrollNode) return;
     if (
