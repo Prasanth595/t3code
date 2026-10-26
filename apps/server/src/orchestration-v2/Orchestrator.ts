@@ -8720,6 +8720,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: withoutGuestAttribution({
         ...queuedMessage,
+        ...command.editor,
         text: command.text,
         ...editedAttachments,
         ...(command.context ? { context: command.context } : {}),
@@ -8736,6 +8737,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: withoutGuestAttribution({
           ...queuedTurnItem,
+          ...command.editor,
           text: command.text,
           ...editedAttachments,
           ...(command.context ? { context: command.context } : {}),

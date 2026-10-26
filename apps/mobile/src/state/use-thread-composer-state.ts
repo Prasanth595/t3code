@@ -471,6 +471,7 @@ export function useThreadComposerState() {
     const result = await editQueuedRun({
       environmentId: thread.environmentId,
       input: {
+        creationSource: "mobile",
         threadId: thread.id,
         runId: edit.runId,
         text,
