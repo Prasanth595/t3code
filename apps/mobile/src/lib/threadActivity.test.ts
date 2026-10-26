@@ -683,7 +683,7 @@ describe("buildThreadFeed", () => {
           {
             ...forkBase,
             type: "fork",
-            title,
+            title: title ?? null,
             source: { type: "run", threadId: sourceThreadId, runId },
             targetThreadId: threadId,
           },
