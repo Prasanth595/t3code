@@ -539,6 +539,45 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect("clears prior usage after a failed probe with changed credentials", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const limits = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          credentialFingerprint: "account-a",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 10 }],
+        } as const;
+        const probeSnapshot = yield* Ref.make<ServerProvider>({
+          ...refreshedSnapshot,
+          usageLimits: limits,
+        });
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.get(probeSnapshot),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const failedLimits = {
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          credentialFingerprint: "account-a",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        } as const;
+        yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: failedLimits });
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, limits);
+
+        const switchedLimits = { ...failedLimits, credentialFingerprint: "account-b" };
+        yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: switchedLimits });
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, switchedLimits);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
     Effect.scoped(
       Effect.gen(function* () {

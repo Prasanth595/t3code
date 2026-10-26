@@ -1,5 +1,7 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
-import { userEvent } from "vite-plus/test/browser";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
+import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -7,6 +9,7 @@ import { act, render } from "../../../test/render";
 const actions = vi.hoisted(() => ({
   toast: vi.fn(),
   onOpenChange: vi.fn(),
+  prepare: vi.fn(),
   canManageProviders: true,
 }));
 const settingsHooks = vi.hoisted(() => ({
@@ -36,6 +39,10 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useEnvironmentSettings: settingsHooks.read as never,
   usePersistEnvironmentProviderInstanceMutation: settingsHooks.useMutation as never,
+}));
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => actions.prepare) as never,
 }));
 vi.mock(import("../../state/session"), async (original) => {
   const hasScope = (environmentId: EnvironmentId, scope: string) =>
@@ -139,6 +146,14 @@ function setup() {
   actions.canManageProviders = true;
   actions.toast.mockReset();
   actions.onOpenChange.mockReset();
+  actions.prepare.mockReset().mockResolvedValue(
+    AsyncResult.success({
+      agentId: "glm-acp-agent",
+      version: "1.0.0",
+      distribution: "binary",
+      prepared: true,
+    }),
+  );
   settingsHooks.read.mockReset().mockReturnValue({ providerInstances: {} });
   settingsHooks.mutate.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   settingsHooks.useMutation.mockReset().mockReturnValue(settingsHooks.mutate);
@@ -243,6 +258,61 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
     expect(signInStep()).toBeNull();
+  });
+
+  it("prepares GLM on the selected environment before creating its dedicated instance and signing in", async () => {
+    setup();
+    const preparation = deferred<unknown>();
+    const mutation = deferred<unknown>();
+    actions.prepare.mockReturnValueOnce(preparation.promise);
+    settingsHooks.mutate.mockReturnValueOnce(mutation.promise);
+    await using _screen = await render(dialog());
+    await userEvent.click(page.getByRole("radio", { name: "GLM Agent" }));
+    await click("Next");
+    await click("Next");
+    await click("Continue to sign-in");
+
+    expect(actions.prepare).toHaveBeenCalledWith({
+      environmentId: remoteEnvironmentId,
+      input: { agentId: "glm-acp-agent" },
+    });
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
+    expect(signInStep()).toBeNull();
+
+    await act(async () => preparation.resolve(AsyncResult.success({ prepared: true })));
+    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledExactlyOnceWith({
+      operation: "create",
+      instanceId: "glm",
+      instance: { driver: "glm", enabled: true, displayName: "GLM Agent" },
+    });
+    expect(signInStep()).toBeNull();
+    expect(actions.onOpenChange).not.toHaveBeenCalled();
+
+    await act(async () => mutation.resolve(AsyncResult.success({})));
+    expect(signInStep()?.textContent).toContain("remote-device/glm");
+    expect(actions.prepare).toHaveBeenCalledTimes(1);
+    expect(settingsHooks.mutate).toHaveBeenCalledTimes(1);
+    await click("Finish sign-in");
+    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps GLM configuration open without creating an instance when preparation fails", async () => {
+    setup();
+    actions.prepare.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Offline"))));
+    await using _screen = await render(dialog());
+    await userEvent.click(page.getByRole("radio", { name: "GLM Agent" }));
+    await click("Next");
+    await click("Next");
+    await click("Continue to sign-in");
+
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
+    expect(signInStep()).toBeNull();
+    expect(actions.onOpenChange).not.toHaveBeenCalled();
+    expect(actions.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", title: "Could not prepare provider" }),
+    );
+    expect(button("Continue to sign-in").disabled).toBe(false);
   });
 
   it("rejects a queued save after the provider grant is revoked", async () => {

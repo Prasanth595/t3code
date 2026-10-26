@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-21T06:20:00Z",
+  "updatedAt": "2026-10-26T12:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -95,6 +95,11 @@
         { "range": ">=1.4.2", "status": "supported" },
         { "range": "<1.4.2", "status": "unknown" }
       ]
+    },
+    {
+      "driver": "glm",
+      "t3CodeRange": ">=0.0.46",
+      "ranges": [{ "range": ">=0.0.0", "status": "unknown" }]
     }
   ],
   "currentModels": {

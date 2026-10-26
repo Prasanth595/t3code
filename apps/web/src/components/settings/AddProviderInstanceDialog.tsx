@@ -3,7 +3,10 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
@@ -22,6 +25,8 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
@@ -100,6 +105,9 @@ export function AddProviderInstanceDialog({
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const prepareRegistryAgent = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {
+    reportFailure: false,
+  });
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
 
   const [wizardStep, setWizardStep] = useState(0);
@@ -222,25 +230,28 @@ export function AddProviderInstanceDialog({
   };
 
   const handleAcpPrepared = (agent: AcpRegistrySearchAgent) => {
-    setDriver(ACP_REGISTRY_DRIVER_KIND);
+    const preparedDriver =
+      providerClients.definitions.find((option) => option.registryAgentId === agent.id)
+        ?.driverKind ?? ACP_REGISTRY_DRIVER_KIND;
+    setDriver(preparedDriver);
     const nextLabel = agent.name;
     const registryIconUrl = resolveOfficialAcpRegistryIconUrl(agent.icon);
     const nextInstanceId = deriveAvailableInstanceId(
-      (candidateLabel) => deriveInstanceId(ACP_REGISTRY_DRIVER_KIND, candidateLabel),
+      (candidateLabel) => deriveInstanceId(preparedDriver, candidateLabel),
       nextLabel,
       existingIds,
     );
     setSelectedAcp(agent);
     setIsManualAcpConfiguration(false);
     setIdentityByDriver((existing) =>
-      updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, {
+      updateProviderIdentityDraft(existing, preparedDriver, {
         label: nextLabel,
         instanceIdOverride: nextInstanceId,
       }),
     );
     setConfigByDriver((existing) => ({
       ...existing,
-      [ACP_REGISTRY_DRIVER_KIND]: {
+      [preparedDriver]: {
         agentId: agent.id,
         distribution: "auto",
         ...(registryIconUrl ? { registryIconUrl } : {}),
@@ -292,6 +303,32 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null || (isAcpRegistry && acpSelectionError !== null)) return;
 
+    setIsSaving(true);
+    if (
+      driverOption.registryAgentId &&
+      localCommandPath.length === 0 &&
+      selectedAcp?.id !== driverOption.registryAgentId
+    ) {
+      setIsPreparingRegistryAgent(true);
+      const prepared = await prepareRegistryAgent({
+        environmentId,
+        input: { agentId: driverOption.registryAgentId },
+      });
+      setIsPreparingRegistryAgent(false);
+      if (prepared._tag === "Failure") {
+        setIsSaving(false);
+        if (!isAtomCommandInterrupted(prepared)) {
+          const error = squashAtomCommandFailure(prepared);
+          toastManager.add({
+            type: "error",
+            title: "Could not prepare provider",
+            description: error instanceof Error ? error.message : "The ACP could not be prepared.",
+          });
+        }
+        return;
+      }
+    }
+
     const config =
       driver === "codex"
         ? { ...configByDriver[driver], setupMode: "existing" }
@@ -308,7 +345,6 @@ export function AddProviderInstanceDialog({
       ...(isLocalAcp && localEnvironment.length > 0 ? { environment: localEnvironment } : {}),
     };
     const brandedId = ProviderInstanceId.make(instanceId);
-    setIsSaving(true);
     const result = await persistProviderInstance({
       operation: "create",
       instanceId: brandedId,
@@ -325,7 +361,7 @@ export function AddProviderInstanceDialog({
       return;
     }
     onCreated?.(brandedId);
-    if (isAcpRegistry && !isLocalAcp) {
+    if (!isLocalAcp && (isAcpRegistry || driverOption.authMethodsDiscovery)) {
       setCreatedInstanceId(brandedId);
       setIsSaving(false);
       setWizardStep(2);
@@ -371,7 +407,8 @@ export function AddProviderInstanceDialog({
               currentStep={wizardStep}
               summaries={wizardStepSummaries}
               instanceIdError={instanceIdError}
-              disabled={isSaving || isPreparingRegistryAgent}
+              steps={createdInstanceId ? ACP_REGISTRY_WIZARD_STEPS : ADD_PROVIDER_WIZARD_STEPS}
+              disabled={isSaving || isPreparingRegistryAgent || createdInstanceId !== null}
               onNavigation={applyWizardNavigation}
             />
           )}
@@ -677,7 +714,7 @@ export function AddProviderInstanceDialog({
                 >
                   {isSaving
                     ? "Adding..."
-                    : isAcpRegistry && !isLocalAcp
+                    : !isLocalAcp && (isAcpRegistry || driverOption.authMethodsDiscovery)
                       ? "Continue to sign-in"
                       : "Add instance"}
                 </Button>

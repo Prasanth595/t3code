@@ -5,6 +5,9 @@ T3 Code can run installed ACP commands or coding agents from the official
 own models, tools, and sign-in, while T3 Code provides projects, threads, checkpoints, and task
 delegation.
 
+For GLM Agent, choose the dedicated [GLM Agent provider](./providers-glm.md), which also reports
+Coding Plan limits. Existing GLM Agent Registry instances move to it automatically.
+
 Google Antigravity is available through its official `antigravity-acp` Registry entry. Add it like
 any other Registry agent; it does not need an Antigravity-specific T3 Code provider.
 

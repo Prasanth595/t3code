@@ -865,10 +865,13 @@ export function EnvironmentProviderSettings({
         return;
       }
 
-      if (instance.driver !== ProviderDriverKind.make("acpRegistry")) return;
       if (providerConfigString(instance.config, "source") === "local") return;
-      const agentId = providerConfigString(instance.config, "agentId");
-      if (agentId === null) return;
+      const agentId =
+        providerClients.get(instance.driver)?.registryAgentId ??
+        (instance.driver === ProviderDriverKind.make("acpRegistry")
+          ? providerConfigString(instance.config, "agentId")
+          : null);
+      if (!agentId) return;
 
       // Concurrent removals race client snapshots; let the server decide whether the agent remains in use.
       const uninstallResult = await uninstallAcpRegistryManagedBinary({
@@ -1267,7 +1270,7 @@ function ProviderInstanceRow({
 }) {
   const allProjects = useProjects();
   const acpProjects =
-    mode === "editor" && liveProvider?.driver === "acpRegistry"
+    mode === "editor" && liveProvider?.nativeSessions !== undefined
       ? allProjects.filter((project) => project.environmentId === environmentId)
       : undefined;
   const instance = explicitInstance ?? { driver };
@@ -1366,7 +1369,7 @@ function ProviderInstanceRow({
           !readOnly &&
           liveProvider &&
           (liveProvider.setup?.canAuthenticate ||
-            (liveProvider.driver === "acpRegistry" && liveProvider.installed)) ? (
+            (driverOption?.authMethodsDiscovery && liveProvider.installed)) ? (
           <ProviderAuthenticationSection
             key={`${environmentId}:${instanceId}`}
             environmentId={environmentId}

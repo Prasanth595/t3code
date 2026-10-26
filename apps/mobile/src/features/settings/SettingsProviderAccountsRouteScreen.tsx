@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { getProviderClient } from "../../lib/providerClients";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -63,7 +64,8 @@ export function SettingsProviderAccountsRouteScreen() {
                       .filter(
                         (provider) =>
                           provider.setup?.canAuthenticate ||
-                          (provider.driver === "acpRegistry" && provider.installed),
+                          (getProviderClient(provider.driver)?.authMethodsDiscovery &&
+                            provider.installed),
                       )
                       .map((provider) => (
                         <ProviderAccount
@@ -75,7 +77,8 @@ export function SettingsProviderAccountsRouteScreen() {
                     {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
                       (provider) =>
                         provider.setup?.canAuthenticate ||
-                        (provider.driver === "acpRegistry" && provider.installed),
+                        (getProviderClient(provider.driver)?.authMethodsDiscovery &&
+                          provider.installed),
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
                         Configure a provider with in-app sign-in in web or desktop Settings.
@@ -123,17 +126,14 @@ function ProviderAccount({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && state?.phase === "succeeded");
+  const discoversAuthMethods = getProviderClient(provider.driver)?.authMethodsDiscovery === true;
   const isDiscovering =
-    provider.driver === "acpRegistry" &&
-    !active &&
-    !signedIn &&
-    !auth.error &&
-    state?.methods === undefined;
+    discoversAuthMethods && !active && !signedIn && !auth.error && state?.methods === undefined;
   const needsExternalSetup =
     !active &&
     !signedIn &&
     (provider.setup?.canAuthenticate === false ||
-      (provider.driver === "acpRegistry" && state?.methods?.length === 0));
+      (discoversAuthMethods && state?.methods?.length === 0));
   const url =
     interaction?.type === "browser" || interaction?.type === "deviceCode"
       ? interaction.url

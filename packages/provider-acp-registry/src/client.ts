@@ -8,6 +8,7 @@ export const acpRegistryClient = defineProviderClient({
   label: "ACP Registry",
   settingsSchema: AcpRegistrySettings,
   hasDefaultInstance: false,
+  authMethodsDiscovery: true,
   icon: {
     viewBox: "0 0 576 220",
     fill: { light: "#000000", dark: "#FFFFFF" },

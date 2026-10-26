@@ -1254,69 +1254,74 @@ describe("AcpRegistrySupport", () => {
     { name: "legacy registry", source: undefined, agentId: "example-agent", referenced: true },
     { name: "registry", source: "registry", agentId: "example-agent", referenced: true },
     { name: "padded registry", source: "registry", agentId: " example-agent ", referenced: true },
+    {
+      name: "dedicated ACP flavor",
+      driver: "customAcp",
+      source: "registry",
+      agentId: "example-agent",
+      referenced: true,
+    },
     { name: "local command", source: "local", agentId: "example-agent", referenced: false },
-  ] as const)(
-    "checks $name references before uninstalling only managed binaries",
-    ({ source, agentId, referenced }) => {
-      return Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-acp-registry-uninstall-",
-        });
-        const agentRoot = `${cacheDir}/tools/example-agent`;
-        const runnerCache = `${cacheDir}/external-npx-cache/example-agent/package.json`;
-        yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/linux-x86_64`, { recursive: true });
-        yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/linux-x86_64/agent`, "binary");
-        yield* fileSystem.makeDirectory(`${cacheDir}/external-npx-cache/example-agent`, {
-          recursive: true,
-        });
-        yield* fileSystem.writeFileString(runnerCache, "{}");
+  ] as const)("checks $name references before uninstalling only managed binaries", (testCase) => {
+    const { source, agentId, referenced } = testCase;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-uninstall-",
+      });
+      const agentRoot = `${cacheDir}/tools/example-agent`;
+      const runnerCache = `${cacheDir}/external-npx-cache/example-agent/package.json`;
+      yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/linux-x86_64`, { recursive: true });
+      yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/linux-x86_64/agent`, "binary");
+      yield* fileSystem.makeDirectory(`${cacheDir}/external-npx-cache/example-agent`, {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(runnerCache, "{}");
 
-        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-          cacheDir,
-          toolsDir: `${cacheDir}/tools`,
-          registryUrl,
-        });
-        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
-        const instanceId = ProviderInstanceId.make("uninstall-reference");
-        yield* hostSettings.set({
-          ...DEFAULT_SERVER_SETTINGS,
-          providerInstances: {
-            [instanceId]: {
-              driver: ProviderDriverKind.make("acpRegistry"),
-              displayName: "Uninstall reference",
-              enabled: true,
-              config: {
-                agentId,
-                commandPath: "/local/agent",
-                ...(source ? { source } : {}),
-              },
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
+      const instanceId = ProviderInstanceId.make("uninstall-reference");
+      yield* hostSettings.set({
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("driver" in testCase ? testCase.driver : "acpRegistry"),
+            displayName: "Uninstall reference",
+            enabled: true,
+            config: {
+              agentId,
+              commandPath: "/local/agent",
+              ...(source ? { source } : {}),
             },
           },
-        });
-        const first = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
-        expect(first).toEqual({ agentId: "example-agent", removed: !referenced });
-        expect(yield* fileSystem.exists(agentRoot)).toBe(referenced);
-        yield* hostSettings.set(DEFAULT_SERVER_SETTINGS);
-        const second = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
+        },
+      });
+      const first = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
+      expect(first).toEqual({ agentId: "example-agent", removed: !referenced });
+      expect(yield* fileSystem.exists(agentRoot)).toBe(referenced);
+      yield* hostSettings.set(DEFAULT_SERVER_SETTINGS);
+      const second = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
 
-        expect(second).toEqual({ agentId: "example-agent", removed: referenced });
-        expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
-          agentId: "example-agent",
-          removed: false,
-        });
-        expect(yield* fileSystem.exists(agentRoot)).toBe(false);
-        expect(yield* fileSystem.exists(runnerCache)).toBe(true);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          layerResolver((request) =>
-            Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused"))),
-          ),
+      expect(second).toEqual({ agentId: "example-agent", removed: referenced });
+      expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
+        agentId: "example-agent",
+        removed: false,
+      });
+      expect(yield* fileSystem.exists(agentRoot)).toBe(false);
+      expect(yield* fileSystem.exists(runnerCache)).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused"))),
         ),
-      );
-    },
-  );
+      ),
+    );
+  });
 
   it.effect("keeps managed package installs when removing the same agent's binaries", () =>
     Effect.gen(function* () {

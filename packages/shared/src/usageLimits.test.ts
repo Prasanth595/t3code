@@ -1197,6 +1197,56 @@ describe("/usage-limits", () => {
       withUsageLimitsCommands([selected], [])[0]?.slashCommands.map((command) => command.name),
     ).toEqual(["usage-limits"]);
   });
+
+  it("keeps GLM usage commands, reports, and pools separate from unrelated ACP agents", () => {
+    const glm = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_glm"),
+      driver: ProviderDriverKind.make("glm"),
+      displayName: "GLM Agent",
+      usageLimits: { ...limits, windows: [{ ...window, id: "glm_session" }] },
+      workspaceSnapshots: [
+        { cwd: "/tmp/project", checkedAt: limits.checkedAt, slashCommands: [], skills: [] },
+      ],
+    });
+    const unrelated = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_kilo"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Kilo",
+      workspaceSnapshots: [
+        { cwd: "/tmp/project", checkedAt: limits.checkedAt, slashCommands: [], skills: [] },
+      ],
+    });
+    const providers = [glm, unrelated];
+    const [glmCommands, unrelatedCommands] = withUsageLimitsCommands(providers, []);
+    expect(glmCommands?.slashCommands.map((command) => command.name)).toEqual(["usage-limits"]);
+    expect(
+      glmCommands?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
+    expect(unrelatedCommands?.slashCommands).toEqual([]);
+    expect(unrelatedCommands?.workspaceSnapshots?.[0]?.slashCommands).toEqual([]);
+    expect(
+      collectProviderUsageLimits(glm.instanceId, providers, [], now)?.accounts.map(
+        (account) => account.instanceId,
+      ),
+    ).toEqual([glm.instanceId]);
+    expect(collectProviderUsageLimits(unrelated.instanceId, providers, [], now)).toBeNull();
+
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          { entry: { target: { label: "Laptop" } }, serverConfig: { providers } },
+        ],
+      ]),
+    );
+    expect(
+      collectLimitPools(accounts, now).map((pool) => ({
+        driver: pool.driver,
+        accounts: pool.accounts.map((account) => account.displayName),
+        windows: pool.windows.map((window) => window.id),
+      })),
+    ).toEqual([{ driver: "glm", accounts: ["GLM Agent"], windows: ["glm_session"] }]);
+  });
 });
 
 describe("sameUsageLimitCommandCoverage", () => {

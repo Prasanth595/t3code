@@ -2243,9 +2243,9 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live(
-    "loads the persisted ACP session during startup without creating a throwaway session",
-    () =>
+  it.live.each([false, true])(
+    "loads the persisted ACP session without a throwaway session (driver migration: %s)",
+    (migrating) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2256,10 +2256,14 @@ describe("AcpAdapterV2", () => {
         );
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
         const instanceId = ProviderInstanceId.make("acp-test-eager-resume");
+        const itemIdentityDriver = migrating
+          ? ProviderDriverKind.make("acp-legacy-test")
+          : ACP_TEST_DRIVER;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
+            itemIdentityDriver,
             capabilities: AcpProviderCapabilitiesV2,
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
@@ -2282,43 +2286,90 @@ describe("AcpAdapterV2", () => {
           modelSelection,
           runtimePolicy,
           initialNativeThreadId: "persisted-session",
+          ...(migrating ? { initialProviderItemIdentityVersion: 2 as const } : {}),
         });
-        const providerThread = yield* runtime.ensureThread({
+        const loadedThread = yield* runtime.ensureThread({
           threadId,
           modelSelection,
           runtimePolicy,
         });
+        const providerThread: OrchestrationV2ProviderThread = {
+          ...loadedThread,
+          id: idAllocator.derive.providerThread({
+            driver: itemIdentityDriver,
+            providerInstanceId: instanceId,
+            nativeThreadId: "persisted-session",
+          }),
+          driver: itemIdentityDriver,
+          nativeThreadRef: {
+            driver: itemIdentityDriver,
+            nativeId: "persisted-session",
+            strength: "strong",
+          },
+        };
 
         assert.equal(providerThread.nativeThreadRef?.nativeId, "persisted-session");
-        assert.isNull(providerThread.nativeMetadata);
+        assert.deepEqual(
+          providerThread.nativeMetadata,
+          migrating ? { itemIdentityVersion: 2 } : null,
+        );
         const startupMethods = yield* pollProtocolMethods(protocolEvents);
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
 
-        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        const resumedThread = yield* runtime.resumeThread({
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(resumedThread.id, providerThread.id);
+        assert.equal(resumedThread.driver, ACP_TEST_DRIVER);
+        assert.equal(resumedThread.nativeThreadRef?.driver, ACP_TEST_DRIVER);
+        assert.equal(resumedThread.nativeThreadRef?.nativeId, "persisted-session");
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
         const now = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
             threadId,
-            providerThread,
+            providerThread: resumedThread,
             instanceId,
             runtimePolicy,
             now,
             ordinal: 1,
           }),
         );
-        const terminal = Array.from(
+        const turnEvents = Array.from(
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           ),
-        ).find((event) => event.type === "turn.terminal");
+        );
+        const terminal = turnEvents.find((event) => event.type === "turn.terminal");
+        assert.equal(terminal?.driver, ACP_TEST_DRIVER);
         assert.equal(
           terminal?.providerTurnId,
           idAllocator.derive.providerTurn({
-            driver: ACP_TEST_DRIVER,
-            nativeTurnId: "persisted-session:turn:1",
+            driver: itemIdentityDriver,
+            nativeTurnId: migrating
+              ? acpScopedNativeId(instanceId, "persisted-session:turn:1")
+              : "persisted-session:turn:1",
+          }),
+        );
+        const assistantItem = turnEvents.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        )[0];
+        assert.isDefined(assistantItem);
+        const nativeItemId = assistantItem?.nativeItemRef?.nativeId;
+        if (nativeItemId === null || nativeItemId === undefined)
+          assert.fail("Assistant item must retain its native identity");
+        assert.equal(assistantItem.nativeItemRef?.driver, ACP_TEST_DRIVER);
+        assert.equal(
+          assistantItem.id,
+          idAllocator.derive.turnItemFromProviderItem({
+            driver: itemIdentityDriver,
+            nativeItemId: migrating ? acpScopedNativeId(instanceId, nativeItemId) : nativeItemId,
           }),
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),

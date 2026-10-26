@@ -232,6 +232,7 @@ export interface AcpAdapterV2Flavor {
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
+  readonly itemIdentityDriver?: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
@@ -1352,6 +1353,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
       ? Effect.succeed(acpMcpContext(undefined, self))
       : mcpSessions.read(threadId).pipe(Effect.map((session) => acpMcpContext(session, self)));
   const driver = flavor.driver;
+  const itemIdentityDriver = flavor.itemIdentityDriver ?? driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
     flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
@@ -1379,22 +1381,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         const providerNodeId = (nativeItemId: string) =>
           idAllocator.derive.nodeFromProviderItem({
-            driver,
+            driver: itemIdentityDriver,
             nativeItemId: providerNativeId(nativeItemId),
           });
         const providerMessageId = (nativeItemId: string) =>
           idAllocator.derive.messageFromProviderItem({
-            driver,
+            driver: itemIdentityDriver,
             nativeItemId: providerNativeId(nativeItemId),
           });
         const providerTurnItemId = (nativeItemId: string) =>
           idAllocator.derive.turnItemFromProviderItem({
-            driver,
+            driver: itemIdentityDriver,
             nativeItemId: providerNativeId(nativeItemId),
           });
         const deriveProviderTurnId = (nativeTurnId: string) =>
           idAllocator.derive.providerTurn({
-            driver,
+            driver: itemIdentityDriver,
             nativeTurnId: providerNativeId(nativeTurnId),
           });
         const useProviderThreadIdentity = (thread: OrchestrationV2ProviderThread): void => {
@@ -2181,8 +2183,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             planId,
           });
           const now = yield* DateTime.now;
-          const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
-          const turnItemId = idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId });
+          const nodeId = idAllocator.derive.nodeFromProviderItem({
+            driver: itemIdentityDriver,
+            nativeItemId,
+          });
+          const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+            driver: itemIdentityDriver,
+            nativeItemId,
+          });
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
           yield* emitProviderEvent({
@@ -2736,7 +2744,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const childThreadId =
             existing?.childThreadId ??
             idAllocator.derive.threadFromProviderThread({
-              driver,
+              driver: itemIdentityDriver,
               providerInstanceId: context.input.modelSelection.instanceId,
               nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
             });
@@ -6935,7 +6943,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               type: "turn_item.updated",
               driver,
               turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: itemIdentityDriver,
+                  nativeItemId,
+                }),
                 threadId: context.input.threadId,
                 runId: context.input.runId,
                 nodeId: context.input.rootNodeId,
@@ -7821,6 +7832,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const now = yield* DateTime.now;
                   return {
                     ...threadInput.providerThread,
+                    driver,
+                    nativeThreadRef: {
+                      ...threadInput.providerThread.nativeThreadRef,
+                      driver,
+                      nativeId: sessionId,
+                      strength: threadInput.providerThread.nativeThreadRef?.strength ?? "strong",
+                    },
                     providerSessionId: input.providerSessionId,
                     status: "idle" as const,
                     updatedAt: now,

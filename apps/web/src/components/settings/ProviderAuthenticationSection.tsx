@@ -24,6 +24,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { providerClients } from "./providerDriverMeta";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -62,17 +63,14 @@ export function ProviderAuthenticationSection({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && auth?.phase === "succeeded");
+  const discoversAuthMethods = providerClients.get(provider.driver)?.authMethodsDiscovery === true;
   const isDiscovering =
-    provider.driver === "acpRegistry" &&
-    !active &&
-    !signedIn &&
-    !query.error &&
-    auth?.methods === undefined;
+    discoversAuthMethods && !active && !signedIn && !query.error && auth?.methods === undefined;
   const needsExternalSetup =
     !active &&
     !signedIn &&
     (provider.setup?.canAuthenticate === false ||
-      (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
+      (discoversAuthMethods && auth?.methods?.length === 0));
   const accountDescription = active
     ? auth?.phase === "starting"
       ? (auth.message ?? "Starting sign-in…")

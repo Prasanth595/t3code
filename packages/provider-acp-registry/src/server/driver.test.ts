@@ -1,4 +1,8 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AcpRegistryOperationError,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -43,6 +47,33 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("preserves a dedicated driver's identity through readiness and live updates", () => {
+    const driverKind = ProviderDriverKind.make("customAcp");
+    const continuationKey = "customAcp:instance:customAcp_test";
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      driverKind,
+      continuationKey,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+    });
+    const updated = applyAcpRegistryLiveConfiguration(
+      applyAcpRegistryAvailableCommands(snapshot, Option.some({ slashCommands: [], skills: [] })),
+      { models: [], currentModelId: null, configOptions: [] },
+      [],
+    );
+    expect(updated).toMatchObject({
+      driver: driverKind,
+      continuation: { groupKey: continuationKey },
+    });
+  });
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,

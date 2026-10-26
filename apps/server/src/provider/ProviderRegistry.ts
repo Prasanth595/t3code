@@ -159,13 +159,9 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     );
   }
 
-  if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
-    // Only completed ACP discovery provides nativeSessions and inventory; placeholder probes cannot establish auth for agents without sign-in.
-    return !(
-      provider.installed &&
-      provider.status === "ready" &&
-      provider.nativeSessions !== undefined
-    );
+  if (provider.nativeSessions !== undefined) {
+    // Only completed ACP discovery provides nativeSessions and inventory.
+    return !(provider.installed && provider.status === "ready");
   }
 
   if (provider.driver === ProviderDriverKind.make("grok")) {

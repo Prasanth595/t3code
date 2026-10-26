@@ -39,6 +39,8 @@ export interface ProviderClientDefinition {
   readonly settingsSchema: ProviderSettingsSchema;
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
   readonly hasDefaultInstance?: boolean;
+  readonly authMethodsDiscovery?: boolean;
+  readonly registryAgentId?: string;
   readonly badgeLabel?: string;
 }
 

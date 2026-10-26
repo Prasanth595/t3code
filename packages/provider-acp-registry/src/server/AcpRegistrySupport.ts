@@ -1895,12 +1895,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               ),
             );
             const isReferenced = Object.values(settings.providerInstances).some((instance) => {
-              if (
-                instance.driver !== "acpRegistry" ||
-                instance.config === null ||
-                typeof instance.config !== "object"
-              )
-                return false;
+              if (instance.config === null || typeof instance.config !== "object") return false;
               const config = instance.config as Record<string, unknown>;
               return (
                 config.source !== "local" &&
