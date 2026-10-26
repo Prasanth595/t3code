@@ -80,6 +80,7 @@ export function useAssetUrl(
 export function useRefreshAssetUrl(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  fallbackUri?: string,
 ): () => Promise<string | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
@@ -88,13 +89,18 @@ export function useRefreshAssetUrl(
     reportFailure: false,
   });
   return useCallback(async () => {
-    if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const state = assetUrlStateFromResult(
-      await createUrl({ environmentId, input: { resource } }),
-      httpBaseUrl,
-    );
-    return state._tag === "Success" ? state.url : null;
-  }, [createUrl, environmentId, httpBaseUrl, resource]);
+    if (environmentId === null || resource === null || httpBaseUrl === null)
+      return fallbackUri ?? null;
+    let result;
+    try {
+      result = await createUrl({ environmentId, input: { resource } });
+    } catch (error) {
+      if (fallbackUri !== undefined) return fallbackUri;
+      throw error;
+    }
+    const state = assetUrlStateFromResult(result, httpBaseUrl);
+    return state._tag === "Success" ? state.url : (fallbackUri ?? null);
+  }, [createUrl, environmentId, httpBaseUrl, resource, fallbackUri]);
 }
 
 /** {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. */
@@ -102,21 +108,28 @@ export async function refreshAssetUrl(
   environmentId: EnvironmentId,
   resource: AssetResource,
   signal?: AbortSignal,
+  fallbackUri?: string,
 ): Promise<string | null> {
   const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
-  if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
+  if (appAtomRegistry.get(connectionAtom)._tag === "None") return fallbackUri ?? null;
   const atom = assetEnvironment.createUrl({ environmentId, input: { resource } });
-  const result = await executeAtomQuery(appAtomRegistry, atom, {
-    label: atom.label?.[0] ?? "asset url",
-    refresh: true,
-    reportFailure: false,
-    ...(signal ? { signal } : {}),
-  });
+  let result;
+  try {
+    result = await executeAtomQuery(appAtomRegistry, atom, {
+      label: atom.label?.[0] ?? "asset url",
+      refresh: true,
+      reportFailure: false,
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (fallbackUri !== undefined && !signal?.aborted) return fallbackUri;
+    throw error;
+  }
   // The query can wait through a reconnect; resolve against the connection that answered it.
   const connection = appAtomRegistry.get(connectionAtom);
-  if (connection._tag === "None") return null;
+  if (connection._tag === "None") return fallbackUri ?? null;
   const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
-  return state._tag === "Success" ? state.url : null;
+  return state._tag === "Success" ? state.url : (fallbackUri ?? null);
 }
 
 export interface AuthorizedAssetUrl {

@@ -1,3 +1,4 @@
+import { mediaPreviewUri } from "../lib/mediaPreviewUri";
 import * as Dialog from "./ui/Dialog";
 import { useContext, useEffect, useEffectEvent, useState } from "react";
 
@@ -53,7 +54,7 @@ async function resolvePreviewItem(
   }
   if (!("environmentId" in item)) return { source: { ...item, name } };
   // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
-  const url = await refreshAssetUrl(item.environmentId, item.resource, signal)
+  const url = await refreshAssetUrl(item.environmentId, item.resource, signal, item.fallbackUri)
     .then((value) => {
       if (!value) throw new Error("Reconnect to this environment and try again.");
       return value;
@@ -64,7 +65,7 @@ async function resolvePreviewItem(
         "Reconnect to this environment and try again. The file may have been moved or deleted.",
       );
     });
-  return { source: { ...item, name, uri: url + (item.srcFragment ?? "") } };
+  return { source: { ...item, name, uri: mediaPreviewUri(url, item.srcFragment)! } };
 }
 
 function ResolvedFilePreview(props: {

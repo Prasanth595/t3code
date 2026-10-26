@@ -50,7 +50,12 @@ function NativeVideoPreview(props: {
   const resolvePlaybackUrl = useEffectEvent(async (): Promise<string> => {
     if (source.type !== "media") throw new Error("Could not load this video.");
     if (!("resource" in source)) return source.uri;
-    const url = await refreshAssetUrl(source.environmentId, source.resource);
+    const url = await refreshAssetUrl(
+      source.environmentId,
+      source.resource,
+      undefined,
+      source.fallbackUri,
+    );
     const playbackUrl = mediaVideoPreviewUri(source, url);
     if (playbackUrl !== null) return playbackUrl;
     throw new Error(

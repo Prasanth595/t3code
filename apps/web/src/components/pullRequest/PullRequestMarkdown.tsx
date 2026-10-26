@@ -41,7 +41,13 @@ function PullRequestHostVideo({
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+    assetUrl._tag === "Success"
+      ? assetUrl.url
+      : assetUrl._tag === "Failure"
+        ? sourceControlClients.mediaUrl(url)?.definition.kind === "bitbucket"
+          ? url.split("#", 1)[0]!
+          : fetchUrl
+        : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -49,7 +55,12 @@ function PullRequestHostVideo({
       label="Pull request video"
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
-      onRetry={refreshAssetUrl}
+      onRetry={
+        assetUrl._tag === "Failure" &&
+        sourceControlClients.mediaUrl(url)?.definition.kind === "bitbucket"
+          ? async () => undefined
+          : refreshAssetUrl
+      }
     />
   );
 }

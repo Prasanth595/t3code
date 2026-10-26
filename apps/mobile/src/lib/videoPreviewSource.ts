@@ -6,10 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import { mediaPreviewUri } from "./mediaPreviewUri";
 import type { DraftComposerFileAttachment } from "./composerImages";
 import type { MediaActionsSource } from "./mediaActionsSource";
 
 export type MediaVideoPreviewSource = {
+  readonly fallbackUri?: string;
   readonly type: "media";
   readonly name: string;
   readonly mimeType: string;
@@ -38,7 +40,7 @@ export function mediaVideoPreviewUri(
   assetUrl: string | null,
 ): string | null {
   if ("uri" in source) return source.uri;
-  return assetUrl === null ? null : assetUrl + (source.srcFragment ?? "");
+  return mediaPreviewUri(assetUrl, source.srcFragment);
 }
 
 export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string {

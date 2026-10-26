@@ -803,3 +803,121 @@ it.effect("keeps a sweep over many branches to a few Bitbucket requests at a tim
     assert.strictEqual(peak, 4);
   }),
 );
+
+it.effect("streams private Downloads with credentials only on the configured API origin", () => {
+  const { execute, layer } = makeLayer({
+    env: { T3CODE_BITBUCKET_ACCESS_TOKEN: "private-token" },
+    response: (request) =>
+      new URL(request.url).hostname === "api.bitbucket.org"
+        ? new Response(null, {
+            status: 302,
+            headers: { location: "https://objects.example.test/signed" },
+          })
+        : new Response(new Uint8Array([1, 2, 3]), {
+            status: 206,
+            headers: { "content-type": "video/mp4", "content-range": "bytes 0-2/10" },
+          }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const response = yield* bitbucket.fetchMedia({
+      url: "https://api.bitbucket.org/2.0/repositories/workspace/repo/downloads/clip.mp4",
+      headers: { range: "bytes=0-2" },
+    });
+    assert.strictEqual(response?.status, 206);
+    assert.deepStrictEqual(new Uint8Array(yield* response!.arrayBuffer), new Uint8Array([1, 2, 3]));
+    assert.deepStrictEqual(
+      execute.mock.calls.map(([request]) => [
+        new URL(request.url).hostname,
+        request.headers.authorization,
+        request.headers.range,
+      ]),
+      [
+        ["api.bitbucket.org", "Bearer private-token", "bytes=0-2"],
+        ["objects.example.test", undefined, "bytes=0-2"],
+      ],
+    );
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("does not send a custom-origin credential to Cloud Downloads", () => {
+  const { execute, layer } = makeLayer({ response: () => new Response(null) });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.fetchMedia({
+      url: "https://api.bitbucket.org/2.0/repositories/w/r/downloads/a.png",
+      headers: {},
+    });
+    assert.strictEqual(execute.mock.calls[0]?.[0].headers.authorization, undefined);
+    yield* bitbucket.fetchMedia({
+      url: "https://api.test.local/2.0/repositories/w/r/downloads/a.png",
+      headers: {},
+    });
+    assert.strictEqual(
+      execute.mock.calls[1]?.[0].headers.authorization,
+      `Basic ${Buffer.from("user@example.com:token").toString("base64")}`,
+    );
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("bounds download redirects and refuses insecure destinations", () => {
+  const { execute, layer } = makeLayer({
+    response: () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://objects.example.test/loop" },
+      }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    assert.strictEqual(
+      yield* bitbucket.fetchMedia({
+        url: "https://api.bitbucket.org/2.0/repositories/w/r/downloads/a.png",
+        headers: {},
+      }),
+      null,
+    );
+    assert.strictEqual(execute.mock.calls.length, 4);
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("bounds response headers without timing out the media body", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const stalled = makeLayer({
+      response: () => new Response(null),
+      answer: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    yield* Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const pending = yield* bitbucket
+        .fetchMedia({
+          url: "https://api.bitbucket.org/2.0/repositories/w/r/downloads/a.mp4",
+          headers: {},
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual(yield* Fiber.join(pending), null);
+    }).pipe(Effect.provide(stalled.layer), Effect.scoped);
+
+    const body = new TransformStream<Uint8Array, Uint8Array>();
+    const streaming = makeLayer({ response: () => new Response(body.readable) });
+    yield* Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const response = yield* bitbucket.fetchMedia({
+        url: "https://api.bitbucket.org/2.0/repositories/w/r/downloads/a.mp4",
+        headers: {},
+      });
+      if (response === null) throw new Error("Expected streaming media");
+      yield* TestClock.adjust("31 seconds");
+      const writer = body.writable.getWriter();
+      const content = yield* response.arrayBuffer.pipe(Effect.forkChild);
+      yield* Effect.promise(async () => {
+        await writer.write(new Uint8Array([7]));
+        await writer.close();
+      });
+      assert.deepStrictEqual(new Uint8Array(yield* Fiber.join(content)), new Uint8Array([7]));
+    }).pipe(Effect.provide(streaming.layer), Effect.scoped);
+  }),
+);
