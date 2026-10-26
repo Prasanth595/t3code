@@ -306,7 +306,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  if (routeName === "Thread") {
+  if (routeName === "Thread" && !props.inspectorPresentation) {
     return <UnavailableThreadDraftRedirect environmentId={environmentId} />;
   }
 
