@@ -1099,6 +1099,28 @@ describe("FactorySessions.send", () => {
     }),
   );
 
+  it.effect("with a model, the message runs on it", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        yield* sessions.send(threadId, "softfac:issue-5:rate-limited:2", "carry on", {
+          instanceId: "claudeAgent",
+          model: "claude-opus-5-5",
+        });
+      }).pipe(Effect.provide(layerSessions({}, {}, recordingDispatch(commands))));
+      assert.strictEqual(commands.length, 1);
+      const command = commands[0]!;
+      assert.strictEqual(command.type, "message.dispatch");
+      if (command.type === "message.dispatch") {
+        assert.deepStrictEqual(command.modelSelection, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        });
+      }
+    }),
+  );
+
   it.effect("never reads the thread first", () =>
     Effect.gen(function* () {
       const sessions = yield* Sessions.FactorySessions;
