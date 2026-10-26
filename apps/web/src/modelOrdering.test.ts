@@ -8,22 +8,21 @@ const CLAUDE_ID = ProviderInstanceId.make("claudeAgent");
 
 describe("model ordering", () => {
   it("renders favorites in saved order across providers, ignoring unavailable favorites", () => {
-    const items = [
+    const items = Object.freeze([
       { instanceId: CODEX_WORK_ID, slug: "direct-max" },
       { instanceId: CODEX_WORK_ID, slug: "pooled-model" },
       { instanceId: CLAUDE_ID, slug: "pooled-model" },
-    ];
-    const favoriteModelOrder = [
+    ]);
+    const favoriteModelOrder = Object.freeze([
       providerModelKey(CLAUDE_ID, "pooled-model"),
       providerModelKey(CLAUDE_ID, "unavailable-model"),
       providerModelKey(CODEX_WORK_ID, "pooled-model"),
       providerModelKey(CODEX_WORK_ID, "direct-max"),
-    ];
+    ]);
 
     expect(
       sortProviderModelItems(items, {
         favoriteModelOrder,
-        instanceOrder: [CODEX_WORK_ID, CLAUDE_ID],
       }),
     ).toEqual([items[2], items[1], items[0]]);
     expect(items.map((item) => item.slug)).toEqual(["direct-max", "pooled-model", "pooled-model"]);
