@@ -1,4 +1,3 @@
-import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -30,19 +29,13 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
-import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
-import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
-import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { PullRequestGuideRunCoordinator } from "../components/pullRequest/guide/PullRequestGuideRunCoordinator";
-import { HostFreezeToastCoordinator } from "../components/HostFreezeToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
-import { ProviderAuthCallbackCoordinator } from "../components/settings/ProviderAuthCallbackCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -189,7 +182,6 @@ function RootRouteView() {
         <AnchoredToastProvider>
           <BrowserChromeThemeSync key={pathname} />
           <EnvironmentThemeSync />
-          <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
           <GuestShareDialogHost />
           <CommandPalette>
@@ -224,7 +216,6 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <BrowserChromeThemeSync key={pathname} />
         <EnvironmentThemeSync />
-        <ProviderAuthCallbackCoordinator />
         <ChatGptWelcomeCoordinator />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
@@ -238,15 +229,11 @@ function RootRouteView() {
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
-          <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <GuestShareDialogHost />
           <SlowRpcRequestToastCoordinator />
-          <HostFreezeToastCoordinator />
-          <PermissionUpdateNotice />
-          {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
           <ProjectCloneToastCoordinator />
           <AddProjectToMachineDialogHost />
           <PullRequestGuideRunCoordinator />
@@ -254,7 +241,6 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
           ) : null}
-          {isElectron ? <DesktopUpdateLaunchNotice /> : null}
           {appShell}
           {/* Keep the theme editor above the router so drafts survive navigation. */}
           <ThemeEditorHost />
@@ -266,8 +252,6 @@ function RootRouteView() {
 
 function EnvironmentThemeSync() {
   useEnvironmentThemeSync();
-  // Sync palettes before adopting the environment theme so it is already in the library.
-  useDefaultThemeAdoption();
   return null;
 }
 
