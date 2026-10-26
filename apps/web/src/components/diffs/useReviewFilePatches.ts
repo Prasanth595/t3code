@@ -63,16 +63,17 @@ export function useReviewFilePatches({
   // decode every patch twice.
   const revalidated = useRef({ revision, queries: null as Set<unknown> | null });
   useEffect(() => {
-    if (revalidated.current.revision !== revision) {
-      revalidated.current = { revision, queries: new Set() };
-    }
+    const previous = revalidated.current;
+    if (previous.revision !== revision) revalidated.current = { revision, queries: new Set() };
     const seen = revalidated.current.queries;
     if (!seen) return;
     for (const { query } of queries) {
       if (seen.has(query)) continue;
       seen.add(query);
       const result = registry.get(query);
-      if (result._tag !== "Initial" && !result.waiting) registry.refresh(query);
+      // A request still running from the previous revision may predate the refreshed preview.
+      const stale = previous.queries?.has(query) || (result._tag !== "Initial" && !result.waiting);
+      if (stale) registry.refresh(query);
     }
   }, [revision, queries, registry]);
   const patches = useAtomValue(queriedPatchesAtom);

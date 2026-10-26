@@ -160,4 +160,8 @@ it("revalidates a cached file requested after the preview refreshes", async () =
   await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(2));
   await screen.rerender(h.ui("refreshed"));
   expect(h.requestsFor("e.ts")).toBe(2);
+
+  // e.ts is still loading from the previous revision, so the next refresh restarts it.
+  await screen.rerender(h.ui("focused"));
+  expect(h.requestsFor("e.ts")).toBe(3);
 });
