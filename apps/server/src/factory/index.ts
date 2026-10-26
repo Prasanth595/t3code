@@ -437,7 +437,7 @@ export const liveWorld = (
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
   const tracker = (effect: Effect.Effect<unknown, GitHubError, FactoryProcess>) =>
     withProcess(effect).pipe(Effect.mapError(asPassError("tracker")));
-  // A session launched while its model cools down from a rate limit runs on the model's fallback.
+  // A claim made while its model cools down from a rate limit launches on the model's fallback.
   const modelNow = (model: T3Sessions.Model) =>
     launchModel(cooldowns, machine.modelFallbacks, model, clock()) ?? model;
   const startContext = (repo: Repo): StartContext => ({
@@ -473,7 +473,6 @@ export const liveWorld = (
     ghConfigDir: machine.ghConfigDir,
     tracker: trackerFor(repo.watched),
     sessions,
-    launchModel: modelNow,
   });
   const gateContext = (repo: Repo, project: ProjectConfig): FeedbackContext => ({
     ...buildingContext(repo, project),
@@ -484,7 +483,6 @@ export const liveWorld = (
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
     feedbackSeconds: machine.feedbackSeconds,
-    launchModel: modelNow,
     gateOptions: {
       ghConfigDir: machine.ghConfigDir,
       clock,

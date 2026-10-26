@@ -22,7 +22,6 @@ import {
   cooldownKey,
   forgetQuietCooldowns,
   launchModel,
-  modelOfKey,
   recordRateLimit,
   type Cooldown,
 } from "./cooldown.ts";
@@ -1710,14 +1709,7 @@ const coolDown = Effect.fn("Pass.coolDown")(function* (
   const { model } = limited;
   const now = world.nowMs();
   const key = model === null ? UNNAMED_MODEL : cooldownKey(model);
-  recordRateLimit(
-    world.cooldowns,
-    key,
-    model?.model ?? key,
-    limited.endedMs,
-    now,
-    limited.retryAfterMs,
-  );
+  recordRateLimit(world.cooldowns, key, model, limited.endedMs, now, limited.retryAfterMs);
   const why = `session hit the provider's rate limit on ${plain(key)}`;
   const cooling = coolingDown(world.cooldowns, key, now);
   const on = model === null ? null : launchModel(world.cooldowns, pass.fallbacks, model, now);
@@ -1741,28 +1733,29 @@ const coolDown = Effect.fn("Pass.coolDown")(function* (
   }
 });
 
-/** The attention item of a model that keeps hitting its rate limit. */
-const cooldownItemId = (key: string) => `cooldown:${key}`;
+/** The attention item of a model that keeps hitting its rate limit, by its key after this prefix. */
+const COOLDOWN_ITEM = "cooldown:";
 /** The windows in a row a model may hit before a person is told, once per streak. */
 const COOLDOWN_ATTENTION_WINDOWS = 3;
 
 /**
  * One line per model whose rate limit cools down now, saying until when and whether new sessions
- * go to its fallback or wait, with one `claim_skipped` when any wait (`claim` holds them back). A
- * model past `COOLDOWN_ATTENTION_WINDOWS` windows in a row raises one item per streak; a model
- * quiet past its window is forgotten, and its item cleared.
+ * go to its fallback or wait (`claim` holds those back). A model past `COOLDOWN_ATTENTION_WINDOWS`
+ * windows in a row raises one item per streak. A model quiet past its window is forgotten, and an
+ * item with no streak behind it is cleared, as after a restart, which forgets every streak.
  */
 const sayCooldowns = Effect.fn("Pass.sayCooldowns")(function* (world: PassWorld, pass: Pass) {
   const now = world.nowMs();
-  for (const key of forgetQuietCooldowns(world.cooldowns, now)) {
-    yield* world.attention.clear((item) => item.id === cooldownItemId(key));
-  }
-  let held = false;
+  forgetQuietCooldowns(world.cooldowns, now);
+  yield* world.attention.clear(
+    (item) =>
+      item.id.startsWith(COOLDOWN_ITEM) &&
+      world.cooldowns.get(item.id.slice(COOLDOWN_ITEM.length))?.raised !== true,
+  );
   for (const [key, cooldown] of world.cooldowns) {
     if (now >= cooldown.untilMs) continue;
-    const model = modelOfKey(key);
+    const { model } = cooldown;
     const on = model === null ? null : launchModel(world.cooldowns, pass.fallbacks, model, now);
-    if (model !== null && on === null) held = true;
     const tail =
       model === null
         ? "its sessions wait for it to end"
@@ -1776,7 +1769,7 @@ const sayCooldowns = Effect.fn("Pass.sayCooldowns")(function* (world: PassWorld,
       cooldown.raised = true;
       pass.report.attention += 1;
       yield* world.attention.raise({
-        id: cooldownItemId(key),
+        id: `${COOLDOWN_ITEM}${key}`,
         kind: "attention",
         repo: null,
         issue: null,
@@ -1789,7 +1782,6 @@ const sayCooldowns = Effect.fn("Pass.sayCooldowns")(function* (world: PassWorld,
       });
     }
   }
-  if (held) yield* pass.record({ event: "claim_skipped", data: { reason: "cooling-down" } });
 });
 
 /**
@@ -2153,7 +2145,9 @@ const claim = Effect.fn("Pass.claim")(function* (
   // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.
   const now = world.nowMs();
   if ([...world.cooldowns.values()].some((cooldown) => now < cooldown.untilMs)) {
+    let held = false;
     for (const queue of queues) {
+      if (queue.issues.length === 0) continue;
       const read = yield* Effect.result(world.projectModel(queue.repo));
       if (read._tag === "Failure") {
         const what = `${queue.repo.watched.repo}: cannot read the T3 project's model: `;
@@ -2164,8 +2158,10 @@ const claim = Effect.fn("Pass.claim")(function* (
         launchModel(world.cooldowns, pass.fallbacks, read.success, now) === null
       ) {
         queue.issues.length = 0;
+        held = true;
       }
     }
+    if (held) yield* pass.record({ event: "claim_skipped", data: { reason: "cooling-down" } });
   }
   let active = count(known, queues);
   let late = false;

@@ -12,7 +12,7 @@ import { ledgerCall as ledger } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isSafeBranchName, type IssueDetail } from "../tracker/github.ts";
-import type { FactorySessions, Model } from "../t3/sessions.ts";
+import type { FactorySessions } from "../t3/sessions.ts";
 import {
   END_WITH_DONE,
   LAUNCH_FAILED,
@@ -41,8 +41,6 @@ export interface RelaunchContext extends RunContext {
   readonly ghConfigDir: string;
   readonly sessions: RunContext["sessions"] &
     Pick<FactorySessions["Service"], "findProject" | "launch">;
-  /** As `StartContext.launchModel`. */
-  readonly launchModel?: (model: Model) => Model;
 }
 
 /** How `relaunchSession` ended. */
@@ -90,7 +88,7 @@ export const relaunchSession = Effect.fn("RunnerRelaunch.relaunchSession")(funct
     return yield* refuse(from.earlierCall ? sessionMayExistNote(missing, commandId) : missing);
   }
   const project = target.success;
-  const model = ctx.launchModel?.(project.model) ?? project.model;
+  const { model } = project;
   const resumed: ResumeFrom = {
     branch: relaunch.branch,
     prUrl: from.prUrl,

@@ -1774,6 +1774,12 @@ export const resumeAfterCooldown = Effect.fn("RunnerBuilding.resumeAfterCooldown
   if (seen.finished) return yield* new NotBuildingError({ run });
   const threadId = seen.threadId;
   if (threadId === null) return yield* new NoSessionError({ run });
+  // The operator stopped the run after `advance` looked: the next `advance` carries the stop out.
+  if (seen.stopRequested)
+    return { kind: "unchanged", why: "a stop by hand was requested" } as const;
+  if (relaunchDecided(seen)) {
+    return { kind: "unchanged", why: "a relaunch is already decided" } as const;
+  }
   const gone = { kind: "unchanged", why: "its thread is gone" } as const;
   const status = yield* threadStatus(ctx, threadId);
   if (status === null) return gone;

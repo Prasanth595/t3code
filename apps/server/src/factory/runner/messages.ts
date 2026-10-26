@@ -230,18 +230,19 @@ export const statusBody = (
 export const RESULT_LINE_REMINDER =
   "Your last reply had no result line. If your work is still in progress, finish it. End your reply with one of these lines as the last line: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
+/** How every resume ends: the session carries on and ends with a result line. */
+const CONTINUE =
+  "Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+
 /**
  * The one message the factory sends into a session whose last run ended `failed` or `cancelled`
  * while T3 Code was in trouble. Its own fixed words, with no session or issue text in it, and the
  * same for every resume, so a send repeated after a crash is the same message.
  */
-export const INTERRUPTION_MESSAGE =
-  "The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+export const INTERRUPTION_MESSAGE = `The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. ${CONTINUE}`;
 
 const RATE_LIMITED =
   "The provider's rate limit cut your last turn off, so the factory is not treating it as your decision.";
-const CONTINUE =
-  "Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
 /**
  * The one message a resume after a provider rate limit sends: once the cooldown is over, or, with

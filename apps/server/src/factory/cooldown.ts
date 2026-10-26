@@ -13,7 +13,8 @@ export interface RateLimit {
 
 /** One model's rate limit: until when it cools down, and how many windows in a row it has hit. */
 export interface Cooldown {
-  readonly model: string;
+  /** Null for a session whose launch recorded no model: it has no fallback and holds no claim. */
+  readonly model: Model | null;
   untilMs: number;
   windows: number;
   /** The streak's attention item was raised: it is raised once per streak. */
@@ -22,18 +23,19 @@ export interface Cooldown {
 
 /** The first window. Each window the model is hit again after the last one ended is twice as long. */
 const COOLDOWN_FIRST_MS = 5 * 60_000;
-/** The longest window the factory picks itself. A provider's retry-after is taken as it is. */
+/** The longest window, whether the factory picks it or the provider's retry-after asks for more. */
 export const COOLDOWN_CAP_MS = 60 * 60_000;
 /** How long after its window a model that was not hit again starts over at the first window. */
 export const COOLDOWN_QUIET_MS = 30 * 60_000;
 
 /**
- * Claude Code's `Request rejected (429)` and `rate_limit_error`, an HTTP 429 or a 429 status said
- * as such, and the credential pool's `All credentials for model … are cooling down`. A bare 429
- * (an issue number, a commit message) is not one.
+ * The provider's error is the last line of the session's message: Claude Code's `API Error: …`
+ * naming a 429 or `rate_limit_error`, or the credential pool's `All credentials for model … are
+ * cooling down`. Anywhere else the words are the session's own, about its work.
  */
-const RATE_LIMITED =
-  /rate_limit_error|\((?:HTTP )?429\)|\bHTTP 429\b|\b(?:status|error|code) 429\b|\b429 Too Many Requests\b|\bAPI Error: 429\b|credentials for model \S+ are cooling down/i;
+const ERROR_LINE = /^(?:API )?Error:/i;
+const RATE_LIMITED = /\b429\b|rate_limit_error/i;
+const COOLING_DOWN = /credentials for model \S+ are cooling down/i;
 
 /** `retry-after: 120`, `retry after 3 minutes`, `try again in 45s`; seconds unless a unit is named. */
 const RETRY_AFTER =
@@ -45,24 +47,27 @@ const UNIT_MS: ReadonlyArray<readonly [RegExp, number]> = [
   [/^m/i, 60_000],
 ];
 
-/** The rate limit `text` (a session's last message) reports, or null for none. */
+/**
+ * The rate limit the last line of `text` (a session's last message) reports, or null for none.
+ * Its retry-after is read from that line too, and capped at `COOLDOWN_CAP_MS`.
+ */
 export const rateLimitOf = (text: string | null): RateLimit | null => {
-  if (text === null || !RATE_LIMITED.test(text)) return null;
-  const after = RETRY_AFTER.exec(text);
+  const line = text
+    ?.split("\n")
+    .map((part) => part.trim())
+    .findLast((part) => part !== "");
+  if (line === undefined) return null;
+  const limited = COOLING_DOWN.test(line) || (ERROR_LINE.test(line) && RATE_LIMITED.test(line));
+  if (!limited) return null;
+  const after = RETRY_AFTER.exec(line);
   if (after === null) return { retryAfterMs: null };
   const unit = after[2] ?? "s";
   const ms = UNIT_MS.find(([pattern]) => pattern.test(unit))?.[1] ?? 1000;
-  return { retryAfterMs: Number(after[1]) * ms };
+  return { retryAfterMs: Math.min(Number(after[1]) * ms, COOLDOWN_CAP_MS) };
 };
 
 /** How a model is named in the cooldowns, the pass's lines and its attention item. */
 export const cooldownKey = (model: Model): string => `${model.instanceId} ${model.model}`;
-
-/** The model a `cooldownKey` names; null for a key that names no instance. */
-export const modelOfKey = (key: string): Model | null => {
-  const space = key.indexOf(" ");
-  return space <= 0 ? null : { instanceId: key.slice(0, space), model: key.slice(space + 1) };
-};
 
 /**
  * Records that a session on `model` ended on a rate limit at `endedMs`, seen at `nowMs`. A session
@@ -73,7 +78,7 @@ export const modelOfKey = (key: string): Model | null => {
 export const recordRateLimit = (
   cooldowns: Map<string, Cooldown>,
   key: string,
-  model: string,
+  model: Model | null,
   endedMs: number,
   nowMs: number,
   retryAfterMs: number | null,
