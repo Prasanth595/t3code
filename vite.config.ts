@@ -522,6 +522,7 @@ export default defineConfig({
                 "rounded-[inherit]",
                 "gap-[0.33em]",
                 "gap-[0.2em]",
+                "leading-[normal]",
                 "underline-offset-[0.2em]",
                 "rounded-[25%]",
                 "text-[length:80cqh]",
