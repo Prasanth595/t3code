@@ -17,6 +17,11 @@ export interface ComposerThreadItem {
   readonly description: string;
 }
 
+/** A mention cannot hold a space, so dashes, underscores, and dots stand in for one. */
+export function composerThreadQuery(query: string): string {
+  return query.replace(/[-_.]+/g, " ");
+}
+
 /**
  * Threads to reference from the composer, matched and ranked like the command
  * palette, without subagent threads. The agent can only read threads on its
@@ -30,7 +35,7 @@ export function matchComposerThreadItems(input: {
   /** Recency is measured against this time. */
   now: number;
 }): ComposerThreadItem[] {
-  const query = foldSearchQuery(input.query);
+  const query = foldSearchQuery(composerThreadQuery(input.query));
   if (query.length === 0) return [];
   const candidates = input.shells.filter(
     (shell) =>

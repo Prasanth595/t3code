@@ -48,3 +48,22 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
   });
   expect(items.map((item) => item.thread.threadId)).toEqual(["word", "newer-mid-word"]);
 });
+
+it("reads dashes, underscores, and dots in a mention as spaces", () => {
+  const match = (query: string) =>
+    matchComposerThreadItems({
+      shells: [
+        shell("follow-up", "Review PR 195 follow-up: tests", {
+          updatedAt: "2026-10-22T00:00:00.000Z",
+        }),
+        shell("exact", "Review PR 195"),
+        shell("other", "Review PR 194"),
+      ],
+      environmentId,
+      excludeThreadId: null,
+      query,
+      now: Date.parse("2026-10-23T00:00:00.000Z"),
+    }).map((item) => item.thread.threadId);
+  expect(match("review-pr-195")).toEqual(["exact", "follow-up"]);
+  expect(match("review_pr.195")).toEqual(["exact", "follow-up"]);
+});

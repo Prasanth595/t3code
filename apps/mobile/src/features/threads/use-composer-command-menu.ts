@@ -7,7 +7,10 @@ import type {
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  composerThreadQuery,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
@@ -281,7 +284,7 @@ export function useComposerCommandMenu({
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
-    trigger?.kind === "path" ? trigger.query : "",
+    trigger?.kind === "path" ? composerThreadQuery(trigger.query) : "",
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({

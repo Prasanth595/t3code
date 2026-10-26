@@ -1,4 +1,7 @@
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  composerThreadQuery,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
 import { useState } from "react";
 import type {
   EnvironmentId,
@@ -93,7 +96,9 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  useThreadSearch(isPathTrigger ? [environmentId] : [], composerThreadQuery(pathTriggerQuery), {
+    titlesOnly: true,
+  });
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
