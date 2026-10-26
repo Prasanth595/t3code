@@ -179,6 +179,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
+import { registerHistoryProjectForThread } from "~/browserHistoryStore";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -237,6 +238,7 @@ import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
   useProject,
+  useProjects,
   useQuietThreadProjection,
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
@@ -1079,6 +1081,24 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const allProjects = useProjects();
+  const sidebarProjectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Register hydrated sidebar identity with persisted browser history.
+  useEffect(() => {
+    if (!clientSettingsHydrated || !activeThreadRef || !activeProject) return;
+    registerHistoryProjectForThread(activeThreadRef, activeProject, {
+      projects: allProjects,
+      settings: sidebarProjectGroupingSettings,
+      primaryEnvironmentId,
+    });
+  }, [
+    activeProject,
+    activeThreadRef,
+    allProjects,
+    clientSettingsHydrated,
+    primaryEnvironmentId,
+    sidebarProjectGroupingSettings,
+  ]);
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =

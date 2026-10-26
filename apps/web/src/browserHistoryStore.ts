@@ -1,5 +1,10 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
@@ -9,6 +14,8 @@ import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
 import { resolveStorage } from "./lib/storage";
+import { buildPhysicalToLogicalProjectKeyMap } from "./sidebarProjectGrouping";
+import type { Project } from "./types";
 
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 
@@ -341,6 +348,23 @@ export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: num
     return;
   }
   state.recordVisit(projectKey, url, visitAt, { environmentHostname });
+}
+
+export function registerHistoryProjectForThread(
+  ref: ScopedThreadRef,
+  project: Project,
+  grouping: {
+    projects: ReadonlyArray<Project>;
+    settings: ProjectGroupingSettings;
+    primaryEnvironmentId: EnvironmentId | null;
+  },
+): void {
+  // Key history by the sidebar's project row. The project alone would miss the
+  // identity a duplicate row borrows from its siblings.
+  const projectKey =
+    buildPhysicalToLogicalProjectKeyMap(grouping).get(derivePhysicalProjectKey(project)) ??
+    deriveLogicalProjectKeyFromSettings(project, grouping.settings);
+  useBrowserHistoryStore.getState().registerThreadProject(ref, projectKey);
 }
 
 export function setTitleForThreadUrl(
