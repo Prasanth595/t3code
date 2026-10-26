@@ -1527,10 +1527,10 @@ function renderFeedEntry(
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
-      // The bootstrap prompt is for the agent, not the reader: a person's photo-only message shows a
-      // caption instead. Messages from other agents keep their folded rendering.
       const attachmentOnly =
-        presentation.attribution !== "agent" && isAttachmentOnlyBootstrapText(message.text);
+        presentation.attribution !== "agent" &&
+        attachments.length > 0 &&
+        isAttachmentOnlyBootstrapText(presentation.text);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
@@ -1658,7 +1658,7 @@ function renderFeedEntry(
                 {attachmentOnly ? (
                   <AttachmentOnlyCaption
                     label={attachments.every(isImageAttachment) ? "Image only" : "Attachment only"}
-                    instruction={message.text.trim()}
+                    instruction={presentation.text}
                   />
                 ) : null}
                 {message.text.trim().length > 0 && !attachmentOnly ? (
@@ -1881,7 +1881,6 @@ type UserMessageContentProps = {
   readonly renderImage: MarkdownImageRenderer;
 };
 
-/** Sent with no text: a quiet caption stands in for the agent's bootstrap prompt, and a tap reveals it. */
 function AttachmentOnlyCaption(props: { readonly label: string; readonly instruction: string }) {
   const [expanded, setExpanded] = useState(false);
   return (

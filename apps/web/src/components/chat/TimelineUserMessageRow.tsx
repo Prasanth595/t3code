@@ -317,7 +317,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const resolvedContext = resolveUserMessageContext(
     userMessage.attribution === "guest" ? { ...row.message, text: userMessage.text } : row.message,
   );
-  const attachmentOnly = !folded && isAttachmentOnlyBootstrapText(resolvedContext.text);
+  const attachmentOnly =
+    !folded &&
+    (row.message.attachments?.length ?? 0) > 0 &&
+    isAttachmentOnlyBootstrapText(resolvedContext.text);
   const bodyText = attachmentOnly ? "" : resolvedContext.text;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
@@ -488,11 +491,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               <div
                 className={cn(
                   "mb-2 grid gap-2",
-                  // A lone photo sent without text fills its bubble instead of leaving half of it empty.
-                  // It sits at the bubble's right edge so opening the caption grows the bubble leftward
-                  // without moving the photo.
                   attachmentOnly && regularImages.length + userVideos.length === 1
-                    ? "ms-auto max-w-[240px] grid-cols-1"
+                    ? "ms-auto w-[240px] max-w-full grid-cols-1"
                     : "max-w-[210px] grid-cols-2",
                 )}
               >
@@ -626,9 +626,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {attachmentOnly ? (
               <AttachmentOnlyCaption
                 label={
-                  userVideos.length + unchippedFiles.length + unknownAttachments.length > 0
-                    ? "Attachment only"
-                    : "Image only"
+                  row.message.attachments?.every(isImageAttachment)
+                    ? "Image only"
+                    : "Attachment only"
                 }
                 instruction={resolvedContext.text}
               />
@@ -695,7 +695,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
-/** Sent with no text: a quiet caption stands in for the agent's bootstrap prompt, and a click reveals it. */
 function AttachmentOnlyCaption({
   label,
   instruction,
@@ -705,7 +704,7 @@ function AttachmentOnlyCaption({
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="text-xs text-muted-foreground" data-user-message-attachment-only="true">
+    <div className="text-xs text-muted-foreground">
       <button
         type="button"
         aria-expanded={expanded}

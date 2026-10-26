@@ -495,6 +495,33 @@ describe("MessagesTimeline attachment-only messages", () => {
     expect(screen.buttons("Image only")).toHaveLength(0);
   });
 
+  it("keeps literal bootstrap text visible without attachments", async () => {
+    setup();
+    await using screen = await renderTimeline([message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)]);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+    expect(screen.buttons(/^Copy message$/i)).toHaveLength(1);
+  });
+
+  it("labels audio-only messages as attachment only", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [
+          {
+            type: "file",
+            id: ChatAttachmentId.make("attachment-audio"),
+            name: "voice.wav",
+            mimeType: "audio/wav",
+            sizeBytes: 1024,
+          },
+        ],
+      }),
+    ]);
+    expect(screen.buttons("Attachment only")).toHaveLength(1);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+  });
+
   it("leaves a photo-only message from another agent as a folded message", async () => {
     setup();
     await using screen = await renderTimeline([
@@ -517,7 +544,7 @@ describe("MessagesTimeline attachment-only messages", () => {
         attachments: [photo],
       }),
     ]);
-    expect(screen.text()).not.toContain("Sent without text");
+    expect(screen.buttons("Image only")).toHaveLength(0);
     expect(screen.text()).toContain("Also check the colors.");
   });
 });
