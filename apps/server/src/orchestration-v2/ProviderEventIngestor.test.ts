@@ -1941,7 +1941,7 @@ layer("ProviderEventIngestorV2", (it) => {
         for (const relationship of ["subagent", "deleted-subagent", "fork"] as const) {
           const childId = ids.derive.threadFromProviderThread({
             driver: CODEX_DRIVER,
-            nativeThreadId: `restored-parent:${relationship}`,
+            nativeThreadId: `lifecycle:${lifecycle}:${relationship}`,
           });
           const deletedAt = relationship === "deleted-subagent" ? now : null;
           yield* ingestor.ingestNormalized({
