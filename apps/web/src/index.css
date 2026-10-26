@@ -2058,6 +2058,7 @@ code {
 
 [data-message-bubble] [data-slot="context-chip"] {
   color: var(--context-chip-message, var(--context-chip-accent));
+  --document-icon-stroke: var(--context-chip-message, var(--context-chip-accent));
 }
 
 /* File links and context chips own their color and focus ring. */
