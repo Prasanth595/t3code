@@ -72,6 +72,11 @@ vi.mock("expo-video", async () => {
     ),
   };
 });
+vi.mock("expo-audio", () => ({
+  AudioModule: { setAudioSessionOwner: vi.fn() },
+  setAudioModeAsync: vi.fn().mockResolvedValue(undefined),
+  setIsAudioActiveAsync: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("expo-image", () => ({ Image: () => null }));
 vi.mock("../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -116,9 +121,11 @@ import {
 function createPlayer() {
   let playing = false;
   const listeners = new Set<() => void>();
+  const playingListeners = new Set<(event: { isPlaying: boolean }) => void>();
   const setPlaying = (next: boolean) => {
     playing = next;
     for (const listener of listeners) listener();
+    for (const listener of playingListeners) listener({ isPlaying: next });
   };
   return {
     currentTime: 0,
@@ -129,6 +136,10 @@ function createPlayer() {
     play: vi.fn(() => setPlaying(true)),
     pause: vi.fn(() => setPlaying(false)),
     replaceAsync: vi.fn(() => mocks.replace()),
+    addListener(event: string, listener: (event: { isPlaying: boolean }) => void) {
+      if (event === "playingChange") playingListeners.add(listener);
+      return { remove: () => playingListeners.delete(listener) };
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);

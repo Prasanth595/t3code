@@ -9,6 +9,7 @@ import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "./videoAudioSe
 export function useMediaVideoPlayback(
   player: VideoPlayer,
   options: { readonly paused: boolean; readonly visible?: boolean },
+  playback: { play(): Promise<void>; pause(): void },
 ) {
   const focused = useIsFocused();
   const fullscreenVideoOpen = useFullscreenVideoOpen();
@@ -22,16 +23,16 @@ export function useMediaVideoPlayback(
   useEffect(() => {
     active.current = focused && !paused && AppState.currentState === "active";
     if (!active.current) interruption.current += 1;
-    if (!focused || paused || (!active.current && !fullscreen.current)) player.pause();
+    if (!focused || paused || (!active.current && !fullscreen.current)) playback.pause();
     // Native background handling distinguishes Android's fullscreen activity
     // from leaving the app; React Native reports both as background.
     const subscription = AppState.addEventListener("change", (state) => {
       active.current = focused && !paused && state === "active";
       if (!active.current) interruption.current += 1;
-      if (state === "inactive" || (state === "background" && !fullscreen.current)) player.pause();
+      if (state === "inactive" || (state === "background" && !fullscreen.current)) playback.pause();
     });
     return () => subscription.remove();
-  }, [focused, player, paused]);
+  }, [focused, playback, paused]);
 
   const createPlayRequest = useCallback(() => {
     const requestedAt = interruption.current;
@@ -39,17 +40,17 @@ export function useMediaVideoPlayback(
     // Returning to the content must not revive playback interrupted during loading.
     return () => {
       if (requestedWhileActive && active.current && requestedAt === interruption.current)
-        player.play();
+        return playback.play();
     };
-  }, [player]);
+  }, [playback]);
 
   const onFullscreenEnter = useCallback(() => {
     fullscreen.current = true;
   }, []);
   const onFullscreenExit = useCallback(() => {
     fullscreen.current = false;
-    if (!active.current) player.pause();
-  }, [player]);
+    if (!active.current) playback.pause();
+  }, [playback]);
 
-  return { createPlayRequest, onFullscreenEnter, onFullscreenExit };
+  return { active, fullscreen, createPlayRequest, onFullscreenEnter, onFullscreenExit };
 }
