@@ -292,23 +292,24 @@ describe("ChatMarkdown workspace file opens", () => {
     );
   });
 
-  it("opens an existing slashed path without searching the workspace", async () => {
-    setup();
-    filesystemMetadata.mockResolvedValue(
-      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
-    );
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
-    await using screen = await renderText("[Plan](docs/GROUPS_PLAN.md:12)", {
-      cwd: "/work",
-      threadRef,
-    });
-    await act(async () => screen.container.querySelector("a")!.click());
+  it.each(["file", "directory"] as const)(
+    "opens an existing slashed %s path without searching the workspace",
+    async (kind) => {
+      setup();
+      filesystemMetadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind }] }));
+      using openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      await using screen = await renderText("[Plan](docs/GROUPS_PLAN.md:12)", {
+        cwd: "/work",
+        threadRef,
+      });
+      await act(async () => screen.container.querySelector("a")!.click());
 
-    expect(workspaceSearch).not.toHaveBeenCalled();
-    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.md", 12);
-  });
+      expect(workspaceSearch).not.toHaveBeenCalled();
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.md", 12);
+    },
+  );
 });
 
 describe("ChatMarkdown headings", () => {

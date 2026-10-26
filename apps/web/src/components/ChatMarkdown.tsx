@@ -760,14 +760,14 @@ function useChatMarkdownState({
     const isBasename = needsWorkspaceBasenameLookup(workspaceRelativePath);
     if (!isBasename) {
       // Search can be truncated, still scanning, or skip ignored files, so it
-      // cannot rule out the literal path. A literal file always wins.
+      // cannot rule out the literal path. Only a missing literal path redirects.
       const metadata = await getFilesystemMetadata({
         environmentId,
         input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
       });
       if (
         metadata._tag !== "Success" ||
-        metadata.value.entries[0]?.kind === "file" ||
+        metadata.value.entries[0] !== null ||
         !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
       ) {
         return null;
