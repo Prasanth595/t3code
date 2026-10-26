@@ -38,6 +38,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   canInterrupt: boolean;
+  runId?: string | null;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
@@ -95,6 +96,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
+  runId = null,
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
@@ -119,8 +121,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
   const [stopPhase, setStopPhase] = useState<"pending" | "timedOut" | "landed" | null>(null);
-  // Losing permission also clears canInterrupt; it does not acknowledge the stop.
-  if (canOperateThread) {
+  const [stopRunId, setStopRunId] = useState(runId);
+  if (stopRunId !== runId) {
+    setStopRunId(runId);
+    setStopPhase(null);
+  } else if (canOperateThread) {
+    // Losing permission also clears canInterrupt; it does not acknowledge the stop.
     if ((stopPhase === "pending" || stopPhase === "timedOut") && !canInterrupt)
       setStopPhase("landed");
     else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);

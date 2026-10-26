@@ -3896,6 +3896,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
+                    runId={
+                      activeThread?.latestRun?.runId ??
+                      props.activeThreadShell?.latestRun?.runId ??
+                      null
+                    }
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}
                     alternateShortcutLabel={shortcutLabelForCommand(
