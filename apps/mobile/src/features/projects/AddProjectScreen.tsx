@@ -689,20 +689,6 @@ function useOpenNewTaskDraft() {
       activeRoute.params !== originRoute.params
     )
       return;
-    const state = navigation.getState();
-    if (Platform.OS === "ios" && state && !state.routes.some((route) => route.name === "Thread")) {
-      const homeKey = state.routes[0]?.key;
-      // UIKit must finish removing the chooser before a new detail card is inserted.
-      const unsubscribe = navigation.addListener("transitionEnd", (event) => {
-        if (!event.data.closing) return;
-        unsubscribe();
-        const current = navigation.getState();
-        if (current?.index !== 0 || current.routes[0]?.key !== homeKey) return;
-        selectDetail({ name: "Thread", params: { draft: params } });
-      });
-      navigation.dispatch(StackActions.popToTop());
-      return;
-    }
     selectDetail({ name: "Thread", params: { draft: params } });
   };
 }

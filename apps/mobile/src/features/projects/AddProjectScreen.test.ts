@@ -14,7 +14,6 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  transitions: new Set<(event: { data: { closing: boolean } }) => void>(),
   scopes: new Set<string>(),
   baseDirectory: "",
   projects: [] as string[],
@@ -75,10 +74,6 @@ vi.mock("react-native", () => ({
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({
     dispatch: state.dispatch,
-    addListener: (_name: string, listener: (event: { data: { closing: boolean } }) => void) => {
-      state.transitions.add(listener);
-      return () => state.transitions.delete(listener);
-    },
     getState: () =>
       state.navigationState ?? {
         index: 4,
@@ -93,7 +88,6 @@ vi.mock("@react-navigation/native", () => ({
   }),
   CommonActions: { reset: (input: unknown) => input },
   StackActions: {
-    popToTop: () => ({ type: "POP_TO_TOP" }),
     push: (name: string, params: unknown) => ({ type: "PUSH", payload: { name, params } }),
   },
 }));
@@ -335,9 +329,7 @@ function mountProjectFlow(
   state.navigationState = current;
   state.dispatch.mockImplementation((action) =>
     apply(
-      action.type === "PUSH" ||
-        action.type === "POP_TO_TOP" ||
-        action.type === "SELECT_WORKSPACE_DETAIL"
+      action.type === "PUSH" || action.type === "SELECT_WORKSPACE_DETAIL"
         ? action
         : CommonActions.reset(action),
     ),
@@ -503,7 +495,6 @@ describe("add project source environment", () => {
 
 describe("local project navigation", () => {
   function setup() {
-    state.transitions.clear();
     state.navigationState = undefined;
     state.scopes = new Set([AuthOrchestrationOperateScope]);
     state.baseDirectory = "/tmp/t3-mobile-audit-fixture";
@@ -664,21 +655,6 @@ describe("local project navigation", () => {
     }
   });
 
-  it("does not replace a destination opened while the chooser is closing", async () => {
-    const { created, projected, submit } = setup();
-    const navigation = mountProjectFlow(false, false, true);
-    const submission = submit();
-    created.resolve(AsyncResult.success(undefined));
-    projected.resolve({ environmentId: "environment", id: "project" });
-    await submission;
-    expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home"]);
-    navigation.push("PullRequest");
-    const selected = navigation.getState();
-    for (const listener of state.transitions) listener({ data: { closing: true } });
-    expect(navigation.getState()).toBe(selected);
-    expect(state.transitions.size).toBe(0);
-  });
-
   it.each([
     { origin: "Thread", withDraft: true, withChooser: true },
     { origin: "NewTaskProject", withDraft: false, withChooser: true },
@@ -696,10 +672,7 @@ describe("local project navigation", () => {
       expect(navigation.getState()).toBe(before);
       projected.resolve({ environmentId: "environment", id: "project" });
       await submission;
-      if (!withDraft) {
-        expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home"]);
-        for (const listener of state.transitions) listener({ data: { closing: true } });
-      }
+      expect(state.dispatch).toHaveBeenCalledTimes(1);
       expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
       expect(navigation.getState().routes[1]?.params).toEqual({
         draft: {
