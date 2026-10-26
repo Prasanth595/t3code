@@ -133,9 +133,7 @@ export function classifyReachability(
     return fail(
       "no_connector",
       "Cloudflare has no live connection from this machine for the tunnel.",
-      (connector.readyConnections ?? 0) > 0
-        ? "T3 Code retries the tunnel automatically. Wait a few minutes. If it stays offline, restart T3 Code."
-        : restart,
+      restart,
     );
   }
   if (status !== null) {
@@ -257,20 +255,16 @@ const make = Effect.gen(function* () {
     if (connector === null || (endpoint?.kind === "status" && endpoint.status === 200)) {
       return facts;
     }
-    // The classification ignores the TCP edge test while cloudflared has ready connections.
-    const connected = (connector.readyConnections ?? 0) > 0;
     const [edgeResults, exitNode] = yield* Effect.all(
       [
-        connected
-          ? Effect.succeed(null)
-          : Effect.forEach(TUNNEL_EDGE_HOSTS, (host) => canOpenTcp(host, TUNNEL_EDGE_PORT), {
-              concurrency: "unbounded",
-            }),
+        Effect.forEach(TUNNEL_EDGE_HOSTS, (host) => canOpenTcp(host, TUNNEL_EDGE_PORT), {
+          concurrency: "unbounded",
+        }),
         readExitNode,
       ],
       { concurrency: 2 },
     );
-    return { ...facts, edgeReachable: edgeResults?.some(Boolean) ?? null, exitNode };
+    return { ...facts, edgeReachable: edgeResults.some(Boolean), exitNode };
   });
 
   // Runs inside the check span; the runtime restart has its own.

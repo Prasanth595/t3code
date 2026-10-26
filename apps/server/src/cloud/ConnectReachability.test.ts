@@ -6,7 +6,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -92,6 +91,7 @@ describe("ConnectReachability stale connector recovery", () => {
   it.effect("restarts cloudflared when Cloudflare has no connector but it reports ready", () =>
     Effect.gen(function* () {
       const restarted: Array<number> = [];
+      let status = 530;
       const reachability = yield* Effect.service(ConnectReachability.ConnectReachability).pipe(
         Effect.provide(
           ConnectReachability.layer.pipe(
@@ -103,14 +103,14 @@ describe("ConnectReachability stale connector recovery", () => {
                   restartConnector: (pid) => Effect.sync(() => restarted.push(pid) > 0),
                 }),
                 Layer.mock(ServerSecretStore.ServerSecretStore)({
-                  get: () => Effect.succeed(Option.some(new Uint8Array())),
+                  get: () => Effect.succeedSome(new Uint8Array()),
                 }),
                 // Cloudflare answers 530 while cloudflared still reports four ready connections.
                 Layer.succeed(
                   HttpClient.HttpClient,
                   HttpClient.make((request) =>
                     Effect.succeed(
-                      HttpClientResponse.fromWeb(request, new Response(null, { status: 530 })),
+                      HttpClientResponse.fromWeb(request, new Response(null, { status })),
                     ),
                   ),
                 ),
@@ -132,6 +132,28 @@ describe("ConnectReachability stale connector recovery", () => {
       yield* TestClock.adjust(Duration.minutes(1));
       yield* reachability.check;
       expect(restarted).toEqual([connected.pid]);
+
+      yield* reachability.check;
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* reachability.check;
+      expect(restarted).toEqual([connected.pid]);
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* reachability.check;
+      expect(restarted).toEqual([connected.pid, connected.pid]);
+
+      status = 200;
+      expect(yield* reachability.check).toMatchObject({ status: "reachable" });
+      status = 502;
+      yield* reachability.check;
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* reachability.check;
+      expect(restarted).toHaveLength(2);
+
+      status = 530;
+      yield* reachability.check;
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* reachability.check;
+      expect(restarted).toEqual([connected.pid, connected.pid, connected.pid]);
     }),
   );
 });
