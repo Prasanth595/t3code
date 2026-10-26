@@ -212,7 +212,7 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    // ACP 1.3.0 treats /compact as model input; it only handles /plan and /logout natively.
+    // ACP 1.3.0 treats /compact as ordinary model input.
     supportsCompaction: false,
   };
 }
