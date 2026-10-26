@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { Atom } from "effect/reactivity";
 import {
   ChatAttachmentId,
   ComposerContextId,
@@ -8,7 +9,16 @@ import {
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
-import { resolveQueuedEditPayload, type QueuedRunEdit } from "./queued-run-edit";
+import { appAtomRegistry } from "./atom-registry";
+import {
+  beginQueuedRunEdit,
+  getQueuedRunEdit,
+  queuedEditDraftKey,
+  resolveQueuedEditPayload,
+  type QueuedRunEdit,
+} from "./queued-run-edit";
+import { threadComposerErrorsAtom } from "./thread-composer-error";
+import { getComposerDraftSnapshot, setComposerDraftText } from "./use-composer-drafts";
 
 const image = (id: string): ChatAttachment => ({
   type: "image",
@@ -78,5 +88,26 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
+  });
+});
+
+describe("beginQueuedRunEdit", () => {
+  it("ends a changed edit when its run starts, without the thread's composer mounted", () => {
+    const threadKey = "env-exit:thread-exit";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    setComposerDraftText(threadKey, "other work");
+    beginQueuedRunEdit(threadKey, edit([]), runs);
+    setComposerDraftText(queuedEditDraftKey(threadKey, runId), "changed");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("other work");
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
   });
 });
