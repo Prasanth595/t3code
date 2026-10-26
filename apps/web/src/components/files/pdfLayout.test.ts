@@ -105,6 +105,20 @@ describe("pdfFindMatchRuns", () => {
     ]);
   });
 
+  it("matches a space in the query across a line end", () => {
+    expect(
+      pdfFindMatchRuns(["Q3 quarterly", "\n", "outlook", " ahead"], "quarterly outlook"),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it("matches a word hyphenated across a line end", () => {
+    expect(pdfFindMatchRuns(["the quar-", "\n", "terly report"], "quarterly")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
   it("highlights nothing for a blank or missing query", () => {
     expect(pdfFindMatchRuns(["a b", "c"], " ")).toEqual([false, false]);
     expect(pdfFindMatchRuns(["a b", "c"], "")).toEqual([false, false]);

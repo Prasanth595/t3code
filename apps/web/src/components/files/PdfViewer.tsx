@@ -247,7 +247,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
             throw new Error(
               "This PDF has too much text to search. Save it to search in another app.",
             );
-          if (text.toLowerCase().includes(query.toLowerCase())) found.push(index);
+          if (pdfFindMatchRuns([text], query)[0]) found.push(index);
         }
         if (cancelled) return;
         setRatios(sizes);
