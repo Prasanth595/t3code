@@ -389,13 +389,23 @@ const BLOCK_MARKER =
 /** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
-  const edits: Array<{ start: number; end: number; content: string }> = [];
+  const edits: MarkdownEdit[] = [];
   const visit = (node: MarkdownNode) => {
     if (!("children" in node)) return;
     if (node.type !== "paragraph") return node.children.forEach(visit);
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
+    if (
+      node.children.some(
+        (child) =>
+          child.type === "inlineCode" &&
+          /^`{3,}[^\r\n]*[\r\n]/.test(
+            markdown.slice(child.position?.start.offset, child.position?.end.offset),
+          ),
+      )
+    )
+      return;
     // Container markers become spaces, except ">", so the new paragraphs stay in the list or quote.
     const markers = markdown
       .slice(markdown.lastIndexOf("\n", start - 1) + 1, start)
@@ -403,7 +413,7 @@ export function markdownWithBlockImages(markdown: string): string {
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
     let previousEnd = start;
-    for (const child of node.children) {
+    for (const [index, child] of node.children.entries()) {
       if (child.type !== "image" && child.type !== "imageReference") continue;
       const imageStart = child.position?.start.offset;
       const imageEnd = child.position?.end.offset;
@@ -419,7 +429,25 @@ export function markdownWithBlockImages(markdown: string): string {
         previousEnd = imageEnd + after.length;
         edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
         // The text after the image now starts a paragraph, where a leading marker would open a block.
-        const marker = BLOCK_MARKER.exec(markdown.slice(previousEnd, end));
+        const suffix = markdown.slice(previousEnd, end);
+        const definition = /^\[(?:\\.|[^\]\\])*\](?=:)/.exec(suffix);
+        if (definition) {
+          const offset = previousEnd + definition[0].length;
+          edits.push({ start: offset, end: offset, content: "\\" });
+        }
+        const next = node.children[index + 1];
+        const literal =
+          next?.type === "text" && next.position?.end.offset !== previousEnd
+            ? /^(?:`{3,}|~{3,})/.exec(suffix)?.[0]
+            : undefined;
+        if (literal) {
+          edits.push({
+            start: previousEnd,
+            end: previousEnd + literal.length,
+            content: [...literal].map((character) => `\\${character}`).join(""),
+          });
+        }
+        const marker = BLOCK_MARKER.exec(suffix);
         if (marker) {
           const offset = previousEnd + marker[0].length;
           edits.push({ start: offset, end: offset, content: "\\" });
@@ -428,9 +456,7 @@ export function markdownWithBlockImages(markdown: string): string {
     }
   };
   visit(parser.parse(markdown));
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyMarkdownEdits(markdown, edits);
 }
 
 export function parseMarkdownDocument(markdown: string): Root {

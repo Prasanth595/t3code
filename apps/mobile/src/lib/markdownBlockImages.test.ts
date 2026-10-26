@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { markdownWithBlockImages } from "./markdownDocument";
+import { markdownWithBlockImages, parseMarkdownDocument } from "./markdownDocument";
 
 describe("images inside running text", () => {
   it("moves each image into its own paragraph", () => {
@@ -41,6 +41,30 @@ describe("images inside running text", () => {
         `See\n\n![a](a.png)\n\n${escaped}`,
       );
     }
+  });
+
+  it("preserves reference-like text and fences after images", () => {
+    for (const suffix of ["[id]: target.png", "~~~js\nconst x = 1", "```js\nconst x = 1"]) {
+      const document = parseMarkdownDocument(markdownWithBlockImages(`See ![a](a.png) ${suffix}`));
+      expect(document.children.map((node) => node.type)).toEqual([
+        "paragraph",
+        "paragraph",
+        "paragraph",
+      ]);
+      const last = document.children.at(-1);
+      expect(last?.type === "paragraph" && last.children).toMatchObject([
+        { type: "text", value: suffix },
+      ]);
+    }
+  });
+
+  it("preserves links and code next to images", () => {
+    expect(markdownWithBlockImages("See ![a](a.png) [id]: target.png\n\n[id]: original.png")).toBe(
+      "See\n\n![a](a.png)\n\n[id]\\: target.png\n\n[id]: original.png",
+    );
+    expect(markdownWithBlockImages("See ![a](a.png) `code`")).toBe("See\n\n![a](a.png)\n\n`code`");
+    const multiline = "See ![a](a.png) ```line\ncode```";
+    expect(markdownWithBlockImages(multiline)).toBe(multiline);
   });
 
   it("leaves images that already start their own line", () => {
