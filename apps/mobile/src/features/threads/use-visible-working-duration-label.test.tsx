@@ -58,7 +58,6 @@ function setup(startedAt: string | null, nowMs = 0, active = true, focusedInitia
   const render = (start: string | null) =>
     act(() =>
       root.render(
-        // oxlint-disable-next-line react/jsx-no-constructed-context-values -- One stable navigation fixture per mounted probe, constructed outside React render.
         <NavigationContext.Provider value={navigation}>
           <Probe startedAt={start} />
         </NavigationContext.Provider>,
