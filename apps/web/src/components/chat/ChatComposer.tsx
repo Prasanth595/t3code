@@ -1527,17 +1527,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     // During a switch, the cursor still belongs to the draft being left.
-    if (lastSyncedDraftKeyRef.current !== pendingAnswerKey || promptRef.current !== composerText) {
+    if (lastSyncedDraftKeyRef.current === pendingAnswerKey && promptRef.current === composerText) {
+      draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"] = {
+        key: pendingAnswerKey ?? composerDraftTargetKey,
+        text: composerText,
+        cursor: composerCursor,
+      };
       return;
     }
-    draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"] = {
-      key: pendingAnswerKey ?? composerDraftTargetKey,
-      text: composerText,
-      cursor: composerCursor,
-    };
-  }, [composerCursor, composerDraftTargetKey, composerText, pendingAnswerKey, promptRef]);
 
-  useEffect(() => {
     const draftChanged = lastSyncedDraftKeyRef.current !== pendingAnswerKey;
     lastSyncedDraftKeyRef.current = pendingAnswerKey;
     if (!draftChanged && (pendingAnswerKey === null || promptRef.current === composerText)) {
@@ -1558,6 +1556,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     setComposerHighlightedItemId(null);
   }, [
+    composerCursor,
     composerDraftTargetKey,
     composerText,
     isLiteralPendingAnswer,

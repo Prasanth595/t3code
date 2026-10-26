@@ -98,7 +98,8 @@ function PendingRequestsProbe({
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
-    setComposerDraftPrompt: useComposerDraftStore.getState().setPrompt,
+    setComposerDraftPrompt: (target, value) =>
+      useComposerDraftStore.getState().setPrompt(target, value),
     promptRef: suppliedPromptRef ?? promptRef,
     composerRef: suppliedComposerRef ?? composerRef,
     setThreadError: () => {},
@@ -206,10 +207,10 @@ it("keeps the message cursor and recovers a custom answer when choosing an optio
     current: {
       getSendContext: () => ({ answeringPendingUserInput: false }),
       resetCursorState,
-    } as ChatComposerHandle,
+    } as unknown as ChatComposerHandle,
   };
   useComposerDraftStore.getState().setPrompt(target, message);
-  await using screen = await render(
+  await using _screen = await render(
     <PendingRequestsProbe
       environmentId={environmentId}
       projection={projection}
