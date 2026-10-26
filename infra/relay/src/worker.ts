@@ -69,6 +69,12 @@ import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as AdminPanel from "./saas/adminPanel.ts";
+import * as LlmProxy from "./saas/LlmProxy.ts";
+import * as SaasAccounts from "./saas/SaasAccounts.ts";
+import * as SaasApi from "./saas/SaasApi.ts";
+import * as SaasCrypto from "./saas/SaasCrypto.ts";
+import * as StripeBilling from "./saas/StripeBilling.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -107,6 +113,8 @@ const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
 const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningSecret", {
   bytes: 32,
 });
+// Rotating this secret makes the stored model key unreadable; the admin then saves it again.
+const SaasSettingsSecret = Alchemy.makeRandom("SaasSettingsSecret", { bytes: 32 });
 
 export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
 
@@ -136,6 +144,7 @@ export const layer = Api.make(
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
+    const randomSaasSettingsSecret = yield* SaasSettingsSecret;
     yield* RelayObservability;
 
     const apnsEnabled = yield* Config.Boolean("APNS_ENABLED").pipe(Config.withDefault(true));
@@ -155,12 +164,37 @@ export const layer = Api.make(
       ),
     );
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
+    const saasSettingsSecret = yield* randomSaasSettingsSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    const saasAdminEmails = yield* Config.String("SAAS_ADMIN_EMAILS").pipe(
+      Config.map((value) =>
+        value
+          .split(",")
+          .map((email) => email.trim())
+          .filter((email) => email.length > 0),
+      ),
+      Config.withDefault(SaasApi.DEFAULT_SAAS_ADMIN_EMAILS),
+    );
+    const clerkJwtTemplate = yield* Config.String("CLERK_JWT_TEMPLATE").pipe(
+      Config.withDefault("t3-relay"),
+    );
+    const stripeSecretKey = yield* Config.option(Config.Redacted("STRIPE_SECRET_KEY"));
+    const stripeWebhookSecret = yield* Config.option(Config.Redacted("STRIPE_WEBHOOK_SECRET"));
+    const stripeSettings =
+      Option.isSome(stripeSecretKey) &&
+      Option.isSome(stripeWebhookSecret) &&
+      Redacted.value(stripeSecretKey.value).trim() !== ""
+        ? {
+            secretKey: stripeSecretKey.value,
+            webhookSecret: stripeWebhookSecret.value,
+            returnOrigin: relayPublicOrigin,
+          }
+        : null;
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
@@ -244,7 +278,30 @@ export const layer = Api.make(
     });
 
     const layerRuntime = Layer.empty.pipe(
-      Layer.provideMerge(MobileRegistrations.layer),
+      Layer.provideMerge(
+        Layer.merge(
+          MobileRegistrations.layer,
+          Layer.merge(LlmProxy.layer, StripeBilling.layer).pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                SaasApi.layerClerkUsers,
+                Layer.succeed(SaasApi.SaasAdmins, saasAdminEmails),
+                Layer.succeed(StripeBilling.StripeConfig, stripeSettings),
+                SaasAccounts.layer.pipe(
+                  Layer.provide(
+                    Layer.effect(
+                      SaasCrypto.SaasSettingsKey,
+                      Effect.gen(function* () {
+                        return yield* saasSettingsSecret;
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
@@ -331,8 +388,17 @@ export const layer = Api.make(
       allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
-    const layerApp = Layer.merge(
+    const layerApp = Layer.mergeAll(
       layerRelayApi,
+      SaasApi.layerAccountApi,
+      SaasApi.layerAdminApi,
+      LlmProxy.layerApi,
+      StripeBilling.layerApi,
+      AdminPanel.layerApi.pipe(
+        Layer.provide(
+          Layer.succeed(AdminPanel.AdminPanelConfig, { clerkPublishableKey, clerkJwtTemplate }),
+        ),
+      ),
       HookForwarder.layerApi.pipe(
         Layer.provide(HookForwarder.layer),
         Layer.provide(layerHookRateLimiter),

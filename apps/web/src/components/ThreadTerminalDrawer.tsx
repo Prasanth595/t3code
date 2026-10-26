@@ -434,7 +434,7 @@ interface TerminalLaunchLocation {
   readonly runtimeEnv?: Record<string, string>;
 }
 
-export function TerminalViewport(props: TerminalViewportProps) {
+function TerminalViewport(props: TerminalViewportProps) {
   const sessionKey = JSON.stringify([
     props.threadRef.environmentId,
     props.threadId,

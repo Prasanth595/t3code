@@ -29,6 +29,13 @@ import {
   type RelayProtectedError as RelayProtectedErrorType,
   RelayUnregisterDeviceEndpoint,
 } from "@t3tools/contracts/relay";
+import {
+  SaasBillingUnavailableError,
+  SaasNotFoundError,
+  type SaasAccountResponse,
+  type SaasLlmKeyResponse,
+  type SaasRedirectResponse,
+} from "@t3tools/contracts/saas";
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -96,10 +103,15 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "unregister relay mobile device",
   "register relay live activity",
   "read relay agent activity snapshot",
+  "read account",
+  "create model key",
+  "start checkout",
+  "open billing portal",
 ]);
 export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 
 export const ManagedRelayRequestActivity = Schema.Literals([
+  "Relay account request",
   "Relay DPoP access token exchange",
   "Relay environment listing",
   "Relay client device listing",
@@ -298,11 +310,27 @@ export class ManagedRelayClient extends Context.Service<
     readonly getAgentActivitySnapshot: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
+    readonly getAccount: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<SaasAccountResponse, ManagedRelayClientError>;
+    readonly createLlmKey: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<SaasLlmKeyResponse, ManagedRelayClientError>;
+    readonly createCheckout: (input: {
+      readonly clerkToken: string;
+      readonly planId: string;
+    }) => Effect.Effect<SaasRedirectResponse, ManagedRelayClientError>;
+    readonly createBillingPortal: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<SaasRedirectResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
 const isRelayProtectedError = Schema.is(RelayProtectedError);
+const isSaasAccountError = Schema.is(
+  Schema.Union([SaasBillingUnavailableError, SaasNotFoundError]),
+);
 
 const TRACEPARENT_TRACE_ID = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/i;
 
@@ -432,6 +460,10 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     unregisterDevice: unavailable("clientRuntime.managedRelay.unregisterDevice"),
     registerLiveActivity: unavailable("clientRuntime.managedRelay.registerLiveActivity"),
     getAgentActivitySnapshot: unavailable("clientRuntime.managedRelay.getAgentActivitySnapshot"),
+    getAccount: unavailable("clientRuntime.managedRelay.getAccount"),
+    createLlmKey: unavailable("clientRuntime.managedRelay.createLlmKey"),
+    createCheckout: unavailable("clientRuntime.managedRelay.createCheckout"),
+    createBillingPortal: unavailable("clientRuntime.managedRelay.createBillingPortal"),
     resetTokenCache: Effect.void.pipe(
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
     ),
@@ -716,8 +748,54 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       request,
     );
 
+  const accountCall = <A>(
+    action: ManagedRelayRequestAction,
+    span: string,
+    request: Effect.Effect<
+      A,
+      RelayHttpRequestError | SaasBillingUnavailableError | SaasNotFoundError
+    >,
+  ) =>
+    request.pipe(
+      Effect.mapError((cause) =>
+        isSaasAccountError(cause)
+          ? new ManagedRelayRequestFailedError({ action, cause })
+          : relayRequestError(action)(cause),
+      ),
+      timeoutRelayRequest("Relay account request"),
+      Effect.withSpan(span),
+      withRelayClientTracing,
+    );
+
   return ManagedRelayClient.of({
     relayUrl,
+    getAccount: (input) =>
+      accountCall(
+        "read account",
+        "clientRuntime.managedRelay.getAccount",
+        client.account.getAccount({ headers: bearerHeaders(input.clerkToken) }),
+      ),
+    createLlmKey: (input) =>
+      accountCall(
+        "create model key",
+        "clientRuntime.managedRelay.createLlmKey",
+        client.account.createLlmKey({ headers: bearerHeaders(input.clerkToken) }),
+      ),
+    createCheckout: (input) =>
+      accountCall(
+        "start checkout",
+        "clientRuntime.managedRelay.createCheckout",
+        client.account.createCheckout({
+          headers: bearerHeaders(input.clerkToken),
+          payload: { planId: input.planId },
+        }),
+      ),
+    createBillingPortal: (input) =>
+      accountCall(
+        "open billing portal",
+        "clientRuntime.managedRelay.createBillingPortal",
+        client.account.createBillingPortal({ headers: bearerHeaders(input.clerkToken) }),
+      ),
     listEnvironments: Effect.fnUntraced(
       function* (input) {
         return yield* client.client

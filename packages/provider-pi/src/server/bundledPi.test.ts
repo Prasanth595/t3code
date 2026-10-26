@@ -9,6 +9,8 @@ import * as NodePath from "node:path";
 
 import { resolvePiCommand, writeBundledPiLaunchers } from "./bundledPi.ts";
 
+const miraEnv = { MIRA_BASE_URL: "http://127.0.0.1:9/v1", MIRA_API_KEY: "mira_test" };
+
 it("runs the bundled Pi CLI when no custom binary is configured", () => {
   const command = resolvePiCommand(undefined, ["--version"], {});
   expect(command.command).toBe(process.execPath);
@@ -17,6 +19,19 @@ it("runs the bundled Pi CLI when no custom binary is configured", () => {
     env: { ...process.env, ...command.env },
   });
   expect(output.toString().trim()).toMatch(/^\d+\.\d+\.\d+/);
+});
+
+it("registers the Mira provider for sessions once an account is connected", () => {
+  const command = resolvePiCommand(undefined, ["--mode", "json", "--list-models", "mira"], miraEnv);
+  // Pi prints the model table on stderr.
+  const result = NodeChildProcess.spawnSync(command.command, [...command.args], {
+    env: { ...process.env, ...command.env },
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout + result.stderr).toMatch(/^mira\s+mira\s/m);
+  expect(resolvePiCommand("/opt/pi", ["--version"], miraEnv).args).toEqual(["--version"]);
+  expect(resolvePiCommand("/opt/pi", ["--mode", "rpc"], {}).args).toEqual(["--mode", "rpc"]);
 });
 
 it("keeps a configured binary path", () => {

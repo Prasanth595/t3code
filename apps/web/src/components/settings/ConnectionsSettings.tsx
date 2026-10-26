@@ -31,6 +31,7 @@ import {
   missingTailscaleEndpointDescription,
   resolveLocalVersionStatusLabel,
 } from "./ConnectionsSettings.logic";
+import { MiraAccountSettings } from "./MiraAccountSettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
@@ -1026,6 +1027,7 @@ export function ConnectionsSettings() {
 
   const primarySettings = (
     <>
+      <MiraAccountSettings />
       {primaryEnvironmentId !== null ? (
         <>
           <SettingsSection

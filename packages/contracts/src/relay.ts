@@ -15,6 +15,23 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  SaasAccountResponse,
+  SaasAdminPlansResponse,
+  SaasAdminSettingsRequest,
+  SaasAdminSettingsResponse,
+  SaasAdminUserPlanRequest,
+  SaasAdminUsersResponse,
+  SaasBillingUnavailableError,
+  SaasCheckoutRequest,
+  SaasForbiddenError,
+  SaasInvalidRequestError,
+  SaasLlmKeyResponse,
+  SaasNotFoundError,
+  SaasPlan,
+  SaasPlanId,
+  SaasRedirectResponse,
+} from "./saas.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
 export type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
@@ -1250,6 +1267,97 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
   )
   .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
+const RelayAccountGroup = HttpApiGroup.make("account")
+  .add(
+    HttpApiEndpoint.get("getAccount", "/v1/account", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasAccountResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Get the signed-in account, its plan, and this month's usage"),
+    HttpApiEndpoint.post("createLlmKey", "/v1/account/llm-key", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasLlmKeyResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Issue a new model API key, revoking earlier ones"),
+    HttpApiEndpoint.post("createCheckout", "/v1/account/checkout", {
+      headers: RelayBearerRequestHeaders,
+      payload: SaasCheckoutRequest,
+      success: SaasRedirectResponse,
+      error: [...RelayAuthAndInternalErrors, SaasBillingUnavailableError, SaasNotFoundError],
+    }).annotate(OpenApi.Summary, "Start a Stripe Checkout for a paid plan"),
+    HttpApiEndpoint.post("createBillingPortal", "/v1/account/billing-portal", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasRedirectResponse,
+      error: [...RelayAuthAndInternalErrors, SaasBillingUnavailableError],
+    }).annotate(OpenApi.Summary, "Open the Stripe billing portal"),
+  )
+  .annotate(OpenApi.Description, "The signed-in user's subscription account.")
+  .middleware(RelayClientAuth);
+
+const RelayAdminErrors = [...RelayAuthAndInternalErrors, SaasForbiddenError] as const;
+
+const RelayAdminGroup = HttpApiGroup.make("admin")
+  .add(
+    HttpApiEndpoint.get("listUsers", "/v1/admin/users", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasAdminUsersResponse,
+      error: RelayAdminErrors,
+    }).annotate(OpenApi.Summary, "List accounts with this month's usage"),
+    HttpApiEndpoint.put("setUserPlan", "/v1/admin/users/:userId/plan", {
+      headers: RelayBearerRequestHeaders,
+      params: Schema.Struct({ userId: TrimmedNonEmptyString }),
+      payload: SaasAdminUserPlanRequest,
+      success: RelayOkResponse,
+      error: [...RelayAdminErrors, SaasNotFoundError],
+    }).annotate(OpenApi.Summary, "Assign a plan to an account"),
+    HttpApiEndpoint.get("listPlans", "/v1/admin/plans", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasAdminPlansResponse,
+      error: RelayAdminErrors,
+    }).annotate(OpenApi.Summary, "List plans"),
+    HttpApiEndpoint.put("savePlan", "/v1/admin/plans/:planId", {
+      headers: RelayBearerRequestHeaders,
+      params: Schema.Struct({ planId: SaasPlanId }),
+      payload: SaasPlan,
+      success: SaasPlan,
+      error: [...RelayAdminErrors, SaasInvalidRequestError],
+    }).annotate(OpenApi.Summary, "Create or update a plan"),
+    HttpApiEndpoint.get("getSettings", "/v1/admin/settings", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasAdminSettingsResponse,
+      error: RelayAdminErrors,
+    }).annotate(OpenApi.Summary, "Read model settings"),
+    HttpApiEndpoint.put("saveSettings", "/v1/admin/settings", {
+      headers: RelayBearerRequestHeaders,
+      payload: SaasAdminSettingsRequest,
+      success: SaasAdminSettingsResponse,
+      error: RelayAdminErrors,
+    }).annotate(OpenApi.Summary, "Update model settings"),
+  )
+  .annotate(OpenApi.Description, "Administration of accounts, plans, and the model key.")
+  .middleware(RelayClientAuth);
+
+// Stripe signs the raw body, so the handler reads it before any decoding.
+const RelayBillingGroup = HttpApiGroup.make("billing")
+  .add(
+    HttpApiEndpoint.post("stripeWebhook", "/v1/billing/stripe-webhook"),
+    HttpApiEndpoint.get("checkoutDone", "/billing/done"),
+  )
+  .annotate(OpenApi.Description, "Stripe webhooks and the page Checkout returns to.");
+
+// The page signs in with Clerk in the browser; its API calls carry their own bearer tokens.
+const RelayAdminPanelGroup = HttpApiGroup.make("adminPanel")
+  .add(HttpApiEndpoint.get("page", "/admin"))
+  .annotate(OpenApi.Description, "The admin web page.");
+
+// Authenticated by the account's model API key, in the OpenAI wire format Pi speaks.
+const RelayLlmGroup = HttpApiGroup.make("llm")
+  .add(
+    HttpApiEndpoint.post("chatCompletions", "/v1/llm/chat/completions"),
+    HttpApiEndpoint.get("models", "/v1/llm/models"),
+  )
+  .annotate(OpenApi.Description, "OpenAI-compatible model access metered against the plan.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1260,6 +1368,11 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayDpopClientGroup,
     RelayServerGroup,
     RelayHooksGroup,
+    RelayAccountGroup,
+    RelayAdminGroup,
+    RelayLlmGroup,
+    RelayBillingGroup,
+    RelayAdminPanelGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

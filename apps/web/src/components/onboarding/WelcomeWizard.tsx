@@ -1,18 +1,12 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ScopedProjectRef,
-  ServerConfig,
-  ServerProvider,
-} from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AuthTerminalOperateScope, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -20,34 +14,31 @@ import {
   CloudIcon,
   LinkIcon,
   MonitorIcon,
-  TerminalIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
-  getOnboardingProviderState,
-  PI_LOGIN_COMMAND,
-} from "../../onboarding/providerReadiness.logic";
-import { randomUUID } from "../../lib/utils";
+  fetchMiraAccount,
+  formatMiraTokens,
+  hasMiraEnvironment,
+  issueMiraModelKey,
+  MIRA_PI_INSTANCE_ID,
+  miraPiInstance,
+} from "../../cloud/miraAccount";
+import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
+import type { SaasAccountResponse } from "@t3tools/contracts/saas";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import {
   isOnboardingRelayEnvironment,
   resolveOnboardingSetup,
 } from "../../onboarding/targetEnvironment.logic";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
-import { getProviderSummary } from "../settings/providerStatus";
-import { providerClients } from "../settings/providerDriverMeta";
-import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -58,16 +49,15 @@ import { CommandBlock } from "../CommandBlock";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
-import { ScrollArea } from "../ui/scroll-area";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
 import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 
-type WizardStep = "connection" | "agents";
+type WizardStep = "account" | "connection" | "agents";
 
-const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agent"] as const;
+const ONBOARDING_STAGES = ["Account", "Connect", "Model"] as const;
+const STEP_ORDER: readonly WizardStep[] = ["account", "connection", "agents"];
 
 export function WelcomeWizard({
   localAvailable,
@@ -78,7 +68,7 @@ export function WelcomeWizard({
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
+  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "account");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   // Share the registry for the wizard's lifetime so unchecked computers are not auto-selected again.
@@ -115,7 +105,7 @@ export function WelcomeWizard({
     setSetupIds(ids);
     setStep("agents");
   };
-  const stageIndex = step === "agents" ? 1 : 0;
+  const stageIndex = STEP_ORDER.indexOf(step);
   const finish = (projectRef?: ScopedProjectRef) => {
     if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
     if (completionErrorToastIdRef.current !== null) {
@@ -169,7 +159,7 @@ export function WelcomeWizard({
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
-          title="Set up T3 Code"
+          title="Set up Mira"
           identity={
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
@@ -185,13 +175,15 @@ export function WelcomeWizard({
             isStepDisabled={(index) => index >= stageIndex}
             onStepChange={(index) => {
               if (index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
+              setStep(STEP_ORDER[index] ?? "account");
             }}
           />
         </WizardHeader>
 
         <WizardPanel>
-          {step === "connection" ? (
+          {step === "account" ? (
+            <AccountStep onContinue={() => setStep("connection")} />
+          ) : step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               selectedIds={selectedIds}
@@ -424,7 +416,7 @@ function ConnectAccountOption({
           }
         >
           <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">T3 Connect</span>
+          <span className="flex-1 text-left">Mira account</span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
               ? "Loading sign-in…"
@@ -579,14 +571,78 @@ function PairingForm({
   );
 }
 
-const PI_DRIVER = ProviderDriverKind.make("pi");
+function AccountStep({ onContinue }: { readonly onContinue: () => void }) {
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+  const cloudEnabled = hasCloudPublicConfig();
+  const [account, setAccount] = useState<SaasAccountResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-interface AgentTerminalSession {
-  readonly environmentId: EnvironmentId;
-  readonly providerInstanceId: ServerProvider["instanceId"];
-  readonly cwd: string;
-  readonly command: string;
-  readonly keybindings: ServerConfig["keybindings"];
+  useEffect(() => {
+    if (!isSignedIn) return;
+    let cancelled = false;
+    fetchMiraAccount().then(
+      (next) => {
+        if (cancelled) return;
+        setAccount(next);
+        setError(null);
+      },
+      (cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn]);
+
+  return (
+    <StepShell
+      title="Sign in to Mira"
+      description="Your Mira account includes the coding model, your plan's monthly usage, and access to your computers from anywhere."
+    >
+      {!cloudEnabled ? (
+        <Alert className="mt-5" variant="warning">
+          <AlertDescription>
+            This build has no Mira account service configured. Set it up before shipping.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <div className="mt-5 flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
+          <CloudIcon className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-foreground">
+              {account?.email ?? (isSignedIn ? "Signed in" : "Mira account")}
+            </span>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {error ??
+                (account
+                  ? `${account.plan.name} plan · ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokens a month`
+                  : isSignedIn
+                    ? "Loading your plan…"
+                    : "Free to create. Paid plans add more usage.")}
+            </p>
+          </div>
+          {isSignedIn ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
+              <CheckIcon className="size-3.5" />
+              Signed in
+            </span>
+          ) : (
+            <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
+              {isLoaded ? "Sign in or create account" : "Loading sign-in…"}
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="mt-6 flex justify-end">
+        <Button autoFocus disabled={cloudEnabled && !isSignedIn} onClick={onContinue}>
+          Continue
+          <ArrowRightIcon className="size-3.5" />
+        </Button>
+      </div>
+    </StepShell>
+  );
 }
 
 function AgentsStep({
@@ -599,23 +655,21 @@ function AgentsStep({
   const { environments } = useEnvironments();
   return (
     <StepShell
-      title="Connect Pi"
-      description="Pi comes with T3 Code. Sign in to a model provider to start coding."
+      title="Connect the Mira model"
+      description="Pi comes with T3 Code. Each computer runs it on your Mira account's model."
     >
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
-        <div className="space-y-5 pr-3">
-          {environmentIds.map((environmentId) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? "Computer"
-              }
-            />
-          ))}
-        </div>
-      </ScrollArea>
+      <div className="mt-5 space-y-1.5">
+        {environmentIds.map((environmentId) => (
+          <MiraModelCard
+            key={environmentId}
+            environmentId={environmentId}
+            machineLabel={
+              environments.find((environment) => environment.environmentId === environmentId)
+                ?.label ?? "Computer"
+            }
+          />
+        ))}
+      </div>
       <div className="mt-6 flex justify-end">
         <Button autoFocus onClick={onContinue}>
           Finish
@@ -626,289 +680,78 @@ function AgentsStep({
   );
 }
 
-function ConnectedAgentsStep({
+function MiraModelCard({
   environmentId,
   machineLabel,
 }: {
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
 }) {
-  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const [phase, setPhase] = useState<"connecting" | "failed">("connecting");
+  const [error, setError] = useState<string | null>(null);
+  const connected = serverConfig !== null && hasMiraEnvironment(serverConfig.settings);
+  const attemptedRef = useRef(false);
+
+  const connect = async () => {
+    if (serverConfig === null) return;
+    setPhase("connecting");
+    setError(null);
+    const result = await settlePromise(async () => {
+      const key = await issueMiraModelKey();
+      const persisted = await persistProviderInstance({
+        operation: "upsert",
+        instanceId: MIRA_PI_INSTANCE_ID,
+        instance: miraPiInstance(serverConfig.settings, key),
+      });
+      if (persisted._tag === "Failure") throw squashAtomCommandFailure(persisted);
+    });
+    if (result._tag === "Failure") {
+      setPhase("failed");
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "Could not connect the model.");
+    }
+  };
 
   useEffect(() => {
-    void refreshProviders({ environmentId, input: {} });
-  }, [environmentId, refreshProviders]);
-
-  const piProviders = providers?.filter((provider) => provider.driver === PI_DRIVER) ?? [];
-  const agents = piProviders.length > 0 ? piProviders : [undefined];
-  return (
-    <section>
-      <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
-      {!canOperateTerminal ? (
-        <p className="mb-2 text-sm text-muted-foreground">
-          This connection cannot control terminals.
-        </p>
-      ) : null}
-      <div className="space-y-1.5">
-        {agents.map((provider) => (
-          <AgentCard
-            key={provider?.instanceId ?? PI_DRIVER}
-            provider={provider}
-            terminalOpen={terminalSession?.providerInstanceId === provider?.instanceId}
-            terminalAvailable={serverConfig !== null && canOperateTerminal}
-            onOpenTerminal={() => {
-              if (
-                provider === undefined ||
-                serverConfig === null ||
-                !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-              )
-                return;
-              setTerminalSession({
-                environmentId,
-                providerInstanceId: provider.instanceId,
-                cwd: serverConfig.cwd,
-                command: PI_LOGIN_COMMAND,
-                keybindings: serverConfig.keybindings,
-              });
-            }}
-          />
-        ))}
-      </div>
-      {terminalSession !== null ? (
-        <AgentInstallTerminal
-          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}`}
-          session={terminalSession}
-          onClose={() => {
-            setTerminalSession(null);
-            void refreshProviders({ environmentId, input: {} });
-          }}
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function AgentCard({
-  provider,
-  terminalOpen,
-  terminalAvailable,
-  onOpenTerminal,
-}: {
-  readonly provider: ServerProvider | undefined;
-  readonly terminalOpen: boolean;
-  readonly terminalAvailable: boolean;
-  readonly onOpenTerminal: () => void;
-}) {
-  const displayName = provider?.displayName || providerClients.get(PI_DRIVER)?.label || "Pi";
-  const summary = getProviderSummary(provider);
-  const providerState = getOnboardingProviderState(provider);
+    if (connected || serverConfig === null || attemptedRef.current) return;
+    attemptedRef.current = true;
+    void connect();
+  });
 
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
       <ProviderInstanceIcon
-        driverKind={PI_DRIVER}
-        displayName={displayName}
+        driverKind={ProviderDriverKind.make("pi")}
+        displayName="Mira"
         iconClassName="size-5"
       />
       <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
+        <span className="block text-sm font-medium text-foreground">{machineLabel}</span>
+        <p className="mt-0.5 text-xs leading-relaxed break-words text-muted-foreground">
+          {connected
+            ? "Ready to code with Mira."
+            : phase === "failed"
+              ? error
+              : serverConfig === null
+                ? "Waiting for this computer…"
+                : "Connecting the Mira model…"}
         </p>
       </div>
       <div className="shrink-0">
-        {providerState === "ready" ? (
+        {connected ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
-        ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">Checking...</span>
-        ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
-        ) : providerState === "attention" ? (
-          <span className="text-xs text-muted-foreground">{summary.headline}</span>
+        ) : phase === "failed" ? (
+          <Button size="xs" variant="ghost" onClick={() => void connect()}>
+            Retry
+          </Button>
         ) : (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            disabled={terminalOpen || !terminalAvailable}
-          >
-            <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? "Sign in" : "Install"}
-          </Button>
+          <span className="text-xs text-muted-foreground">Connecting…</span>
         )}
-      </div>
-    </div>
-  );
-}
-
-function AgentInstallTerminal({
-  session,
-  onClose,
-}: {
-  readonly session: AgentTerminalSession;
-  readonly onClose: () => void;
-}) {
-  const { command, cwd, environmentId, keybindings, providerInstanceId } = session;
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const [advancedTypography] = useLocalStorage(
-    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const openTerminal = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
-  const writeTerminal = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
-  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
-  const setupQueueRef = useRef(Promise.resolve());
-  const setupGenerationRef = useRef(0);
-  const activeSetupGenerationRef = useRef<number | null>(null);
-  const [terminalId] = useState(() => `onboarding-pi-${randomUUID()}`);
-  const threadRef = scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID);
-  const [setupAttempt, setSetupAttempt] = useState(0);
-  const [setupState, setSetupState] = useState<
-    "preparing" | "ready" | "openFailed" | "writeFailed"
-  >("preparing");
-  const terminalReady = setupState === "ready" || setupState === "writeFailed";
-
-  // StrictMode can finish a cancelled open after replacement setup; it must not close or pre-type into that
-  // session.
-  useEffect(() => {
-    const generation = setupGenerationRef.current + 1;
-    setupGenerationRef.current = generation;
-    activeSetupGenerationRef.current = generation;
-    // oxlint-disable-next-line react/set-state-in-effect -- A retry or a new command reopens the terminal, which shows as preparing until the open settles.
-    setSetupState("preparing");
-
-    setupQueueRef.current = setupQueueRef.current.then(async () => {
-      if (activeSetupGenerationRef.current !== generation) return;
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        setSetupState("openFailed");
-        return;
-      }
-      const opened = await openTerminal({
-        environmentId,
-        input: {
-          threadId: AGENT_ONBOARDING_THREAD_ID,
-          terminalId,
-          cwd,
-          providerInstanceId,
-        },
-      });
-      if (opened._tag !== "Success") {
-        if (activeSetupGenerationRef.current === generation) setSetupState("openFailed");
-        return;
-      }
-
-      if (activeSetupGenerationRef.current !== generation) return;
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        setSetupState("writeFailed");
-        return;
-      }
-
-      const wrote = await writeTerminal({
-        environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
-      });
-      if (activeSetupGenerationRef.current !== generation) return;
-      setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
-    });
-
-    // Revocation leaves the PTY running; close only while terminal access remains.
-    return () => {
-      if (activeSetupGenerationRef.current === generation) {
-        activeSetupGenerationRef.current = null;
-      }
-      setupQueueRef.current = setupQueueRef.current.then(async () => {
-        if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
-        await closeTerminal({
-          environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, deleteHistory: true },
-        });
-      });
-    };
-  }, [
-    closeTerminal,
-    command,
-    cwd,
-    environmentId,
-    openTerminal,
-    providerInstanceId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry bumps setupAttempt to open the terminal again.
-    setupAttempt,
-    terminalId,
-    writeTerminal,
-  ]);
-
-  return (
-    <div
-      data-thread-terminal-drawer
-      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
-    >
-      <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
-        <span className="text-2xs font-medium text-muted-foreground">
-          {!canOperateTerminal ? (
-            "This connection cannot control terminals."
-          ) : setupState === "writeFailed" ? (
-            <>
-              Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
-              terminal.
-            </>
-          ) : setupState === "ready" ? (
-            "Review the command, then press Enter to run it."
-          ) : setupState === "openFailed" ? (
-            "Could not open the setup terminal."
-          ) : (
-            "Preparing command..."
-          )}
-        </span>
-        <div className="flex items-center gap-1">
-          {setupState === "openFailed" ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={!canOperateTerminal}
-              onClick={() => {
-                if (readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-                  setSetupAttempt((value) => value + 1);
-                }
-              }}
-            >
-              Retry
-            </Button>
-          ) : null}
-          <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-      </div>
-      <div className="h-64">
-        {terminalReady ? (
-          <TerminalViewport
-            threadRef={threadRef}
-            threadId={AGENT_ONBOARDING_THREAD_ID}
-            terminalId={terminalId}
-            terminalLabel="Sign in to Pi"
-            cwd={cwd}
-            providerInstanceId={providerInstanceId}
-            advancedTypography={advancedTypography}
-            onSessionExited={onClose}
-            focusRequestId={1}
-            autoFocus
-            visible
-            resizeEpoch={0}
-            drawerHeight={256}
-            keybindings={keybindings}
-          />
-        ) : null}
       </div>
     </div>
   );

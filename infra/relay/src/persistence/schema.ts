@@ -205,3 +205,55 @@ export const relayDpopProofs = pgTable(
     index("idx_relay_dpop_proofs_expires_at").on(table.expiresAt),
   ],
 );
+
+export const saasPlans = pgTable("saas_plans", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  name: text("name").notNull(),
+  monthlyTokenLimit: bigint("monthly_token_limit", { mode: "number" }).notNull(),
+  priceCents: integer("price_cents").notNull().default(0),
+  stripePriceId: varchar("stripe_price_id", { length: 255 }),
+  isDefault: boolean("is_default").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});
+
+export const saasAccounts = pgTable("saas_accounts", {
+  userId: varchar("user_id", { length: 191 }).primaryKey(),
+  email: text("email"),
+  planId: varchar("plan_id", { length: 64 }).notNull(),
+  stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+  stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
+  subscriptionStatus: varchar("subscription_status", { length: 32 }),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});
+
+export const saasUsage = pgTable(
+  "saas_usage",
+  {
+    userId: varchar("user_id", { length: 191 }).notNull(),
+    period: varchar("period", { length: 7 }).notNull(),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    requests: integer("requests").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.period] })],
+);
+
+export const saasLlmKeys = pgTable(
+  "saas_llm_keys",
+  {
+    keyHash: varchar("key_hash", { length: 64 }).primaryKey(),
+    userId: varchar("user_id", { length: 191 }).notNull(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    revokedAt: varchar("revoked_at", { length: 64 }),
+  },
+  (table) => [index("idx_saas_llm_keys_user_id").on(table.userId)],
+);
+
+export const saasSettings = pgTable("saas_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});

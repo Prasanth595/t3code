@@ -923,6 +923,10 @@ describe("EnvironmentSupervisor", () => {
         registerLiveActivity: unused,
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
+        getAccount: () => Effect.die("unused getAccount"),
+        createLlmKey: () => Effect.die("unused createLlmKey"),
+        createCheckout: () => Effect.die("unused createCheckout"),
+        createBillingPortal: () => Effect.die("unused createBillingPortal"),
       });
       const layerHttp = RpcHttp.layerRemoteHttpClient(fetchFn);
       const remoteAuthorization = yield* RemoteEnvironmentAuthorization.make.pipe(

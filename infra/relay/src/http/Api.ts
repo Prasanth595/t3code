@@ -135,7 +135,7 @@ const appendRelayTraceContextResponseHeader = Effect.gen(function* () {
 }).pipe(Effect.ignore);
 
 const relayCorsMiddleware = HttpMiddleware.cors({
-  allowedMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["authorization", "b3", "traceparent", "content-type", "dpop"],
   exposedHeaders: ["traceparent", "www-authenticate"],
   maxAge: 86_400,

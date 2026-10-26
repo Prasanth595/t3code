@@ -76,6 +76,10 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     registerLiveActivity: () => Effect.die("unused"),
     getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
+    getAccount: () => Effect.die("unused getAccount"),
+    createLlmKey: () => Effect.die("unused createLlmKey"),
+    createCheckout: () => Effect.die("unused createCheckout"),
+    createBillingPortal: () => Effect.die("unused createBillingPortal"),
     ...overrides,
   });
 }

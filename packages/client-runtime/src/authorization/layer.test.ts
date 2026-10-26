@@ -184,6 +184,10 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     registerLiveActivity: unexpected,
     getAgentActivitySnapshot: unexpected,
     resetTokenCache: Effect.void,
+    getAccount: () => Effect.die("unused getAccount"),
+    createLlmKey: () => Effect.die("unused createLlmKey"),
+    createCheckout: () => Effect.die("unused createCheckout"),
+    createBillingPortal: () => Effect.die("unused createBillingPortal"),
   });
   const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provide(
