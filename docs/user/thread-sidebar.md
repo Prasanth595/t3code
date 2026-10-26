@@ -202,6 +202,11 @@ On mobile, the thread list search also lists message matches and opens them at
 the matching message; on an iPad with a keyboard, `Cmd+K` opens the same
 palette.
 
+To show one project's threads, use the project menu beside the sidebar search. On web
+and desktop you can also run **Filter threads by project** from the command palette.
+Choose **All projects** to clear the filter. `sidebar.filterProject` opens that list
+directly; it has no default shortcut, so assign one in **Settings → Keybindings**.
+
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)

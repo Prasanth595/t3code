@@ -95,8 +95,10 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { useUiStateStore } from "../uiStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -240,9 +242,12 @@ import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { ProjectFavicon } from "./ProjectFavicon";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+
+const currentMarker = <span className="text-xs text-muted-foreground/70">Current</span>;
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -260,6 +265,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openChildSearch = (mode: "files" | "content", context: CommandPaletteReturnContext) =>
     dispatch({ _tag: "OpenChildSearch", mode, context });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  const hasProjects = useProjects().length > 0;
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useThreadRouteTarget();
@@ -324,6 +331,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         dispatch({ _tag: "OpenChangeTheme" });
         return;
       }
+      // Inert where the sidebar has no project scope to set: the legacy
+      // sidebar, or no projects. The event then stays with its other handlers.
+      if (command === "sidebar.filterProject" && !legacySidebarEnabled && hasProjects) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        dispatch({ _tag: "OpenFilterProject" });
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -353,7 +369,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     appearanceMode,
+    hasProjects,
     keybindings,
+    legacySidebarEnabled,
     navigate,
     previewOpen,
     resolvedTheme,
@@ -612,6 +630,21 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
   const projectGroups = useSortedProjectGroups(environmentLabelById);
+  const sidebarProjectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
+  const setSidebarProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const clearThreadSelection = useThreadSelectionStore((store) => store.clearSelection);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  // A selection made under one scope can hold threads the next scope hides.
+  const setProjectScope = (key: string | null) => {
+    clearThreadSelection();
+    setSidebarProjectScopeKey(key);
+  };
+  // A persisted scope whose project is not in the catalog reads as unscoped.
+  const scopedProjectGroupKey = projectGroups.some(
+    (group) => group.projectKey === sidebarProjectScopeKey,
+  )
+    ? sidebarProjectScopeKey
+    : null;
   const contextualProjectRef = resolveThreadActionProjectRef({
     activeDraftThread,
     activeThread: activeThread ?? undefined,
@@ -1511,6 +1544,50 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
 
+  // Same scope the sidebar's project menu writes, so either control can set
+  // or clear it. Hidden where that menu is: no projects, or the legacy sidebar.
+  const filterProjectItem: CommandPaletteSubmenuItem = {
+    kind: "submenu",
+    value: "action:filter-project",
+    searchTerms: ["filter threads by project", "sidebar", "scope", "all projects"],
+    title: "Filter threads by project",
+    icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+    shortcutCommand: "sidebar.filterProject",
+    groups: [
+      {
+        value: "project-filter",
+        label: "Filter threads by project",
+        items: [
+          {
+            kind: "action",
+            value: "project-filter:all",
+            title: "All projects",
+            searchTerms: ["all projects", "clear", "reset"],
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            titleTrailingContent: scopedProjectGroupKey === null ? currentMarker : undefined,
+            run: async () => setProjectScope(null),
+          },
+          ...projectGroups.map((group) => ({
+            kind: "action" as const,
+            value: `project-filter:${group.projectKey}`,
+            title: group.displayName,
+            searchTerms: [
+              group.displayName,
+              ...group.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]),
+            ],
+            icon: <ProjectFavicon project={group} className={ITEM_ICON_CLASS} />,
+            titleTrailingContent:
+              scopedProjectGroupKey === group.projectKey ? currentMarker : undefined,
+            run: async () => setProjectScope(group.projectKey),
+          })),
+        ],
+      },
+    ],
+  };
+  const canFilterByProject = !legacySidebarEnabled && projectGroups.length > 0;
+  if (canFilterByProject) actionItems.push(filterProjectItem);
+
   // Apply intents after commit but before paint because they clear parent state and may navigate.
   const projectThreadItemCount = projectThreadItems.length;
   const applyOpenIntent = useEffectEvent((intent: CommandPaletteOpenIntent) => {
@@ -1540,6 +1617,9 @@ function OpenCommandPaletteDialog(props: {
           addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
           groups: [{ value: "themes", label: "Change theme", items: [] }],
         });
+        return;
+      case "filter-project":
+        if (canFilterByProject) pushPaletteView(filterProjectItem);
         return;
     }
   });
