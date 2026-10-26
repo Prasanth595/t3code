@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -33,7 +33,6 @@ import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type SetStateAction,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -79,7 +78,8 @@ import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useAttachedTerminalSession } from "../state/terminalSessions";
+import { attachedTerminalSessionAtom } from "../state/terminalSessions";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope } from "../state/session";
@@ -124,6 +124,8 @@ function resolveTerminalDrawerMaxHeight(input: DrawerLayout): number {
     Math.max(0, input.chatColumnHeight - (input.headerHeight ?? 0) - (input.composerHeight ?? 0)),
   );
 }
+
+const DRAG_HEIGHT_PROPERTY = "--terminal-drawer-drag-height";
 
 function clampDrawerHeight(height: number, maxHeight: number): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -400,6 +402,19 @@ export function shouldClearTerminalSelectionAction(options: {
   return options.actionPending || options.openMenuRequestId === options.currentRequestId;
 }
 
+/**
+ * A writable session's output generation. A new one is a fresh PTY (or a
+ * reconnect) that has not seen the surface's grid yet.
+ */
+function writableSessionGeneration(
+  session: TerminalSessionState,
+  canOperate: boolean,
+): number | null {
+  return canOperate && session.version > 0 && session.status === "running"
+    ? session.output.generation
+    : null;
+}
+
 export function shouldHandleTerminalExit(
   current: TerminalSessionState["status"],
   synchronized: TerminalSessionState["status"],
@@ -429,8 +444,6 @@ interface TerminalViewportProps {
   /** Focuses the viewport when it mounts; otherwise focus arrives through `focusTerminal`. */
   autoFocus?: boolean;
   visible: boolean;
-  resizeEpoch: number;
-  drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
 }
 
@@ -466,8 +479,6 @@ function TerminalSessionViewport({
   onAddTerminalContext,
   autoFocus = false,
   visible,
-  resizeEpoch,
-  drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -526,20 +537,23 @@ function TerminalSessionViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
-  const terminalSession = useAttachedTerminalSession({
-    environmentId,
-    terminal: {
-      threadId,
-      terminalId,
-      cwd,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { env: runtimeEnv } : {}),
-      ...(providerInstanceId ? { providerInstanceId } : {}),
-    },
+  // Keyed by the launch (see TerminalViewport), so the atom is fixed for this surface.
+  const terminalSessionAtom = attachedTerminalSessionAtom(environmentId, {
+    threadId,
+    terminalId,
+    cwd,
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
+    ...(runtimeEnv ? { env: runtimeEnv } : {}),
+    ...(providerInstanceId ? { providerInstanceId } : {}),
   });
-  const canResizeTerminal =
-    canOperateTerminal && terminalSession.version > 0 && terminalSession.status === "running";
-  const resizeSessionGeneration = canResizeTerminal ? terminalSession.output.generation : null;
+  // Attaching starts with the viewport, while the WASM surface is still loading;
+  // the surface reads the session itself, so output chunks never re-render here.
+  useAtomMount(terminalSessionAtom);
+  const readTerminalSession = useEffectEvent(() => appAtomRegistry.get(terminalSessionAtom));
+  const subscribeTerminalSession = useEffectEvent(
+    (listener: (session: TerminalSessionState) => void) =>
+      appAtomRegistry.subscribe(terminalSessionAtom, listener),
+  );
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
       environmentId,
@@ -547,15 +561,14 @@ function TerminalSessionViewport({
     }),
   );
   const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
-    if (!canResizeTerminal || !hasTerminalWriteAccess()) return;
+    if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
+      return;
+    }
     return runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
     });
   });
-  const terminalOutput = terminalSession.output;
-  const terminalError = terminalSession.error;
-  const terminalStatus = terminalSession.status;
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const synchronizeTerminalStatus = useEffectEvent(
@@ -577,19 +590,6 @@ function TerminalSessionViewport({
       if (version > 0) synchronizedStatusRef.current = status;
     },
   );
-  const terminalVersion = terminalSession.version;
-  const previousSessionRef = useRef({
-    output: terminalOutput,
-    error: terminalError,
-    status: terminalStatus,
-    version: terminalVersion,
-  });
-  const readLatestSession = useEffectEvent(() => ({
-    output: terminalOutput,
-    error: terminalError,
-    status: terminalStatus,
-    version: terminalVersion,
-  }));
   const openLinkInPreview = useEffectEvent(
     (url: string, forceBrowser: boolean, fallbackToBrowser: () => void) =>
       openTerminalLinkInPreview({ url, threadRef, openPreview, fallbackToBrowser, forceBrowser }),
@@ -608,13 +608,6 @@ function TerminalSessionViewport({
     linkActivationScopeRef.current = canOpenHostEditor;
     terminalRef.current?.refreshLinkActivation();
   }, [canOpenHostEditor]);
-
-  useEffect(() => {
-    if (resizeSessionGeneration === null) return;
-    // The first fit can precede authorization/attach; replay the grid for each writable session, including
-    // reconnects.
-    terminalRef.current?.resendSize();
-  }, [resizeSessionGeneration]);
 
   useLayoutEffect(() => {
     visibleRef.current = visible;
@@ -673,8 +666,7 @@ function TerminalSessionViewport({
       if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
         void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
       }
-      const latestSession = readLatestSession();
-      previousSessionRef.current = latestSession;
+      const latestSession = readTerminalSession();
       const initialOutput = readTerminalOutputUpdate(
         latestSession.output,
         INITIAL_TERMINAL_OUTPUT_CURSOR,
@@ -686,6 +678,34 @@ function TerminalSessionViewport({
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status, latestSession.version);
+      // Read and subscribe in one synchronous step so no output lands between them.
+      let previousSession = latestSession;
+      let resizeGeneration = writableSessionGeneration(latestSession, hasTerminalWriteAccess());
+      setupCleanups.push(
+        subscribeTerminalSession((session) => {
+          const nextResizeGeneration = writableSessionGeneration(session, hasTerminalWriteAccess());
+          if (nextResizeGeneration !== resizeGeneration) {
+            resizeGeneration = nextResizeGeneration;
+            // The first fit can precede authorization/attach; replay the grid for each writable session, including
+            // reconnects.
+            if (nextResizeGeneration !== null) terminal.resendSize();
+          }
+          const previous = previousSession;
+          synchronizeTerminalStatus(terminal, session.status, session.version);
+          if (session.version === previous.version && session.output === previous.output) {
+            return;
+          }
+          outputCursorRef.current = synchronizeTerminalOutput(
+            terminal,
+            session,
+            outputCursorRef.current,
+          );
+          if (session.error !== null && session.error !== previous.error) {
+            writeSystemMessage(terminal, session.error);
+          }
+          previousSession = session;
+        }),
+      );
       if (
         hasTerminalWriteAccess() &&
         visibleRef.current &&
@@ -1075,53 +1095,6 @@ function TerminalSessionViewport({
     };
   }, [cwd, environmentId, terminalId]);
 
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    const current = {
-      output: terminalOutput,
-      error: terminalError,
-      status: terminalStatus,
-      version: terminalVersion,
-    };
-    if (!terminal) {
-      previousSessionRef.current = current;
-      return;
-    }
-
-    const previous = previousSessionRef.current;
-    synchronizeTerminalStatus(terminal, current.status, current.version);
-    if (current.version === previous.version && current.output === previous.output) {
-      return;
-    }
-
-    outputCursorRef.current = synchronizeTerminalOutput(terminal, current, outputCursorRef.current);
-
-    if (current.error !== null && current.error !== previous.error) {
-      writeSystemMessage(terminal, current.error);
-    }
-
-    previousSessionRef.current = current;
-  }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
-
-  // A hidden surface skips fitting, and showing it again fits through setVisible.
-  const layoutRevision = visible ? `${drawerHeight}:${resizeEpoch}` : null;
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal || layoutRevision === null) return;
-    const wasAtBottom = terminal.isAtBottom();
-    // onResize alone sends PTY resize RPCs; fitting here only refreshes layout.
-    const frame = window.requestAnimationFrame(() => {
-      if (!visibleRef.current) return;
-      terminal.fit();
-      if (wasAtBottom) {
-        terminal.scrollToBottom();
-      }
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [layoutRevision]);
-
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
     const focus = () =>
@@ -1245,8 +1218,6 @@ function TerminalSplitPanes({
   threadId,
   onAddTerminalContext,
   visible,
-  resizeEpoch,
-  drawerHeight,
   keybindings,
 }: {
   terminalIds: readonly string[];
@@ -1261,8 +1232,6 @@ function TerminalSplitPanes({
   threadId: ThreadId;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   visible: boolean;
-  resizeEpoch: number;
-  drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
 }) {
   return (
@@ -1311,8 +1280,6 @@ function TerminalSplitPanes({
                 onSessionExited={() => onCloseTerminal(terminalId)}
                 onAddTerminalContext={onAddTerminalContext}
                 visible={visible}
-                resizeEpoch={resizeEpoch}
-                drawerHeight={drawerHeight}
                 keybindings={keybindings}
               />
             </div>
@@ -1456,36 +1423,19 @@ export default function ThreadTerminalDrawer({
     false,
     Schema.Boolean,
   );
-  const controlledDrawerHeight = height;
   const drawerRef = useRef<HTMLElement | null>(null);
   const [drawerLayout, setDrawerLayout] = useState(() => readDrawerLayout(null));
   const maxDrawerHeight = resolveTerminalDrawerMaxHeight({ ...drawerLayout, composerHeight });
-  const [drawerHeightState, setDrawerHeightState] = useState(() => ({
-    threadId,
-    height: controlledDrawerHeight,
-  }));
-  const preferredDrawerHeight =
-    drawerHeightState.threadId === threadId ? drawerHeightState.height : controlledDrawerHeight;
-  const drawerHeight = clampDrawerHeight(preferredDrawerHeight, maxDrawerHeight);
-  const setDrawerHeight = (update: SetStateAction<number>) => {
-    setDrawerHeightState((current) => {
-      const currentHeight = current.threadId === threadId ? current.height : controlledDrawerHeight;
-      const nextHeight = typeof update === "function" ? update(currentHeight) : update;
-      return nextHeight === currentHeight && current.threadId === threadId
-        ? current
-        : { threadId, height: nextHeight };
-    });
-  };
-  const [resizeEpoch, setResizeEpoch] = useState(0);
-  const drawerHeightRef = useRef(drawerHeight);
-  const lastSyncedHeightRef = useRef({ threadId, height: controlledDrawerHeight });
+  const drawerHeight = clampDrawerHeight(height, maxDrawerHeight);
+  // A drag only writes the drawer's style; the store hears the height once, at
+  // pointerup. The custom property outranks the rendered height while it is set.
   const resizeStateRef = useRef<{
     pointerId: number;
     startY: number;
     startHeight: number;
+    height: number;
     drawer: HTMLElement | null;
   } | null>(null);
-  const didResizeDuringDragRef = useRef(false);
 
   const normalizedTerminalIds = (() => {
     const normalizedIds: string[] = [];
@@ -1655,35 +1605,15 @@ export default function ThreadTerminalDrawer({
     });
   };
 
-  useLayoutEffect(() => {
-    const resizeState = resizeStateRef.current;
-    if (resizeState) {
-      resizeState.drawer?.style.setProperty("height", `${drawerHeightRef.current}px`);
-      return;
-    }
-    drawerHeightRef.current = drawerHeight;
-  }, [drawerHeight]);
-
-  const syncHeight = (nextHeight: number) => {
-    const lastSynced = lastSyncedHeightRef.current;
-    if (lastSynced.threadId === threadId && lastSynced.height === nextHeight) return;
-    lastSyncedHeightRef.current = { threadId, height: nextHeight };
-    onHeightChange(nextHeight);
-  };
-
-  useEffect(() => {
-    lastSyncedHeightRef.current = { threadId, height: controlledDrawerHeight };
-  }, [controlledDrawerHeight, threadId]);
-
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    didResizeDuringDragRef.current = false;
     resizeStateRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
-      startHeight: drawerHeightRef.current,
+      startHeight: drawerHeight,
+      height: drawerHeight,
       drawer: event.currentTarget.parentElement,
     };
   };
@@ -1696,12 +1626,11 @@ export default function ThreadTerminalDrawer({
       resizeState.startHeight + (resizeState.startY - event.clientY),
       maxDrawerHeight,
     );
-    if (clampedHeight === drawerHeightRef.current) {
+    if (clampedHeight === resizeState.height) {
       return;
     }
-    didResizeDuringDragRef.current = true;
-    drawerHeightRef.current = clampedHeight;
-    resizeState.drawer?.style.setProperty("height", `${clampedHeight}px`);
+    resizeState.height = clampedHeight;
+    resizeState.drawer?.style.setProperty(DRAG_HEIGHT_PROPERTY, `${clampedHeight}px`);
   };
 
   const handleResizePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1711,19 +1640,11 @@ export default function ThreadTerminalDrawer({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    resizeState.drawer?.style.removeProperty(DRAG_HEIGHT_PROPERTY);
     // A drag that ends where it started keeps the stored preference, which may
     // be taller than the capped height the drag started from.
-    if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
-      // React skips the write when the rendered height did not change, so put
-      // back the preference as the current layout caps it.
-      const renderedHeight = clampDrawerHeight(preferredDrawerHeight, maxDrawerHeight);
-      drawerHeightRef.current = renderedHeight;
-      resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
-      return;
-    }
-    setDrawerHeight(drawerHeightRef.current);
-    syncHeight(drawerHeightRef.current);
-    setResizeEpoch((value) => value + 1);
+    if (resizeState.height === resizeState.startHeight || resizeState.height === height) return;
+    onHeightChange(resizeState.height);
   };
 
   const drawerLayoutRef = useRef(drawerLayout);
@@ -1740,16 +1661,17 @@ export default function ThreadTerminalDrawer({
       if (!heightBudgetChanged && source === "column") return;
       drawerLayoutRef.current = layout;
       const resizeState = resizeStateRef.current;
-      const liveHeight = clampDrawerHeight(
-        drawerHeightRef.current,
-        resolveTerminalDrawerMaxHeight({ ...layout, composerHeight }),
-      );
-      if (resizeState && liveHeight !== drawerHeightRef.current) {
-        drawerHeightRef.current = liveHeight;
-        resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
+      if (resizeState) {
+        const liveHeight = clampDrawerHeight(
+          resizeState.height,
+          resolveTerminalDrawerMaxHeight({ ...layout, composerHeight }),
+        );
+        if (liveHeight !== resizeState.height) {
+          resizeState.height = liveHeight;
+          resizeState.drawer?.style.setProperty(DRAG_HEIGHT_PROPERTY, `${liveHeight}px`);
+        }
       }
       if (heightBudgetChanged) setDrawerLayout(layout);
-      setResizeEpoch((value) => value + 1);
     },
   );
   useLayoutEffect(() => {
@@ -1774,9 +1696,6 @@ export default function ThreadTerminalDrawer({
     };
   }, [isPanel, visible]);
 
-  const syncPreferredHeight = useEffectEvent(() => syncHeight(preferredDrawerHeight));
-  useEffect(() => () => syncPreferredHeight(), []);
-
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
@@ -1787,7 +1706,7 @@ export default function ThreadTerminalDrawer({
           "relative flex min-w-0 flex-col overflow-hidden bg-background",
           isPanel ? "h-full flex-1" : "z-45 shrink-0 border-t border-border/80",
         )}
-        style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+        style={isPanel ? undefined : { height: `var(${DRAG_HEIGHT_PROPERTY}, ${drawerHeight}px)` }}
       >
         {!isPanel ? (
           <div
@@ -1823,7 +1742,7 @@ export default function ThreadTerminalDrawer({
         "relative flex min-w-0 flex-col overflow-hidden bg-background",
         isPanel ? "h-full flex-1" : "z-45 shrink-0 border-t border-border/80",
       )}
-      style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+      style={isPanel ? undefined : { height: `var(${DRAG_HEIGHT_PROPERTY}, ${drawerHeight}px)` }}
     >
       {!isPanel ? (
         <div
@@ -1907,8 +1826,6 @@ export default function ThreadTerminalDrawer({
               threadId={threadId}
               onAddTerminalContext={onAddTerminalContext}
               visible={visible}
-              resizeEpoch={resizeEpoch}
-              drawerHeight={drawerHeight}
               keybindings={keybindings}
             />
           </div>
