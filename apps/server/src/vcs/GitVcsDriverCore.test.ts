@@ -3065,63 +3065,90 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("uses parallel checkout without skipping filters or hooks", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* git(cwd, ["config", "filter.test.smudge", "sed s/original/filtered/g"]);
-        yield* writeTextFile(cwd, ".gitattributes", "asset.txt filter=test\n");
-        yield* writeTextFile(cwd, "asset.txt", "original\n");
-        yield* git(cwd, ["add", "."]);
-        yield* git(cwd, ["commit", "-m", "filtered asset"]);
-        yield* writeTextFile(
-          cwd,
-          ".git/hooks/post-checkout",
-          "#!/bin/sh\ngit config checkout.workers > checkout-workers\nexit 0\n",
-        );
-        yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
-        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "parallel");
-
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/parallel",
-          baseRefName: initialBranch,
-        });
-
-        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "locked");
-        assert.equal(yield* fs.readFileString(path.join(worktreePath, "checkout-workers")), "0\n");
-        assert.equal(yield* fs.readFileString(path.join(worktreePath, "asset.txt")), "filtered\n");
-        assert.equal(
-          yield* git(worktreePath, ["rev-parse", "HEAD"]),
-          yield* git(cwd, ["rev-parse", "HEAD"]),
-        );
-        assert.equal(
-          yield* git(cwd, ["config", "branch.feature/parallel.t3-merge-base"]),
-          initialBranch,
-        );
-        for (const [configured, expected] of [
-          ["1", "1"],
-          ["", "0"],
-        ] as const) {
-          yield* git(cwd, ["config", "checkout.workers", configured]);
-          const configuredPath = path.join(yield* makeTmpDir("git-worktrees-"), "configured");
-          yield* driver.createWorktree({
+    it.effect.each([false, true])(
+      "reports checkout ownership when a post-checkout hook fails: %s",
+      (failHook) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["config", "filter.test.smudge", "sed s/original/filtered/g"]);
+          yield* writeTextFile(cwd, ".gitattributes", "asset.txt filter=test\n");
+          yield* writeTextFile(cwd, "asset.txt", "original\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "filtered asset"]);
+          yield* writeTextFile(
             cwd,
-            path: configuredPath,
-            refName: initialBranch,
-            newRefName: `feature/configured-${expected}`,
-          });
-          assert.equal(
-            yield* fs.readFileString(path.join(configuredPath, "checkout-workers")),
-            `${expected}\n`,
+            ".git/hooks/post-checkout",
+            `#!/bin/sh
+git config checkout.workers > checkout-workers
+${failHook ? `git branch ${initialBranch}` : "exit 0"}
+`,
           );
-        }
-      }),
+          yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+          const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "parallel");
+
+          const claimed: string[] = [];
+          const result = yield* Effect.result(
+            driver.createWorktree(
+              {
+                cwd,
+                path: worktreePath,
+                refName: initialBranch,
+                newRefName: "feature/parallel",
+                baseRefName: initialBranch,
+              },
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      claimed.push(path);
+                    }),
+                },
+              },
+            ),
+          );
+          assert.equal(Result.isFailure(result), failHook);
+          assert.deepEqual(claimed, [worktreePath]);
+
+          assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "locked");
+          assert.equal(
+            yield* fs.readFileString(path.join(worktreePath, "checkout-workers")),
+            "0\n",
+          );
+          assert.equal(
+            yield* fs.readFileString(path.join(worktreePath, "asset.txt")),
+            "filtered\n",
+          );
+          assert.equal(
+            yield* git(worktreePath, ["rev-parse", "HEAD"]),
+            yield* git(cwd, ["rev-parse", "HEAD"]),
+          );
+          if (failHook) return;
+          assert.equal(
+            yield* git(cwd, ["config", "branch.feature/parallel.t3-merge-base"]),
+            initialBranch,
+          );
+          for (const [configured, expected] of [
+            ["1", "1"],
+            ["", "0"],
+          ] as const) {
+            yield* git(cwd, ["config", "checkout.workers", configured]);
+            const configuredPath = path.join(yield* makeTmpDir("git-worktrees-"), "configured");
+            yield* driver.createWorktree({
+              cwd,
+              path: configuredPath,
+              refName: initialBranch,
+              newRefName: `feature/configured-${expected}`,
+            });
+            assert.equal(
+              yield* fs.readFileString(path.join(configuredPath, "checkout-workers")),
+              `${expected}\n`,
+            );
+          }
+        }),
     );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
       "creates a worktree from a %s without recording it as a PR base",

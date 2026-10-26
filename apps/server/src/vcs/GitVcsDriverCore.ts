@@ -3754,6 +3754,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           : {}),
       },
+    ).pipe(
+      Effect.tapError(() =>
+        Effect.gen(function* () {
+          if (!input.newRefName || !progress?.onWorktreeClaimed) return;
+          // A failing post-checkout hook can leave a registered checkout despite Git's exit code.
+          const registered = yield* runGitStdout(
+            "GitVcsDriver.createWorktree.checkClaim",
+            input.cwd,
+            ["worktree", "list", "--porcelain", "-z"],
+          ).pipe(Effect.orElseSucceed(() => ""));
+          const claimedPath = parseWorktreeBranchPaths(registered).get(input.newRefName);
+          if (claimedPath === undefined) return;
+          const physicalPath = yield* fileSystem
+            .realPath(worktreePath)
+            .pipe(Effect.orElseSucceed(() => worktreePath));
+          if (path.normalize(claimedPath) === path.normalize(physicalPath)) {
+            yield* progress.onWorktreeClaimed(worktreePath);
+          }
+        }),
+      ),
     );
 
     if (progress?.onWorktreeClaimed) {
