@@ -21,6 +21,16 @@ vi.mock(import("../../state/server"), async (original) => {
   };
 });
 
+vi.mock(import("../../hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), mathRenderingEnabled: true };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
+
 import { page, userEvent } from "vite-plus/test/browser";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -284,6 +294,29 @@ it("opens option images without answering", async () => {
   );
   await userEvent.click(screen.getByAltText("Preview", { exact: true }));
   await expect.element(page.getByRole("dialog", { name: "Expanded image preview" })).toBeVisible();
+  expect(select).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
+});
+
+it("scrolls option equations without answering", async () => {
+  const select = vi.fn();
+  const advance = vi.fn();
+  const container = document.createElement("div");
+  container.style.width = "400px";
+  await using screen = await render(
+    markdownPanel(select, advance, {
+      label: "Equation",
+      description: "$$\n" + Array(100).fill("x_i").join(" + ") + "\n$$",
+    }),
+    { container },
+  );
+  const scroller = screen.getByLabelText("Scroll display equation");
+  await expect.element(scroller).toBeVisible();
+  const element = scroller.element();
+  await vi.waitFor(() => expect(element.scrollWidth).toBeGreaterThan(element.clientWidth));
+  await userEvent.click(scroller);
+  await userEvent.wheel(element, { delta: { x: 200, y: 0 } });
+  await vi.waitFor(() => expect(element.scrollLeft).toBeGreaterThan(0));
   expect(select).not.toHaveBeenCalled();
   expect(advance).not.toHaveBeenCalled();
 });
