@@ -410,7 +410,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Crypto.Crypto, crypto),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
-        if (Schema.is(AntigravityRuntimeTemp.BacklogFullError)(cause)) {
+        if (cause._tag === "AntigravityRuntimeTempBacklogFullError") {
           return installationError("verify", AntigravityRuntimeTemp.BACKLOG_FULL_MESSAGE, cause);
         }
         const detail =
