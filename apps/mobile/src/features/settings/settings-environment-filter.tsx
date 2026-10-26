@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -79,24 +80,26 @@ export function SettingsEnvironmentFilterProvider(props: {
 }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  // Written only by selectProject; a closed Settings has no project page left to read it.
   const currentProjectKey = useRef<string | null>(null);
   if (!props.open && (selectedIds !== null || selectedProjectKey !== null)) {
+    currentProjectKey.current = null;
     setSelectedIds(null);
     setSelectedProjectKey(null);
   }
+  const selectProject = useCallback((projectKey: string | null) => {
+    currentProjectKey.current = projectKey;
+    setSelectedProjectKey(projectKey);
+  }, []);
+  const getSelectedProjectKey = useCallback(() => currentProjectKey.current, []);
   const value = useMemo(
     () => ({
       selectedIds,
       selectedProjectKey,
       setSelectedIds,
-      selectProject: (projectKey: string | null) => {
-        currentProjectKey.current = projectKey;
-        setSelectedProjectKey(projectKey);
-      },
-      getSelectedProjectKey: () => currentProjectKey.current,
+      selectProject,
+      getSelectedProjectKey,
     }),
-    [selectedIds, selectedProjectKey],
+    [selectedIds, selectedProjectKey, selectProject, getSelectedProjectKey],
   );
   return (
     <SettingsEnvironmentSelectionContext value={value}>

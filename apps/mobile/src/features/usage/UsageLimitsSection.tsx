@@ -27,7 +27,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useNowMinute } from "../../lib/clock";
+import { useNowMinuteMs } from "../../lib/clock";
 import {
   environmentIdsKey,
   limitsAutoRefreshSetAtom,
@@ -323,7 +323,7 @@ export function useRefreshLimits(
 ) {
   const registry = useContext(RegistryContext);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const now = Date.parse(useNowMinute());
+  const now = useNowMinuteMs();
   const [refreshing, setRefreshing] = useState(false);
   const refreshingRef = useRef(false);
   const selected = [...presentations].filter(

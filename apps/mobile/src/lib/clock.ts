@@ -7,7 +7,17 @@ export function useDeadlinePassed(deadlineMs: number | null): boolean {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
-/** ISO timestamp truncated to the minute, advancing each wall-clock minute. */
-export function useNowMinute(): string {
-  return useSyncExternalStore(minuteTick.subscribe, minuteTick.getSnapshot, minuteTick.getSnapshot);
+/**
+ * `minuteTick`'s UTC `YYYY-MM-DDTHH:mm` as epoch ms. The snapshot carries no
+ * offset, and `Date.parse` reads offset-less date-times as local time.
+ */
+export function minuteTickToEpochMs(minute: string): number {
+  return Date.parse(`${minute}:00Z`);
+}
+
+/** Epoch ms floored to the minute, advancing each wall-clock minute. */
+export function useNowMinuteMs(): number {
+  return minuteTickToEpochMs(
+    useSyncExternalStore(minuteTick.subscribe, minuteTick.getSnapshot, minuteTick.getSnapshot),
+  );
 }
