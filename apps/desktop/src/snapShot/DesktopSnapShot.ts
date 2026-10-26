@@ -83,7 +83,9 @@ import { showWindowsCaptureOverlay } from "./WindowsCaptureFeedback.ts";
 
 import {
   boundedSnapShotString,
+  findCaptureSource,
   isWaylandSession,
+  isX11Session,
   sameSnapShotShortcut,
   toElectronAccelerator,
   snapShotShortcutRegistrationFailureMessage,
@@ -95,8 +97,8 @@ import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
 const SHORTCUT_COOLDOWN_NS = 200_000_000n;
-const WAYLAND_MODIFIER_PAIR_UNAVAILABLE_MESSAGE =
-  "Modifier-pair shortcuts aren't available in this Wayland session. Choose another shortcut or use Take snapshot from the command palette.";
+const LINUX_MODIFIER_PAIR_UNAVAILABLE_MESSAGE =
+  "Modifier-pair shortcuts aren't available on Linux. Choose another shortcut or use Take snapshot from the command palette.";
 const FLASH_ANIMATION_DURATION_MS = 180;
 const FLASH_STATIC_DURATION_MS = 60;
 const FLASH_FRAME_INTERVAL_MS = 16;
@@ -280,8 +282,10 @@ type SnapShotSystemAnimationSettings = Pick<
 >;
 
 function captureMode(platform: NodeJS.Platform): DesktopSnapShotState["mode"] {
-  if (platform === "linux")
-    return isWaylandSession(platform, process.env) ? "portal" : "unavailable";
+  if (platform === "linux") {
+    if (isWaylandSession(platform, process.env)) return "portal";
+    return isX11Session(platform, process.env) ? "direct" : "unavailable";
+  }
   return platform === "darwin" || platform === "win32" ? "direct" : "unavailable";
 }
 
@@ -424,6 +428,22 @@ function snapShotImageSize(png: Buffer, fallback: Electron.Rectangle): Electron.
   };
 }
 
+async function captureX11WindowSnapshot(
+  active: ActiveWindow,
+  captureId: string,
+): Promise<{ readonly source: Electron.DesktopCapturerSource; readonly png: Buffer }> {
+  const sources = await Electron.desktopCapturer.getSources({
+    types: ["window"],
+    thumbnailSize: snapShotThumbnailSize(active),
+    fetchWindowIcons: true,
+  });
+  const source = findCaptureSource(sources, active);
+  if (!source || source.thumbnail.isEmpty()) {
+    throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
+  }
+  return { source, png: source.thumbnail.toPNG() };
+}
+
 async function captureSource({
   mode,
   captureId,
@@ -483,7 +503,7 @@ async function captureSource({
         snapShotThumbnailSize(active),
       ));
       imageTempReady = true;
-    } else if (mode === "direct") {
+    } else if (mode === "direct" && platform === "win32") {
       if (!active) {
         throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
       }
@@ -493,6 +513,11 @@ async function captureSource({
         snapShotFlashBounds(active, platform),
         snapShotThumbnailSize(active),
       ));
+    } else if (mode === "direct") {
+      if (!active) {
+        throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
+      }
+      ({ source, png } = await captureX11WindowSnapshot(active, captureId));
     } else {
       const { captureLinuxWindow } = await import("./LinuxSnapShot.ts");
       const snapshot = await captureLinuxWindow(
@@ -529,7 +554,10 @@ async function captureSource({
       }
     }
     const accessibleIdentity = active
-      ? { ...active, bounds: snapShotFlashBounds(active, platform) }
+      ? {
+          ...active,
+          bounds: platform === "linux" ? active.bounds : snapShotFlashBounds(active, platform),
+        }
       : linuxWindow?.processId
         ? {
             title: linuxWindow.title,
@@ -666,9 +694,17 @@ function snapShotFlashBounds(
   platform: NodeJS.Platform,
 ): Electron.Rectangle {
   if (!active) return Electron.screen.getPrimaryDisplay().bounds;
-  return platform === "win32"
-    ? Electron.screen.screenToDipRect(null, active.bounds)
-    : active.bounds;
+  if (platform === "win32") return Electron.screen.screenToDipRect(null, active.bounds);
+  if (platform === "linux") {
+    const origin = Electron.screen.screenToDipPoint(active.bounds);
+    const { scaleFactor } = Electron.screen.getDisplayNearestPoint(origin);
+    return {
+      ...origin,
+      width: Math.max(1, Math.round(active.bounds.width / scaleFactor)),
+      height: Math.max(1, Math.round(active.bounds.height / scaleFactor)),
+    };
+  }
+  return active.bounds;
 }
 
 async function showCaptureFeedback(
@@ -682,7 +718,7 @@ async function showCaptureFeedback(
   destinationWindowBounds?: Electron.Rectangle,
 ): Promise<boolean> {
   // Wayland does not let this client position overlays on another app's window.
-  if (platform === "linux") return false;
+  if (platform === "linux" && isWaylandSession(platform, process.env)) return false;
   const bounds = snapShotFlashBounds(active, platform);
   const animationsEnabled =
     settings.snapShotAnimations &&
@@ -1058,8 +1094,8 @@ export const make = Effect.gen(function* () {
       };
     }
     if (isModifierPairShortcut(shortcut)) {
-      if (mode === "portal") {
-        return { available: false, message: WAYLAND_MODIFIER_PAIR_UNAVAILABLE_MESSAGE };
+      if (mode === "portal" || environment.platform === "linux") {
+        return { available: false, message: LINUX_MODIFIER_PAIR_UNAVAILABLE_MESSAGE };
       }
       const available = yield* Effect.tryPromise(() =>
         startPairShortcutProcess(
@@ -1169,7 +1205,7 @@ export const make = Effect.gen(function* () {
         message:
           mode === "unavailable"
             ? environment.platform === "linux"
-              ? "SnapShots require a Wayland session. X11 capture is not supported."
+              ? "SnapShots require a Wayland or X11 desktop session."
               : "SnapShots are not supported on this platform."
             : null,
       });
@@ -1229,7 +1265,7 @@ export const make = Effect.gen(function* () {
         mode,
         shortcut,
         shortcutRegistered: false,
-        shortcutMessage: WAYLAND_MODIFIER_PAIR_UNAVAILABLE_MESSAGE,
+        shortcutMessage: LINUX_MODIFIER_PAIR_UNAVAILABLE_MESSAGE,
         message: null,
       });
       return;
@@ -1281,6 +1317,16 @@ export const make = Effect.gen(function* () {
           })),
         ),
       );
+      return;
+    }
+    if (environment.platform === "linux" && isModifierPairShortcut(shortcut)) {
+      yield* Ref.set(stateRef, {
+        mode,
+        shortcut,
+        shortcutRegistered: false,
+        shortcutMessage: LINUX_MODIFIER_PAIR_UNAVAILABLE_MESSAGE,
+        message: null,
+      });
       return;
     }
 
@@ -1668,6 +1714,13 @@ export const make = Effect.gen(function* () {
                   linuxFeedbackAvailable:
                     kdeHelper.status === "ready" && kdeHelper.feedbackAvailable === true,
                 }
+              : {}),
+            ...(environment.platform === "linux"
+              ? isWaylandSession(environment.platform, process.env)
+                ? ({ linuxSession: "wayland" } as const)
+                : isX11Session(environment.platform, process.env)
+                  ? ({ linuxSession: "x11" } as const)
+                  : {}
               : {}),
             shortcutVerified,
           };

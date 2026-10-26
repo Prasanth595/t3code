@@ -175,6 +175,7 @@ export const DesktopSnapShotState = Schema.Struct({
   mode: DesktopSnapShotMode,
   windows: Schema.optional(Schema.Boolean),
   linuxDesktop: Schema.optional(Schema.Literals(["gnome", "kde", "niri", "hyprland"])),
+  linuxSession: Schema.optional(Schema.Literals(["wayland", "x11"])),
   linuxBackend: Schema.optional(
     Schema.Literals(["screenshot-portal", "gnome-extension", "niri", "kde", "hyprland", "picker"]),
   ),

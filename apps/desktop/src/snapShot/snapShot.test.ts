@@ -11,6 +11,7 @@ import {
   findCaptureSource,
   hideAndWaitForBlur,
   isWaylandSession,
+  isX11Session,
 } from "./snapShot.ts";
 
 describe("accessibleWindowText", () => {
@@ -509,6 +510,27 @@ describe("findCaptureSource", () => {
         },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("isX11Session", () => {
+  it("requires Linux and a display", () => {
+    expect(isX11Session("darwin", { DISPLAY: ":0" })).toBe(false);
+    expect(isX11Session("win32", { DISPLAY: ":0" })).toBe(false);
+    expect(isX11Session("linux", {})).toBe(false);
+    expect(isX11Session("linux", { DISPLAY: "" })).toBe(false);
+  });
+
+  it("treats a Linux display as X11 only outside Wayland", () => {
+    expect(isX11Session("linux", { DISPLAY: ":0" })).toBe(true);
+    expect(isX11Session("linux", { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" })).toBe(true);
+    expect(
+      isX11Session("linux", {
+        DISPLAY: ":0",
+        XDG_SESSION_TYPE: "wayland",
+      }),
+    ).toBe(false);
+    expect(isX11Session("linux", { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" })).toBe(false);
   });
 });
 

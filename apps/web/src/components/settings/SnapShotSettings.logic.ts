@@ -61,6 +61,7 @@ export function snapShotSetupComplete(
   includeAccessibility: boolean,
 ): boolean {
   if (state?.windows) return true;
+  if (state?.linuxSession === "x11") return Boolean(state.shortcutRegistered);
   return (
     state?.macPermissions !== undefined &&
     captureSetupAccessReady(state) &&

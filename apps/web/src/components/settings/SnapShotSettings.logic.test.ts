@@ -163,4 +163,18 @@ it("hides macOS setup only while permissions and the shortcut are all in place",
       true,
     ),
   ).toBe(true);
+  expect(
+    snapShotSetupComplete({ ...ready, macPermissions: undefined, linuxSession: "x11" }, true),
+  ).toBe(true);
+  expect(
+    snapShotSetupComplete(
+      {
+        ...ready,
+        macPermissions: undefined,
+        linuxSession: "x11",
+        shortcutRegistered: false,
+      },
+      true,
+    ),
+  ).toBe(false);
 });

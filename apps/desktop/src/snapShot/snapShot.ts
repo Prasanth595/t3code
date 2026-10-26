@@ -615,6 +615,12 @@ export function findCaptureSource<T extends CaptureSourceLike>(
   return titleMatches.length === 1 ? titleMatches[0] : undefined;
 }
 
+export function isX11Session(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv): boolean {
+  return (
+    platform === "linux" && Boolean(environment.DISPLAY) && !isWaylandSession(platform, environment)
+  );
+}
+
 export function isWaylandSession(
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,

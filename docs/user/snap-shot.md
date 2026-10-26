@@ -5,19 +5,20 @@ attachment carries the app name and window title, and when available the app ico
 accessibility data (its controls, text, and their positions in the image). Agents can use that data
 to reason about the screenshot.
 
-SnapShots are off by default and available in the desktop app on macOS, Windows, and Linux with
-Wayland. X11 sessions are not supported.
+SnapShots are off by default and available in the desktop app on macOS, Windows, and Linux.
 
 ## Turning it on
 
-Open **Settings** > **SnapShots** and turn the feature on. Setup has two steps: allow capture, then
-choose a shortcut. Each step shows only what your desktop needs. **Finish later** turns capture back
-off but keeps anything you already installed, so you can resume where you left off.
+Open **Settings** > **SnapShots** and turn the feature on. Setup has two steps: allow capture where
+your desktop needs it, then choose a shortcut. Each step shows only what your desktop needs.
+**Finish later** turns capture back off but keeps anything you already installed, so you can resume
+where you left off.
 
 - **macOS** asks for Screen Recording during setup. It asks for Accessibility only when **Include
   app text** is on.
 - **Windows** needs no setup or permission.
-- **Linux** depends on your desktop. See [Linux desktops](#linux-desktops).
+- **Linux** needs no permission on X11. On Wayland it depends on your desktop. See
+  [Linux desktops](#linux-desktops).
 
 Turning capture off releases the shortcut. It does not uninstall a helper or extension you installed.
 
@@ -65,9 +66,12 @@ reduced-motion setting also disables the animation.
 
 ## Linux desktops
 
-SnapShots work on Wayland sessions. Each desktop provides capture differently, and setup names your
-current desktop and shows only what it needs. Preferences carry across desktops, but each desktop's
-helper and shortcut approval are separate.
+SnapShots work on X11 and Wayland sessions. Each Wayland desktop provides capture differently, and
+setup names your current desktop and shows only what it needs. Preferences carry across desktops,
+but each desktop's helper and shortcut approval are separate.
+
+**X11.** No helper, extension, or permission is needed. T3 Code captures the active window directly,
+as it does on macOS and Windows.
 
 **GNOME.** Install the bundled **T3 Code SnapShots** extension during setup. It is installed
 per-user, offline, and needs no administrator password. Sign out and back in after the first

@@ -1,16 +1,20 @@
 # Linux window capture
 
-Wayland only. Each capture picks one backend in `LinuxSnapShot.ts` (Hyprland helper, Niri IPC, KDE
+Two capture paths. On X11, `X11Foreground.ts` reads the active window and Electron's
+`desktopCapturer` captures it, with the same screen-bounds identity used on macOS and Windows. On
+Wayland, each capture picks one backend in `LinuxSnapShot.ts` (Hyprland helper, Niri IPC, KDE
 helper, Screenshot portal with active-window target, GNOME extension, then the Electron picker) and
 never falls back to another on failure, cancellation, or denial. A stale `NIRI_SOCKET` or a reachable
 GNOME extension must not select another desktop's backend; session detection comes from
-`XDG_CURRENT_DESKTOP`, in `linuxCaptureSession.ts`.
+`XDG_CURRENT_DESKTOP`, in `linuxCaptureSession.ts`. `isX11Session` requires `DISPLAY` and no Wayland
+session, so a Wayland desktop with XWayland keeps its Wayland backend.
 
 ## Module boundaries
 
 `dbus-next` must only be reached through dynamic imports. `linuxCaptureSession.ts` holds the pure
 helpers (session detection, Niri binding text, portal key mapping, PNG reading) so the main process
-can answer "which desktop is this" without loading a D-Bus client on macOS or Windows.
+can answer "which desktop is this" without loading a D-Bus client on macOS or Windows. For X11,
+`ffi-rs` loads only in the lookup subprocess, never in the main process.
 
 `patches/dbus-next@0.10.2.patch` removes `usocket` (its optional native Unix-FD transport) and
 connects to both `unix:path=` and `unix:abstract=` buses through Node's `net`. We never pass Unix
@@ -22,11 +26,13 @@ outside systemd. Keep the patch when bumping `dbus-next`.
 The Screenshot portal returns a PNG URI and no window identity, so portal and picker captures carry
 no accessibility data. Do not infer it from the subsequently focused window or a guessed title.
 
-Native backends supply PID, title, and frame. AT-SPI matching is by PID plus a unique title and size
-match. AT-SPI reports `(0, 0)` for a window's screen position on Wayland even when the compositor
-knows the real one, so only width and height are compared, and descendant coordinates are trusted
-only when the AT-SPI root agrees with the compositor frame and at least one descendant reports a
-distinct position. Otherwise bounds are `null` rather than zero-origin rectangles.
+Native backends supply PID, title, and frame. X11 also supplies the client window's screen origin,
+so AT-SPI matching compares x, y, width, and height, as on macOS and Windows. Wayland matching is by
+PID plus a unique title and size match. AT-SPI reports `(0, 0)` for a window's screen position on
+Wayland even when the compositor knows the real one, so only width and height are compared, and
+descendant coordinates are trusted only when the AT-SPI root agrees with the compositor frame and at
+least one descendant reports a distinct position. Otherwise bounds are `null` rather than
+zero-origin rectangles.
 
 Title matching ignores a single leading Braille CLI spinner frame, since terminals change it between
 capture and lookup. KDE supplies both `frameGeometry` and `clientGeometry`; accept either verified
@@ -34,6 +40,21 @@ size, never a decoration-height tolerance.
 
 On GNOME, browser accessibility bridges need `org.gnome.desktop.interface toolkit-accessibility`
 before the browser starts. Do not toggle it during capture.
+
+## X11
+
+Xlib's default error handler terminates the process on protocol errors, including a window
+closing between requests. Keep the lookup in `X11ForegroundWorker.ts`; a JavaScript `catch` in the
+main process cannot contain that failure. The helper has a bounded lifetime and preserves stderr
+when a lookup fails.
+
+Keep the client window's physical bounds for capture and AT-SPI matching. Convert them to Electron
+DIP coordinates only for feedback overlays; Linux's `screenToDipRect` is unavailable, so use
+`screenToDipPoint` for the origin and the destination display's scale for the size. Do not add
+`_NET_FRAME_EXTENTS`: these consumers use the client window rather than the window manager frame.
+
+The Xlib ABI here assumes 64-bit little-endian Linux, matching the desktop's x64 and arm64 targets.
+Xlib stores format-32 properties in native `long` slots, which are eight bytes on these targets.
 
 ## KDE
 

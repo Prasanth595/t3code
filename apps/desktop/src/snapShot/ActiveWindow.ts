@@ -1,14 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This platform boundary asks the OS for its foreground window with Node.
 
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
 
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
+import { readX11ForegroundProcess } from "./X11ForegroundProcess.ts";
 
-/** id is CGWindowNumber on macOS or HWND on Windows, matching the capture backend. */
+/** id is CGWindowNumber on macOS, HWND on Windows, or the X11 window id, matching the capture backend. */
 export type ActiveWindow = {
-  readonly platform: "macos" | "windows";
+  readonly platform: "macos" | "windows" | "linux";
   readonly id: number;
   readonly title: string;
   readonly bounds: {
@@ -128,8 +131,44 @@ async function windowsActiveWindow(): Promise<ActiveWindow | undefined> {
   };
 }
 
+function processExecutablePath(processId: number): string {
+  if (processId <= 0) return "";
+  try {
+    return NodeFS.readlinkSync(`/proc/${processId}/exe`).replace(/ \(deleted\)$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function processName(processId: number): string {
+  if (processId <= 0) return "";
+  try {
+    return NodeFS.readFileSync(`/proc/${processId}/comm`, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function linuxActiveWindow(): Promise<ActiveWindow | undefined> {
+  const window = await readX11ForegroundProcess(
+    NodePath.join(__dirname, "snapShot", "X11ForegroundWorker.cjs"),
+  );
+  if (!window) return undefined;
+  const path = processExecutablePath(window.processId);
+  const name =
+    window.appName.trim() || processName(window.processId) || path.split("/").pop() || "";
+  return {
+    platform: "linux",
+    id: window.id,
+    title: window.title,
+    bounds: window.bounds,
+    owner: { name, processId: window.processId, path },
+  };
+}
+
 export function activeWindow(platform: NodeJS.Platform): Promise<ActiveWindow | undefined> {
   if (platform === "darwin") return macActiveWindow();
   if (platform === "win32") return windowsActiveWindow();
+  if (platform === "linux") return linuxActiveWindow();
   return Promise.resolve(undefined);
 }

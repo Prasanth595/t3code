@@ -60,6 +60,8 @@ const {
   prepareCaptureRevealMock,
   nextPortalState,
   regionCaptureMock,
+  displayNearestPointMock,
+  screenToDipPointMock,
   screenToDipRectMock,
   shortcutForkArgs,
   shortcutForkOptions,
@@ -141,6 +143,11 @@ const {
     vi.fn<
       (region: Electron.Rectangle) => Promise<{ width: number; height: number; png: Buffer }>
     >(),
+  displayNearestPointMock: vi.fn(() => ({
+    bounds: { x: 100, y: 100, width: 800, height: 600 },
+    scaleFactor: 1,
+  })),
+  screenToDipPointMock: vi.fn((point: Electron.Point) => point),
   screenToDipRectMock: vi.fn((_window: unknown, bounds: Electron.Rectangle) => bounds),
   shortcutForkArgs: [] as Array<ReadonlyArray<string>>,
   shortcutForkOptions: [] as Array<{ env?: NodeJS.ProcessEnv }>,
@@ -407,10 +414,9 @@ vi.mock("electron", () => {
         { id: 2, bounds: { x: 0, y: -200, width: 1_440, height: 900 } },
       ],
       getCursorScreenPoint: () => ({ x: 500, y: 500 }),
-      getDisplayNearestPoint: () => ({
-        bounds: { x: 100, y: 100, width: 800, height: 600 },
-      }),
+      getDisplayNearestPoint: displayNearestPointMock,
       getPrimaryDisplay: () => ({ bounds: { x: 0, y: 0, width: 1_440, height: 900 } }),
+      screenToDipPoint: screenToDipPointMock,
       screenToDipRect: screenToDipRectMock,
     },
     shell: { openExternal: openExternalMock },
@@ -1047,6 +1053,122 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
     ),
   );
 });
+
+it.effect.each([1, 1.25, 2])(
+  "captures the active X11 window at scale %s and registers a chord",
+  (scale) => {
+    vi.stubEnv("XDG_SESSION_TYPE", "x11");
+    vi.stubEnv("WAYLAND_DISPLAY", "");
+    vi.stubEnv("DISPLAY", ":0");
+    flashWindows.length = 0;
+    screenToDipPointMock.mockImplementation(({ x, y }) => ({ x: x / scale, y: y / scale }));
+    displayNearestPointMock.mockReturnValue({
+      bounds: { x: 0, y: 0, width: 1440, height: 900 },
+      scaleFactor: scale,
+    });
+    registerShortcutMock.mockReset().mockReturnValue(true);
+    const png = Buffer.from([1, 2, 3]);
+    const active = {
+      platform: "linux",
+      id: 16_777_219,
+      title: "Editor",
+      bounds: { x: 10, y: 20, width: 800, height: 600 },
+      owner: { name: "Text Editor", processId: 123, path: "" },
+    } as const;
+    activeWindowMock.mockReset().mockResolvedValue(active);
+    getSourcesMock.mockReset().mockResolvedValue([
+      {
+        id: "window:16777219:0",
+        name: "Editor",
+        thumbnail: { isEmpty: () => false, toPNG: () => png },
+      },
+    ]);
+    accessibilityByPidMock.mockReset().mockResolvedValue({
+      children: async () => [
+        {
+          role: "window",
+          name: "Editor",
+          bounds: active.bounds,
+          tree: async () => ({ name: "Editor", value: "X11 text", children: [] }),
+          children: async () => [],
+        },
+      ],
+    });
+    let metadata = "";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure({
+          ...enabledSettings(),
+          snapShotShortcut: {
+            key: "2",
+            ctrlKey: true,
+            shiftKey: true,
+            altKey: false,
+            metaKey: false,
+            modKey: false,
+          },
+          snapShotAnimations: false,
+          snapShotFlash: true,
+        });
+        const state = yield* service.state;
+        assert.equal(state.mode, "direct");
+        assert.equal(state.linuxSession, "x11");
+        assert.isTrue(state.shortcutRegistered);
+        assert.deepEqual(
+          registerShortcutMock.mock.calls.map(([accelerator]) => accelerator),
+          ["Control+Shift+2"],
+        );
+
+        yield* service.capture;
+        assert.lengthOf(linuxCaptureMock.mock.calls, 0);
+        assert.deepEqual(getSourcesMock.mock.calls, [
+          [
+            {
+              types: ["window"],
+              thumbnailSize: { width: 800, height: 600 },
+              fetchWindowIcons: true,
+            },
+          ],
+        ]);
+        assert.lengthOf(flashWindows, 1);
+        assert.deepEqual(flashWindows[0]?.bounds, {
+          x: 10 / scale,
+          y: 20 / scale,
+          width: 800 / scale,
+          height: 600 / scale,
+        });
+        const saved = yield* decodePendingMetadata(metadata);
+        assert.equal(saved.source.appName, "Text Editor");
+        assert.equal(saved.source.windowTitle, "Editor");
+        assert.include(saved.source.accessibleText, "X11 text");
+        assert.isUndefined(saved.source.appIdentifier);
+      }),
+    ).pipe(
+      Effect.provide(
+        layerTest("linux", {
+          makeDirectory: () => Effect.void,
+          rename: () => Effect.void,
+          writeFile: () => Effect.void,
+          writeFileString: (_, text) =>
+            Effect.sync(() => {
+              metadata = text;
+            }),
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          vi.unstubAllEnvs();
+          screenToDipPointMock.mockImplementation((point) => point);
+          displayNearestPointMock.mockReturnValue({
+            bounds: { x: 100, y: 100, width: 800, height: 600 },
+            scaleFactor: 1,
+          });
+        }),
+      ),
+    );
+  },
+);
 
 it.effect.each([
   { backend: "gnome", screenshot: "PNG" },

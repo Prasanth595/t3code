@@ -103,6 +103,7 @@ export function SnapShotSetupDialog({
   const [configBusy, setConfigBusy] = useState(false);
   const busy = actionBusy || checking || configBusy;
   const backend = captureSetupBackend(state);
+  const x11 = state.linuxSession === "x11";
   const configShortcut = backend === "niri" || backend === "hyprland";
   const desktop = captureSetupDesktopName(state);
   const extension = state.gnomeExtension;
@@ -184,17 +185,22 @@ export function SnapShotSetupDialog({
                   description:
                     "Your desktop doesn't support automatic capture. You'll choose the window to capture instead.",
                 }
-              : {
-                  title: "Allow snapshots",
-                  description:
-                    backend === "portal"
-                      ? "Your desktop may ask for permission when you first capture."
-                      : macPermissions
-                        ? macPermissionsReady
-                          ? "Test a snapshot of the current window. If macOS asks to bypass its window picker, choose Allow. The test image is discarded."
-                          : "Allow each permission, then continue."
-                        : "Allow access when prompted to start capturing windows.",
-                };
+              : backend === "direct" && x11
+                ? {
+                    title: "Capture is ready",
+                    description: "Next, choose your shortcut.",
+                  }
+                : {
+                    title: "Allow snapshots",
+                    description:
+                      backend === "portal"
+                        ? "Your desktop may ask for permission when you first capture."
+                        : macPermissions
+                          ? macPermissionsReady
+                            ? "Test a snapshot of the current window. If macOS asks to bypass its window picker, choose Allow. The test image is discarded."
+                            : "Allow each permission, then continue."
+                          : "Allow access when prompted to start capturing windows.",
+                  };
   const title = step === "access" ? accessCopy.title : "Choose your shortcut";
   const description =
     step === "access"
@@ -448,7 +454,9 @@ export function SnapShotSetupDialog({
                   : macPermissions
                     ? "Test capture and continue"
                     : backend === "direct"
-                      ? "Allow capture"
+                      ? x11
+                        ? "Enable capture"
+                        : "Allow capture"
                       : !accessReady && !macPermissions
                         ? "Try again"
                         : "Continue"}
