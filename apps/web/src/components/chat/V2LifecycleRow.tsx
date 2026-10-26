@@ -319,8 +319,11 @@ export function EnvironmentSubagentAvatar({
   status?: OrchestrationV2TurnItem["status"] | undefined;
 }) {
   const providersAtom = serverEnvironment.providersValueAtom(environmentId);
-  const entries = (providers: ReadonlyArray<ServerProvider> | null | undefined) =>
-    deriveProviderInstanceEntries(providers ?? []);
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const entries = (providers: ReadonlyArray<ServerProvider> | null | undefined) => {
+    const derived = deriveProviderInstanceEntries(providers ?? []);
+    return settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+  };
   const displayName = useAtomValue(
     providersAtom,
     (providers) =>

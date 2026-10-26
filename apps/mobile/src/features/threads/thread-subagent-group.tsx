@@ -11,7 +11,7 @@ import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
-  ServerProvider,
+  ServerConfig,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { AppState, Pressable, View, type ColorValue } from "react-native";
@@ -56,17 +56,32 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly config: ServerConfig | null | undefined;
 }) {
-  const provider = props.providers.find(
+  const providers = props.config?.providers ?? [];
+  const provider = providers.find(
+    (candidate) => candidate.instanceId === props.item.providerInstanceId,
+  );
+  const badgeEntries = providers.map((candidate) => {
+    const rawConfig = props.config?.settings.providerInstances[candidate.instanceId]?.config;
+    const instanceConfig =
+      rawConfig !== null && typeof rawConfig === "object"
+        ? (rawConfig as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
+    return {
+      ...candidate,
+      driverKind: candidate.driver,
+      acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
+    };
+  });
+  const badgeEntry = badgeEntries.find(
     (candidate) => candidate.instanceId === props.item.providerInstanceId,
   );
   const showBadge =
     provider !== undefined &&
-    shouldShowInstanceBadge(
-      { ...provider, driverKind: provider.driver },
-      props.providers.map((candidate) => ({ ...candidate, driverKind: candidate.driver })),
-    );
+    badgeEntry !== undefined &&
+    shouldShowInstanceBadge(badgeEntry, badgeEntries);
   return (
     <View
       accessible={false}
@@ -136,7 +151,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} providers={config?.providers ?? []} />
+                <SubagentAvatar item={agent.item} config={config} />
               </View>
             ))}
             {agents.length > 3 ? (
