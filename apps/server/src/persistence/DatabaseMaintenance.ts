@@ -228,10 +228,7 @@ const make = Effect.gen(function* () {
           yield* fs.remove(legacy + suffix, { force: true });
         }
       });
-      // SQLite's Windows handles deny FILE_SHARE_DELETE. Check for a running
-      // old server, then close our connection before unlinking. A competing
-      // SQLite opener still makes Windows refuse the unlink. POSIX keeps the
-      // exclusive lock through deletion because open files can be unlinked.
+      // Windows denies unlinking open SQLite files; POSIX can keep the lock through deletion.
       yield* lockExclusively(legacy).pipe(
         Effect.andThen(windows ? Effect.void : removeFiles),
         Effect.provide(NodeSqliteClient.layer({ filename: legacy })),

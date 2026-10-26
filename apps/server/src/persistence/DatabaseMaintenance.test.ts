@@ -183,6 +183,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* maintenance.removeLegacyDatabase(dbPath);
           assert.isFalse(yield* fs.exists(legacy));
           assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+          assert.isFalse(yield* fs.exists(`${legacy}-shm`));
           assert.isTrue(yield* fs.exists(dbPath));
           assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
         }).pipe(
