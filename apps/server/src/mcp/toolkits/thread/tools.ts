@@ -1,4 +1,11 @@
 import {
+  ClaudeSessionAdoptInput,
+  ClaudeSessionRefreshInput,
+  ClaudeSessionReleaseInput,
+  ClaudeSessionStatusInput,
+  ClaudeSessionResult,
+} from "@t3tools/contracts";
+import {
   NativeSessionAdoptInput,
   NativeSessionReleaseInput,
   NativeSessionRefreshInput,
@@ -318,7 +325,39 @@ const NativeStatusTool = Tool.make("t3_native_session_status", {
   success: NativeSessionResult,
 }).annotate(Tool.Readonly, true);
 
+const ClaudeAdoptTool = Tool.make("t3_claude_session_adopt", {
+  ...commandTool,
+  parameters: ClaudeSessionAdoptInput,
+  success: ClaudeSessionResult,
+  description:
+    "Adopt an exact stopped Claude UUID into an existing project with selected destination settings. Starts no Claude process.",
+});
+const ClaudeRefreshTool = Tool.make("t3_claude_session_refresh", {
+  ...commandTool,
+  parameters: ClaudeSessionRefreshInput,
+  success: ClaudeSessionResult,
+  description: "Refresh complete native Claude history without a prompt or query.",
+}).annotate(Tool.Readonly, true);
+const ClaudeReleaseTool = Tool.make("t3_claude_session_release", {
+  ...commandTool,
+  parameters: ClaudeSessionReleaseInput,
+  success: ClaudeSessionResult,
+  description:
+    "Fence managed Claude writes and reserve one destination after writer exit. Blocked or pending results do not authorize a launch.",
+});
+const ClaudeStatusTool = Tool.make("t3_claude_session_status", {
+  ...commandTool,
+  parameters: ClaudeSessionStatusInput,
+  success: ClaudeSessionResult,
+  description:
+    "Read current Claude control or an immutable operation result without runtime changes.",
+}).annotate(Tool.Readonly, true);
+
 export const ThreadToolkit = Toolkit.make(
+  ClaudeAdoptTool,
+  ClaudeRefreshTool,
+  ClaudeReleaseTool,
+  ClaudeStatusTool,
   NativeAdoptTool,
   NativeReleaseTool,
   NativeRefreshTool,

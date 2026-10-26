@@ -916,6 +916,7 @@ export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2Pending
 
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   historyAuthority: Schema.optionalKey(Schema.Literal("native")),
+  historyGeneration: Schema.optionalKey(PositiveInt),
   controllerEpoch: Schema.optionalKey(NonNegativeInt),
   modelSelection: Schema.optional(ModelSelection),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

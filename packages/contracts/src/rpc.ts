@@ -1,4 +1,12 @@
 import {
+  CLAUDE_SESSION_METHODS,
+  ClaudeSessionAdoptRequest,
+  ClaudeSessionRefreshRequest,
+  ClaudeSessionReleaseRequest,
+  ClaudeSessionStatusRequest,
+  ClaudeSessionResult,
+} from "./claudeSessions.ts";
+import {
   NATIVE_SESSION_METHODS,
   NativeSessionAdoptInput,
   NativeSessionReleaseInput,
@@ -1913,6 +1921,29 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const claudeSessionRpcs = [
+  Rpc.make(CLAUDE_SESSION_METHODS.adopt, {
+    payload: ClaudeSessionAdoptRequest,
+    success: ClaudeSessionResult,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(CLAUDE_SESSION_METHODS.refresh, {
+    payload: ClaudeSessionRefreshRequest,
+    success: ClaudeSessionResult,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(CLAUDE_SESSION_METHODS.release, {
+    payload: ClaudeSessionReleaseRequest,
+    success: ClaudeSessionResult,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(CLAUDE_SESSION_METHODS.status, {
+    payload: ClaudeSessionStatusRequest,
+    success: ClaudeSessionResult,
+    error: EnvironmentAuthorizationError,
+  }),
+] as const;
+
 const nativeSessionRpcs = [
   Rpc.make(NATIVE_SESSION_METHODS.adopt, {
     payload: NativeSessionAdoptInput,
@@ -1938,6 +1969,7 @@ const nativeSessionRpcs = [
 
 export const WsRpcGroup = RpcGroup.make(
   ...nativeSessionRpcs,
+  ...claudeSessionRpcs,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

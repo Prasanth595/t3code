@@ -194,6 +194,7 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  readonly managedClaude: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -376,6 +377,8 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const releaseReceipts = new Map<ProviderSessionId, { finalized: boolean }>();
+      const scopeReceipts = new WeakMap<Scope.Closeable, { finalized: boolean }>();
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -917,6 +920,9 @@ export const layerWithOptions = (
               }
               const updated = new Map(current);
               updated.delete(key);
+              const receipt = { finalized: false };
+              releaseReceipts.set(input.providerSessionId, receipt);
+              scopeReceipts.set(existing.scope, receipt);
               return ["removed", updated] as const;
             }),
             DateTime.now,
@@ -937,6 +943,12 @@ export const layerWithOptions = (
         annotations: { readonly providerSessionId?: ProviderSessionId; readonly reason: string },
       ) {
         const closeFiber = yield* Scope.close(scope, Exit.void).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              const receipt = scopeReceipts.get(scope);
+              if (receipt !== undefined) receipt.finalized = true;
+            }),
+          ),
           Effect.exit,
           Effect.forkDetach({ startImmediately: true }),
         );
@@ -980,7 +992,18 @@ export const layerWithOptions = (
           removeLiveEntry(input),
           ([entry, releasedAt]) =>
             Option.match(entry, {
-              onNone: () => Effect.void,
+              onNone: () =>
+                Effect.suspend(() => {
+                  if (!input.requireSettled) return Effect.void;
+                  return releaseReceipts.get(input.providerSessionId)?.finalized === true
+                    ? Effect.void
+                    : Effect.fail(
+                        new ProviderSessionReleaseError({
+                          providerSessionId: input.providerSessionId,
+                          reason: input.reason,
+                        }),
+                      );
+                }),
               onSome: (entry) =>
                 Effect.gen(function* () {
                   const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
@@ -1091,6 +1114,7 @@ export const layerWithOptions = (
           if (
             entry === undefined ||
             entry.runtime.nativeSession !== undefined ||
+            entry.managedClaude ||
             entry.busyTurns.size > 0 ||
             entry.idleGeneration !== input.generation
           ) {
@@ -2131,8 +2155,28 @@ export const layerWithOptions = (
                   dropMcpCredentialReservation(input.threadId, mcpCredentialId);
                 }
               });
+              releaseReceipts.delete(input.providerSessionId);
               const sessionScope = yield* Scope.fork(sessionScopes);
-              yield* agentScope.clear(input.threadId);
+              const threadRecords = yield* projectionStore
+                .getThreadRecords(input.threadId, ["providerThreads"])
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionOpenError({
+                        instanceId: input.modelSelection.instanceId,
+                        providerSessionId: input.providerSessionId,
+                        cause,
+                      }),
+                  ),
+                );
+              const managedClaude = threadRecords.providerThreads.some(
+                (provider) =>
+                  provider.driver === "claudeAgent" &&
+                  provider.providerInstanceId === input.modelSelection.instanceId &&
+                  provider.nativeMetadata?.historyAuthority === "native" &&
+                  typeof provider.nativeMetadata.controllerEpoch === "number",
+              );
+              if (!managedClaude) yield* agentScope.clear(input.threadId);
               const runtime = yield* adapter
                 .openSession({
                   threadId: input.threadId,
@@ -2195,6 +2239,7 @@ export const layerWithOptions = (
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
+                managedClaude,
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,

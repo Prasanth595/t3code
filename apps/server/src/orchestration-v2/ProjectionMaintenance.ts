@@ -10,6 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { ClaudeHistory } from "./ClaudeSessionJournal.ts";
 
 export interface ProjectionVerificationV2 {
   readonly valid: boolean;
@@ -137,6 +138,18 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
 
           const pageSize = 500;
+          const claudeRows = yield* sql<{
+            payload_json: string;
+          }>`SELECT payload_json FROM orchestration_v2_claude_history`;
+          const claudeHistory = yield* Effect.forEach(claudeRows, (row) =>
+            Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeHistory))(row.payload_json),
+          );
+          const claudePositions = new Set(
+            claudeHistory.flatMap((history) => [
+              ...history.removedTurnItemIds,
+              ...history.items.map((item) => item.turnItemId),
+            ]),
+          );
           let lastSequence = 0;
           while (true) {
             const page = yield* eventStore
@@ -144,7 +157,10 @@ export const layer: Layer.Layer<
               .pipe(Stream.runCollect);
             for (const stored of page) {
               yield* projectionStore.apply(stored.event);
-              if (stored.event.type === "turn-item.updated") {
+              if (
+                stored.event.type === "turn-item.updated" &&
+                !claudePositions.has(stored.event.payload.id)
+              ) {
                 yield* sql`
                 INSERT INTO orchestration_v2_turn_item_positions (
                   thread_id,
@@ -165,6 +181,11 @@ export const layer: Layer.Layer<
             if (page.length < pageSize) break;
             yield* Effect.yieldNow;
           }
+          yield* Effect.forEach(claudeHistory, (history) =>
+            ProjectionStore.applyClaudeHistoryProjection(history).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+            ),
+          );
           const now = DateTime.formatIso(yield* DateTime.now);
           yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (

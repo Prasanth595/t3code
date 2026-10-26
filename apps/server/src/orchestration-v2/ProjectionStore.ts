@@ -1988,6 +1988,25 @@ function shellFromState(input: {
   };
 }
 
+export const applyClaudeHistoryProjection = Effect.fn("ProjectionStore.applyClaudeHistory")(
+  function* (history: import("./ClaudeSessionJournal.ts").ClaudeHistory) {
+    const sql = yield* SqlClient.SqlClient;
+    const removedItems = encodeIdList(history.removedTurnItemIds);
+    const removedMessages = encodeIdList(history.removedMessageIds);
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${history.threadId} AND turn_item_id IN (SELECT value FROM json_each(${removedItems}))`;
+    yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${history.threadId} AND message_id IN (SELECT value FROM json_each(${removedMessages}))`;
+    const positions = encodeIdList([
+      ...history.removedTurnItemIds,
+      ...history.items.map((item) => item.turnItemId),
+    ]);
+    yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${history.threadId} AND turn_item_id IN (SELECT value FROM json_each(${positions}))`;
+    for (const item of history.items) {
+      yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal) VALUES (${history.threadId}, ${item.turnItemId}, ${item.ordinal})`;
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET ordinal = ${item.ordinal}, payload_json = json_set(payload_json, '$.ordinal', ${item.ordinal}) WHERE thread_id = ${history.threadId} AND turn_item_id = ${item.turnItemId}`;
+    }
+  },
+);
+
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {

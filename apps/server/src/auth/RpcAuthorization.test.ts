@@ -14,6 +14,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  CLAUDE_SESSION_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,20 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("requires only orchestration read or operate for manual Claude lifecycle", () => {
+    expect(requiredScopeForRpcMethod(CLAUDE_SESSION_METHODS.adopt)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(CLAUDE_SESSION_METHODS.release)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(CLAUDE_SESSION_METHODS.refresh)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(CLAUDE_SESSION_METHODS.status)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

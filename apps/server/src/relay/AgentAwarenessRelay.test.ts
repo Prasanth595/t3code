@@ -182,6 +182,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
     releaseNativeSession: unused,
     refreshNativeSession: unused,
     nativeSessionStatus: unused,
+    adoptClaudeSession: unused,
+    refreshClaudeSession: unused,
+    releaseClaudeSession: unused,
+    claudeSessionStatus: unused,
     getThreadShell: (threadId) =>
       Effect.sync(() => shellReads.push(threadId)).pipe(
         Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),

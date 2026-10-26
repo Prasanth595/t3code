@@ -1,5 +1,8 @@
 import {
   CommandId,
+  type ClaudeSessionIdentityPlan,
+  type ClaudeSessionBlocker,
+  ProviderDriverKind,
   EventId,
   OrchestrationV2AppThread,
   type ProviderOptionSelections,
@@ -38,7 +41,14 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import { nativeCommandCategory } from "./NativeSessionPolicy.ts";
+import {
+  nativeCommandCategory,
+  nativeCommandOwners,
+  claudeThreadSettingsFit,
+} from "./NativeSessionPolicy.ts";
+import { deriveProviderThread } from "@t3tools/provider-core/server/IdAllocator";
+import { ClaudeEnrollment, ClaudeHistory, ClaudeOperation } from "./ClaudeSessionJournal.ts";
+import { canonicalClaudeJson } from "../claudeSessionSnapshot.ts";
 
 export const NativeCommandAdmission = Context.Reference<
   { readonly threadId: ThreadId; readonly epoch: number | null } | undefined
@@ -104,6 +114,18 @@ export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStre
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
+  readonly checkClaudeSessionTarget: (
+    plan: ClaudeSessionIdentityPlan,
+  ) => Effect.Effect<ClaudeSessionBlocker["code"] | null, EventSinkV2Error>;
+  readonly commitClaudeSession: (input: {
+    readonly expectedRevision: number | null;
+    readonly expectedSequence: number;
+    readonly expectedThread?: ThreadProjectionCommit["expected"];
+    readonly enrollment: ClaudeEnrollment;
+    readonly operation: ClaudeOperation;
+    readonly history?: ClaudeHistory;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<boolean, EventSinkV2Error>;
   readonly write: (input: {
     readonly threadCommit?: ThreadProjectionCommit;
     /** Return no events if another thread owns this native session at commit time. */
@@ -262,6 +284,101 @@ const layerBase: Layer.Layer<
       OrchestrationV2DomainEvent["type"],
       PubSub.PubSub<OrchestrationV2StoredEvent>
     >();
+    const claudeBindingOwned = Effect.fn("EventSink.claudeBindingOwned")(function* (
+      plan: ClaudeSessionIdentityPlan,
+    ) {
+      const providerId = deriveProviderThread({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: plan.providerInstanceId,
+        nativeThreadId: plan.nativeId,
+      });
+      const rows = yield* sql`
+        SELECT thread_id FROM orchestration_v2_projection_provider_threads
+        WHERE thread_id IS NOT ${plan.threadId} AND
+          (provider_thread_id = ${providerId} OR (driver = 'claudeAgent' AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${plan.nativeId}))
+        UNION ALL
+        SELECT thread_id FROM orchestration_v2_claude_sessions
+        WHERE thread_id <> ${plan.threadId} AND native_id = ${plan.nativeId}
+        UNION ALL
+        SELECT thread_id FROM orchestration_v2_native_sessions WHERE thread_id = ${plan.threadId}
+      `;
+      return rows.length > 0;
+    });
+    const claudeSessionWorkActive = Effect.fn("EventSink.claudeSessionWorkActive")(function* (
+      threadId: ThreadId,
+    ) {
+      const work = yield* sql`
+        SELECT effect_id FROM orchestration_v2_effect_outbox WHERE thread_id = ${threadId} AND status IN ('pending', 'running')
+        UNION ALL SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId} AND enabled = 1
+        UNION ALL SELECT write_id FROM orchestration_v2_claude_writes WHERE thread_id = ${threadId} AND state <> 'settled'
+        UNION ALL SELECT generation_id FROM orchestration_v2_claude_generations WHERE thread_id = ${threadId} AND state <> 'exited'
+      `.pipe(Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause })));
+      return work.length > 0;
+    });
+    const checkClaudeSessionTarget = Effect.fn("EventSink.checkClaudeSessionTarget")(function* (
+      plan: ClaudeSessionIdentityPlan,
+    ): Effect.fn.Return<ClaudeSessionBlocker["code"] | null, EventSinkV2Error> {
+      if (
+        yield* claudeBindingOwned(plan).pipe(
+          Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause })),
+        )
+      )
+        return "native-binding-owned";
+      const target = yield* projectionStore.getThreadProjection(plan.threadId).pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause })),
+      );
+      if (target !== null) {
+        if (target.thread.projectId !== plan.projectId) return "scope-mismatch";
+        if (
+          target.thread.activeProviderThreadId !== null ||
+          target.thread.deletedAt !== null ||
+          target.thread.archivedAt !== null ||
+          target.thread.forkedFrom !== null ||
+          target.messages.length > 0 ||
+          target.turnItems.length > 0 ||
+          target.runs.length > 0 ||
+          target.providerThreads.length > 0 ||
+          target.providerSessions.length > 0 ||
+          target.providerTurns.length > 0 ||
+          target.runtimeRequests.length > 0 ||
+          target.subagents.length > 0 ||
+          target.nodes.length > 0 ||
+          target.attempts.length > 0 ||
+          target.contextTransfers.length > 0 ||
+          target.contextHandoffs.length > 0 ||
+          target.plans.length > 0 ||
+          target.checkpoints.length > 0
+        )
+          return "target-not-empty";
+        if (!claudeThreadSettingsFit(plan, target.thread)) return "settings-changed";
+      }
+      return (yield* claudeSessionWorkActive(plan.threadId)) ? "managed-work-active" : null;
+    });
+    const claudeBindingEventsConflict = Effect.fn("EventSink.claudeBindingEventsConflict")(
+      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        for (const event of events) {
+          if (event.type === "thread.created") {
+            const reserved =
+              yield* sql`SELECT thread_id FROM orchestration_v2_claude_sessions WHERE thread_id = ${event.threadId}`;
+            if (reserved.length > 0) return true;
+          }
+          if (event.type !== "provider-thread.updated" || event.payload.driver !== "claudeAgent")
+            continue;
+          const provider = event.payload;
+          const owners = yield* sql`
+          SELECT thread_id FROM orchestration_v2_projection_provider_threads
+          WHERE thread_id IS NOT ${provider.appThreadId} AND
+            (provider_thread_id = ${provider.id} OR (driver = 'claudeAgent' AND provider_instance_id = ${provider.providerInstanceId} AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${provider.nativeThreadRef?.nativeId ?? null}))
+          UNION ALL SELECT thread_id FROM orchestration_v2_claude_sessions
+          WHERE (native_id = ${provider.nativeThreadRef?.nativeId ?? null} AND thread_id IS NOT ${provider.appThreadId})
+            OR (thread_id = ${provider.appThreadId} AND (native_id IS NOT ${provider.nativeThreadRef?.nativeId ?? null} OR json_extract(payload_json, '$.plan.providerInstanceId') IS NOT ${provider.providerInstanceId}))
+        `;
+          if (owners.length > 0) return true;
+        }
+        return false;
+      },
+    );
     const publishLiveEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2StoredEvent>) {
@@ -446,6 +563,8 @@ const layerBase: Layer.Layer<
 
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
+          if (yield* claudeBindingEventsConflict(input.events))
+            return { committed: [], outcomes: [] };
           const threadCommit = input.threadCommit;
           const threadEvents: Array<OrchestrationV2DomainEvent> = [];
           if (threadCommit !== undefined) {
@@ -735,17 +854,25 @@ const layerBase: Layer.Layer<
             input.threadId,
             ...(admission === undefined ? [] : [admission.threadId]),
           ];
-          const rows = yield* sql<{
-            thread_id: ThreadId;
-            controller: string;
-            epoch: number;
-          }>`SELECT thread_id, json_extract(payload_json, '$.controller.type') AS controller, json_extract(payload_json, '$.controller.epoch') AS epoch FROM orchestration_v2_native_sessions WHERE thread_id IN ${sql.in(nativeScopes)}`;
+          const owners = yield* nativeCommandOwners(nativeScopes).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          const rows = owners.map(({ record }) => ({
+            thread_id: record.threadId,
+            controller: record.controller.type,
+            epoch: record.controller.epoch,
+          }));
+          const bindingConflict = yield* claudeBindingEventsConflict(input.events);
           const selectedNative = rows.find((row) => row.thread_id === input.threadId);
-          if (rows.length > 0) {
+          if (rows.length > 0 || bindingConflict) {
             const current =
               selectedNative === undefined
                 ? undefined
-                : yield* projectionStore.getThread(input.threadId);
+                : yield* projectionStore.getThread(input.threadId).pipe(
+                    Effect.catchTags({
+                      ProjectionStoreThreadNotFoundError: () => Effect.succeed(undefined),
+                    }),
+                  );
             const workspaceChanged = input.events.some(
               (event) =>
                 current !== undefined &&
@@ -754,7 +881,27 @@ const layerBase: Layer.Layer<
                 event.payload.worktreePath !== current.worktreePath,
             );
             const category = nativeCommandCategory(input.commandType);
+            let claudePolicyChanged = false;
+            for (const owner of owners) {
+              if (owner.provider !== "claude" || category !== "controlled") continue;
+              const thread = yield* projectionStore.getThread(owner.record.threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(undefined),
+                }),
+              );
+              const pending =
+                yield* sql`SELECT write_id FROM orchestration_v2_claude_writes WHERE thread_id = ${owner.record.threadId} AND state <> 'settled' LIMIT 1`;
+              if (
+                thread === undefined ||
+                !claudeThreadSettingsFit(owner.record.plan, thread) ||
+                pending.length > 0
+              )
+                claudePolicyChanged = true;
+            }
             if (
+              bindingConflict ||
+              claudePolicyChanged ||
+              new Set(rows.map((row) => row.thread_id)).size !== rows.length ||
               category === "unsupported" ||
               category === "create" ||
               workspaceChanged ||
@@ -1015,7 +1162,89 @@ const layerBase: Layer.Layer<
       );
     };
 
+    const commitClaudeSession = Effect.fn("EventSink.commitClaudeSession")(
+      function* (input: Parameters<EventSinkV2Shape["commitClaudeSession"]>[0]) {
+        const result = yield* commitThenPublish(
+          Effect.gen(function* () {
+            const { enrollment, operation, history } = input;
+            const currentRows = yield* sql<{
+              revision: number;
+            }>`SELECT revision FROM orchestration_v2_claude_sessions WHERE thread_id = ${enrollment.threadId}`;
+            if (
+              (currentRows[0]?.revision ?? null) !== input.expectedRevision ||
+              enrollment.revision !== (input.expectedRevision ?? 0) + 1 ||
+              (yield* eventStore.latestSequence({ threadId: enrollment.threadId })) !==
+                input.expectedSequence
+            )
+              return { changed: false, committed: [], outcomes: [] };
+            if (input.expectedThread !== undefined) {
+              const current = yield* projectionStore.getThread(enrollment.threadId);
+              if (!sameThreadPolicy(current, input.expectedThread))
+                return { changed: false, committed: [], outcomes: [] };
+            }
+            if (yield* claudeBindingOwned(enrollment.plan))
+              return { changed: false, committed: [], outcomes: [] };
+            if (
+              operation.kind === "adopt" &&
+              enrollment.controller.epoch === 1 &&
+              (yield* checkClaudeSessionTarget(enrollment.plan)) !== null
+            )
+              return { changed: false, committed: [], outcomes: [] };
+            if (
+              operation.kind === "release" &&
+              enrollment.controller.type === "external" &&
+              (yield* claudeSessionWorkActive(enrollment.threadId))
+            )
+              return { changed: false, committed: [], outcomes: [] };
+            const operations = yield* sql<{
+              payload_hash: string;
+              completed: number;
+            }>`SELECT payload_hash, completed FROM orchestration_v2_claude_operations WHERE operation_id = ${operation.operationId} AND thread_id = ${enrollment.threadId}`;
+            if (
+              operations[0]?.payload_hash !== operation.requestDigest ||
+              operations[0]?.completed !== 0
+            )
+              return { changed: false, committed: [], outcomes: [] };
+            if (history !== undefined && history.threadId !== enrollment.threadId)
+              return { changed: false, committed: [], outcomes: [] };
+            const store = `${enrollment.plan.configDir.effectiveRoot.device}:${enrollment.plan.configDir.effectiveRoot.inode}`;
+            const transcript = `${enrollment.plan.transcript.device}:${enrollment.plan.transcript.inode}`;
+            const reserved =
+              yield* sql`INSERT INTO orchestration_v2_claude_sessions (thread_id, environment_id, physical_store, native_id, physical_transcript, revision, payload_json)
+            VALUES (${enrollment.threadId}, ${enrollment.environmentId}, ${store}, ${enrollment.plan.nativeId}, ${transcript}, ${enrollment.revision}, ${canonicalClaudeJson(enrollment)})
+            ON CONFLICT(thread_id) DO UPDATE SET revision = excluded.revision, payload_json = excluded.payload_json
+            WHERE physical_store = excluded.physical_store AND native_id = excluded.native_id AND physical_transcript = excluded.physical_transcript
+            RETURNING thread_id`;
+            if (reserved.length !== 1) return { changed: false, committed: [], outcomes: [] };
+            if (history !== undefined)
+              yield* ProjectionStore.applyClaudeHistoryProjection(history).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+            const committed = yield* eventStore.append({ events: input.events });
+            const outcomes = yield* applyStoredEvents(committed);
+            if (history !== undefined) {
+              yield* ProjectionStore.applyClaudeHistoryProjection(history).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+              const boundarySequence = committed.at(-1)?.sequence ?? input.expectedSequence;
+              yield* sql`INSERT INTO orchestration_v2_claude_history (thread_id, generation, boundary_sequence, payload_json)
+              VALUES (${history.threadId}, ${history.generation}, ${boundarySequence}, ${canonicalClaudeJson(history)})
+              ON CONFLICT(thread_id) DO UPDATE SET generation = excluded.generation, boundary_sequence = excluded.boundary_sequence, payload_json = excluded.payload_json`;
+            }
+            yield* sql`UPDATE orchestration_v2_claude_operations SET completed = ${operation.completed ? 1 : 0}, payload_json = ${canonicalClaudeJson(operation)} WHERE operation_id = ${operation.operationId} AND completed = 0`;
+            return { changed: true, committed, outcomes };
+          }),
+          ({ committed, outcomes }) => publishStoredEvents(committed, outcomes),
+        );
+        return result.changed;
+      },
+      (effect) =>
+        effect.pipe(Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause }))),
+    );
+
     return EventSinkV2.of({
+      checkClaudeSessionTarget,
+      commitClaudeSession,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
           Effect.mapError(

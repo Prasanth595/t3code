@@ -25,6 +25,7 @@ import type * as ServerConfig from "../config.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | SqlClient.SqlClient
+  | Layer.Services<typeof ProviderOrchestrationAdapterInfrastructure.layer>
   | Exclude<
       BuiltInDriversEnv,
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure

@@ -1,9 +1,17 @@
 import {
   NativeSessionSettings,
+  NativeSessionRecord,
+  type ClaudeSessionIdentityPlan,
+  type ModelSelection,
+  type OrchestrationV2AppThread,
+  type ThreadId,
   type OrchestrationV2ServerCommand,
   type NativeSessionOperation,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ClaudeEnrollment } from "./ClaudeSessionJournal.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -81,11 +89,16 @@ const commandCategories: ReadonlyMap<string, NativeCommandCategory> = new Map(
     "runtime-request.delivery.fail": "controlled",
     "thread.background-work.settle": "controlled",
     "secret_request.record": "independent",
+    "claudeSessions.adopt": "journal",
+    "claudeSessions.refresh": "journal",
+    "claudeSessions.release": "journal",
     "nativeSessions.adopt": "journal",
     "nativeSessions.release": "journal",
     "nativeSessions.refresh": "journal",
   } satisfies Record<
-    OrchestrationV2ServerCommand["type"] | `nativeSessions.${NativeSessionOperation["kind"]}`,
+    | OrchestrationV2ServerCommand["type"]
+    | `nativeSessions.${NativeSessionOperation["kind"]}`
+    | `claudeSessions.${NativeSessionOperation["kind"]}`,
     NativeCommandCategory
   >),
 );
@@ -135,3 +148,54 @@ export function nativePermissionsFit(
     (allowed.excludeTmpdirEnvVar !== true || native.excludeTmpdirEnvVar === true)
   );
 }
+
+const decodeCodexOwner = Schema.decodeEffect(Schema.fromJsonString(NativeSessionRecord));
+const decodeClaudeOwner = Schema.decodeEffect(Schema.fromJsonString(ClaudeEnrollment));
+
+export const nativeCommandOwners = Effect.fn("NativeSessionPolicy.owners")(function* (
+  threadIds: ReadonlyArray<ThreadId>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ provider: "codex" | "claude"; payload_json: string }>`
+    SELECT 'codex' AS provider, payload_json FROM orchestration_v2_native_sessions WHERE thread_id IN ${sql.in(threadIds)}
+    UNION ALL
+    SELECT 'claude' AS provider, payload_json FROM orchestration_v2_claude_sessions WHERE thread_id IN ${sql.in(threadIds)}
+  `;
+  return yield* Effect.forEach(rows, (row) =>
+    Effect.gen(function* () {
+      if (row.provider === "codex")
+        return {
+          provider: "codex" as const,
+          record: yield* decodeCodexOwner(row.payload_json),
+        };
+      return {
+        provider: "claude" as const,
+        record: yield* decodeClaudeOwner(row.payload_json),
+      };
+    }),
+  );
+});
+
+export const claudeModelSelectionFits = (
+  plan: ClaudeSessionIdentityPlan,
+  selection: ModelSelection,
+) =>
+  selection.instanceId === plan.providerInstanceId &&
+  selection.model === plan.selection.model &&
+  (selection.options ?? []).every(
+    (option) => option.id === "effort" && option.value === plan.selection.effort,
+  ) &&
+  (selection.options ?? []).length === (plan.selection.effort === undefined ? 0 : 1);
+
+export const claudeThreadSettingsFit = (
+  plan: ClaudeSessionIdentityPlan,
+  thread: OrchestrationV2AppThread,
+) =>
+  thread.projectId === plan.projectId &&
+  thread.providerInstanceId === plan.providerInstanceId &&
+  claudeModelSelectionFits(plan, thread.modelSelection) &&
+  thread.runtimeMode === plan.selection.runtimeMode &&
+  thread.interactionMode === "default" &&
+  (thread.worktreePath === null || thread.worktreePath === plan.cwd.path) &&
+  thread.archivedAt === null &&
+  thread.deletedAt === null;

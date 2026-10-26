@@ -1791,6 +1791,8 @@ function makeFakeClaudeCli(answerSetServers = true) {
     const child = Object.assign(new NodeEvents.EventEmitter(), {
       stdin,
       stdout,
+      // Synthetic process handle: all kill/exit behavior stays in this emitter.
+      pid: process.pid,
       killed: false,
       exitCode: null as number | null,
       kill: () => {
@@ -1833,12 +1835,13 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
     url: "http://127.0.0.1:43123/mcp",
     headers: { Authorization: "Bearer dummy-mcp-credential" },
   };
-  const openWith = (cli: ReturnType<typeof makeFakeClaudeCli>) =>
+  const openWith = (cli: ReturnType<typeof makeFakeClaudeCli>, managed = false) =>
     Effect.gen(function* () {
       const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
       return yield* runner.open({
         threadId: ThreadId.make("thread-claude-mcp-channel"),
         providerSessionId: ProviderSessionId.make("provider-session-claude-mcp-channel"),
+        ...(managed ? { managedHandoff: true as const } : {}),
         options: {
           ...ClaudeAdapterV2.makeClaudeQueryOptions({
             modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -1850,6 +1853,9 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
           }),
           pathToClaudeCodeExecutable: "/opt/claude/cli.js",
           spawnClaudeCodeProcess: cli.spawn,
+          ...(managed
+            ? { extraArgs: { "replay-user-messages": null }, supportedDialogKinds: [] }
+            : {}),
         },
       });
     }).pipe(
@@ -1875,6 +1881,38 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       assert.notInclude(spawned, "--mcp-config");
       assert.notInclude(spawned, "dummy-mcp-credential");
     }),
+  );
+
+  it.effect(
+    "captures the managed child identity and sends explicit acknowledgement arguments",
+    () =>
+      Effect.gen(function* () {
+        const cli = makeFakeClaudeCli();
+        yield* Effect.acquireUseRelease(
+          openWith(cli, true),
+          (session) =>
+            Effect.sync(() => {
+              const stat = NodeFS.readFileSync(`/proc/${process.pid}/stat`, "utf8");
+              assert.equal(session.managedProcess?.pid, process.pid);
+              assert.equal(
+                session.managedProcess?.start,
+                stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19],
+              );
+              assert.equal(
+                session.managedProcess?.boot,
+                NodeFS.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
+              );
+              assert.include(cli.spawns[0]?.args ?? [], "--replay-user-messages");
+              assert.deepInclude(
+                cli.controlRequests.find(
+                  (request) => Reflect.get(request, "subtype") === "initialize",
+                ),
+                { supportedDialogKinds: [] },
+              );
+            }),
+          (session) => session.close,
+        );
+      }),
   );
 });
 
@@ -2423,6 +2461,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect(
+    "resumes a native-authoritative binding with no T3 turns on first input and after adapter restart",
+    () =>
+      Effect.gen(function* () {
+        const nativeSessionId = "00000000-0000-4000-8000-000000000701";
+        let savedBinding: OrchestrationV2ProviderThread | undefined;
+        for (const phase of ["first-input", "adapter-restart"]) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({ nativeSessionId });
+              savedBinding ??= {
+                ...harness.providerThread,
+                nativeMetadata: { historyAuthority: "native", controllerEpoch: 1 },
+              };
+              assert.isNull(savedBinding.firstRunOrdinal);
+              assert.isNull(savedBinding.lastRunOrdinal);
+              assert.isNull(savedBinding.nativeConversationHeadRef);
+              assert.lengthOf(harness.processQueues, 0);
+              assert.deepEqual(harness.offeredMessages, []);
+
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: savedBinding,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make(`attempt-native-authority-${phase}`),
+                  text: "Continue the saved conversation.",
+                  attachments: [],
+                  modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, options: [] },
+                  providerTurnOrdinal: 1,
+                  nativeThreadHasTurns: false,
+                }),
+              );
+
+              const options = harness.getOpenedOptions();
+              assert.equal(options?.resume, nativeSessionId);
+              assert.notProperty(options, "sessionId");
+              assert.notProperty(options, "resumeSessionAt");
+              assert.lengthOf(harness.processQueues, 1);
+              assert.lengthOf(harness.offeredMessages, 1);
+              assert.equal(
+                harness.offeredMessages[0]?.message.content,
+                "Continue the saved conversation.",
+              );
+            }),
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("allocates a new strong UUID session without native history authority", () =>
+    Effect.gen(function* () {
+      const nativeSessionId = "00000000-0000-4000-8000-000000000702";
+      const harness = yield* makeWakeHarnessWithOptions({ nativeSessionId });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-new-strong-uuid"),
+          text: "Start a conversation.",
+          attachments: [],
+          nativeThreadHasTurns: false,
+        }),
+      );
+      const options = harness.getOpenedOptions();
+      assert.equal(options?.sessionId, nativeSessionId);
+      assert.notProperty(options, "resume");
+      assert.notProperty(options, "resumeSessionAt");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>

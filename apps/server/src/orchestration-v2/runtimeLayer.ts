@@ -1,4 +1,13 @@
 import * as NativeSessionService from "./NativeSessionService.ts";
+import * as ClaudeSessionLifecycle from "./ClaudeSessionLifecycle.ts";
+import * as ClaudeSessionHost from "./ClaudeSessionHost.ts";
+import * as ClaudeSessionJournal from "./ClaudeSessionJournal.ts";
+import * as ClaudeSessionOwnership from "./ClaudeSessionOwnership.ts";
+import * as ClaudeSessionRuntime from "./ClaudeSessionRuntime.ts";
+import * as ClaudeSessionFence from "./ClaudeSessionFence.ts";
+import * as ProviderOrchestrationAdapterInfrastructure from "../provider/ProviderOrchestrationAdapterInfrastructure.ts";
+import * as ServerConfig from "../config.ts";
+import * as Effect from "effect/Effect";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -241,6 +250,37 @@ const layerNativeSessionProvided = NativeSessionService.layer.pipe(
   ),
 );
 
+const layerClaudeHost = ClaudeSessionHost.layer.pipe(
+  Layer.provide(ProviderOrchestrationAdapterInfrastructure.layerClaudeIdentity),
+);
+const layerClaudeLifecycleRuntime = ClaudeSessionRuntime.layerLifecycleRuntime.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProviderOrchestrationAdapterInfrastructure.layerClaudeRuntime,
+      layerProviderSessionManagerProvided,
+    ),
+  ),
+);
+const layerClaudeOwnership = Layer.unwrap(
+  Effect.gen(function* () {
+    return ClaudeSessionOwnership.layer((yield* ServerConfig.ServerConfig).dbPath);
+  }),
+);
+const layerClaudeSessionProvided = ClaudeSessionLifecycle.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerClaudeHost,
+      layerClaudeLifecycleRuntime,
+      layerClaudeOwnership,
+      ClaudeSessionJournal.layer,
+      ClaudeSessionFence.layer.pipe(Layer.provide(ClaudeSessionJournal.layer)),
+      layerEventSinkProvided,
+      layerStores,
+      IdAllocator.layer,
+    ),
+  ),
+);
+
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -377,6 +417,7 @@ export const layerProduction = Layer.mergeAll(
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(
+  Layer.provide(layerClaudeSessionProvided),
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
   Layer.provide(Scheduler.layer),
   Layer.provideMerge(layerEventInfrastructure),

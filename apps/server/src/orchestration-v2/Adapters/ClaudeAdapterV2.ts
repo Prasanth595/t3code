@@ -51,6 +51,8 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- capture the just-spawned child before the event loop can reap its PID.
+import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -64,6 +66,8 @@ import {
 } from "@t3tools/shared/claudeCompaction";
 import {
   type ChatAttachment,
+  type MessageId,
+  ClaudeSessionProcess,
   ClaudeSettings,
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
@@ -493,13 +497,21 @@ export type ClaudeAgentSdkQueryOptions = Omit<
 
 export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
+  readonly controllerEpoch?: number;
+  readonly managedHandoff?: true;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
 
 export interface ClaudeAgentSdkQuerySession {
+  readonly managedProcess?: ClaudeSessionProcess & {
+    readonly exited: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  };
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
-  readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly offer: (
+    message: SDKUserMessage,
+    messageId?: MessageId,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,
@@ -914,6 +926,7 @@ export const layerQueryRunner: Layer.Layer<
         // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
         const binaryPath = queryOptions.pathToClaudeCodeExecutable;
         const launch =
+          input.managedHandoff === true ||
           binaryPath === undefined ||
           CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
             ? undefined
@@ -936,12 +949,57 @@ export const layerQueryRunner: Layer.Layer<
         const stopScope =
           unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
         // Windows has no process groups, so there the SDK spawns the CLI itself.
+        let managedProcess: ClaudeAgentSdkQuerySession["managedProcess"];
+        const spawnManaged = (spawnOptions: ClaudeSpawnOptions): ClaudeSpawnedProcess => {
+          if (platform !== "linux" || managedProcess !== undefined)
+            throw queryRunnerError("Unsupported managed spawn", "spawn");
+          const child =
+            options.spawnClaudeCodeProcess?.(spawnOptions) ??
+            NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
+              cwd: spawnOptions.cwd,
+              env: spawnOptions.env,
+              signal: spawnOptions.signal,
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+          if (!("pid" in child) || typeof child.pid !== "number")
+            throw queryRunnerError("Missing managed child identity", "spawn");
+          const exit = new Promise<void>((resolve, reject) => {
+            child.once("exit", () => resolve());
+            child.once("error", reject);
+          });
+          // Retain the exit independently of SDK close and stdout EOF.
+          void exit.catch(() => undefined);
+          try {
+            // Synchronous /proc reads precede any event-loop yield or child reap.
+            // Capturing after MCP initialization could mistake a reused PID for this child.
+            const stat = NodeFS.readFileSync(`/proc/${child.pid}/stat`, "utf8");
+            const identity = Schema.decodeUnknownSync(ClaudeSessionProcess)({
+              pid: child.pid,
+              start: stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19],
+              boot: NodeFS.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
+            });
+            managedProcess = {
+              ...identity,
+              exited: Effect.tryPromise({
+                try: () => exit,
+                catch: (cause) => queryRunnerError(cause, "processExit"),
+              }),
+            };
+          } catch (cause) {
+            // The SDK has not received this exact child handle yet; no group cleanup.
+            child.kill("SIGTERM");
+            throw queryRunnerError(cause, "spawnIdentity");
+          }
+          return child;
+        };
         const spawnClaudeCodeProcess =
-          options.spawnClaudeCodeProcess ??
-          (platform === "win32"
-            ? undefined
-            : (spawnOptions: ClaudeSpawnOptions) =>
-                spawnClaudeProcessGroup(spawnOptions, stopScope));
+          input.managedHandoff === true
+            ? spawnManaged
+            : (options.spawnClaudeCodeProcess ??
+              (platform === "win32"
+                ? undefined
+                : (spawnOptions: ClaudeSpawnOptions) =>
+                    spawnClaudeProcessGroup(spawnOptions, stopScope)));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
@@ -1004,6 +1062,7 @@ export const layerQueryRunner: Layer.Layer<
         );
 
         return {
+          ...(managedProcess === undefined ? {} : { managedProcess }),
           messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
           ).pipe(
@@ -1499,6 +1558,10 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_pending_request_list",
   "mcp__t3-code__t3_pending_request_read",
   "mcp__t3-code__t3_thread_configuration",
+  "mcp__t3-code__t3_claude_session_refresh",
+  "mcp__t3-code__t3_claude_session_status",
+  "mcp__t3-code__t3_native_session_refresh",
+  "mcp__t3-code__t3_native_session_status",
   "mcp__t3-code__t3_thread_transfers",
   "mcp__t3-code__t3_worktree_status",
   "mcp__t3-code__t3_worktree_list",
@@ -9333,7 +9396,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            resumeSessionAt !== undefined ||
+            openedWithResume ||
+            hasPersistedProviderTurn ||
+            turnInput.providerThread.nativeMetadata?.historyAuthority === "native";
           const toolSearchOverride = yield* resolveToolSearchOverride(turnInput.runtimePolicy.cwd);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
@@ -9373,6 +9439,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
+              ...(turnInput.providerThread.nativeMetadata?.controllerEpoch === undefined
+                ? {}
+                : { controllerEpoch: turnInput.providerThread.nativeMetadata.controllerEpoch }),
               options: queryOptions,
             })
             .pipe(
@@ -9642,7 +9711,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
-              yield* querySession.query.offer(userMessage);
+              yield* querySession.query.offer(userMessage, turnInput.message.messageId);
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -9958,6 +10027,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
+              uuid: yield* crypto.randomUUIDv4().pipe(Effect.filterOrFail(isClaudePromptUuid)),
               attachmentsDir,
               fileSystem,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
@@ -9980,7 +10050,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            yield* existing.query.offer(userMessage, turnInput.message.messageId);
           },
           (effect, turnInput) =>
             effect.pipe(

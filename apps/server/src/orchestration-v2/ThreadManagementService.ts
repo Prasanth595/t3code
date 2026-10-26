@@ -1,3 +1,4 @@
+import * as ClaudeSessionLifecycle from "./ClaudeSessionLifecycle.ts";
 import { NativeSessionError } from "@t3tools/contracts";
 import * as EventSink from "./EventSink.ts";
 import * as NativeSessionService from "./NativeSessionService.ts";
@@ -335,6 +336,10 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly adoptClaudeSession: ClaudeSessionLifecycle.ClaudeSessionLifecycle["Service"]["adopt"];
+  readonly refreshClaudeSession: ClaudeSessionLifecycle.ClaudeSessionLifecycle["Service"]["refresh"];
+  readonly releaseClaudeSession: ClaudeSessionLifecycle.ClaudeSessionLifecycle["Service"]["release"];
+  readonly claudeSessionStatus: ClaudeSessionLifecycle.ClaudeSessionLifecycle["Service"]["status"];
   readonly adoptNativeSession: NativeSessionService.NativeSessionService["Service"]["adopt"];
   readonly releaseNativeSession: NativeSessionService.NativeSessionService["Service"]["release"];
   readonly refreshNativeSession: NativeSessionService.NativeSessionService["Service"]["refresh"];
@@ -536,6 +541,27 @@ function latestSteerableRun(
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
+  const claudeSessions = yield* Effect.serviceOption(ClaudeSessionLifecycle.ClaudeSessionLifecycle);
+  const claudeUnsupported = (
+    input: import("@t3tools/contracts").ClaudeSessionStatusInput,
+  ): import("@t3tools/contracts").ClaudeSessionResult => ({
+    contractVersion: 1,
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+    threadId: input.threadId,
+    provider: "claude",
+    operationId: input.operationId ?? null,
+    state: "blocked",
+    view: null,
+    reservation: null,
+    blockers: [
+      {
+        code: "contract-unsupported",
+        detail: "Claude handoff is unavailable in this runtime.",
+        nextAction: "unsupported",
+      },
+    ],
+  });
   const nativeSessions = yield* Effect.serviceOption(NativeSessionService.NativeSessionService);
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1226,6 +1252,22 @@ const make = Effect.gen(function* () {
   });
 
   return ThreadManagementService.of({
+    adoptClaudeSession: (input) =>
+      Option.isSome(claudeSessions)
+        ? claudeSessions.value.adopt(input)
+        : Effect.succeed(claudeUnsupported(input)),
+    refreshClaudeSession: (input) =>
+      Option.isSome(claudeSessions)
+        ? claudeSessions.value.refresh(input)
+        : Effect.succeed(claudeUnsupported(input)),
+    releaseClaudeSession: (input) =>
+      Option.isSome(claudeSessions)
+        ? claudeSessions.value.release(input)
+        : Effect.succeed(claudeUnsupported(input)),
+    claudeSessionStatus: (input) =>
+      Option.isSome(claudeSessions)
+        ? claudeSessions.value.status(input)
+        : Effect.succeed(claudeUnsupported(input)),
     adoptNativeSession: (input) =>
       Option.isSome(nativeSessions)
         ? nativeSessions.value.adopt(input)

@@ -1,9 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import claudeFixture from "../../orchestration-v2/testkit/claudeSessionContract.fixture.json" with { type: "json" };
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   NativeSessionError,
+  ClaudeSessionResult,
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
@@ -64,6 +66,47 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
+
+it.effect(
+  "reads a manual Claude enrollment through the production MCP handler without loading a target thread",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const fixture = yield* Schema.decodeUnknownEffect(ClaudeSessionResult)(claudeFixture);
+      const response = yield* server
+        .callTool({
+          name: "t3_claude_session_status",
+          arguments: {
+            contractVersion: 1,
+            environmentId: fixture.environmentId,
+            projectId: fixture.projectId,
+            threadId: fixture.threadId,
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(response.isError).toBe(false);
+      expect(response.structuredContent).toEqual({ ...fixture, operationId: null });
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              claudeSessionStatus: () =>
+                Schema.decodeUnknownEffect(ClaudeSessionResult)({
+                  ...claudeFixture,
+                  operationId: null,
+                }).pipe(Effect.orDie),
+            }),
+          ),
+        ),
+      ),
+    ),
+);
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);

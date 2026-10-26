@@ -1,3 +1,4 @@
+import { CLAUDE_SESSION_METHODS } from "./claudeSessions.ts";
 import { NATIVE_SESSION_METHODS } from "./nativeSessions.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
@@ -15,6 +16,10 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [CLAUDE_SESSION_METHODS.adopt]: AuthOrchestrationOperateScope,
+  [CLAUDE_SESSION_METHODS.release]: AuthOrchestrationOperateScope,
+  [CLAUDE_SESSION_METHODS.refresh]: AuthOrchestrationReadScope,
+  [CLAUDE_SESSION_METHODS.status]: AuthOrchestrationReadScope,
   [NATIVE_SESSION_METHODS.adopt]: AuthOrchestrationOperateScope,
   [NATIVE_SESSION_METHODS.release]: AuthOrchestrationOperateScope,
   [NATIVE_SESSION_METHODS.refresh]: AuthOrchestrationReadScope,

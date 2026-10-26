@@ -1,3 +1,5 @@
+import { CLAUDE_SESSION_METHODS } from "@t3tools/contracts";
+import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import { NATIVE_SESSION_METHODS } from "@t3tools/contracts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -798,6 +800,20 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       dedupeBodies ? Stream.suspend(() => Stream.map(stream, makeLiveBodyDeduper())) : stream;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
 
+    let nativeHistoryGeneration = 0;
+    const historyGenerationOf = (event: OrchestrationV2StoredEvent["event"]): number => {
+      if (
+        event.type !== "provider-thread.updated" ||
+        event.payload.driver !== "claudeAgent" ||
+        event.payload.nativeMetadata?.historyAuthority !== "native"
+      )
+        return 0;
+      const generation = event.payload.nativeMetadata.historyGeneration;
+      return typeof generation === "number" && Number.isSafeInteger(generation) && generation > 0
+        ? generation
+        : 0;
+    };
+
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
@@ -812,8 +828,9 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       ),
     );
 
-    const eventStreamFrom = (afterSequence: number) =>
-      threadManagement
+    const eventStreamFrom = (afterSequence: number) => {
+      let deliveredThrough = afterSequence;
+      return threadManagement
         .streamStoredEventsFrom({
           threadId: input.threadId,
           afterSequence,
@@ -825,6 +842,31 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             event: projectDomainEventForWire(stored.event),
           })),
           coalesceThreadLiveStream,
+          Stream.mapEffect(
+            (
+              item,
+            ): Effect.Effect<
+              ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+              OrchestrationV2GetThreadProjectionError
+            > => {
+              if (item.kind === "event" && item.sequence <= deliveredThrough)
+                return Effect.succeed([]);
+              if (
+                item.kind === "event" &&
+                historyGenerationOf(item.event) > nativeHistoryGeneration
+              ) {
+                return loadSnapshotItem().pipe(
+                  Effect.map((snapshot) => {
+                    deliveredThrough = snapshot.snapshotSequence;
+                    return [snapshot];
+                  }),
+                );
+              }
+              if (item.kind === "event") deliveredThrough = item.sequence;
+              return Effect.succeed([item]);
+            },
+          ),
+          Stream.flatMap(Stream.fromIterable),
           Stream.mapError(
             (cause) =>
               new OrchestrationV2GetThreadProjectionError({
@@ -834,6 +876,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               }),
           ),
         );
+    };
 
     const loadReplayThrough = (afterSequence: number, throughSequence: number) =>
       applicationEvents
@@ -868,7 +911,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ? Stream.make({ kind: "synchronized" as const })
         : Stream.empty;
 
-    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
+    const loadSnapshotItem = Effect.fn("ws.orchestrationV2.loadThreadSnapshotItem")(function* () {
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
       const snapshot = yield* (
         useBoundedSnapshot
@@ -888,6 +931,18 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ),
       );
       const { snapshotSequence } = snapshot;
+      nativeHistoryGeneration = Math.max(
+        0,
+        ...snapshot.projection.providerThreads.map((provider) => {
+          const generation = provider.nativeMetadata?.historyGeneration;
+          return provider.driver === "claudeAgent" &&
+            provider.nativeMetadata?.historyAuthority === "native" &&
+            typeof generation === "number" &&
+            Number.isSafeInteger(generation)
+            ? generation
+            : 0;
+        }),
+      );
       const snapshotItem = useBoundedSnapshot
         ? buildBoundedThreadStreamSnapshot({
             ...snapshot,
@@ -903,10 +958,15 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               projection: dedupeBodies ? dedupeSnapshotBodies(projection) : projection,
             };
           })();
+      return snapshotItem;
+    });
+
+    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
+      const snapshotItem = yield* loadSnapshotItem();
       return withLiveDedupe(
         Stream.concat(
           Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
-          eventStreamFrom(snapshotSequence),
+          eventStreamFrom(snapshotItem.snapshotSequence),
         ),
       );
     });
@@ -965,6 +1025,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         if (shell !== null) return yield* snapshotThenLive();
       }
       const replay = yield* loadReplayThrough(input.afterSequence, highWater);
+      if (replay.some((item) => historyGenerationOf(item.event) > 0))
+        return yield* snapshotThenLive();
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
@@ -1945,6 +2007,12 @@ export const layerWsRpc = (
                 ),
             ),
           ),
+        [CLAUDE_SESSION_METHODS.adopt]: ({ input }) => threadManagement.adoptClaudeSession(input),
+        [CLAUDE_SESSION_METHODS.refresh]: ({ input }) =>
+          threadManagement.refreshClaudeSession(input),
+        [CLAUDE_SESSION_METHODS.release]: ({ input }) =>
+          threadManagement.releaseClaudeSession(input),
+        [CLAUDE_SESSION_METHODS.status]: ({ input }) => threadManagement.claudeSessionStatus(input),
         [NATIVE_SESSION_METHODS.adopt]: (input) => threadManagement.adoptNativeSession(input),
         [NATIVE_SESSION_METHODS.release]: (input) => threadManagement.releaseNativeSession(input),
         [NATIVE_SESSION_METHODS.refresh]: (input) => threadManagement.refreshNativeSession(input),

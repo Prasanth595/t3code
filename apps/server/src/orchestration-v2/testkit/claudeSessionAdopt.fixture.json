@@ -1,0 +1,42 @@
+{
+  "input": {
+    "contractVersion": 1,
+    "environmentId": "environment-fixture",
+    "projectId": "project-fixture",
+    "threadId": "10000000-0000-4000-8000-000000000001",
+    "operationId": "10000000-0000-4000-8000-000000000003",
+    "expectedEpoch": null,
+    "providerInstanceId": "claude-fixture",
+    "nativeId": "10000000-0000-4000-8000-000000000002",
+    "selection": {
+      "profile": "manual-selected-v1",
+      "model": "claude-sonnet-4-6",
+      "runtimeMode": "approval-required",
+      "effort": "high"
+    },
+    "sourceStopped": {
+      "kind": "operator-stopped",
+      "terminal": {
+        "boot": "10000000-0000-4000-8000-000000000009",
+        "socket": {
+          "device": "8",
+          "inode": "100"
+        },
+        "workspaceId": "workspace-fixture",
+        "tabId": "tab-fixture",
+        "paneId": "pane-fixture",
+        "terminalId": "terminal-fixture",
+        "pty": {
+          "device": "136",
+          "inode": "4"
+        },
+        "shell": {
+          "pid": 424242,
+          "start": "123456",
+          "boot": "10000000-0000-4000-8000-000000000009"
+        }
+      },
+      "knownPreviousProcess": null
+    }
+  }
+}

@@ -3645,3 +3645,93 @@ it.effect(
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );
+
+it.effect("requires a positive finalized scope receipt when a released session is absent", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const threadId = ThreadId.make("settled-receipt-thread");
+      const providerSessionId = ProviderSessionId.make("settled-receipt-session");
+      const release = {
+        providerSessionId,
+        reason: "manual_shutdown" as const,
+        requireSettled: true,
+      };
+      assert.equal((yield* manager.release(release).pipe(Effect.result))._tag, "Failure");
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator: allocator,
+            threadId,
+            now: yield* DateTime.now,
+          }),
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* manager.release(release);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      yield* manager.release(release);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("preserves retained scopes when opening an enrolled Claude conversation", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    let cleared = 0;
+    const agentScope = {
+      ...AgentScope.defaultValue(),
+      clear: () =>
+        Effect.sync(() => {
+          cleared++;
+        }),
+    };
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("managed-claude-scope");
+      const providerSessionId = ProviderSessionId.make("managed-claude-session");
+      const providerThread = makeProviderThread({
+        idAllocator: allocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId, now }),
+          {
+            id: yield* allocator.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...providerThread,
+              driver: ProviderDriverKind.make("claudeAgent"),
+              nativeMetadata: { historyAuthority: "native", controllerEpoch: 1 },
+            },
+          },
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal(cleared, 0);
+      yield* TestClock.adjust("2 seconds");
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      yield* manager.release({
+        providerSessionId,
+        reason: "manual_shutdown",
+        requireSettled: true,
+      });
+      assert.equal(cleared, 0);
+    }).pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })),
+      Effect.provideService(AgentScope, agentScope),
+    );
+  }),
+);

@@ -1,0 +1,101 @@
+{
+  "contractVersion": 1,
+  "environmentId": "environment-fixture",
+  "projectId": "project-fixture",
+  "threadId": "10000000-0000-4000-8000-000000000001",
+  "provider": "claude",
+  "operationId": "10000000-0000-4000-8000-000000000003",
+  "state": "ready",
+  "view": {
+    "plan": {
+      "planVersion": 1,
+      "environmentId": "environment-fixture",
+      "projectId": "project-fixture",
+      "threadId": "10000000-0000-4000-8000-000000000001",
+      "providerInstanceId": "claude-fixture",
+      "nativeId": "10000000-0000-4000-8000-000000000002",
+      "home": {
+        "path": "/private/fixture/home",
+        "device": "8",
+        "inode": "1"
+      },
+      "configDir": {
+        "kind": "unset",
+        "effectiveRoot": {
+          "path": "/private/fixture/home/.claude",
+          "device": "8",
+          "inode": "2"
+        }
+      },
+      "projectsRoot": {
+        "path": "/private/fixture/home/.claude/projects",
+        "device": "8",
+        "inode": "3"
+      },
+      "transcript": {
+        "path": "/private/fixture/home/.claude/projects/-repo/10000000-0000-4000-8000-000000000002.jsonl",
+        "device": "8",
+        "inode": "4"
+      },
+      "cwd": {
+        "path": "/repo",
+        "device": "8",
+        "inode": "5"
+      },
+      "executable": {
+        "file": {
+          "path": "/private/fixture/claude",
+          "device": "8",
+          "inode": "6"
+        },
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "selection": {
+        "profile": "manual-selected-v1",
+        "model": "claude-sonnet-4-6",
+        "runtimeMode": "approval-required",
+        "effort": "high"
+      },
+      "sdkPermissionMode": "default",
+      "configurationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "herdrLaunch": {
+        "executable": "/private/fixture/claude",
+        "args": [
+          "--resume",
+          "10000000-0000-4000-8000-000000000002",
+          "--model",
+          "claude-sonnet-4-6",
+          "--permission-mode",
+          "default",
+          "--effort",
+          "high"
+        ],
+        "cwd": "/repo",
+        "environment": {
+          "HOME": "/private/fixture/home",
+          "CLAUDE_CONFIG_DIR": null
+        }
+      },
+      "planDigest": "4ae5037dc3e42b65d6846eab898d3d7813b24e6c230eec09597e5f87173338fe"
+    },
+    "controller": {
+      "type": "t3",
+      "epoch": 1
+    },
+    "history": {
+      "authority": "native",
+      "scope": "root-active-chain",
+      "generation": 1,
+      "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "runtime": {
+      "kind": "not-started",
+      "nativeIdentity": "not-observed"
+    },
+    "settingsBasis": "selected-destination",
+    "writerScope": "participating-clients",
+    "unmanagedWriterExclusion": "not-proved"
+  },
+  "reservation": null,
+  "blockers": []
+}

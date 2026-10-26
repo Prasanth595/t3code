@@ -25,13 +25,21 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as NativeSessionStore from "./NativeSessionStore.ts";
-import { nativeCommandCategory, nativePermissionsFit } from "./NativeSessionPolicy.ts";
+import {
+  nativeCommandCategory,
+  nativePermissionsFit,
+  nativeCommandOwners,
+  claudeModelSelectionFits,
+  claudeThreadSettingsFit,
+} from "./NativeSessionPolicy.ts";
+import { claudeRuntimeQueryPolicyForRuntimePolicy } from "./Adapters/ClaudeAdapterV2.ts";
 import { makeNativeWritePolicy, NativeSessionWriteContext } from "./NativeSessionProtocol.ts";
 import { openCheckedNativeTransport } from "./NativeSessionTransport.ts";
 import { readNativeHistory } from "./NativeSessionHistory.ts";
@@ -102,6 +110,7 @@ export const layer = Layer.effect(
   NativeSessionService,
   Effect.gen(function* () {
     const store = yield* NativeSessionStore.NativeSessionStore;
+    const sql = yield* SqlClient.SqlClient;
     const operations = yield* KeyedLock.make<NativeSessionRecord["threadId"]>();
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -1149,6 +1158,25 @@ export const layer = Layer.effect(
     ) {
       if (command.type === "thread.create") {
         if (command.importedNativeThread) {
+          if (command.importedNativeThread.ref.driver === "claudeAgent") {
+            const owners = yield* sql<{
+              thread_id: NativeSessionRecord["threadId"];
+            }>`SELECT thread_id FROM orchestration_v2_claude_sessions WHERE native_id = ${command.importedNativeThread.ref.nativeId} OR thread_id = ${command.threadId} LIMIT 1`.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new NativeSessionError({
+                    code: "persistence",
+                    threadId: command.threadId,
+                    cause,
+                  }),
+              ),
+            );
+            if (owners[0] !== undefined)
+              return yield* new NativeSessionError({
+                code: "native-binding-owned",
+                threadId: owners[0].thread_id,
+              });
+          }
           const owner = yield* store.byNativeId(command.importedNativeThread.ref.nativeId);
           if (Option.isSome(owner))
             return yield* new NativeSessionError({
@@ -1164,11 +1192,77 @@ export const layer = Layer.effect(
           : "sourceThreadId" in command
             ? command.sourceThreadId
             : command.parentThreadId;
-      const saved = yield* store.get(threadId);
-      if (Option.isNone(saved)) return { threadId, epoch: null };
+      const owners = yield* nativeCommandOwners([threadId]).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.mapError(
+          (cause) => new NativeSessionError({ code: "persistence", threadId, cause }),
+        ),
+      );
+      if (owners.length > 1)
+        return yield* new NativeSessionError({ code: "native-binding-owned", threadId });
+      const owner = owners[0];
+      if (owner === undefined) return { threadId, epoch: null };
       const category = nativeCommandCategory(command.type);
       if (category === "independent") return;
-      const native = saved.value;
+      if (owner.provider === "claude") {
+        const native = owner.record;
+        if (native.controller.type !== "t3")
+          return yield* new NativeSessionError({ code: "controller-unavailable", threadId });
+        if (category === "unsupported")
+          return yield* new NativeSessionError({ code: "adopted-operation-unsupported", threadId });
+        const thread = yield* projections
+          .getThread(threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new NativeSessionError({ code: "thread-not-found", threadId, cause }),
+            ),
+          );
+        const selection =
+          "modelSelection" in command && command.modelSelection !== undefined
+            ? command.modelSelection
+            : thread.modelSelection;
+        const policy = yield* policies.resolve({ thread, modelSelection: selection }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new NativeSessionError({
+                code: "adopted-settings-change-unsupported",
+                threadId,
+                cause,
+              }),
+          ),
+        );
+        if (
+          !claudeThreadSettingsFit(native.plan, thread) ||
+          !claudeModelSelectionFits(native.plan, selection) ||
+          ("runtimeMode" in command &&
+            command.runtimeMode !== undefined &&
+            command.runtimeMode !== native.plan.selection.runtimeMode) ||
+          ("interactionMode" in command &&
+            command.interactionMode !== undefined &&
+            command.interactionMode !== "default") ||
+          policy.cwd !== native.plan.cwd.path ||
+          policy.runtimeMode !== native.plan.selection.runtimeMode ||
+          policy.interactionMode !== "default" ||
+          policy.sandboxPolicy !== undefined ||
+          policy.reasoningEffort !== undefined ||
+          claudeRuntimeQueryPolicyForRuntimePolicy(policy).permissionMode !==
+            native.plan.sdkPermissionMode
+        )
+          return yield* new NativeSessionError({
+            code: "adopted-settings-change-unsupported",
+            threadId,
+          });
+        const unsettled =
+          yield* sql`SELECT write_id FROM orchestration_v2_claude_writes WHERE thread_id = ${threadId} AND state <> 'settled' LIMIT 1`.pipe(
+            Effect.mapError(
+              (cause) => new NativeSessionError({ code: "persistence", threadId, cause }),
+            ),
+          );
+        if (unsettled.length > 0)
+          return yield* new NativeSessionError({ code: "unknown-delivery", threadId });
+        return { threadId, epoch: native.controller.epoch };
+      }
+      const native = owner.record;
       if (
         "modelSelection" in command &&
         command.modelSelection !== undefined &&

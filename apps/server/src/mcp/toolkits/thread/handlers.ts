@@ -1,3 +1,4 @@
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -94,6 +95,26 @@ const nativeFailure = (error: unknown) =>
     : unavailable();
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_claude_session_adopt: writesThread((input) =>
+    Effect.flatMap(ThreadManagementService.ThreadManagementService, (threads) =>
+      threads.adoptClaudeSession(input),
+    ),
+  ),
+  t3_claude_session_refresh: McpToolAccess.reads((input) =>
+    Effect.flatMap(ThreadManagementService.ThreadManagementService, (threads) =>
+      threads.refreshClaudeSession(input),
+    ),
+  ),
+  t3_claude_session_release: writesThread((input) =>
+    Effect.flatMap(ThreadManagementService.ThreadManagementService, (threads) =>
+      threads.releaseClaudeSession(input),
+    ),
+  ),
+  t3_claude_session_status: McpToolAccess.reads((input) =>
+    Effect.flatMap(ThreadManagementService.ThreadManagementService, (threads) =>
+      threads.claudeSessionStatus(input),
+    ),
+  ),
   t3_native_session_adopt: writesThread((input) =>
     readThread(input.threadId).pipe(
       Effect.flatMap(({ threads }) => threads.adoptNativeSession(input)),

@@ -70,3 +70,4 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./nativeSessions.ts";
+export * from "./claudeSessions.ts";
