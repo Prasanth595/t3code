@@ -243,6 +243,26 @@ describe("preview guest input", () => {
       expect(host.hostWebContents.executeJavaScript).not.toHaveBeenCalled();
       expect(host.activeElement()).toBe(host.webview);
     });
+
+    it("keeps the originally focused guest when overlapping clicks return to it", async () => {
+      const host = makeHost();
+      host.webview.focus();
+      const guest = makeGuest({ host });
+      const other = makeGuest({ host, webview: host.makeElement("webview", GUEST_ID + 1) });
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      other.sendCommand.mockImplementationOnce(async () => {
+        started.resolve();
+        await finish.promise;
+        return { result: {} };
+      });
+      const clicking = other.send("Input.dispatchMouseEvent", press);
+      await started.promise;
+      await guest.send("Input.dispatchMouseEvent", press);
+      finish.resolve();
+      await clicking;
+      expect(host.activeElement()).toBe(host.webview);
+    });
   });
 });
 

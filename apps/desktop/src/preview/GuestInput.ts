@@ -99,6 +99,7 @@ const restoreHostFocusScript = (guests: Set<number>) =>
   `(() => {
     const previous = globalThis[${HELD_FOCUS}]; delete globalThis[${HELD_FOCUS}];
     const current = document.activeElement;
+    if (previous === current) return;
     if (current?.localName !== "webview" || !${JSON.stringify([...guests])}.includes(current.getWebContentsId())) return;
     if (previous && previous !== current && previous.isConnected) previous.focus({ preventScroll: true });
     if (document.activeElement === current) current.blur();
