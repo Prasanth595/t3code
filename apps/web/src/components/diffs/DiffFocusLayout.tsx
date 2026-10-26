@@ -258,7 +258,7 @@ export function DiffFocusFileList({
               role="option"
               aria-selected={selected}
               className={cn(
-                "flex h-6 cursor-default items-center gap-2 rounded-md px-2 text-xs [contain-intrinsic-size:auto_1.5rem] [content-visibility:auto]",
+                "flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-xs [contain-intrinsic-size:auto_2rem] [content-visibility:auto]",
                 selected
                   ? "bg-foreground/12 group-focus/list:bg-primary/20"
                   : "hover:bg-foreground/7",
