@@ -517,7 +517,11 @@ it.layer(layerTest)("CodexDriver", (it) => {
           instanceId: ProviderInstanceId.make("codex-native-channel"),
           displayName: "Codex channel test",
           enabled: false,
-          environment: [],
+          environment: Object.entries(fixture.env ?? {}).map(([name, value]) => ({
+            name,
+            value,
+            sensitive: false,
+          })),
           config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: home },
         }).pipe(Effect.provideService(HttpClient.HttpClient, http));
         const capabilities = yield* instance.snapshot.resolveMaintenance();
@@ -547,7 +551,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.provideService(HostProcess.Environment, fixture.env ?? {}),
+        Effect.provideService(HostProcess.Environment, {}),
         Effect.scoped,
       ),
     );

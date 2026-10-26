@@ -3,7 +3,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -117,13 +116,16 @@ const lookupCodexNativeVersion = Effect.gen(function* () {
   const hasLegacyPackage = assets.has(`codex-npm-${platform}-${architecture}-${version}.tgz`);
   return hasPackage || hasLegacyPackage ? version : null;
 }).pipe(
-  Effect.timeoutOption("4 seconds"),
-  Effect.map(Option.getOrNull),
+  Effect.timeout("4 seconds"),
   Effect.orElseSucceed(() => null),
 );
 
 /** `codex update` owns the shared home's standalone tree; auth-overlay homes do not carry it. */
-function makeCodexMaintenanceResolver(sharedHomePath: string, http: HttpClient.HttpClient) {
+function makeCodexMaintenanceResolver(
+  sharedHomePath: string,
+  http: HttpClient.HttpClient,
+  env: NodeJS.ProcessEnv,
+) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
@@ -134,6 +136,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string, http: HttpClient.H
       env: { CODEX_HOME: sharedHomePath },
       lookupLatestVersion: lookupCodexNativeVersion.pipe(
         Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(HostProcess.Environment, env),
       ),
     },
   });
@@ -224,7 +227,7 @@ export const CodexDriver: ProviderDriver<
     } satisfies CodexSettings;
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(
-        makeCodexMaintenanceResolver(homeLayout.sharedHomePath, httpClient),
+        makeCodexMaintenanceResolver(homeLayout.sharedHomePath, httpClient, processEnv),
         {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,
