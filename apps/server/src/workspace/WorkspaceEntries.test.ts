@@ -202,13 +202,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         // Shaped like a pnpm `node_modules`: one link per package into `.pnpm`.
+        const directoryPath = [...Array.from({ length: 80 }, () => "nested"), "node_modules"].join(
+          "/",
+        );
         const packages = Array.from({ length: 200 }, (_, index) => `pkg-${index}`);
         yield* Effect.forEach(
           packages,
           (name) =>
             Effect.gen(function* () {
-              yield* writeTextFile(cwd, `node_modules/.pnpm/${name}/index.js`);
-              yield* fileSystem.symlink(`.pnpm/${name}`, path.join(cwd, "node_modules", name));
+              yield* writeTextFile(cwd, `${directoryPath}/.pnpm/${name}/index.js`);
+              yield* fileSystem.symlink(`.pnpm/${name}`, path.join(cwd, directoryPath, name));
             }),
           { concurrency: 32, discard: true },
         );
@@ -225,9 +228,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }) as typeof NodeFSP.realpath);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath: "node_modules" });
+        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
         expect(entries.map((entry) => entry.path).toSorted()).toEqual(
-          ["node_modules/.pnpm", ...packages.map((name) => `node_modules/${name}`)].toSorted(),
+          [
+            `${directoryPath}/.pnpm`,
+            ...packages.map((name) => `${directoryPath}/${name}`),
+          ].toSorted(),
         );
         expect(entries.every((entry) => entry.kind === "directory")).toBe(true);
         expect(maxInFlight).toBeLessThanOrEqual(64);

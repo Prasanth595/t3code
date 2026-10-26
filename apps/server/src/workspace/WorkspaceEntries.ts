@@ -332,14 +332,15 @@ export const make = Effect.gen(function* () {
             // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
             let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
             const loadVisitedFolders = () =>
-              (visitedFolders ??= Promise.all(
-                target.relativePath
-                  .split("/")
-                  .filter((segment) => segment !== "")
-                  .map((_, index, segments) =>
-                    NodeFSP.realpath(path.join(normalizedCwd, ...segments.slice(0, index + 1))),
-                  ),
-              ).then((folders) => [root, ...folders]));
+              (visitedFolders ??= (async () => {
+                const folders = [root];
+                let current = normalizedCwd;
+                for (const segment of target.relativePath.split("/").filter(Boolean)) {
+                  current = path.join(current, segment);
+                  folders.push(await NodeFSP.realpath(current));
+                }
+                return folders;
+              })());
             const resolveSymlinkKind = async (
               name: string,
             ): Promise<ProjectEntry["kind"] | undefined> => {
