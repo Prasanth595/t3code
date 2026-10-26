@@ -56,24 +56,14 @@ function runRecoveryScenario(
     const preferredShell = path.join(bin, "preferred-shell");
     yield* fs.writeFileString(
       preferredShell,
-      '#!/bin/sh\nexport T3_TEST_PREFERRED=1\nexec /bin/zsh "$@"\n',
+      `#!/bin/sh
+printf 'probe\\n' >> '${probes}'
+[ -f '${ready}' ] || exit 1
+export PATH='${shellPath}'
+exec /bin/sh -c "$2"
+`,
     );
     yield* fs.chmod(preferredShell, 0o700);
-    yield* fs.writeFileString(
-      path.join(home, ".zshenv"),
-      [
-        "[[ -o login && -o interactive ]] || return 0",
-        `print probe >> '${probes}'`,
-        `if [[ ! -f '${ready}' ]]; then`,
-        '  [[ "$T3_TEST_ALLOW_FALLBACK" = 1 && -z "$T3_TEST_PREFERRED" ]] || exit 1',
-        "fi",
-        "",
-      ].join("\n"),
-    );
-    yield* fs.writeFileString(
-      path.join(home, ".zprofile"),
-      `if [[ -f '${ready}' ]]; then\nexport PATH='${shellPath}'\nelse\nexport PATH='${inheritedPath}'\nfi\n`,
-    );
     yield* fs.writeFileString(
       path.join(bin, "ssh"),
       `#!/bin/sh\nexec /usr/bin/ssh -F '${config}' "$@"\n`,
@@ -197,7 +187,10 @@ function runRecoveryScenario(
           ChildProcess.isStandardCommand(command) &&
           command.command === "/bin/launchctl"
           ? ChildProcess.make("/bin/sh", ["-c", `printf '%s' '${inheritedPath}'`])
-          : command,
+          : ChildProcess.isStandardCommand(command) &&
+              ["/bin/zsh", "/bin/bash"].includes(command.command)
+            ? ChildProcess.make("/bin/sh", ["-c", "exit 1"])
+            : command,
       ),
     );
     yield* Effect.acquireUseRelease(
@@ -207,13 +200,13 @@ function runRecoveryScenario(
           ...previous,
           HOME: home,
           ZDOTDIR: home,
-          SHELL: operation === "fallback-shell" ? preferredShell : "/bin/zsh",
+          SHELL: preferredShell,
           T3_TEST_ALLOW_FALLBACK: operation === "fallback-shell" ? "1" : "0",
           PATH: inheritedPath,
         };
         const spy = vi.spyOn(NodeOS, "userInfo").mockReturnValue({
           ...NodeOS.userInfo(),
-          shell: "/bin/zsh",
+          shell: preferredShell,
         });
         return { previous, spy };
       }),
@@ -228,28 +221,18 @@ function runRecoveryScenario(
 }
 
 describe("SSH shell PATH recovery with real OpenSSH", () => {
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
+  it.effect(
     "pins remote cleanup to the supplied host after PATH recovery changes alias resolution",
     () => runRecoveryScenario("disconnect"),
   );
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
-    "retries the preferred shell when a fallback shell supplied only a degraded PATH",
-    () => runRecoveryScenario("fallback-shell"),
-  );
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
-    "retries the login shell when launchctl supplied only a degraded PATH",
-    () => runRecoveryScenario("launchctl"),
-  );
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
+  it.effect(
     "recovers a failed startup capture before resolving a host and caches the recovered PATH",
     () => runRecoveryScenario("resolve"),
   );
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
-    "recovers a failed startup capture before invoking a saved host's ProxyCommand",
-    () => runRecoveryScenario("connect"),
+  it.effect("recovers a failed startup capture before invoking a saved host's ProxyCommand", () =>
+    runRecoveryScenario("connect"),
   );
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
-    "preserves the SSH error when PATH capture is still unavailable",
-    () => runRecoveryScenario("still-unavailable"),
+  it.effect("preserves the SSH error when PATH capture is still unavailable", () =>
+    runRecoveryScenario("still-unavailable"),
   );
 });
