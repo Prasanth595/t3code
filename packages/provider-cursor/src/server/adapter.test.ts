@@ -97,6 +97,24 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      name: "keeps valid counts when another turn reports invalid counts",
+      usage: [
+        { inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 50 },
+        { inputTokens: NaN, outputTokens: Infinity, cacheReadTokens: -10, cacheWriteTokens: 0 },
+      ],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 100,
+        cachedInputTokens: 60,
+        cacheCreationTokens: 40,
+        outputTokens: 20,
+        hasSubagents: false,
+      },
+    },
+    {
       name: "marks missing usage unavailable",
       usage: [],
       status: "finished" as const,
@@ -170,24 +188,15 @@ describe("CursorAdapterV2", () => {
                   return {
                     agentId: "native-cursor-usage",
                     runId: "native-cursor-run",
-                    wait:
-                      status === "cancelled"
-                        ? Deferred.await(cancelled).pipe(
-                            Effect.as({
-                              id: "native-cursor-run",
-                              requestId: "native-request",
-                              status,
-                              model: { id: "composer-2.5" },
-                              durationMs: 1,
-                            }),
-                          )
-                        : Effect.succeed({
-                            id: "native-cursor-run",
-                            requestId: "native-request",
-                            status,
-                            model: { id: "composer-2.5" },
-                            durationMs: 1,
-                          }),
+                    wait: (status === "cancelled" ? Deferred.await(cancelled) : Effect.void).pipe(
+                      Effect.as({
+                        id: "native-cursor-run",
+                        requestId: "native-request",
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                    ),
                     cancel: Deferred.succeed(cancelled, undefined),
                   };
                 }),

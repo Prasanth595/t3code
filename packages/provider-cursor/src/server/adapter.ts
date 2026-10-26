@@ -1980,12 +1980,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               const reasoningTokens =
                 added.reasoningTokens === undefined && usage?.reasoningTokens === undefined
                   ? undefined
-                  : (usage?.reasoningTokens ?? 0) + (added.reasoningTokens ?? 0);
+                  : (usage?.reasoningTokens ?? 0) + tokenCount(added.reasoningTokens);
               context.usage = {
-                inputTokens: (usage?.inputTokens ?? 0) + added.inputTokens,
-                outputTokens: (usage?.outputTokens ?? 0) + added.outputTokens,
-                cacheReadTokens: (usage?.cacheReadTokens ?? 0) + added.cacheReadTokens,
-                cacheWriteTokens: (usage?.cacheWriteTokens ?? 0) + added.cacheWriteTokens,
+                inputTokens: (usage?.inputTokens ?? 0) + tokenCount(added.inputTokens),
+                outputTokens: (usage?.outputTokens ?? 0) + tokenCount(added.outputTokens),
+                cacheReadTokens: (usage?.cacheReadTokens ?? 0) + tokenCount(added.cacheReadTokens),
+                cacheWriteTokens:
+                  (usage?.cacheWriteTokens ?? 0) + tokenCount(added.cacheWriteTokens),
                 ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
               };
               return;
@@ -2052,8 +2053,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               hasSubagents,
             };
           }
-          // Cursor's inputTokens already includes cache reads and writes: every SDK run matched
-          // to its dashboard event had inputTokens = uncached + cacheRead + cacheWrite.
+          // Cursor input tokens already include cache reads and writes.
           const inputTokens = tokenCount(context.usage.inputTokens);
           const cachedInputTokens = Math.min(
             tokenCount(context.usage.cacheReadTokens),
