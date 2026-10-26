@@ -241,33 +241,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const setHostStatus = (
     hostId: DeviceHostId,
     status: DeviceServiceState["hostStatuses"][string],
+    expectedHost?: DeviceHost.DeviceHost["Service"],
   ) =>
     Effect.suspend(() =>
       !hosts.has(hostId)
         ? SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state))
-        : publish((state) => ({
-            ...state,
-            ...(hostId === LOCAL_DEVICE_HOST_ID
-              ? { hostStatus: status.status, hostStatusDetail: status.detail }
-              : {}),
-            hostStatuses: {
-              ...state.hostStatuses,
-              [hostId]: {
-                ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
-                  ? { androidDiscoveryIncomplete: true }
-                  : {}),
-                ...status,
-              },
-            },
-          })),
+        : publish((state) =>
+            expectedHost && hosts.get(hostId) !== expectedHost
+              ? state
+              : {
+                  ...state,
+                  ...(hostId === LOCAL_DEVICE_HOST_ID
+                    ? { hostStatus: status.status, hostStatusDetail: status.detail }
+                    : {}),
+                  hostStatuses: {
+                    ...state.hostStatuses,
+                    [hostId]: {
+                      ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
+                        ? { androidDiscoveryIncomplete: true }
+                        : {}),
+                      ...status,
+                    },
+                  },
+                },
+          ),
     );
 
-  // A host can take minutes to start (an SSH host may be installing its hub),
-  // so starting runs outside the lifecycle lock; each host serializes its own
-  // starts and stops. Turning device support or agent access off can land
-  // before a start takes its host's lock, so however the start ends, an
-  // unwanted one stops again under the lock and drops the statuses it
-  // published after configure cleared them.
+  // Host startup can take minutes; only revocation cleanup holds the shared lock.
   const stopIfRevoked =
     (host: DeviceHost.DeviceHost["Service"], agent: boolean) =>
     <A, E>(start: Effect.Effect<A, E>) =>
@@ -277,6 +277,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             .withPermit(
               Effect.gen(function* () {
                 const current = yield* readDeviceSettings;
+                if (hosts.get(host.id) !== host) {
+                  yield* host.stop;
+                  return;
+                }
                 if (current.enabled && (!agent || current.agentAccessEnabled)) return;
                 yield* current.enabled ? host.stopAgent : host.stop;
                 yield* publish((state) => ({
@@ -297,7 +301,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       );
 
-  // Whether a start that just ended is still wanted; a replaced host fails it.
   const confirmStarted = Effect.fn("DeviceService.confirmStarted")(function* (
     host: DeviceHost.DeviceHost["Service"],
     agent: boolean,
@@ -326,17 +329,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }
       const ready = yield* host
         .ensureReady((status, detail) =>
-          setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
+          setHostStatus(host.id, { status, detail }, host).pipe(Effect.asVoid),
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail:
-                error._tag === "DeviceHostError" && error.step === "probe"
-                  ? sshProbeFailureMessage(error)
-                  : error.message,
-            }),
+            setHostStatus(
+              host.id,
+              {
+                status: "failed",
+                detail:
+                  error._tag === "DeviceHostError" && error.step === "probe"
+                    ? sshProbeFailureMessage(error)
+                    : error.message,
+              },
+              host,
+            ),
           ),
           Effect.mapError(
             (error) =>
@@ -393,17 +400,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         return null;
       const ready = yield* host
         .ensureAgentReady((phase, detail) =>
-          setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+          setHostStatus(host.id, { status: phase, detail }, host).pipe(Effect.asVoid),
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail:
-                error._tag === "DeviceHostError" && error.step === "probe"
-                  ? sshProbeFailureMessage(error)
-                  : error.message,
-            }),
+            setHostStatus(
+              host.id,
+              {
+                status: "failed",
+                detail:
+                  error._tag === "DeviceHostError" && error.step === "probe"
+                    ? sshProbeFailureMessage(error)
+                    : error.message,
+              },
+              host,
+            ),
           ),
           Effect.mapError(
             (error) =>
@@ -504,9 +515,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   // Checked under the lock configure publishes under, so a failure that ends
   // after device support was turned off cannot mark the setting back on.
   const publishStartFailure = Effect.fn("DeviceService.publishStartFailure")(
-    function* (hostId: DeviceHostId, error: DeviceError) {
-      if (!(yield* readDeviceSettings).enabled) return;
-      yield* setHostStatus(hostId, {
+    function* (host: DeviceHost.DeviceHost["Service"], error: DeviceError) {
+      if (hosts.get(host.id) !== host || !(yield* readDeviceSettings).enabled) return;
+      yield* setHostStatus(host.id, {
         status: "failed",
         detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
       });
@@ -524,7 +535,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         Effect.gen(function* () {
           const ready = yield* readinessIfSupported(host.id);
           if (ready) yield* refresh(ready);
-        }).pipe(Effect.catch((error) => publishStartFailure(host.id, error))),
+        }).pipe(Effect.catch((error) => publishStartFailure(host, error))),
       { concurrency: 4 },
     );
     return (yield* SynchronizedRef.get(stateRef)).state;
@@ -564,13 +575,23 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const retryHost: DeviceService["Service"]["retryHost"] = Effect.fn("DeviceService.retryHost")(
     function* (hostId) {
-      yield* resolveHost(hostId);
+      const host = yield* resolveHost(hostId);
       if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
       yield* Effect.gen(function* () {
         const ready =
-          (yield* agentReadinessIfSupported(hostId)) ?? (yield* readinessIfSupported(hostId));
+          (yield* agentReadinessIfSupported(hostId).pipe(
+            Effect.catch((error) =>
+              readDeviceSettings.pipe(
+                Effect.flatMap((current) =>
+                  current.enabled && current.agentAccessEnabled
+                    ? Effect.fail(error)
+                    : Effect.succeed(null),
+                ),
+              ),
+            ),
+          )) ?? (yield* readinessIfSupported(hostId));
         if (ready) yield* refresh(ready);
-      }).pipe(Effect.catch((error) => publishStartFailure(hostId, error)));
+      }).pipe(Effect.catch((error) => publishStartFailure(host, error)));
       return (yield* SynchronizedRef.get(stateRef)).state;
     },
   );
@@ -1133,9 +1154,13 @@ export const make = Effect.gen(function* () {
                 ),
               ),
             (status, detail) =>
-              service
-                .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })
-                .pipe(Effect.asVoid),
+              Effect.suspend(() =>
+                configured.get(host.id)?.scope === hostScope
+                  ? service
+                      .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })
+                      .pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
           ).pipe(Effect.provideService(Scope.Scope, hostScope), Effect.provide(hostContext));
           hosts.set(host.id, instance);
           configured.set(host.id, { config: host, scope: hostScope });

@@ -150,71 +150,24 @@ it.effect("keeps hosts independent when serials collide and another host fails",
 
 it.effect("starts other hosts while one host is still starting", () =>
   Effect.gen(function* () {
-    const slowStarted = yield* Deferred.make<void>();
-    const finishSlow = yield* Deferred.make<void>();
-    const stops: string[] = [];
-    const host = (id: string, start: Effect.Effect<void>): DeviceHost.DeviceHost["Service"] => {
-      const run = () => Effect.succeed({ stdout: "", stderr: "", code: 0 });
-      const ready: DeviceHost.DeviceHostAgentReady = {
-        nodePath: process.execPath,
-        hub: { origin: `http://${id}` },
-        devices: makeDeviceHubOperations({
-          hostId: id,
-          origin: `http://${id}`,
-          http: HttpClient.make(() => Effect.die("unused")),
-          run,
-          androidAvailable: Effect.succeed(false),
-        }),
-        agentDevice: null,
-        run,
-        helpers: { serveSimAxSettings: null, serveSimCli: null },
-      };
-      return {
-        id,
-        label: id,
-        summary: Effect.succeed({
-          id,
-          label: id,
-          kind: "ssh",
-          hubInstalled: true,
-          agentDeviceInstalled: true,
-          platforms: [],
-        }),
-        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
-        ensureReady: () => start.pipe(Effect.as(ready)),
-        ensureAgentReady: () => start.pipe(Effect.as(ready)),
-        current: Effect.succeed(null),
-        stopAgent: Effect.void,
-        stop: Effect.sync(() => {
-          stops.push(id);
-        }),
-      };
-    };
-    const hosts = new Map([
-      [
-        "slow",
-        host(
-          "slow",
-          Deferred.succeed(slowStarted, undefined).pipe(Effect.andThen(Deferred.await(finishSlow))),
-        ),
-      ],
-      ["fast", host("fast", Effect.void)],
-    ]);
+    const slowHost = yield* pausedHost("ensureReady", "slow");
+    const fastHost = yield* pausedHost("ensureAgentReady", "fast");
+    const hosts = new Map([slowHost.host, fastHost.host].map((host) => [host.id, host]));
     const service = yield* DeviceService.makeWithHosts(hosts).pipe(
       Effect.provide(NodeCrypto.layer),
     );
     const slow = yield* service.readiness("slow").pipe(Effect.flip, Effect.forkChild);
-    yield* Deferred.await(slowStarted);
+    yield* Deferred.await(slowHost.started);
     expect((yield* service.readiness("fast")).hostId).toBe("fast");
     expect((yield* service.state).hostStatuses.fast?.status).toBe("ready");
-    // Turning device support off while a host starts stops that host once it is up.
     yield* service.configure({ enabled: false });
-    yield* Deferred.succeed(finishSlow, undefined);
+    yield* Deferred.succeed(slowHost.finish, undefined);
     const error = yield* Fiber.join(slow);
     expect(error._tag === "DeviceHostUnavailableError" && error.reason).toBe(
       "Device support was turned off while the host was starting.",
     );
-    expect(stops).toEqual(["slow", "fast", "slow"]);
+    expect(slowHost.calls).toEqual(["stop", "stop"]);
+    expect(fastHost.calls).toEqual(["stop"]);
     expect((yield* service.state).hostStatuses).toEqual({});
   }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
@@ -307,8 +260,10 @@ it.effect("stops a start that fails after device support was turned off before i
   ),
 );
 
-// A local host whose `pausing` start waits until the test lets it finish.
-const pausedLocalHost = (pausing: "ensureReady" | "ensureAgentReady") =>
+const pausedHost = (
+  pausing: "ensureReady" | "ensureAgentReady",
+  id: string = LOCAL_DEVICE_HOST_ID,
+) =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
@@ -316,10 +271,10 @@ const pausedLocalHost = (pausing: "ensureReady" | "ensureAgentReady") =>
     const run = () => Effect.succeed({ stdout: "", stderr: "", code: 0 });
     const ready: DeviceHost.DeviceHostAgentReady = {
       nodePath: process.execPath,
-      hub: { origin: "http://local" },
+      hub: { origin: `http://${id}` },
       devices: makeDeviceHubOperations({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        origin: "http://local",
+        hostId: id,
+        origin: `http://${id}`,
         http: HttpClient.make((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(request, Response.json({ simulators: [], emulators: [] })),
@@ -340,12 +295,12 @@ const pausedLocalHost = (pausing: "ensureReady" | "ensureAgentReady") =>
           )
         : Effect.succeed(ready);
     const host: DeviceHost.DeviceHost["Service"] = {
-      id: LOCAL_DEVICE_HOST_ID,
+      id,
       label: "Local",
       summary: Effect.succeed({
-        id: LOCAL_DEVICE_HOST_ID,
+        id,
         label: "Local",
-        kind: "local",
+        kind: id === LOCAL_DEVICE_HOST_ID ? "local" : "ssh",
         hubInstalled: true,
         agentDeviceInstalled: true,
         platforms: [{ platform: "android", available: true }],
@@ -366,7 +321,7 @@ const pausedLocalHost = (pausing: "ensureReady" | "ensureAgentReady") =>
 
 it.effect("stays disabled when device support is turned off while listing starts a host", () =>
   Effect.gen(function* () {
-    const { host, started, finish, calls } = yield* pausedLocalHost("ensureReady");
+    const { host, started, finish, calls } = yield* pausedHost("ensureReady");
     const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
       Effect.provide(NodeCrypto.layer),
     );
@@ -384,7 +339,7 @@ it.effect("stays disabled when device support is turned off while listing starts
 
 it.effect("retries without agent tools when agent access is turned off while they start", () =>
   Effect.gen(function* () {
-    const { host, started, finish, calls } = yield* pausedLocalHost("ensureAgentReady");
+    const { host, started, finish, calls } = yield* pausedHost("ensureAgentReady");
     const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
       Effect.provide(NodeCrypto.layer),
     );
@@ -396,6 +351,79 @@ it.effect("retries without agent tools when agent access is turned off while the
     expect(calls).toEqual(["stopAgent", "stopAgent"]);
     expect(state.agentAccessEnabled).toBe(false);
     expect(state.hostStatus).toBe("ready");
+  }).pipe(
+    Effect.provide(
+      ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+  ),
+);
+
+it.effect("keeps the replacement ready when an old host finishes starting", () =>
+  Effect.gen(function* () {
+    for (const fail of [false, true]) {
+      const { host, started, finish, calls } = yield* pausedHost("ensureReady");
+      const pendingHost: DeviceHost.DeviceHost["Service"] = {
+        ...host,
+        ensureReady: (onPhase) =>
+          host.ensureReady(onPhase).pipe(
+            Effect.tap(() => onPhase("starting")),
+            Effect.filterOrFail(
+              () => !fail,
+              () =>
+                new DeviceHost.DeviceHostError({
+                  hostId: host.id,
+                  step: "start",
+                  cause: "offline",
+                }),
+            ),
+          ),
+      };
+      const hosts = new Map([[host.id, pendingHost]]);
+      const service = yield* DeviceService.makeWithHosts(hosts).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+      const listing = yield* service.list.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      hosts.set(host.id, { ...host });
+      yield* service.setHostStatus(host.id, { status: "ready" });
+      yield* Deferred.succeed(finish, undefined);
+      const state = yield* Fiber.join(listing);
+      expect(calls).toEqual(["stop"]);
+      expect(state.hostStatuses[host.id]?.status).toBe("ready");
+    }
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect("retries the hub when revoked agent startup fails", () =>
+  Effect.gen(function* () {
+    const { host, started, finish } = yield* pausedHost("ensureAgentReady");
+    const failingHost = {
+      ...host,
+      ensureAgentReady: () =>
+        host
+          .ensureAgentReady(() => Effect.void)
+          .pipe(
+            Effect.andThen(
+              Effect.fail(
+                new DeviceHost.DeviceHostError({
+                  hostId: host.id,
+                  step: "agent",
+                  cause: "offline",
+                }),
+              ),
+            ),
+          ),
+    };
+    const service = yield* DeviceService.makeWithHosts(new Map([[host.id, failingHost]])).pipe(
+      Effect.provide(NodeCrypto.layer),
+    );
+    const retrying = yield* service.retryHost(host.id).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* service.configure({ agentAccessEnabled: false });
+    yield* Deferred.succeed(finish, undefined);
+    const state = yield* Fiber.join(retrying);
+    expect(state.agentAccessEnabled).toBe(false);
+    expect(state.hostStatuses[host.id]?.status).toBe("ready");
   }).pipe(
     Effect.provide(
       ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
