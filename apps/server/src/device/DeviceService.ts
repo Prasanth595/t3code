@@ -774,8 +774,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
       ),
     }));
-    // Discovery can stall while an emulator saves its snapshot. A failed
-    // refresh must not turn an accepted shutdown into an action failure.
+    // Snapshot saves can stall discovery; refresh failure must not fail an accepted shutdown.
     yield* refresh(ready).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
@@ -870,8 +869,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   return {
     ...DeviceService.of({
       testHost,
-      updateTool: (tool) =>
-        lifecycleLock.withPermit(
+      updateTool: Effect.fn("DeviceService.updateTool")(function (tool) {
+        return lifecycleLock.withPermit(
           Effect.gen(function* () {
             if (!installTool)
               return yield* new DeviceOperationError({
@@ -882,15 +881,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             yield* installTool(tool);
             return yield* inspect;
           }),
-        ),
+        );
+      }),
       retryHost,
       inspect,
-      easAccount: () =>
-        Effect.fail(
+      easAccount: Effect.fn("DeviceService.easAccount")(function () {
+        return Effect.fail(
           new DeviceEasAccountError({
             reason: "EAS accounts are unavailable in this device service.",
           }),
-        ),
+        );
+      }),
       agentCli: Effect.fail(
         new DeviceHostUnavailableError({
           hostId: LOCAL_DEVICE_HOST_ID,
@@ -978,7 +979,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 });
 
 /** @public */
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
   const config = yield* ServerConfig.ServerConfig;
@@ -1225,8 +1226,7 @@ export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalD
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(
     Effect.gen(function* () {
-      // Subscribe before reading the snapshot so no change between the two
-      // is lost; the scope lives as long as the stream does.
+      // Subscribe before reading so no change is lost.
       const subscription = yield* service.subscribe;
       const initial = yield* service.state;
       return Stream.concat(Stream.make(initial), Stream.fromSubscription(subscription));
