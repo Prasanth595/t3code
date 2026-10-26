@@ -44,6 +44,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
   applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
@@ -322,7 +323,7 @@ export function EnvironmentSubagentAvatar({
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const entries = (providers: ReadonlyArray<ServerProvider> | null | undefined) => {
     const derived = deriveProviderInstanceEntries(providers ?? []);
-    return settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+    return settings ? brandProviderInstanceEntries(derived, settings) : derived;
   };
   const displayName = useAtomValue(
     providersAtom,
