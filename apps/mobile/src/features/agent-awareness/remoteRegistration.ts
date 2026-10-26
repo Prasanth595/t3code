@@ -547,9 +547,9 @@ function publishReconciledWidget(): void {
   if (!relayTokenProvider) return;
   if (relayWidgetSnapshot === null && observedWidgetActivities.size === 0) return;
   const result = reconcileWidgetActivity(observedWidgetActivities, relayWidgetSnapshot);
-  const confirmations = [...observedWidgetActivities.keys()].map(
-    (id) => widgetShellConfirmedAt.get(id) ?? 0,
-  );
+  const confirmations = [...observedWidgetActivities.entries()]
+    .filter(([, rows]) => rows.length > 0)
+    .map(([id]) => widgetShellConfirmedAt.get(id) ?? 0);
   if (
     relayWidgetConfirmedAt !== null &&
     (relayWidgetSnapshot?.aggregate?.activities.length ?? 0) > 0

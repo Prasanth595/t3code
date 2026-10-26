@@ -58,6 +58,8 @@ function shell(
 ): EnvironmentShellState {
   return {
     status,
+    generation: 0,
+    removedAt: new Map(),
     error: Option.none(),
     snapshot: Option.some({
       projects: [project],
