@@ -446,4 +446,29 @@ describe("server browser capture", () => {
       vi.useRealTimers();
     }
   });
+
+  it("lets only one waiting capture send once the unanswered one settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstAnswer = Promise.withResolvers<{ data: string }>();
+      const send = vi
+        .fn()
+        .mockReturnValueOnce(firstAnswer.promise)
+        .mockReturnValue(new Promise(() => {}));
+      const cdp = { send } as unknown as CDPSession;
+      const captures = [1, 2, 3].map(() =>
+        ServerBrowserPage.captureViewport(cdp, { format: "jpeg" }).catch(() => null),
+      );
+
+      firstAnswer.resolve({ data: "first" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await Promise.all(captures);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

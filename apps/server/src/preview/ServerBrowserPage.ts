@@ -466,8 +466,14 @@ export const captureViewport = async (
     timer = setTimeout(() => reject(noFrame()), CAPTURE_TIMEOUT_MS);
   });
   try {
-    const unanswered = unansweredCaptures.get(cdp);
-    if (unanswered) await Promise.race([unanswered, expired]);
+    // Callers waiting on the same capture wake together; only the first may send.
+    for (
+      let unanswered = unansweredCaptures.get(cdp);
+      unanswered;
+      unanswered = unansweredCaptures.get(cdp)
+    ) {
+      await Promise.race([unanswered, expired]);
+    }
     const captured = cdp.send("Page.captureScreenshot", {
       format: options.format,
       ...(options.quality === undefined ? {} : { quality: options.quality }),
