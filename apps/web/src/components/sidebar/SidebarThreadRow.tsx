@@ -510,6 +510,40 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
+export const SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR =
+  "button:not([data-sidebar-row-primary]), a, input";
+
+// Visible row content covers the primary button, so presses must transfer focus.
+export function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
+  if (!event.currentTarget.contains(event.target as Node)) return;
+  if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
+  const primaryAction = event.currentTarget.querySelector<HTMLButtonElement>(
+    "[data-sidebar-row-primary]",
+  );
+  if (!primaryAction) return;
+  event.preventDefault();
+  primaryAction.focus({ preventScroll: true });
+}
+
+// Keep actions outside the named button so screen readers expose them. Row
+// isolation keeps this button above its background and behind its visible content.
+export function SidebarRowPrimaryAction(props: {
+  name: string;
+  isActive: boolean;
+  isBusy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      data-sidebar-row-primary
+      aria-label={props.name}
+      aria-current={props.isActive ? "page" : undefined}
+      aria-busy={props.isBusy || undefined}
+      className="absolute inset-0 -z-1 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    />
+  );
+}
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -808,12 +842,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.preventDefault();
     onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
   };
-  const handleKeyDown = (event: ReactKeyboardEvent) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    onThreadActivate(threadRef);
-  };
   const handleDoubleClick = (event: ReactMouseEvent) => {
     if (
       !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
@@ -825,7 +853,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) {
       return;
     }
-    if ((event.target as HTMLElement).closest("button, a, input")) return;
+    if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
     event.preventDefault();
     onStartRename(threadRef, thread.title);
   };
@@ -909,7 +937,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "group/sidebar-row relative isolate w-full cursor-pointer overflow-hidden rounded-md text-left select-none",
     variantAction === "unsettle" &&
       !props.isActive &&
       "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70 redesign:[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
@@ -1010,7 +1038,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {thread.title}
     </span>
   );
-  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
+  const primaryAction = (
+    <SidebarRowPrimaryAction
+      name={accessibility.label}
+      isActive={props.isActive}
+      isBusy={isRegeneratingTitle}
+    />
+  );
 
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -1107,21 +1141,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             render={
               <div
                 ref={rowRef}
-                role="button"
-                tabIndex={0}
-                aria-label={accessibility.label}
-                aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
-                aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                onMouseDown={focusSidebarRowPrimaryAction}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
-                onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
               />
             }
           >
-            {accessibleTitle}
+            {primaryAction}
             <span
               className={cn(
                 "flex shrink-0 items-center transition-opacity",
@@ -1278,21 +1307,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <div
               ref={rowRef}
-              role="button"
-              tabIndex={0}
-              aria-label={accessibility.label}
-              aria-current={accessibility.current}
               data-testid="sidebar-row-card"
-              aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              onMouseDown={focusSidebarRowPrimaryAction}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
-              onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
             />
           }
         >
-          {accessibleTitle}
+          {primaryAction}
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",

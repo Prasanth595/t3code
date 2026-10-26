@@ -19,7 +19,13 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
-import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import {
+  draftPenClassName,
+  draftSurfaceClassName,
+  SidebarRowPrimaryAction,
+  focusSidebarRowPrimaryAction,
+  SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR,
+} from "./SidebarThreadRow";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
@@ -56,22 +62,21 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   });
   const handleActivate = () => onNavigate(draftId);
   const handleKeyDown = (event: ReactKeyboardEvent) => {
-    // Keys targeting the nested discard button belong to the button:
-    // preventDefault here would swallow Space's synthesized click and
-    // navigate instead of discarding.
-    if ((event.target as HTMLElement).closest("button")) return;
-    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-      event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
-      onContextMenu(draftId, { x: rect.left, y: rect.bottom });
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onNavigate(draftId);
-    }
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    onContextMenu(draftId, { x: rect.left, y: rect.bottom });
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(draftId, { x: event.clientX, y: event.clientY });
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onContextMenu(
+      draftId,
+      event.clientX === 0 && event.clientY === 0
+        ? { x: bounds.left, y: bounds.bottom }
+        : { x: event.clientX, y: event.clientY },
+    );
   };
   const handleDiscard = (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -81,20 +86,17 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   return (
     <li className="list-none py-0.5">
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={accessibility.label}
-        aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "group/sidebar-row relative isolate w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground select-none",
           props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
+        onMouseDown={focusSidebarRowPrimaryAction}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
       >
-        <span className="sr-only">{preview}</span>
+        <SidebarRowPrimaryAction name={accessibility.label} isActive={props.isActive} />
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
