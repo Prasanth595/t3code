@@ -11,6 +11,9 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
+
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
@@ -1061,6 +1064,54 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("honors an account change consumed while a handoff interrupts a probe", () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      const probeCleanup = yield* Deferred.make<void>();
+      const releaseProbe = yield* Deferred.make<void>();
+      const replacementReady = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `token-${attempt}`,
+              expiresAtEpochMs: 3_600_000 * attempt,
+            },
+          }),
+        ready: (attempt) => (attempt === 2 ? Deferred.await(replacementReady) : Effect.void),
+        probe: () =>
+          Deferred.succeed(probeStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() =>
+              Deferred.succeed(probeCleanup, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseProbe)),
+              ),
+            ),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("59 minutes");
+      yield* harness.wake("application-active");
+      yield* Deferred.await(probeStarted);
+      yield* harness.wake("credentials-changed");
+      yield* Deferred.await(probeCleanup);
+      yield* Deferred.succeed(replacementReady, undefined);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(releaseProbe, undefined);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("renews a nearly expired cached token for a new socket and HTTP shares it", () =>
     Effect.gen(function* () {
       const endpoint = {
@@ -1200,7 +1251,7 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(harness.dependencies));
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
-      const tickets = () => httpPaths.filter((path) => path === "/api/auth/websocket-ticket");
+      const tickets = () => httpPaths.filter((path) => path === "/api/auth/websocket-ticket/rpc");
       expect(tickets()).toHaveLength(1);
       expect(yield* Ref.get(bootstrapCalls)).toBe(0);
 

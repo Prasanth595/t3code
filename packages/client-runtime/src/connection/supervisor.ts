@@ -593,7 +593,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // loopback server).
   const monitorConnectedLease = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
+    ended: Ref.Ref<boolean | undefined>,
   ) {
+    const endFor = (signal: SupervisorSignal) =>
+      connectedLeaseEnd(signal, lease).pipe(
+        Effect.tap((end) => (end === undefined ? Effect.void : Ref.set(ended, end === "reset"))),
+        Effect.uninterruptible,
+      );
     // A probe answers an explicit retry here, so the retry must not also reset
     // the backoff of a later, unrelated failure.
     const takeSignal = Queue.take(signals).pipe(
@@ -601,9 +607,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
     );
-    // Ticks always run: the check skips the preferred route itself, and the
-    // route list can grow while connected (learned routes). They stop with
-    // this monitor, because a replacement session starts its own.
+    // Learned routes can appear while connected; each monitor owns its ticker.
     yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
       Stream.drop(1),
       Stream.runForEach(() => requestBetterRouteCheck(lease)),
@@ -611,7 +615,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
     for (;;) {
       const next = yield* takeSignal;
-      const end = yield* connectedLeaseEnd(next, lease);
+      const end = yield* endFor(next);
       if (end !== undefined) {
         return end === "reset";
       }
@@ -653,7 +657,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* probeEvent.exit;
           break;
         }
-        const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal, lease);
+        const endDuringProbe = yield* endFor(probeEvent.signal);
         if (endDuringProbe !== undefined) {
           yield* Fiber.interrupt(probe);
           return endDuringProbe === "reset";
@@ -668,12 +672,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   }, Effect.scoped);
 
-  // The server closes a socket when the DPoP access token it opened with
-  // expires, so a replacement opens on a renewed token first. Starting inside
-  // the refresh skew makes the authorization service mint a new token instead
-  // of returning the one that is about to expire. After a handoff, the next one
-  // waits at least the skew, so tokens issued for less than that can't start
-  // a loop; their sessions end at expiry and reconnect with backoff instead.
+  // Inside the refresh skew, authorization mints a new token. Spacing handoffs
+  // by at least that skew prevents short-lived tokens from creating a loop.
   const replaceBeforeExpiry = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
     minimumDelayMs: number,
@@ -864,6 +864,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
+    const ended = yield* Ref.make<boolean | undefined>(undefined);
     const awaitConnectedEvent = (current: typeof active, minimumReplacementDelayMs: number) => {
       const traced = (error: ConnectionAttemptError): TracedAttemptFailure => ({
         error,
@@ -871,7 +872,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       });
       return Effect.raceAllFirst([
         current.lease.session.closed.pipe(Effect.mapError(traced)),
-        monitorConnectedLease(current.lease).pipe(
+        monitorConnectedLease(current.lease, ended).pipe(
           Effect.map((resetRetry) => ({ _tag: "Ended" as const, resetRetry })),
           Effect.mapError(traced),
         ),
@@ -882,13 +883,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     };
     let connectedExit = yield* awaitConnectedEvent(active, 0);
     while (Exit.isSuccess(connectedExit) && connectedExit.value._tag === "Replaced") {
+      // Probe cleanup can outlive the monitor's terminal decision.
+      const resetRetry = yield* Ref.get(ended);
+      if (resetRetry !== undefined) {
+        connectedExit = Exit.succeed({ _tag: "Ended", resetRetry });
+        break;
+      }
       // A disconnect signal lost to the race must not keep the replacement.
       if (!(yield* Ref.get(intent)).desired) break;
       const { replacement } = connectedExit.value;
       yield* SubscriptionRef.set(prepared, Option.some(replacement.lease.prepared));
       yield* SubscriptionRef.set(session, Option.some(replacement.lease.session));
       yield* Ref.set(probeUnanswered, false);
-      // The replacement session reports its own direct endpoints, as a reconnect would.
       if (options?.learnRoutes !== undefined) {
         yield* learnRoutesFrom(options.learnRoutes, replacement.lease).pipe(Effect.forkScoped);
       }
