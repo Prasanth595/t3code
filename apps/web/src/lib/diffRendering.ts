@@ -1,16 +1,22 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
-const DIFF_THEME_NAMES = {
+export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
+  readableLight: READABLE_LIGHT_THEME_NAME,
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+  if (theme === "dark") return DIFF_THEME_NAMES.dark;
+  // The New design (data-redesign on <html>) keeps every light syntax color readable on white.
+  return typeof document !== "undefined" && document.documentElement.hasAttribute("data-redesign")
+    ? DIFF_THEME_NAMES.readableLight
+    : DIFF_THEME_NAMES.light;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

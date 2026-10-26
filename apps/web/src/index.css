@@ -1278,6 +1278,18 @@ html[data-redesign][data-diff-color-scheme="blue-orange"] {
   --diff-added-icon: initial;
 }
 
+html.dark[data-redesign][data-diff-color-scheme="blue-orange"] {
+  --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+
+/* New design: sections in the provider detail pane sit flat in its card instead of nesting
+   cards inside it. Headings and row dividers still separate them. */
+[data-redesign] [data-provider-detail] [data-slot="settings-group"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 /* New design: a diff header's copy button shows on file hover or focus. */
 @media (hover: hover) {
   [data-redesign] diffs-container:not(:hover) [data-diff-copy-path]:not(:focus-within) {
