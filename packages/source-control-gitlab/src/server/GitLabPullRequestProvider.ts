@@ -111,11 +111,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * The REST detail carries no line counts, so they are read alongside it. A failed count read
-   * leaves them at zero, which the page already shows as no counts, rather than failing the
-   * read; an unusable CLI or account still fails it, as every optional read here does.
-   */
+  // REST omits line counts; the CLI recovers optional stats failures per batch.
   const mergeRequestWithStats = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -124,7 +120,7 @@ export const make = Effect.gen(function* () {
     Effect.all(
       [
         cli.getMergeRequestDetail(input),
-        recoverRead(cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] }), []),
+        cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] }),
       ],
       { concurrency: 2 },
     ).pipe(

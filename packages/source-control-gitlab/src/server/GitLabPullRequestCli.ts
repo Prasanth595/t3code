@@ -1251,7 +1251,7 @@ export const make = Effect.gen(function* () {
 
     listMergeRequestStats,
 
-    getMergeRequestFileStats: (input) =>
+    getMergeRequestFileStats: Effect.fn("GitLabPullRequestCli.getMergeRequestFileStats")((input) =>
       graphqlRead({
         cwd: input.cwd,
         operation: "getMergeRequestFileStats",
@@ -1259,6 +1259,7 @@ export const make = Effect.gen(function* () {
         variables: { fullPath: input.repository, iid: String(input.number) },
         decode: decodeMergeRequestFileStatsJson,
       }),
+    ),
 
     listNotes: Effect.fn("GitLabPullRequestCli.listNotes")(function (input) {
       return notesPage({ ...input, page: 1, collected: [] });

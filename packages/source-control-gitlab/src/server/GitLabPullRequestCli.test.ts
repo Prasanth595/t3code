@@ -1249,4 +1249,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ]);
       }),
   );
+  it.effect.each([
+    GitLabCli.GitLabCliUnavailableError,
+    GitLabCli.GitLabCliAuthenticationError,
+    GitLabCli.GitLabCliRateLimitError,
+  ])("propagates unusable CLI and account failures from stats (%s)", (ErrorType) =>
+    Effect.gen(function* () {
+      const error = new ErrorType({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(error));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* Effect.result(
+        cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [{ repository: "acme/web", number: 7 }],
+        }),
+      );
+      expect(result).toMatchObject({ _tag: "Failure", failure: error });
+    }),
+  );
 });
