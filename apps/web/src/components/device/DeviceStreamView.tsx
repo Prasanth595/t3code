@@ -202,6 +202,7 @@ export function DeviceStreamView(props: {
   const activePointer = useRef<{ id: number; x: number; y: number } | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- Pointer ownership ends with its input connection.
   useEffect(() => {
+    if (!client || !inputState.connected) return;
     return () => {
       activePointer.current = null;
     };
