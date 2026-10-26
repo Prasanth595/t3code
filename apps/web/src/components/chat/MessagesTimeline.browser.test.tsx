@@ -623,34 +623,35 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
-function ChangedFilesTimeline() {
+function TimelineChangedFilesCard() {
   const [expanded, setExpanded] = useState(true);
+  return (
+    <ChangedFilesCard
+      runId={RunId.make("run-1")}
+      files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
+        path,
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      }))}
+      allDirectoriesExpanded={expanded}
+      resolvedTheme="light"
+      onToggleAllDirectories={() => setExpanded((value) => !value)}
+      onOpenTurnDiff={() => {}}
+    />
+  );
+}
+
+function ChangedFilesTimeline() {
   return (
     <LegendList
       data={["files", "after"]}
-      extraData={expanded}
       keyExtractor={(item) => item}
       estimatedItemSize={100}
       recycleItems={false}
       className="h-[600px]"
       renderItem={({ item }) =>
-        item === "files" ? (
-          <ChangedFilesCard
-            runId={RunId.make("run-1")}
-            files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
-              path,
-              kind: "modified",
-              additions: 1,
-              deletions: 0,
-            }))}
-            allDirectoriesExpanded={expanded}
-            resolvedTheme="light"
-            onToggleAllDirectories={() => setExpanded((value) => !value)}
-            onOpenTurnDiff={() => {}}
-          />
-        ) : (
-          <div data-testid="after">After</div>
-        )
+        item === "files" ? <TimelineChangedFilesCard /> : <div data-testid="after">After</div>
       }
     />
   );
