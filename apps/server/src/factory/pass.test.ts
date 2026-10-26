@@ -5627,12 +5627,11 @@ describe("pr-open runs: instructor feedback", () => {
 
 describe("a provider rate limit", () => {
   const FABLE_KEY = "claudeAgent claude-fable-5-1";
-  const limited = (endedMs: number, model: Model | null = FABLE): AdvanceOutcome => ({
-    kind: "rate-limited",
-    endedMs,
-    retryAfterMs: null,
-    model,
-  });
+  const limited = (
+    endedMs: number,
+    model: Model | null = FABLE,
+    retryAfterMs: number | null = null,
+  ): AdvanceOutcome => ({ kind: "rate-limited", endedMs, retryAfterMs, model });
   const cooledResumes = (fake: Fake) => fake.calls.filter((c) => c.startsWith("cooled_resume "));
   const coolingLines = (lines: ReadonlyArray<string>) =>
     lines.filter((l) => l.startsWith("provider cooling down"));
@@ -5848,6 +5847,17 @@ describe("a provider rate limit", () => {
       yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
       assert.ok(!fake.calls.some((c) => c.startsWith("project_model ")));
+    }),
+  );
+
+  it.effect("opens the window the provider's retry-after asks for", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000, FABLE, 30 * MINUTE)];
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.equal(fake.cooldowns.get(FABLE_KEY)!.untilMs, T0 + 30 * MINUTE);
+      assert.deepEqual(coolingLines(lines), [coolingLine(T0 + 30 * MINUTE, FABLE_KEY, 1, HELD)]);
     }),
   );
 

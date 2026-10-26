@@ -2600,4 +2600,17 @@ describe("a provider rate limit", () => {
       });
     }),
   );
+
+  it.effect("is not resumed once a relaunch is decided, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, relaunchLine(1, "t3code/abc")]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), {
+        kind: "unchanged",
+        why: "a relaunch is already decided",
+      });
+      assert.strictEqual(bytesOf(rig), before);
+    }),
+  );
 });

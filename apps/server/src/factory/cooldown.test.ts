@@ -8,6 +8,7 @@ import { describe } from "vite-plus/test";
 import {
   COOLDOWN_CAP_MS,
   COOLDOWN_QUIET_MS,
+  RETRY_AFTER_CAP_MS,
   coolingDown,
   cooldownKey,
   forgetQuietCooldowns,
@@ -72,12 +73,12 @@ describe("rateLimitOf", () => {
     assert.deepStrictEqual(rateLimitOf("API Error: 429, retry after 500ms"), { retryAfterMs: 500 });
   });
 
-  it("caps the provider's retry-after at the longest window", () => {
+  it("takes a long retry-after as given, and bounds one past a day", () => {
     assert.deepStrictEqual(rateLimitOf("API Error: 429, retry after 2h"), {
-      retryAfterMs: COOLDOWN_CAP_MS,
+      retryAfterMs: 2 * 60 * MINUTE,
     });
     assert.deepStrictEqual(rateLimitOf(`API Error: 429, retry after ${"9".repeat(400)}`), {
-      retryAfterMs: COOLDOWN_CAP_MS,
+      retryAfterMs: RETRY_AFTER_CAP_MS,
     });
   });
 
