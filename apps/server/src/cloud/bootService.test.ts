@@ -808,6 +808,28 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("migrates a versioned macOS launch agent to the fixed launcher", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, runtime, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const first = yield* service.install();
+      const legacy = (yield* fs.readFileString(first.unitPath)).replace(
+        path.join(baseDir, "runtime", "launcher", "t3"),
+        runtime.entryPath,
+      );
+      yield* fs.writeFileString(first.unitPath, legacy);
+      yield* fs.remove(path.join(baseDir, "runtime", "launcher"), { recursive: true, force: true });
+      expect((yield* service.status).current).toBe(false);
+
+      const updated = yield* makeService(undefined, "1.2.4");
+      const installed = yield* updated.install();
+      expect(BootService.bootServiceProgramOf(yield* fs.readFileString(installed.unitPath))).toBe(
+        path.join(baseDir, "runtime", "launcher", "t3"),
+      );
+      expect(yield* updated.status).toMatchObject({ current: true, installedVersion: "1.2.4" });
+    }),
+  );
+
   it.effect("keeps the launch agent on one launcher path across versions on macOS", () =>
     Effect.gen(function* () {
       const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");

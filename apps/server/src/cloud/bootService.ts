@@ -572,12 +572,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
-  // macOS keys Full Disk Access and Files & Folders grants for a non-bundled
-  // executable to its absolute path, and the launch agent's process is the
-  // responsible process for everything it spawns. Running the launcher from
-  // a versioned directory made every update lose those grants, so on macOS
-  // the launch agent runs a copy of the runtime at a path no update changes.
-  // The copy still spawns `versions/<activeVersion>/t3 serve` as before.
+  // macOS privacy grants track the launchd parent's executable path across updates.
   const launcherDir = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_DIR);
   const launcher =
     platform === "darwin"
@@ -608,8 +603,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  // The executable hosts the launcher as a hidden subcommand of itself, so
-  // the unit runs the pinned runtime (or, on macOS, its fixed-path copy) directly.
   const plan: BootServicePlan = {
     program: [launcher?.entryPath ?? runtimePaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,
@@ -728,21 +721,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
-  const launcherComplete = (directory: string) =>
-    Effect.all([
-      fs.exists(path.join(directory, path.basename(runtimePaths.entryPath))),
-      fs
-        .readFileString(path.join(directory, path.basename(runtimePaths.sentinelPath)))
-        .pipe(
-          Effect.catch((error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
-          ),
-        ),
-    ]).pipe(
-      Effect.map(
-        ([entryExists, sentinel]) => entryExists && isExactServiceVersion(sentinel.trim()),
-      ),
+  const launcherComplete = Effect.fn("cloud.boot_service.launcher_complete")(function* (
+    directory: string,
+  ) {
+    const entryExists = yield* fs.exists(
+      path.join(directory, path.basename(runtimePaths.entryPath)),
     );
+    const sentinel = yield* fs
+      .readFileString(path.join(directory, path.basename(runtimePaths.sentinelPath)))
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")));
+    return entryExists && isExactServiceVersion(sentinel.trim());
+  });
   const recoverLauncher = Effect.suspend(() =>
     launcher === undefined
       ? Effect.void
@@ -780,11 +769,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           yield* fs.copy(runtimePaths.sentinelPath, path.join(launcher.stagingDir, sentinel));
         }),
   ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  // Renames, never overwrites: a launcher that is still running keeps its
-  // open executable. The fixed path holds a complete copy except for the
-  // moment between the two renames; a failed swap puts the previous copy
-  // back. Once the new copy is in place, a retired copy that cannot be
-  // removed is left for the next install to clear.
+  // Rename instead of overwriting a running executable; keep recovery copies if rollback fails.
   const publishLauncher = Effect.suspend(() =>
     launcher === undefined
       ? Effect.void
