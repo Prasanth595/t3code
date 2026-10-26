@@ -386,12 +386,11 @@ export function composerRecallContext(
     text = text.slice(0, start) + text.slice(end);
   }
   // Recompute rather than carrying provenance from a message being edited.
-  const records = context?.records ?? [];
-  if (text === sentText) return records.length > 0 ? { version: 1, records } : undefined;
+  const { composerRecall: _previousRecall, ...base } = context ?? { version: 1, records: [] };
+  if (text === sentText) return base.records.length > 0 || base.guest ? base : undefined;
   const start = text.length > 0 ? sentText.indexOf(text) : -1;
   return {
-    version: 1,
-    records,
+    ...base,
     composerRecall: start < 0 ? text : [start, start + text.length],
   };
 }

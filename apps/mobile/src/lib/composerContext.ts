@@ -268,7 +268,7 @@ export function serializeComposerMessageForServer(
 ): { text: string; context?: OrchestrationMessageContext } {
   const text = isImageReferencesOnly(composerText)
     ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
-    : composerText;
+    : composerText.trim();
   const recallContext = composerRecallContext(
     text,
     recallComposerText(composerText, context),

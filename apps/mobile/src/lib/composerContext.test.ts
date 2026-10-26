@@ -438,3 +438,10 @@ describe("threadComposerContext", () => {
     ).toBe("thread_abc-123");
   });
 });
+
+it("captures whitespace at dispatch without trimming the recoverable outbox draft", () => {
+  const authored = "  literal prompt\n";
+  const sent = serializeComposerMessageForServer(authored, undefined, true);
+  expect(sent.text).toBe("literal prompt");
+  expect(recallComposerText(sent.text, sent.context)).toBe(authored);
+});
