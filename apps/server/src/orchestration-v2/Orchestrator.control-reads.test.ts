@@ -15,6 +15,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1678,7 +1679,7 @@ it.effect.each([
               yield* worker.drain();
               yield* Fiber.join(ended);
             });
-          // Other provider wakes, such as a finished command, start a follow-up task instead.
+          // A monitor wake is neither a follow-up task nor the task's result.
           const queueMonitorWake = (id: string) =>
             Effect.gen(function* () {
               yield* orchestrator.dispatch({
@@ -1696,6 +1697,24 @@ it.effect.each([
                 dispatchMode: { type: "queue_after_active" },
                 createdBy: "agent",
                 creationSource: "server",
+              });
+              yield* worker.drain();
+            });
+          // A scheduled run is a later result outside any task; other provider wakes, such as a
+          // finished command, start a follow-up task instead.
+          const queueScheduledRun = (id: string) =>
+            Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`queue-session-release-${id}`),
+                threadId,
+                messageId: MessageId.make(`message:session-release-${id}`),
+                text: "Scheduled check",
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                creationSource: "mcp",
+                scheduledTaskId: ScheduledTaskId.make(`scheduled:session-release-${id}`),
               });
               yield* worker.drain();
             });
@@ -1833,7 +1852,7 @@ it.effect.each([
           }
           if (queued === "later run") {
             // A later non-task run is not the interrupted task's end, so it releases nothing.
-            assert.equal(yield* finishLaterRun(queueMonitorWake("later-run")), providerSessionId);
+            assert.equal(yield* finishLaterRun(queueScheduledRun("later-run")), providerSessionId);
           }
           if (queued === "held monitor" || queued === "cancelled behind held monitor") {
             // Resuming starts the held wake, which reattaches the released session.
@@ -1879,7 +1898,7 @@ it.effect.each([
             yield* finishTurn(queued === "interrupted follow-up" ? "interrupted" : "cancelled");
             // A later non-task run is not the ended follow-up's end, so it releases nothing.
             assert.equal(
-              yield* finishLaterRun(queueMonitorWake("after-follow-up")),
+              yield* finishLaterRun(queueScheduledRun("after-follow-up")),
               providerSessionId,
             );
           }
