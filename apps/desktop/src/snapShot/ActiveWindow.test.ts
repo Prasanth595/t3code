@@ -102,6 +102,18 @@ it.each([
     },
   },
   {
+    name: "vertical strips at a negative desktop origin",
+    helpers: [
+      { id: 1, title: "", bounds: { x: -122, y: -100, width: 41, height: 1_000 } },
+      { id: 2, title: "", bounds: { x: -81, y: -100, width: 81, height: 1_000 } },
+    ],
+    content: {
+      id: 3,
+      title: "Document",
+      bounds: { x: 0, y: -100, width: 1_008, height: 1_000 },
+    },
+  },
+  {
     name: "a smaller front window's strips with a larger background window",
     helpers: [
       { id: 75, title: "", bounds: { x: 100, y: 139, width: 1_200, height: 41 } },
@@ -130,6 +142,36 @@ it.each([
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
+  {
+    name: "horizontal strip below the document",
+    title: "",
+    bounds: { x: 0, y: 1_200, width: 800, height: 50 },
+  },
+  {
+    name: "horizontal strip inside the document",
+    title: "",
+    bounds: { x: 0, y: 600, width: 800, height: 50 },
+  },
+  {
+    name: "horizontal strip far above the document",
+    title: "",
+    bounds: { x: 0, y: -300, width: 800, height: 50 },
+  },
+  {
+    name: "vertical strip right of the document",
+    title: "",
+    bounds: { x: 900, y: 0, width: 50, height: 1_000 },
+  },
+  {
+    name: "vertical strip inside the document",
+    title: "",
+    bounds: { x: 400, y: 0, width: 50, height: 1_000 },
+  },
+  {
+    name: "vertical strip far left of the document",
+    title: "",
+    bounds: { x: -250, y: 0, width: 50, height: 1_000 },
+  },
 ])("keeps a frontmost $name ahead of a larger document", async ({ title, bounds }) => {
   stubMacLookup(
     macLookup([
