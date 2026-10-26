@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestrationV2WorkflowPlan,
+  type OrchestrationV2WorkflowReviewRecord,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
@@ -173,6 +174,7 @@ import {
 } from "@t3tools/shared/storedWorkflowScript";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import { checkWorkflowScript } from "./workflowScript.ts";
+import { workflowReviewRecord } from "./workflowReviewRecord.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -1059,6 +1061,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
         : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+    case "workflow_review":
+      return `Reviewed a workflow graph with ${item.taskCount} task(s).`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -2745,7 +2749,7 @@ const make = Effect.gen(function* () {
             title: concreteGraph.name ?? "Graph",
           }
         : undefined;
-    return { review, compiled };
+    return { review, compiled, graph: concreteGraph };
   });
 
   /** The input files whose hashes differ from an earlier review, or undefined if it is unknown. */
@@ -2782,6 +2786,47 @@ const make = Effect.gen(function* () {
     ),
     blockers: review.blockers,
     ...(review.advisory === undefined ? {} : { advisory: review.advisory }),
+  });
+
+  /**
+   * Writes the approval record of a review as a turn item of the caller's run, where clients read
+   * it from. A review the person has to approve is refused when its record cannot be written,
+   * because a card the person cannot see is a review they cannot decide; any other review only
+   * loses its card.
+   */
+  const recordGraphReview = Effect.fn("OrchestratorMcpService.recordGraphReview")(function* (
+    scope: McpThreadInvocationScope,
+    parent: CallerProjection,
+    review: OrchestrationV2WorkflowReviewRecord,
+  ) {
+    const cause = yield* Effect.gen(function* () {
+      const run = yield* requireDelegatingRun(scope, parent);
+      yield* threadManagement.dispatch({
+        type: "workflow.review.record",
+        commandId: stableCommandId({
+          scope,
+          requestKey: review.reviewId,
+          operation: "workflow-review-record",
+        }),
+        threadId: scope.thread.threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        turnItemId: TurnItemId.make(
+          `turn-item:workflow-review:${stablePart(scope.thread.threadId)}:${stablePart(review.reviewId)}`,
+        ),
+        review,
+      });
+    }).pipe(
+      Effect.match({ onSuccess: () => undefined, onFailure: (error) => errorMessage(error) }),
+    );
+    if (cause === undefined) return;
+    if (review.approvalRequired) {
+      return yield* failure(
+        "orchestration_error",
+        `Could not record the review for the user to approve: ${cause} Call graph_review again.`,
+      );
+    }
+    yield* Effect.logWarning("Could not record a graph review", { cause });
   });
 
   /**
@@ -3843,11 +3888,8 @@ const make = Effect.gen(function* () {
       const ticket = yield* workflowApprovalGate
         .beginReview(scope.thread.threadId)
         .pipe(Effect.mapError(approvalFailure));
-      const { review } = yield* reviewCallerGraph(
-        yield* loadProjection(scope.thread.threadId),
-        input.graph,
-        input.workerTarget,
-      );
+      const parent = yield* loadProjection(scope.thread.threadId);
+      const { review, graph } = yield* reviewCallerGraph(parent, input.graph, input.workerTarget);
       // The review gets its id here, where it is produced. The client decides about it by this
       // id and the digest; nothing the provider echoes back is read.
       const reviewId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
@@ -3859,7 +3901,9 @@ const make = Effect.gen(function* () {
           ready: isReviewReady(review),
         })
         .pipe(Effect.mapError(approvalFailure));
-      return graphReviewResult(review, { reviewId, approvalRequired });
+      const result = graphReviewResult(review, { reviewId, approvalRequired });
+      yield* recordGraphReview(scope, parent, workflowReviewRecord(result, graph));
+      return result;
     }),
     graphStart: Effect.fn("OrchestratorMcpService.graphStart")(function* (callerScope, input) {
       yield* requireCapability(callerScope);

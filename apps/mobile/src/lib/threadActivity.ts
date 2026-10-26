@@ -7,7 +7,10 @@ import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/tu
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
-import { isWorkflowReviewItem } from "@t3tools/client-runtime/state/workflowReview";
+import {
+  isProjectedWorkflowReview,
+  type ProjectedWorkflowReviewItem,
+} from "@t3tools/client-runtime/state/workflowReview";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
@@ -403,11 +406,12 @@ export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): bool
   );
 }
 
-/** The coordinator's reviewed graph, which the person decides on in a card of its own. */
-export function isWorkflowReviewActivityGroup(entry: ThreadFeedActivityGroup): boolean {
-  return (
-    entry.activities.length === 1 && isWorkflowReviewItem(entry.activities[0]!.projectedItem.item)
-  );
+/** The review record of a reviewed workflow graph, which the person decides on in a card of its own. */
+export function workflowReviewOfActivityGroup(
+  entry: ThreadFeedActivityGroup,
+): ProjectedWorkflowReviewItem | null {
+  const projectedItem = entry.activities.length === 1 ? entry.activities[0]!.projectedItem : null;
+  return projectedItem !== null && isProjectedWorkflowReview(projectedItem) ? projectedItem : null;
 }
 
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
@@ -521,7 +525,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "secret_request" ||
     item.type === "link_request" ||
     // Kept out of the folded summary: the person approves or dismisses it there.
-    isWorkflowReviewItem(item)
+    item.type === "workflow_review"
   );
 }
 
@@ -645,6 +649,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "lock";
     case "link_request":
       return "globe";
+    case "workflow_review":
+      return "zap";
   }
 }
 
@@ -706,6 +712,8 @@ function itemSummary(
       return item.label;
     case "link_request":
       return `Link ${item.label ?? item.url ?? "an environment"}`;
+    case "workflow_review":
+      return "Workflow plan";
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -766,6 +774,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "workflow_review":
+      return item.name;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
