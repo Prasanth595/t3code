@@ -507,7 +507,6 @@ export function usePendingThreadRequests(input: {
       }
       return;
     }
-    // Enter in the composer lands here too. A skipped question leaves the last Submit dead.
     if (!activePendingProgress.canAdvance) return;
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   };

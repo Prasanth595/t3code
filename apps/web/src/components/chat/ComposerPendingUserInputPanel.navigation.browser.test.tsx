@@ -152,7 +152,6 @@ function QuestionPositionProbe(props: ProbeProps) {
       >
         Choose Incremental
       </button>
-      {/* Enter in the composer reaches the same advance as the disabled Next button. */}
       <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
         Submit
       </button>
@@ -161,7 +160,6 @@ function QuestionPositionProbe(props: ProbeProps) {
 }
 
 it("stays on an unanswered question when the composer submits", async () => {
-  using _timers = fakeTimers();
   await using screen = await render(
     <QuestionPositionProbe
       environmentId={EnvironmentId.make("unanswered-environment")}
