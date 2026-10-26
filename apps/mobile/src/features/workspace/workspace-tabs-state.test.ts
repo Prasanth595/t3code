@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   initialWorkspaceTabsState,
+  type WorkspaceTabsState,
   workspaceTabsReducer,
   workspaceTabForNativeSlot,
   resolveWorkspaceTabOrder,
@@ -8,6 +9,12 @@ import {
   workspaceDockBottomClearance,
   workspaceUsesColumns,
 } from "./workspace-tabs-state";
+
+// Searchable list tests start on the Agent (threads) tab; the app itself opens on Chats.
+const threadsTabState = (): WorkspaceTabsState => ({
+  ...initialWorkspaceTabsState(),
+  selectedTab: "threads",
+});
 
 describe("compact list clearance", () => {
   it.each([
@@ -57,14 +64,14 @@ describe("workspace root navigation", () => {
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
-    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["chats", "threads", "usage"]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
     );
   });
 
   it("retains separate queries and positions across tabs, and cancels only the current search", () => {
-    let state = initialWorkspaceTabsState();
+    let state = threadsTabState();
     state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 640 });
     state = workspaceTabsReducer(state, { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "keyboard" });
@@ -95,7 +102,7 @@ describe("workspace root navigation", () => {
   });
 
   it("clear keeps search active without losing the position cancel restores", () => {
-    let state = initialWorkspaceTabsState();
+    let state = threadsTabState();
     state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 500 });
     state = workspaceTabsReducer(state, { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "diff" });
@@ -111,7 +118,7 @@ describe("workspace root navigation", () => {
   });
 
   it("keeps the Settings search apart from the tab Settings opened over", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+    let state = workspaceTabsReducer(threadsTabState(), {
       type: "query",
       query: "diff",
       tab: "threads",
@@ -125,13 +132,13 @@ describe("workspace root navigation", () => {
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    let state = workspaceTabsReducer(threadsTabState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "cancel" });
     expect(workspaceTabsReducer(state, { type: "expand" })).toBe(state);
   });
 
   it("a blur from the previous native tab cannot open search in the selected tab", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    let state = workspaceTabsReducer(threadsTabState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "keyboard" });
     state = workspaceTabsReducer(state, { type: "select", tab: "pullRequests" });
     state = workspaceTabsReducer(state, { type: "expand", tab: "threads" });
@@ -140,7 +147,7 @@ describe("workspace root navigation", () => {
     expect(workspaceTabsReducer(state, { type: "select", tab: "pullRequests" })).toBe(state);
   });
   it("returns from Usage without losing list state", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+    let state = workspaceTabsReducer(threadsTabState(), {
       type: "query",
       query: "retained",
       tab: "threads",
