@@ -536,6 +536,131 @@ describe("autodeploy.sh", () => {
   });
 });
 
+describe("autodeploy.sh waiting behind runs", () => {
+  const pendingFile = () => NodePath.join(home, ".config/t3fac/factory/deploy-pending");
+  const writePending = (secondsAgo: number, sha = "0".repeat(40)) => {
+    NodeFS.mkdirSync(NodePath.dirname(pendingFile()), { recursive: true });
+    const since = Math.floor(Date.now() / 1000) - secondsAgo;
+    NodeFS.writeFileSync(pendingFile(), `${since} ${sha}\n`);
+    return since;
+  };
+  const writeMachineConfig = (text: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(pendingFile()), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(NodePath.dirname(pendingFile()), "config.yml"), text);
+  };
+  const BUSY = status([{ state: "building" }]);
+
+  beforeEach(() => {
+    setupSandbox();
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("marks the build pending and logs the wait so far", async () => {
+    const sha = commitToOrigin("second");
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.deploys).toEqual([]);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^\\d+ ${sha}\\n$`));
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("waited 0s of deploy_wait_minutes 120");
+  });
+
+  it("keeps the first time when main moves, and updates the sha", async () => {
+    commitToOrigin("second");
+    statusBodies = [BUSY];
+    await runAutodeploy();
+    const [since] = NodeFS.readFileSync(pendingFile(), "utf8").split(" ");
+    const third = commitToOrigin("third");
+    await runAutodeploy();
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(`${since} ${third}\n`);
+  });
+
+  it("deploys although a run is in progress once the build has waited past the limit", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    writePending(3 * 3600);
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(result.output).toContain(`deploying ${short} although a factory run is in progress`);
+    expect(result.output).toContain("waited 3h00m");
+    expect(result.output).toContain("past deploy_wait_minutes 120");
+    expect(result.output.match(/deploying /g)).toHaveLength(1);
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("deploys past the limit although an agent is at work in a thread", async () => {
+    const sha = commitToOrigin("second");
+    writePending(3 * 3600);
+    statusBodies = [status([], false, 2)];
+    const result = await runAutodeploy();
+    expect(result.output).toContain("although an agent is at work in a thread");
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+  });
+
+  it("reads the limit from deploy_wait_minutes", async () => {
+    const sha = commitToOrigin("second");
+    writeMachineConfig("gh_config_dir: /gh\ndeploy_wait_minutes: 1\n");
+    statusBodies = [BUSY];
+    writePending(30);
+    const waiting = await runAutodeploy();
+    expect(waiting.deploys).toEqual([]);
+    expect(lines(waiting.output)).toHaveLength(1);
+    expect(waiting.output).toContain("of deploy_wait_minutes 1");
+
+    writePending(120);
+    const deployed = await runAutodeploy();
+    expect(deployed.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+  });
+
+  it("uses the default and says so when deploy_wait_minutes cannot be read", async () => {
+    commitToOrigin("second");
+    writeMachineConfig("deploy_wait_minutes: lots\n");
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("cannot read deploy_wait_minutes");
+    expect(result.output).toContain("using 120");
+  });
+
+  it("removes the marker when nothing is pending", async () => {
+    writePending(60);
+    expect((await runAutodeploy()).output).toBe("");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("removes the marker after a deploy or rollback by hand", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    NodeFS.writeFileSync(holdFile(), "");
+    const result = await runAutodeploy();
+    expect(result.output).toContain("until main moves");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("removes the marker when the deploy fails", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    const result = await runAutodeploy({ INSTALL_FAIL: "1" });
+    expect(result.output).toContain("failed");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("keeps the marker while a build is retried", async () => {
+    commitToOrigin("second");
+    const since = writePending(60);
+    await runAutodeploy({ DEPLOY_FAIL: "1" });
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
+  });
+});
+
 describe("autodeploy.sh pruning old versions", () => {
   const versionsDir = () => NodePath.join(root(), "versions");
   const versions = () => NodeFS.readdirSync(versionsDir()).toSorted();
