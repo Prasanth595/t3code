@@ -46,7 +46,7 @@ With `origin` on git.cafe, work through GitCafe and leave GitHub's API alone:
 - Merge with `gh pr merge <n> --match-head-commit <sha>`, because `cafe pr merge` cannot pin the
   commit you reviewed.
 - `cafe` commands differ from `gh`: `cafe issue comments <n>` not `--comments`, `cafe pr status`
-  not `pr checks`. `cafe api` paths omit `/api` (`cafe api /repos/...`).
+  not `pr checks`.
 
 ## Choosing a dev process
 
