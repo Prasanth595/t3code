@@ -314,12 +314,10 @@ export function AddProviderInstanceDialog({
       localCommandPath.length === 0 &&
       selectedAcp?.id !== driverOption.registryAgentId
     ) {
-      setIsPreparingRegistryAgent(true);
       const prepared = await prepareRegistryAgent({
         environmentId,
         input: { agentId: driverOption.registryAgentId },
       });
-      setIsPreparingRegistryAgent(false);
       if (prepared._tag === "Failure") {
         setIsSaving(false);
         if (!isAtomCommandInterrupted(prepared)) {
