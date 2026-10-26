@@ -282,7 +282,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const [preview, setPreview] = useState<Drag | null>(null);
   const [translateY] = useState(() => new Animated.Value(0));
   const latest = useRef({ rows, planners });
-  // oxlint-disable-next-line react/refs -- The autoscroll rAF loop started at drag start reads the current rows and planners on every frame.
   latest.current = { rows, planners };
 
   function move(thread: EnvironmentThreadShell, destination: ThreadMoveDestination) {
@@ -330,7 +329,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     .map((row) => `${row.key}:${row.thread?.pinOrderKey}:${row.thread?.activeOrderKey}`)
     .join("|");
   useEffect(() => {
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies, react/set-state-in-effect -- A changed thread order cancels the in-progress drag and clears its preview; stop only touches refs and state setters.
     stop();
   }, [orderVersion]);
   useEffect(
@@ -394,7 +392,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     };
     setPreview({ ...drag.current });
     update(0);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     let last = performance.now();
     const tick = () => {
       const current = drag.current;
