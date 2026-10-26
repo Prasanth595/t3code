@@ -660,6 +660,38 @@ describe("autodeploy.sh waiting behind runs", () => {
     await runAutodeploy({ DEPLOY_FAIL: "1" });
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
   });
+
+  // The server drains only for a deploy that can happen: a tick that cannot ask whether a run is
+  // in the way never installs, so it leaves no marker behind.
+  it("removes the marker when the token is missing", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    writeEnv([`T3FAC_AUTODEPLOY_CLONE="${clone}"`]);
+    const result = await runAutodeploy();
+    expect(result.output).toContain("T3FAC_AUTODEPLOY_TOKEN");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("removes the marker when the status API cannot be reached", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    const closed = NodeNet.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const deadPort = (closed.address() as NodeNet.AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const result = await runAutodeploy({ T3FAC_PORT: String(deadPort) });
+    expect(result.output).toContain("/api/factory/status");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+  });
+
+  it("marks the build pending on an idle tick too, so a run that starts during the build waits", async () => {
+    const sha = commitToOrigin("second");
+    statusBodies = [IDLE, BUSY];
+    const result = await runAutodeploy();
+    expect(result.deploys).toHaveLength(1);
+    expect(result.output).toContain("waited 0s of deploy_wait_minutes 120");
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^\\d+ ${sha}\\n$`));
+  });
 });
 
 describe("autodeploy.sh pruning old versions", () => {
