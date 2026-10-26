@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { undoLatestThreadAction, useThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -25,17 +25,27 @@ export function SidebarThreadUndoNotice({ className }: { className?: string }) {
     else cancelAnnouncement("thread-undo-notice");
   }, [summary, undoLabel]);
 
-  if (!summary) return null;
+  // Keeps the last text on screen while it fades out, then unmounts on transitionend.
+  const [shownSummary, setShownSummary] = useState(summary);
+  if (summary && summary !== shownSummary) setShownSummary(summary);
+  const text = summary ?? shownSummary;
+  if (!text) return null;
 
   return (
     <div
       role="group"
-      className={cn("truncate px-2 text-2xs leading-6 text-sidebar-muted-foreground", className)}
+      aria-hidden={!summary}
+      inert={!summary}
+      onTransitionEnd={(event) => {
+        if (!summary && event.target === event.currentTarget) setShownSummary(null);
+      }}
+      className={cn(
+        "truncate px-2 text-2xs leading-6 text-sidebar-muted-foreground transition-opacity duration-200 ease-out starting:opacity-0",
+        !summary && "opacity-0",
+        className,
+      )}
     >
-      {summary},{" "}
-      <InlineButton onClick={undoLatestThreadAction} tone="inherit">
-        {undoLabel}
-      </InlineButton>
+      {text}, <InlineButton onClick={undoLatestThreadAction}>{undoLabel}</InlineButton>
     </div>
   );
 }
