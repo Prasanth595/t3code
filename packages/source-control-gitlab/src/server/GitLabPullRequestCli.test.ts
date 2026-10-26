@@ -1041,17 +1041,24 @@ layer("GitLabPullRequestCli.layer", (it) => {
   it.effect("asks GitLab to search the project's users when the menu has a query", () =>
     Effect.gen(function* () {
       mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(mergeRequestJson({ reviewers: [reviewer, { id: 42, username: "unrelated" }] })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([reviewer]))));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      yield* cli.listReviewerCandidates({
+      const list = yield* cli.listReviewerCandidates({
         cwd: "/w",
         repository: "acme/web",
         number: 7,
         query: "octo cat",
       });
 
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        [reviewer.username, true],
+      ]);
       expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
     }),
   );

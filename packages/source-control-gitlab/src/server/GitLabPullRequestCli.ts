@@ -1339,12 +1339,14 @@ export const make = Effect.gen(function* () {
         ).pipe(
           Effect.map(([mergeRequest, users]) => {
             const author = mergeRequest.author?.login;
-            const requested = mergeRequest.reviewerUsers.map(({ id, ...actor }) => ({
-              ...actor,
-              id: String(id),
-              kind: "user" as const,
-              isRequested: true,
-            }));
+            const requested = (input.query?.trim() ? [] : mergeRequest.reviewerUsers).map(
+              ({ id, ...actor }) => ({
+                ...actor,
+                id: String(id),
+                kind: "user" as const,
+                isRequested: true,
+              }),
+            );
             const listed = new Set(requested.map((reviewer) => reviewer.id));
             // Every reviewer id, not just the ones shown above: a reviewer GitLab sent without a
             // username can still turn up on the users page, and must read as requested there or

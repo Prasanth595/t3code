@@ -3658,7 +3658,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   },
                   pullRequest: {
                     author: { __typename: "User", login: "bilal" },
-                    reviewRequests: { nodes: [] },
+                    reviewRequests: {
+                      nodes: ["octocat", "unrelated"].map((login) => ({
+                        requestedReviewer: {
+                          __typename: "User",
+                          login,
+                          name: null,
+                          avatarUrl: "https://avatars/user",
+                        },
+                      })),
+                    },
                   },
                 },
               },
@@ -3677,7 +3686,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
-      expect(list.candidates.map((candidate) => candidate.login)).toEqual(["octocat"]);
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        ["octocat", true],
+      ]);
     }),
   );
 

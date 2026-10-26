@@ -2259,7 +2259,7 @@ export const make = Effect.gen(function* () {
           .ReviewerCandidates({ owner, name, number: input.number, query: input.query ?? null })
           .pipe(
             graphql({ ...input, operation, allowReserve: true }),
-            Effect.map(toReviewerCandidates),
+            Effect.map((result) => toReviewerCandidates(result, input.query)),
             Effect.flatMap(found({ ...input, operation })),
           );
       },
