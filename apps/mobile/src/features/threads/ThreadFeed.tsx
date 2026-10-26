@@ -951,8 +951,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownLinkColor = theme["--color-md-link"];
   const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
   const markdownCodeBg = theme["--color-md-code-bg"];
-  // Enriched paints a code block nested in a list over the iOS selection highlight
-  // (software-mansion/enriched-markdown#1024); a see-through box that looks the same lets it show.
+  // Enriched paints list code blocks over iOS selection (software-mansion/enriched-markdown#1024).
   const markdownCodeBlockBg = seeThroughThemeColor(markdownCodeBg, theme["--color-screen"]);
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];

@@ -317,11 +317,7 @@ export function themeColorWithAlpha(color: string, alpha: number): string {
   return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
 }
 
-/**
- * A translucent colour that looks like opaque `color` laid over `surface`, so whatever is drawn
- * beneath it shows through. Exact whenever `color` is reachable at an opacity of at most 0.5;
- * otherwise (a box lighter than a light page) it is as close as half opacity allows.
- */
+/** Match the opaque color over its surface while leaving at least half the selection visible. */
 export function seeThroughThemeColor(color: string, surface: string): string {
   const target = rgbChannels(color);
   const behind = rgbChannels(surface);
