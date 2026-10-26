@@ -84,10 +84,16 @@ export const SaasAdminUserPlanRequest = Schema.Struct({
   planId: SaasPlanId,
 });
 
+/** How much the model thinks before answering; `disabled` skips thinking entirely. */
+export const SaasReasoningEffort = Schema.Literals(["disabled", "low", "high", "max"]);
+export type SaasReasoningEffort = typeof SaasReasoningEffort.Type;
+
 export const SaasAdminSettingsResponse = Schema.Struct({
   deepseekKeyConfigured: Schema.Boolean,
   deepseekModel: TrimmedNonEmptyString,
   anonymousDailyChatLimit: NonNegativeInt,
+  chatReasoningEffort: SaasReasoningEffort,
+  agenticReasoningEffort: SaasReasoningEffort,
 });
 export type SaasAdminSettingsResponse = typeof SaasAdminSettingsResponse.Type;
 
@@ -96,6 +102,8 @@ export const SaasAdminSettingsRequest = Schema.Struct({
   deepseekApiKey: Schema.optionalKey(Schema.String),
   deepseekModel: Schema.optionalKey(TrimmedNonEmptyString),
   anonymousDailyChatLimit: Schema.optionalKey(NonNegativeInt),
+  chatReasoningEffort: Schema.optionalKey(SaasReasoningEffort),
+  agenticReasoningEffort: Schema.optionalKey(SaasReasoningEffort),
 });
 export type SaasAdminSettingsRequest = typeof SaasAdminSettingsRequest.Type;
 

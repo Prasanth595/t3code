@@ -1,9 +1,10 @@
-import type {
-  SaasAdminSettingsRequest,
-  SaasAdminSettingsResponse,
-  SaasAdminUser,
-  SaasPlan,
-  SaasUsage,
+import {
+  SaasReasoningEffort,
+  type SaasAdminSettingsRequest,
+  type SaasAdminSettingsResponse,
+  type SaasAdminUser,
+  type SaasPlan,
+  type SaasUsage,
 } from "@t3tools/contracts/saas";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
@@ -29,6 +30,14 @@ const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_MODEL_SETTING = "deepseek_model";
 const ANONYMOUS_CHAT_LIMIT_SETTING = "anonymous_daily_chat_limit";
 export const DEFAULT_ANONYMOUS_DAILY_CHAT_LIMIT = 10;
+const CHAT_EFFORT_SETTING = "chat_reasoning_effort";
+const AGENTIC_EFFORT_SETTING = "agentic_reasoning_effort";
+// Chat answers short questions, so it thinks briefly; agentic work keeps the model's default.
+export const DEFAULT_CHAT_REASONING_EFFORT: SaasReasoningEffort = "low";
+export const DEFAULT_AGENTIC_REASONING_EFFORT: SaasReasoningEffort = "high";
+const isReasoningEffort = Schema.is(SaasReasoningEffort);
+const readEffort = (stored: string | undefined, fallback: SaasReasoningEffort) =>
+  isReasoningEffort(stored) ? stored : fallback;
 
 export class SaasPersistenceError extends Schema.TaggedError<SaasPersistenceError>()(
   "SaasPersistenceError",
@@ -125,7 +134,12 @@ export class SaasAccounts extends Context.Service<
       readonly priceId: string | null;
     }) => Effect.Effect<void, SaasPersistenceError>;
     readonly getModelAccess: Effect.Effect<
-      { readonly apiKey: Redacted.Redacted<string> | null; readonly model: string },
+      {
+        readonly apiKey: Redacted.Redacted<string> | null;
+        readonly model: string;
+        readonly chatReasoningEffort: SaasReasoningEffort;
+        readonly agenticReasoningEffort: SaasReasoningEffort;
+      },
       SaasPersistenceError
     >;
   }
@@ -397,6 +411,14 @@ export const make = Effect.gen(function* () {
       deepseekKeyConfigured: (settings.get(DEEPSEEK_KEY_SETTING) ?? "") !== "",
       deepseekModel: settings.get(DEEPSEEK_MODEL_SETTING) ?? DEFAULT_DEEPSEEK_MODEL,
       anonymousDailyChatLimit: parseLimit(settings.get(ANONYMOUS_CHAT_LIMIT_SETTING)),
+      chatReasoningEffort: readEffort(
+        settings.get(CHAT_EFFORT_SETTING),
+        DEFAULT_CHAT_REASONING_EFFORT,
+      ),
+      agenticReasoningEffort: readEffort(
+        settings.get(AGENTIC_EFFORT_SETTING),
+        DEFAULT_AGENTIC_REASONING_EFFORT,
+      ),
     };
   });
 
@@ -428,6 +450,12 @@ export const make = Effect.gen(function* () {
     if (input.anonymousDailyChatLimit !== undefined) {
       yield* writeSetting(ANONYMOUS_CHAT_LIMIT_SETTING, String(input.anonymousDailyChatLimit));
     }
+    if (input.chatReasoningEffort !== undefined) {
+      yield* writeSetting(CHAT_EFFORT_SETTING, input.chatReasoningEffort);
+    }
+    if (input.agenticReasoningEffort !== undefined) {
+      yield* writeSetting(AGENTIC_EFFORT_SETTING, input.agenticReasoningEffort);
+    }
     return yield* getSettings;
   });
 
@@ -444,6 +472,14 @@ export const make = Effect.gen(function* () {
               ),
             ),
       model: settings.get(DEEPSEEK_MODEL_SETTING) ?? DEFAULT_DEEPSEEK_MODEL,
+      chatReasoningEffort: readEffort(
+        settings.get(CHAT_EFFORT_SETTING),
+        DEFAULT_CHAT_REASONING_EFFORT,
+      ),
+      agenticReasoningEffort: readEffort(
+        settings.get(AGENTIC_EFFORT_SETTING),
+        DEFAULT_AGENTIC_REASONING_EFFORT,
+      ),
     };
   });
 
