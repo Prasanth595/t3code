@@ -23,6 +23,9 @@ import {
   SaasAdminUserPlanRequest,
   SaasAdminUsersResponse,
   SaasBillingUnavailableError,
+  SaasChatConversation,
+  SaasChatId,
+  SaasChatListResponse,
   SaasCheckoutRequest,
   SaasForbiddenError,
   SaasInvalidRequestError,
@@ -1350,6 +1353,43 @@ const RelayAdminPanelGroup = HttpApiGroup.make("adminPanel")
   .add(HttpApiEndpoint.get("page", "/admin"))
   .annotate(OpenApi.Description, "The admin web page.");
 
+// Open to clients without an account: a Clerk bearer is optional, and the device header
+// counts the free messages. The reply streams in the OpenAI SSE format.
+const RelayChatGroup = HttpApiGroup.make("chat")
+  .add(HttpApiEndpoint.post("chatCompletions", "/v1/chat/completions"))
+  .annotate(OpenApi.Description, "Chat mode: model replies that need no connected computer.");
+
+const chatParams = Schema.Struct({ chatId: SaasChatId });
+const RelayChatsGroup = HttpApiGroup.make("chats")
+  .add(
+    HttpApiEndpoint.get("listChats", "/v1/chats", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasChatListResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "List the account's chats, newest first"),
+    HttpApiEndpoint.get("getChat", "/v1/chats/:chatId", {
+      headers: RelayBearerRequestHeaders,
+      params: chatParams,
+      success: SaasChatConversation,
+      error: [...RelayAuthAndInternalErrors, SaasNotFoundError],
+    }).annotate(OpenApi.Summary, "Read one chat with its messages"),
+    HttpApiEndpoint.put("saveChat", "/v1/chats/:chatId", {
+      headers: RelayBearerRequestHeaders,
+      params: chatParams,
+      payload: SaasChatConversation,
+      success: RelayOkResponse,
+      error: [...RelayAuthAndInternalErrors, SaasInvalidRequestError],
+    }).annotate(OpenApi.Summary, "Create or replace a chat"),
+    HttpApiEndpoint.delete("deleteChat", "/v1/chats/:chatId", {
+      headers: RelayBearerRequestHeaders,
+      params: chatParams,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Delete a chat"),
+  )
+  .annotate(OpenApi.Description, "Chat history synced across the account's devices.")
+  .middleware(RelayClientAuth);
+
 // Authenticated by the account's model API key, in the OpenAI wire format Pi speaks.
 const RelayLlmGroup = HttpApiGroup.make("llm")
   .add(
@@ -1371,6 +1411,8 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayAccountGroup,
     RelayAdminGroup,
     RelayLlmGroup,
+    RelayChatGroup,
+    RelayChatsGroup,
     RelayBillingGroup,
     RelayAdminPanelGroup,
   )

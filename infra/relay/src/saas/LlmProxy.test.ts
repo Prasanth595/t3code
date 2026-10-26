@@ -12,6 +12,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as LlmProxy from "./LlmProxy.ts";
 import * as SaasAccounts from "./SaasAccounts.ts";
+import * as SaasChat from "./SaasChat.ts";
 
 const plan: SaasPlan = {
   id: "free",
@@ -21,6 +22,8 @@ const plan: SaasPlan = {
   stripePriceId: null,
   isDefault: true,
   sortOrder: 0,
+  agenticEnabled: true,
+  dailyChatLimit: 0,
 };
 
 const account = (usedInputTokens: number): SaasAccounts.SaasAccountView => ({
@@ -35,8 +38,12 @@ const encoder = new TextEncoder();
 
 function makeHarness(options: {
   readonly usedInputTokens?: number;
+  readonly plan?: Partial<SaasPlan>;
+  readonly anonymousDailyChatLimit?: number;
   readonly upstream: (request: HttpClientRequest.HttpClientRequest) => Response;
 }) {
+  const accountPlan = { ...plan, ...options.plan };
+  const counts = new Map<string, number>();
   const sent: Array<HttpClientRequest.HttpClientRequest> = [];
   const recorded: Array<{ inputTokens: number; outputTokens: number }> = [];
   const layer = Layer.effect(LlmProxy.LlmProxy, LlmProxy.make).pipe(
@@ -46,9 +53,15 @@ function makeHarness(options: {
           resolveLlmKey: (apiKey) =>
             Effect.succeed(
               apiKey === "mira_valid-key-0123456789"
-                ? Option.some(account(options.usedInputTokens ?? 0))
+                ? Option.some({ ...account(options.usedInputTokens ?? 0), plan: accountPlan })
                 : Option.none(),
             ),
+          getAccount: () => Effect.succeed({ ...account(0), plan: accountPlan }),
+          getSettings: Effect.succeed({
+            deepseekKeyConfigured: true,
+            deepseekModel: "deepseek-chat",
+            anonymousDailyChatLimit: options.anonymousDailyChatLimit ?? 10,
+          }),
           getModelAccess: Effect.succeed({
             apiKey: Redacted.make("sk-deepseek"),
             model: "deepseek-chat",
@@ -58,6 +71,20 @@ function makeHarness(options: {
               recorded.push({ inputTokens: input.inputTokens, outputTokens: input.outputTokens });
             }),
         }),
+        Layer.mock(SaasChat.SaasChat, {
+          countMessage: (subjects) =>
+            Effect.sync(() =>
+              subjects.map((subject) => {
+                const next = (counts.get(subject) ?? 0) + 1;
+                counts.set(subject, next);
+                return next;
+              }),
+            ),
+          recordTokens: () => Effect.void,
+        }),
+        Layer.succeed(LlmProxy.ChatBearerVerifier, (token) =>
+          Effect.succeed(token === "clerk-valid" ? Option.some("user_1") : Option.none()),
+        ),
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
@@ -85,7 +112,22 @@ function makeHarness(options: {
       ),
       Effect.provide(layer),
     );
-  return { sent, recorded, chat };
+  const chatMode = (headers: Record<string, string>) =>
+    LlmProxy.LlmProxy.pipe(
+      Effect.flatMap((proxy) =>
+        proxy.chat(
+          HttpServerRequest.fromWeb(
+            new Request("https://relay.test/v1/chat/completions", {
+              method: "POST",
+              headers: { "content-type": "application/json", ...headers },
+              body: JSON.stringify({ messages: [{ role: "user", content: "Hi" }] }),
+            }),
+          ),
+        ),
+      ),
+      Effect.provide(layer),
+    );
+  return { sent, recorded, chat, chatMode };
 }
 
 const readText = (response: HttpServerResponse.HttpServerResponse) =>
@@ -165,6 +207,63 @@ describe("LlmProxy", () => {
       expect(yield* readText(response)).toBe(chunks.join(""));
       expect(sentJson(harness.sent[0])?.stream_options).toEqual({ include_usage: true });
       expect(harness.recorded).toEqual([{ inputTokens: 7, outputTokens: 3 }]);
+    }),
+  );
+
+  it.effect("refuses agentic requests on a plan without agentic mode", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        plan: { agenticEnabled: false },
+        upstream: () => new Response("{}"),
+      });
+      const response = yield* harness.chat({ messages: [] });
+      expect(response.status).toBe(403);
+      expect(JSON.parse(yield* readText(response)).error.type).toBe("agentic_not_in_plan");
+      expect(harness.sent).toEqual([]);
+    }),
+  );
+});
+
+describe("chat mode", () => {
+  const device = { "x-mira-device-id": "device-0123456789abcdef" };
+  const sse = () =>
+    new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+
+  it.effect("asks a device without an account to sign up after its free messages", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ anonymousDailyChatLimit: 2, upstream: sse });
+      expect((yield* harness.chatMode(device)).status).toBe(200);
+      expect((yield* harness.chatMode(device)).status).toBe(200);
+      const refused = yield* harness.chatMode(device);
+      expect(refused.status).toBe(429);
+      expect(JSON.parse(yield* readText(refused)).error.code).toBe("sign_up_required");
+      expect(harness.sent).toHaveLength(2);
+      expect(sentJson(harness.sent[0])?.stream).toBe(true);
+    }),
+  );
+
+  it.effect("keeps chat open for a signed-in plan with no daily cap", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        anonymousDailyChatLimit: 1,
+        plan: { agenticEnabled: false, dailyChatLimit: 0 },
+        upstream: sse,
+      });
+      for (let index = 0; index < 3; index++) {
+        expect((yield* harness.chatMode({ authorization: "Bearer clerk-valid" })).status).toBe(200);
+      }
+    }),
+  );
+
+  it.effect("stops a signed-in plan at its daily cap and rejects stale sessions", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ plan: { dailyChatLimit: 1 }, upstream: sse });
+      expect((yield* harness.chatMode({ authorization: "Bearer clerk-valid" })).status).toBe(200);
+      const capped = yield* harness.chatMode({ authorization: "Bearer clerk-valid" });
+      expect(JSON.parse(yield* readText(capped)).error.code).toBe("daily_limit");
+      const stale = yield* harness.chatMode({ authorization: "Bearer clerk-stale" });
+      expect(stale.status).toBe(401);
+      expect(JSON.parse(yield* readText(stale)).error.code).toBe("session_expired");
     }),
   );
 });

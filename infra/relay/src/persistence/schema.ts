@@ -214,6 +214,8 @@ export const saasPlans = pgTable("saas_plans", {
   stripePriceId: varchar("stripe_price_id", { length: 255 }),
   isDefault: boolean("is_default").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),
+  agenticEnabled: boolean("agentic_enabled").notNull().default(false),
+  dailyChatLimit: integer("daily_chat_limit").notNull().default(0),
   createdAt: varchar("created_at", { length: 64 }).notNull(),
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),
 });
@@ -257,3 +259,32 @@ export const saasSettings = pgTable("saas_settings", {
   value: text("value").notNull(),
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),
 });
+
+/** Chat messages per subject (`user:`, `device:` or `ip:` prefixed) per UTC day. */
+export const saasChatDaily = pgTable(
+  "saas_chat_daily",
+  {
+    subject: varchar("subject", { length: 191 }).notNull(),
+    day: varchar("day", { length: 10 }).notNull(),
+    messages: integer("messages").notNull().default(0),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.subject, table.day] })],
+);
+
+export const saasChatConversations = pgTable(
+  "saas_chat_conversations",
+  {
+    userId: varchar("user_id", { length: 191 }).notNull(),
+    id: varchar("id", { length: 64 }).notNull(),
+    title: text("title").notNull(),
+    messages: text("messages").notNull(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.id] }),
+    index("idx_saas_chat_conversations_user_updated").on(table.userId, table.updatedAt),
+  ],
+);

@@ -112,7 +112,9 @@ function planRow(plan, isNew) {
   };
   const row = el("tr", {},
     isNew ? field("id", "text", "Plan id") : el("td", { textContent: plan.id }),
-    field("name", "text", "Name"), field("monthlyTokenLimit", "number", "Monthly tokens"),
+    field("name", "text", "Name"), field("agenticEnabled", "checkbox", "Agentic mode"),
+    field("monthlyTokenLimit", "number", "Monthly agentic tokens"),
+    field("dailyChatLimit", "number", "Chat messages per day"),
     field("priceCents", "number", "Price in cents"), field("stripePriceId", "text", "Stripe price id"),
     field("isDefault", "checkbox", "Default plan"), field("sortOrder", "number", "Order"));
   const save = el("button", { className: "primary", textContent: "Save" });
@@ -121,7 +123,9 @@ function planRow(plan, isNew) {
     const next = {
       id: isNew ? value("id").value.trim() : plan.id,
       name: value("name").value.trim(),
+      agenticEnabled: value("agenticEnabled").checked,
       monthlyTokenLimit: Number(value("monthlyTokenLimit").value),
+      dailyChatLimit: Number(value("dailyChatLimit").value),
       priceCents: Number(value("priceCents").value),
       stripePriceId: value("stripePriceId").value.trim() || null,
       isDefault: value("isDefault").checked,
@@ -136,21 +140,22 @@ function planRow(plan, isNew) {
 
 async function renderPlans() {
   const { plans } = await api("/v1/admin/plans");
-  const blank = { id: "", name: "", monthlyTokenLimit: 0, priceCents: 0, stripePriceId: "", isDefault: false, sortOrder: plans.length };
+  const blank = { id: "", name: "", agenticEnabled: false, monthlyTokenLimit: 0, dailyChatLimit: 0, priceCents: 0, stripePriceId: "", isDefault: false, sortOrder: plans.length };
   return el("div", {},
     el("table", {},
-      el("thead", {}, el("tr", {}, ...["Id", "Name", "Tokens / month", "Price (cents)", "Stripe price id", "Default", "Order", ""].map((h) => el("th", { textContent: h })))),
+      el("thead", {}, el("tr", {}, ...["Id", "Name", "Agentic", "Agentic tokens / month", "Chat messages / day", "Price (cents)", "Stripe price id", "Default", "Order", ""].map((h) => el("th", { textContent: h })))),
       el("tbody", {}, ...plans.map((plan) => planRow(plan, false)), planRow(blank, true))),
-    el("p", { className: "muted", textContent: "New accounts get the default plan. A plan needs a Stripe price id before users can buy it. The last row adds a plan." }));
+    el("p", { className: "muted", textContent: "New accounts get the default plan. A plan needs a Stripe price id before users can buy it. Chat messages per day of 0 means unlimited; a cap guards against abuse. The last row adds a plan." }));
 }
 
 async function renderSettings() {
   const settings = await api("/v1/admin/settings");
   const key = el("input", { type: "password", id: "deepseek-key", placeholder: settings.deepseekKeyConfigured ? "Saved. Enter a new key to replace it." : "sk-…", style: "width:28rem", autocomplete: "off" });
   const model = el("input", { type: "text", id: "deepseek-model", value: settings.deepseekModel, style: "width:28rem" });
+  const anonymous = el("input", { type: "number", id: "anonymous-limit", min: "0", value: String(settings.anonymousDailyChatLimit) });
   const save = el("button", { className: "primary", textContent: "Save" });
   save.onclick = async () => {
-    const body = { deepseekModel: model.value.trim() };
+    const body = { deepseekModel: model.value.trim(), anonymousDailyChatLimit: Number(anonymous.value) };
     if (key.value.trim() !== "") body.deepseekApiKey = key.value.trim();
     try { await api("/v1/admin/settings", { method: "PUT", body: JSON.stringify(body) }); showError(); await render(); }
     catch (error) { showError(error); }
@@ -160,6 +165,8 @@ async function renderSettings() {
     el("p", { className: settings.deepseekKeyConfigured ? "muted" : "error", textContent: status }),
     el("label", { htmlFor: "deepseek-key", textContent: "DeepSeek API key" }), key,
     el("label", { htmlFor: "deepseek-model", textContent: "DeepSeek model" }), model,
+    el("label", { htmlFor: "anonymous-limit", textContent: "Chat messages per day without an account" }), anonymous,
+    el("p", { className: "muted", textContent: "After these, the app asks people to create a free account. 0 asks right away." }),
     el("p", {}, save));
 }
 
