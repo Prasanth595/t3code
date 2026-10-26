@@ -138,11 +138,12 @@ const resumedMcpQueryInput = {
 } satisfies ClaudeAgentSdkQueryOpenInput;
 
 it.effect.each([
-  { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, rejects: false },
-  { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, rejects: true },
-  { permissionMode: "default", allowDangerouslySkipPermissions: true, rejects: false },
-  { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: false, rejects: false },
-] as const)("initializes bypass before accepting prompts: %o", (options) =>
+  ["bypassPermissions", true, "accept"],
+  ["bypassPermissions", true, "reject"],
+  ["default", true, "accept"],
+  ["bypassPermissions", false, "accept"],
+  ["bypassPermissions", true, "stall"],
+] as const)("initializes permission mode before prompts: %o", ([mode, eligible, response]) =>
   Effect.scoped(
     Effect.gen(function* () {
       const restoring = Promise.withResolvers<void>();
@@ -150,7 +151,7 @@ it.effect.each([
       const setPermissionMode = vi.fn(async (_mode: ClaudeSdk.PermissionMode) => {
         restoring.resolve();
         await acknowledge.promise;
-        if (options.rejects) throw new Error("Bypass disabled by managed policy");
+        if (response === "reject") throw new Error("Bypass disabled by managed policy");
       });
       let prompts: AsyncIterable<ClaudeSdk.SDKUserMessage> | undefined;
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ prompt }) => {
@@ -172,8 +173,8 @@ it.effect.each([
             model: "claude-sonnet-4-6",
             tools: [],
             resume: FORK_SESSION_ID,
-            permissionMode: options.permissionMode,
-            allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
+            permissionMode: mode,
+            allowDangerouslySkipPermissions: eligible,
           },
         })
         .pipe(Effect.forkChild);
@@ -181,9 +182,13 @@ it.effect.each([
         Effect.promise(() => restoring.promise).pipe(Effect.as("restore")),
         Fiber.join(opening).pipe(Effect.as("open")),
       );
-      const bypass =
-        options.permissionMode === "bypassPermissions" && options.allowDangerouslySkipPermissions;
+      const bypass = mode === "bypassPermissions" && eligible;
       assert.equal(first, bypass ? "restore" : "open");
+      if (bypass) assert.isUndefined(opening.pollUnsafe());
+      if (response === "stall") {
+        yield* TestClock.adjust("10 seconds");
+        assert.isDefined(opening.pollUnsafe(), "A stalled control request must not block startup");
+      }
       acknowledge.resolve();
       const session = yield* Fiber.join(opening);
       yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));

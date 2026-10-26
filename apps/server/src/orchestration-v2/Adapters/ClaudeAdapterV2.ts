@@ -1013,7 +1013,7 @@ export const layerQueryRunner: Layer.Layer<
                     ) {
                       yield* Effect.tryPromise(() =>
                         queryRuntime.setPermissionMode("bypassPermissions"),
-                      ).pipe(Effect.ignore);
+                      ).pipe(Effect.timeout("10 seconds"), Effect.ignore);
                     }
                     if (mcpServers !== undefined) {
                       // Errors and mcp_status can echo headers; log only server names.
