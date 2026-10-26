@@ -308,7 +308,8 @@ const resolveLinuxLauncherPython = Effect.fn("resolveLinuxLauncherPython")(funct
     return undefined;
   }
   if (!/^Seccomp:[ \t]*0[ \t]*$/m.test(yield* readProc("/proc/self/status"))) return undefined;
-  return pythonExecutable ?? (yield* resolveCommandPath("python3", { env: baseEnv })) ?? undefined;
+  const python = pythonExecutable ?? (yield* resolveCommandPath("python3", { env: baseEnv }));
+  return python ? (yield* Path.Path).resolve(python) : undefined;
 });
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {

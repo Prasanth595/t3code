@@ -706,7 +706,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           profileDirectory: path.join(directory, "profile"),
           platform: "linux",
           userHome: directory,
-          baseEnv: { PATH: binDirectory },
+          baseEnv: { PATH: path.relative(process.cwd(), binDirectory) },
         }).pipe(
           Effect.provideService(
             FileSystem.FileSystem,
