@@ -139,6 +139,10 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
+    /** Turns a device off unless a thread has it open; false when one does. */
+    readonly shutdownUnlessOpen: (
+      input: DeviceShutdownInput,
+    ) => Effect.Effect<boolean, DeviceError>;
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
@@ -187,6 +191,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const lifecycleLock = yield* Semaphore.make(1);
+  // shutdownUnlessOpen claims a device under the lifecycle lock, so an open that
+  // overlaps the claim or the shutdown cannot register a session on it.
+  let shutdownEpoch = 0;
+  const shutdownClaims = new Map<string, number>();
+  const shutdownsInFlight = new Map<string, number>();
+  const deviceKey = (hostId: DeviceHostId, deviceId: DeviceId) => `${hostId}\u0000${deviceId}`;
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
       enabled: value.enableDeviceSupport,
@@ -585,6 +595,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
+      const openedEpoch = shutdownEpoch;
       const host = yield* resolveHost(input.hostId);
       yield* ensurePlatform(host, input.platform);
       const ready = yield* readiness(host.id);
@@ -671,6 +682,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               hostLabel: host.label,
               reason: "Device support was turned off while the device was opening.",
             });
+          const key = deviceKey(host.id, device.id);
+          if (shutdownsInFlight.has(key) || (shutdownClaims.get(key) ?? 0) > openedEpoch)
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              hostLabel: host.label,
+              reason: "The device was turned off while it was opening. Retry the operation.",
+            });
           yield* publish((current) => ({
             ...current,
             sessions: [
@@ -753,6 +771,39 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }));
     },
   );
+
+  const shutdownUnlessOpen: DeviceService["Service"]["shutdownUnlessOpen"] = Effect.fn(
+    "DeviceService.shutdownUnlessOpen",
+  )(function* (input) {
+    const host = yield* resolveHost(input.hostId);
+    const key = deviceKey(host.id, input.deviceId);
+    const claimed = yield* lifecycleLock.withPermit(
+      Effect.gen(function* () {
+        const { state } = yield* SynchronizedRef.get(stateRef);
+        if (
+          state.sessions.some(
+            (session) => session.hostId === host.id && session.deviceId === input.deviceId,
+          )
+        )
+          return false;
+        shutdownEpoch += 1;
+        shutdownClaims.set(key, shutdownEpoch);
+        shutdownsInFlight.set(key, (shutdownsInFlight.get(key) ?? 0) + 1);
+        return true;
+      }),
+    );
+    if (!claimed) return false;
+    yield* shutdown({ ...input, hostId: host.id }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          const remaining = (shutdownsInFlight.get(key) ?? 1) - 1;
+          if (remaining === 0) shutdownsInFlight.delete(key);
+          else shutdownsInFlight.set(key, remaining);
+        }),
+      ),
+    );
+    return true;
+  });
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
@@ -882,6 +933,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       open,
       close,
       shutdown,
+      shutdownUnlessOpen,
       detail,
       action,
       screenshot,

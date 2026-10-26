@@ -3,6 +3,7 @@ import {
   type DeviceHostId,
   type DeviceId,
   type DevicePlatform,
+  type DeviceSession,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -252,13 +253,11 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       if (input.shutdown === true) {
-        const hostId =
-          input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
-        const recorded = (yield* devices.sessionsForThread(scope.thread.threadId)).some(
-          (session) =>
-            (hostId === undefined || session.hostId === hostId) &&
-            (input.deviceId === undefined || session.deviceId === input.deviceId),
-        );
+        // Like devices.close, an omitted hostId matches a session on any host.
+        const matches = (session: DeviceSession) =>
+          (input.hostId === undefined || session.hostId === input.hostId) &&
+          (input.deviceId === undefined || session.deviceId === input.deviceId);
+        const recorded = (yield* devices.sessionsForThread(scope.thread.threadId)).some(matches);
         // Sessions live in memory, so a restart forgets them and close alone would turn nothing off.
         if (!recorded) {
           if (input.deviceId === undefined) {
@@ -267,23 +266,22 @@ const handlers = {
                 "No device is open in this thread, so nothing was turned off. Pass deviceId to turn a device off.",
             });
           }
+          const openElsewhere = new DeviceToolUnavailableError({
+            reason: `Device ${input.deviceId}${input.hostId === undefined ? "" : ` on host ${input.hostId}`} is open in another thread, so it was not turned off.`,
+          });
           const state = yield* devices.list;
-          if (
-            state.sessions.some(
-              (session) => session.hostId === hostId && session.deviceId === input.deviceId,
-            )
-          ) {
-            return yield* new DeviceToolUnavailableError({
-              reason: `Device ${input.deviceId} on host ${hostId} is open in another thread, so it was not turned off.`,
-            });
-          }
+          if (state.sessions.some(matches)) return yield* openElsewhere;
           const target = yield* pickDevice(state.devices, input);
-          if (target.booted) {
-            yield* devices.shutdown({
+          // The service rechecks under its session lock, since another thread may open it meanwhile.
+          if (
+            target.booted &&
+            !(yield* devices.shutdownUnlessOpen({
               hostId: target.hostId,
               deviceId: target.id,
               platform: target.platform,
-            });
+            }))
+          ) {
+            return yield* openElsewhere;
           }
           return {};
         }

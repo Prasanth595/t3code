@@ -250,7 +250,7 @@ it.effect("device_close with shutdown turns off a device whose session a restart
           list: Effect.succeed({ ...state, sessions }),
           sessionsForThread: (id) =>
             Effect.succeed(sessions.filter((session) => session.threadId === id)),
-          shutdown: (input) => Effect.sync(() => void shutdowns.push(input)),
+          shutdownUnlessOpen: (input) => Effect.sync(() => shutdowns.push(input) > 0),
           close: (input) => Effect.sync(() => void closes.push(input)),
         }),
       ),
@@ -270,9 +270,9 @@ it.effect("device_close with shutdown turns off a device whose session a restart
           Effect.provideService(McpSchema.McpServerClient, client),
         );
     }).pipe(Effect.scoped, Effect.provide(layerFor(sessions)));
-  const session = (owner: ThreadId): DeviceSession => ({
+  const session = (owner: ThreadId, hostId = "local"): DeviceSession => ({
     threadId: owner,
-    hostId: "local",
+    hostId,
     deviceId: DeviceId.make("UDID-1"),
     platform: "ios",
     openedAt: "2026-09-08T00:00:00.000Z",
@@ -301,6 +301,23 @@ it.effect("device_close with shutdown turns off a device whose session a restart
     const recorded = yield* call({ deviceId: "UDID-1", shutdown: true }, [session(threadId)]);
     expect(recorded.isError).toBe(false);
     expect(closes).toEqual([{ threadId, deviceId: "UDID-1", shutdown: true }]);
+    expect(shutdowns).toHaveLength(1);
+
+    // Without hostId the session on an SSH host is this thread's, so close turns it off there.
+    const remote = yield* call({ deviceId: "UDID-1", shutdown: true }, [
+      session(threadId, "ssh-mac"),
+    ]);
+    expect(remote.isError).toBe(false);
+    expect(closes).toHaveLength(2);
+    expect(shutdowns).toHaveLength(1);
+
+    const remoteForeign = yield* call({ deviceId: "UDID-1", shutdown: true }, [
+      session(otherThread, "ssh-mac"),
+    ]);
+    expect(remoteForeign.isError).toBe(true);
+    expect(remoteForeign.content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining("open in another thread") }),
+    ]);
     expect(shutdowns).toHaveLength(1);
   });
 });

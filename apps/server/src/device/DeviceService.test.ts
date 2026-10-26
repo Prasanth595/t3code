@@ -49,7 +49,7 @@ const fixture = Effect.fn("fixture")(function* (
     | DeviceHost.AgentDeviceStartError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
-  options: { readonly endsDevices?: boolean } = {},
+  options: { readonly endsDevices?: boolean; readonly onShutdown?: Effect.Effect<void> } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -68,6 +68,7 @@ const fixture = Effect.fn("fixture")(function* (
         return HttpClientResponse.fromWeb(request, new Response(new Uint8Array([137, 80, 78, 71])));
       }
       if (request.url.endsWith("/shutdown")) {
+        yield* options.onShutdown ?? Effect.void;
         shutDown = true;
         booted = false;
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
@@ -583,6 +584,49 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
     const state = yield* service.state;
     expect(state.sessions).toEqual([]);
     expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a device no thread has open is not turned off under an open racing it", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    let pause = false;
+    const { service } = yield* fixture(Effect.void, undefined, false, undefined, false, undefined, {
+      onShutdown: Effect.suspend(() =>
+        pause
+          ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish)))
+          : Effect.void,
+      ),
+    });
+    yield* service.configure({ enabled: true });
+    const first = ThreadId.make("race-first");
+    const other = ThreadId.make("race-other");
+    const { deviceId, platform } = yield* service.open({
+      threadId: first,
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+    yield* service.close({ threadId: first, deviceId });
+
+    // An open that registers first keeps the device on.
+    yield* service.open({ threadId: other, deviceId, platform });
+    expect(yield* service.shutdownUnlessOpen({ deviceId, platform })).toBe(false);
+    expect((yield* service.state).sessions.map((session) => session.threadId)).toEqual([other]);
+    yield* service.close({ threadId: other, deviceId });
+
+    // An open that lands while the shutdown runs fails instead of registering.
+    pause = true;
+    const shuttingDown = yield* service
+      .shutdownUnlessOpen({ deviceId, platform })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    const opening = yield* Effect.exit(service.open({ threadId: other, deviceId, platform }));
+    yield* Deferred.succeed(finish, undefined);
+    expect(yield* Fiber.join(shuttingDown)).toBe(true);
+    expect(opening._tag).toBe("Failure");
+    expect(String(opening)).toContain("turned off while it was opening");
+    expect((yield* service.state).sessions).toEqual([]);
   }).pipe(Effect.scoped),
 );
 
