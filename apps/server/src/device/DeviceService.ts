@@ -699,12 +699,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
-    hostId: DeviceHostId,
+    ready: DeviceReadiness,
     deviceId: DeviceId,
     platform: DevicePlatform,
-    readyOverride?: DeviceReadiness,
   ) {
-    const ready = readyOverride ?? (yield* readiness(hostId));
     yield* ready.devices.shutdown({ id: deviceId, platform });
     yield* publish((state) => ({
       ...state,
@@ -713,16 +711,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ? { ...device, booted: false }
           : device,
       ),
-      // Close removes each record only after its own release, so other
-      // threads keep theirs for their own close.
-      sessions: readyOverride
-        ? state.sessions
-        : state.sessions.filter(
-            (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-          ),
     }));
-    // Snapshot saves can stall discovery; refresh failure must not fail an accepted shutdown.
-    if (!readyOverride) yield* refreshAfterShutdown(ready);
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
@@ -763,10 +752,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   hostLabel: host.label,
                   reason: "Device host is not running. Reconnect before retrying close.",
                 });
-              yield* shutdownDevice(session.hostId, session.deviceId, session.platform, {
-                hostId: session.hostId,
-                ...ready,
-              });
+              yield* shutdownDevice(
+                {
+                  hostId: session.hostId,
+                  ...ready,
+                },
+                session.deviceId,
+                session.platform,
+              );
             }
             yield* publish((current) => ({
               ...current,
@@ -791,13 +784,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const shutdown: DeviceService["Service"]["shutdown"] = Effect.fn("DeviceService.shutdown")(
     function* (input) {
       const host = yield* resolveHost(input.hostId);
-      yield* shutdownDevice(host.id, input.deviceId, input.platform);
+      const ready = yield* readiness(host.id);
+      yield* shutdownDevice(ready, input.deviceId, input.platform);
       yield* publish((current) => ({
         ...current,
         sessions: current.sessions.filter(
           (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
         ),
       }));
+      yield* refreshAfterShutdown(ready);
     },
   );
 
