@@ -1977,7 +1977,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 context.usageMissed = true;
                 return;
               }
-              if (Object.values(added).some((tokens) => !Number.isFinite(tokens) || tokens < 0)) {
+              if (
+                Object.values(added).some(
+                  (tokens) => tokens !== undefined && (!Number.isFinite(tokens) || tokens < 0),
+                )
+              ) {
                 context.usageMissed = true;
               }
               const reasoningTokens =
