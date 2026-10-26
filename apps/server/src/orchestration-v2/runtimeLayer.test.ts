@@ -4681,6 +4681,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         runId: limited.id,
       });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:hold-available`),
+            type: "run.updated",
+            threadId,
+            runId: available.id,
+            occurredAt: now,
+            payload: { ...available, queueHeld: true },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume-available`),
+        threadId,
+      });
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
       const started = after.runs.find((run) => run.id === available.id);
