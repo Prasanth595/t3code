@@ -54,9 +54,14 @@ export function showBootError(error: unknown) {
     content.append(detail);
   }
 
+  const reload = document.createElement("button");
+  reload.id = "boot-error-reload";
+  reload.type = "button";
+  reload.textContent = "Reload";
+  reload.addEventListener("click", () => window.location.reload());
+
   const hint = document.createElement("p");
-  hint.textContent =
-    "Try reloading. If the problem continues, run this in a terminal to find the cause.";
+  hint.textContent = "If reloading does not help, run this in a terminal to find the cause:";
 
   const command = document.createElement("code");
   command.textContent = FALLBACK_TRIAGE_COMMAND;
@@ -83,13 +88,11 @@ export function showBootError(error: unknown) {
     commandRow.append(copy);
   }
 
-  const reload = document.createElement("button");
-  reload.id = "boot-error-reload";
-  reload.type = "button";
-  reload.textContent = "Reload";
-  reload.addEventListener("click", () => window.location.reload());
+  const triage = document.createElement("div");
+  triage.id = "boot-error-triage";
+  triage.append(hint, commandRow);
 
-  content.append(hint, commandRow, reload);
+  content.append(reload, triage);
   bootShell.replaceChildren(content);
 
   void resolveTriageCommand(window.desktopBridge).then((value) => (command.textContent = value));
