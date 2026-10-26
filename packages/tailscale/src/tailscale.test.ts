@@ -98,9 +98,14 @@ function layerMockSpawner(
   );
 }
 
-function layerServeFixture(rootProxy: string | null, listener: object = { HTTPS: true }) {
+function layerServeFixture(
+  rootProxy: string | null,
+  listener: object = { HTTPS: true },
+  extra: object = {},
+) {
   const writes: Array<ReadonlyArray<string>> = [];
   const serveStatus = JSON.stringify({
+    ...extra,
     TCP: { "443": listener },
     Web: {
       "desktop.tail.ts.net:443": {
@@ -321,6 +326,58 @@ describe("tailscale", () => {
       );
     });
   });
+
+  it.effect("leaves Funnel and foreground handlers untouched", () =>
+    Effect.gen(function* () {
+      for (const extra of [
+        { AllowFunnel: { "desktop.tail.ts.net:443": true } },
+        {
+          Foreground: {
+            session: {
+              TCP: { "443": { HTTPS: true } },
+              Web: {
+                "desktop.tail.ts.net:443": {
+                  Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } },
+                },
+              },
+            },
+          },
+        },
+      ]) {
+        const fixture = layerServeFixture(null, { HTTPS: true }, extra);
+        const claimed = yield* claimTailscaleServe({ localPort: 3773 }).pipe(
+          Effect.result,
+          Effect.provide(fixture.layer),
+        );
+        assert.isTrue(Result.isFailure(claimed));
+        assert.isFalse(
+          yield* releaseTailscaleServe({ localPort: 3773 }).pipe(Effect.provide(fixture.layer)),
+        );
+        assert.deepEqual(fixture.writes, []);
+      }
+    }),
+  );
+
+  it.effect("does not write when Serve status is unreadable", () =>
+    Effect.gen(function* () {
+      for (const stdout of ["", "not-json"]) {
+        const writes: Array<ReadonlyArray<string>> = [];
+        const layer = layerMockSpawner((_command, args) => {
+          if (args.join(" ") === "serve status --json") return { stdout };
+          writes.push(args);
+          return {};
+        });
+        for (const operation of [claimTailscaleServe, releaseTailscaleServe]) {
+          const error = yield* operation({ localPort: 3773 }).pipe(
+            Effect.flip,
+            Effect.provide(layer),
+          );
+          assert.instanceOf(error, TailscaleStatusParseError);
+        }
+        assert.deepEqual(writes, []);
+      }
+    }),
+  );
 
   it.live("replaces a Serve root left behind by a stopped server", () =>
     Effect.gen(function* () {

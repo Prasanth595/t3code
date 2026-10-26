@@ -463,11 +463,12 @@ class TailscaleServeOccupiedError extends Schema.TaggedError<TailscaleServeOccup
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `Tailscale Serve HTTPS port ${this.servePort} already fronts another running server; leaving it in place.`;
+    return `Tailscale Serve HTTPS port ${this.servePort} is occupied; leaving it in place.`;
   }
 }
 
 const TailscaleServeConfigFields = {
+  AllowFunnel: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   TCP: Schema.optional(
     Schema.Record(
       Schema.String,
@@ -502,7 +503,7 @@ const decodeTailscaleServeConfigJson = Schema.decodeEffect(
 
 const readTailscaleServeConfig = readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
   Effect.flatMap((stdout) =>
-    decodeTailscaleServeConfigJson(stdout.trim() === "" ? "{}" : stdout).pipe(
+    decodeTailscaleServeConfigJson(stdout).pipe(
       Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
     ),
   ),
@@ -517,14 +518,27 @@ const servePortHolder = (
   config: typeof TailscaleServeConfigJson.Type,
   servePort: number,
 ): TailscaleServePortHolder => {
-  for (const scope of [config, ...Object.values(config.Foreground ?? {})]) {
+  for (const scope of [...Object.values(config.Foreground ?? {}), config]) {
+    // Serve clears Funnel on this port; foreground mappings belong to another CLI session.
+    if (
+      Object.entries(scope.AllowFunnel ?? {}).some(
+        ([key, enabled]) => enabled && key.endsWith(`:${servePort}`),
+      )
+    ) {
+      return { _tag: "other" };
+    }
     const listener = scope.TCP?.[String(servePort)];
     // `serve --https` switches the whole port to HTTPS, so a plain HTTP or TCP listener is taken.
-    if (listener !== undefined && (listener.HTTPS !== true || listener.TCPForward !== undefined)) {
+    if (
+      listener !== undefined &&
+      (scope !== config || listener.HTTPS !== true || listener.TCPForward !== undefined)
+    ) {
       return { _tag: "other" };
     }
     for (const [hostPort, web] of Object.entries(scope.Web ?? {})) {
-      const root = hostPort.endsWith(`:${servePort}`) ? web.Handlers?.["/"] : undefined;
+      if (!hostPort.endsWith(`:${servePort}`)) continue;
+      if (scope !== config) return { _tag: "other" };
+      const root = web.Handlers?.["/"];
       if (root !== undefined) {
         return root.Proxy !== undefined ? { _tag: "proxy", target: root.Proxy } : { _tag: "other" };
       }
@@ -535,8 +549,10 @@ const servePortHolder = (
 
 const LOOPBACK_PROXY_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** Only a refused loopback connection proves a target stopped; anything else counts as live. */
-const proxyTargetIsLive = (target: string): Effect.Effect<boolean> => {
+// Only a refused loopback connection proves a target stopped.
+const proxyTargetIsLive = Effect.fn("tailscale.proxyTargetIsLive")((
+  target: string,
+): Effect.Effect<boolean> => {
   const url = URL.canParse(target) ? new URL(target) : undefined;
   if (url === undefined || !LOOPBACK_PROXY_HOSTS.has(url.hostname)) {
     return Effect.succeed(true);
@@ -555,12 +571,8 @@ const proxyTargetIsLive = (target: string): Effect.Effect<boolean> => {
     socket.once("error", (error: NodeJS.ErrnoException) => settle(error.code !== "ECONNREFUSED"));
     return Effect.sync(() => socket.destroy());
   });
-};
+});
 
-/**
- * Publishes `localPort` unless the root of `servePort` already fronts another
- * running server. A mapping left behind by a server that has stopped is replaced.
- */
 export const claimTailscaleServe = Effect.fn("tailscale.claimTailscaleServe")(function* (
   input: TailscaleServeTarget,
 ) {
@@ -577,7 +589,6 @@ export const claimTailscaleServe = Effect.fn("tailscale.claimTailscaleServe")(fu
   yield* ensureTailscaleServe(input);
 });
 
-/** Removes the root of `servePort` only while it still points at this server. */
 export const releaseTailscaleServe = Effect.fn("tailscale.releaseTailscaleServe")(function* (
   input: TailscaleServeTarget,
 ) {
@@ -595,7 +606,6 @@ export const releaseTailscaleServe = Effect.fn("tailscale.releaseTailscaleServe"
 
 const T3EnvironmentIdentity = Schema.Struct({ environmentId: Schema.String });
 
-/** The environment id the T3 server at `baseUrl` reports, if one answers there. */
 export const readT3EnvironmentId = Effect.fn("tailscale.readT3EnvironmentId")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {
     const client = yield* HttpClient.HttpClient;
@@ -612,7 +622,6 @@ export const readT3EnvironmentId = Effect.fn("tailscale.readT3EnvironmentId")(
   Effect.orElseSucceed(() => Option.none<string>()),
 );
 
-/** Serve keys a mapping by port alone, so another server on this host can answer the URL. */
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: {
     readonly baseUrl: string;
