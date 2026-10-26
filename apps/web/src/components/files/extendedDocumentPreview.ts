@@ -222,7 +222,11 @@ const HTML_TAGS = new Set([
 ]);
 async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
   if (node.name === "#text") return boundedMarkup(escape(text(node)));
-  const tag = node.name.split(":").at(-1) ?? "";
+  const tag =
+    node.name
+      .replace(/^\{[^}]*\}/, "")
+      .split(":")
+      .at(-1) ?? "";
   if (["head", "script", "style", "iframe", "object", "embed", "svg", "math", "form"].includes(tag))
     return "";
   if (tag === "br" || tag === "hr") return boundedMarkup(`<${tag}>`);

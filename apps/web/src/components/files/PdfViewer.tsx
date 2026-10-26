@@ -223,8 +223,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
   // oxlint-disable-next-line t3code/react-effect-budget -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
-    if (!anchor || anchor.width === width) return;
     zoomAnchor.current = null;
+    if (!anchor || anchor.width === width) return;
     scroll.current?.scrollTo({
       top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
     });

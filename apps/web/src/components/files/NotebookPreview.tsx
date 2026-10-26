@@ -53,7 +53,10 @@ export default function NotebookPreview(props: {
   }));
   const outputCount = props.notebook.cells
     .slice(0, visible)
-    .reduce((count, cell) => count + cell.outputs.length, 0);
+    .reduce(
+      (count, cell) => count + cell.outputs.filter((output) => output.kind === "html").length,
+      0,
+    );
   // oxlint-disable-next-line t3code/react-effect-budget -- Observe output visibility and measure departing outputs to bound iframe lifetimes while preserving scroll height.
   useEffect(() => {
     const root = scroll.current;
@@ -129,25 +132,30 @@ export default function NotebookPreview(props: {
               {cell.outputs.map((output, outputIndex) => (
                 <div
                   key={outputIndex}
-                  data-notebook-output={`${index}-${outputIndex}`}
+                  data-notebook-output={
+                    output.kind === "html" ? `${index}-${outputIndex}` : undefined
+                  }
                   className="border-t border-border/60"
                   style={{
-                    minHeight: outputView.mounted.has(`${index}-${outputIndex}`)
-                      ? undefined
-                      : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
+                    minHeight:
+                      output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
+                        ? undefined
+                        : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
                   }}
                 >
-                  {!outputView.mounted.has(`${index}-${outputIndex}`) ? null : output.kind ===
-                    "html" ? (
-                    <DocumentPages
-                      html={output.text}
-                      name={`Cell ${index + 1} HTML output`}
-                      output
-                    />
+                  {output.kind === "html" ? (
+                    !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
+                      <DocumentPages
+                        html={output.text}
+                        name={`Cell ${index + 1} HTML output`}
+                        output
+                      />
+                    )
                   ) : output.kind === "image" ? (
                     <img
                       src={output.text}
                       alt={`Cell ${index + 1} output`}
+                      loading="lazy"
                       className="max-h-96 max-w-full p-4 object-contain"
                     />
                   ) : (
