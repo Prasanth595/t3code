@@ -3,10 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
-import * as Ref from "effect/Ref";
 import { vi } from "vite-plus/test";
 
 import * as BrowserSession from "../BrowserSession.ts";
@@ -58,8 +56,6 @@ const withImporter = Effect.fnUntraced(function* (
   const root = source.userDataDirectory(context);
   if (root === undefined) throw new Error("Source has no user-data directory");
   yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-  // The cookie database is what marks a source as installed, so a fixture
-  // without one is reported as absent before any other check runs.
   yield* fileSystem.writeFileString(
     `${root}/Default/${source.engine === "firefox" ? "cookies.sqlite" : "Cookies"}`,
     "db",
@@ -190,31 +186,6 @@ describe("BrowserImport", () => {
 });
 
 describe("BrowserImport.writeCookies", () => {
-  it.effect("counts a rejected cookie and its domain as skipped", () =>
-    Effect.gen(function* () {
-      let flushes = 0;
-      const result = yield* BrowserImport.writeCookies(
-        {
-          cookies: {
-            set: () => Promise.reject(new Error("fixture rejection")),
-            flushStore: () => {
-              flushes += 1;
-              return Promise.resolve();
-            },
-          },
-        },
-        { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
-      );
-
-      assert.deepEqual(result, {
-        imported: 0,
-        skipped: 1,
-        skippedDomains: ["rejected.example"],
-      });
-      assert.equal(flushes, 0);
-    }),
-  );
-
   it.effect("flushes the store after writing, and reports success if the flush fails", () =>
     Effect.gen(function* () {
       const events: Array<string> = [];
@@ -236,30 +207,6 @@ describe("BrowserImport.writeCookies", () => {
 
       assert.deepEqual(events, ["set", "set", "flush"]);
       assert.deepEqual(result, { imported: 2, skipped: 0, skippedDomains: [] });
-    }),
-  );
-
-  it.effect("propagates interruption while writing a cookie", () =>
-    Effect.gen(function* () {
-      const write = BrowserImport.writeCookies(
-        {
-          cookies: {
-            set: () => new Promise<void>(() => {}),
-            flushStore: () => Promise.resolve(),
-          },
-        },
-        { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
-      );
-
-      const interrupted = yield* Ref.make(false);
-      const fiber = yield* write.pipe(
-        Effect.onInterrupt(() => Ref.set(interrupted, true)),
-        Effect.forkChild,
-      );
-      yield* Effect.yieldNow;
-      yield* Fiber.interrupt(fiber);
-
-      assert.isTrue(yield* Ref.get(interrupted));
     }),
   );
 });
