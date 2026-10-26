@@ -210,9 +210,13 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(foreign.isError).toBe(true);
       expect(foreign.content.map((entry) => entry.type)).toEqual(["text"]);
 
+      // A coordinator thread without device access is refused by the handler.
       const denied = yield* server
         .callTool({ name: "device_list", arguments: {} })
-        .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
+        .pipe(
+          callWith(["orchestration", "preview"]),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
       expect(denied.isError).toBe(true);
       // The agent can't see Settings, and a running session keeps the capabilities it started with,
       // so the error says where the user turns access on and when it applies.
@@ -222,6 +226,17 @@ it.effect("registers the device tools and returns the screenshot as image conten
           text: "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
         },
       ]);
+      // A workflow member without device access cannot see or call the tool.
+      const hidden = yield* server
+        .callTool({ name: "device_list", arguments: {} })
+        .pipe(
+          callWith(["worktree"]),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.flip,
+        );
+      expect(String((hidden as { readonly message?: unknown }).message ?? hidden)).toContain(
+        "not found",
+      );
     }),
   ).pipe(Effect.provide(layerTest)),
 );

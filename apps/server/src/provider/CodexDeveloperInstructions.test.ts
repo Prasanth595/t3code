@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_SECTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -86,6 +89,38 @@ describe("Codex device context", () => {
     NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+  });
+});
+
+describe("Codex context for workflow members", () => {
+  it("drops only the orchestration entries and shrinks the context", () => {
+    const runtime = { model: "gpt-6.1-sol" };
+    const full = buildCodexAdditionalContext(runtime, { browser: false, device: false });
+    const member = buildCodexAdditionalContext(runtime, { browser: false, device: false }, false);
+
+    NodeAssert.deepEqual(Object.keys(member), ["t3_code_runtime"]);
+    NodeAssert.deepEqual(member.t3_code_runtime, full.t3_code_runtime);
+    const bytes = (context: typeof full) =>
+      Object.values(context).reduce(
+        (sum, entry) => sum + Buffer.byteLength(entry.value, "utf8"),
+        0,
+      );
+    NodeAssert.equal(
+      bytes(full) - bytes(member),
+      T3_CODE_ORCHESTRATION_SECTIONS.reduce(
+        (sum, section) => sum + Buffer.byteLength(section, "utf8"),
+        0,
+      ),
+    );
+  });
+
+  it("keeps browser and device text under their own availability", () => {
+    const member = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: true },
+      false,
+    );
+    NodeAssert.deepEqual(Object.keys(member), ["t3_code_runtime", "t3_code_tools"]);
   });
 });
 

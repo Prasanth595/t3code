@@ -23,6 +23,9 @@ Ordinary coding tasks need no T3 tools.
 
 - Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` to verify or show your own edit, even a frontend edit or an open tab. Do not repeat preview calls from an earlier turn. Use them only when the current request asks for browser work or names a page or tab. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+  `### Fan-out and effort
+
+Default to one agent. Fan out only for independent branches that each need about 10 or more tool calls, material too large for one context, or a check that needs a fresh context (ideally another model). Chains, role splits (plan, implement, test, review) and jobs under about 15 tool calls stay with one agent: each extra agent pays for a full context prefix. Size: 1 agent for lookups and edits, 2-4 for comparisons, 5-10 only for clear breadth; more than 10 needs a stated reason. Split by context, never by role. Brief each agent with objective, output file and boundaries; give verifiers artifacts and criteria. If the user asked for a workflow, still plan the graph, tell the user graph_review's advisory in one sentence, and never swap the workflow for one agent. budgetTokens excludes your own tokens: set it near graph_review's suggestedBudgetTokens. A workflow wake lists node status and output paths; read the files or call workflow_status.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `

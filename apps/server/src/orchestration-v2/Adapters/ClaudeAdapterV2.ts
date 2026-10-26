@@ -1467,6 +1467,12 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /**
+   * A workflow member gets no orchestration text (its T3 tools are hidden by the MCP server). It
+   * keeps every settings source: user and local settings carry permission rules, hooks and env
+   * (which can hold the API endpoint or credentials) that T3 also reads for its own policy.
+   */
+  readonly workflowMember?: boolean;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1573,7 +1579,7 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
+          (input.mcpServers === undefined || input.workflowMember === true
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
@@ -9902,6 +9908,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            ...(McpProviderSession.isWorkflowMemberSession(mcpSession)
+              ? { workflowMember: true }
+              : {}),
           });
           const querySession = yield* queryRunner
             .open({
