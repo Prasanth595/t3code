@@ -46,6 +46,7 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
       return null;
     }
   })();
+  // oxlint-disable-next-line t3code/react-effect-budget -- Create an object URL for the extracted image and revoke it when the entry changes or unmounts.
   useEffect(() => {
     if (kind !== "image") return;
     const extension = props.path.slice(props.path.lastIndexOf("."));
@@ -107,6 +108,7 @@ export default function BinaryViewer(props: {
     }, 15_000);
     workerRef.current?.postMessage(request);
   };
+  // oxlint-disable-next-line t3code/react-effect-budget -- Own the binary fetch, archive or database worker, message subscription, and request timeout for this file.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./binaryPreview.worker.ts", import.meta.url), {
