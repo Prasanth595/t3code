@@ -6,6 +6,7 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
+import { useAtomValue } from "@effect/atom-react";
 import {
   ThreadId,
   AuthTerminalReadScope,
@@ -17,7 +18,15 @@ import {
 
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
-import { useEnvironmentScope } from "./session";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "./session";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
+
+const terminalMetadataListAtom = environmentAtomList("web-terminal-metadata", (environmentId) =>
+  terminalEnvironment.metadata({ environmentId, input: null }),
+);
+const terminalLabelsByResults = new WeakMap<ReadonlyArray<unknown>, ReadonlyMap<string, string>>();
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -188,4 +197,30 @@ export function useThreadRunningTerminalIds(input: {
 }): ReadonlyArray<string> {
   const sessions = useKnownTerminalSessions(input);
   return selectRunningSubprocessTerminalIds(sessions ?? []);
+}
+
+/** First terminal label per thread that has a terminal, keyed `${environmentId}:${threadId}`. */
+export function useTerminalLabelsByThreadKey(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyMap<string, string> {
+  const readable = useEnvironmentsWithScope(
+    environmentIds.map((environmentId) => ({ environmentId })),
+    AuthTerminalReadScope,
+  );
+  const readableIds = environmentIds.filter((environmentId) => readable.has(environmentId));
+  const results = useAtomValue(terminalMetadataListAtom(environmentIdsKey(readableIds)));
+  let labels = terminalLabelsByResults.get(results);
+  if (!labels) {
+    const next = new Map<string, string>();
+    results.forEach((result, index) => {
+      const metadata = Option.getOrNull(AsyncResult.value(result));
+      if (metadata === null) return;
+      for (const [threadId, summaries] of terminalMetadataIndex(metadata).byThreadId) {
+        next.set(`${readableIds[index]}:${threadId}`, summaries[0]!.label);
+      }
+    });
+    labels = next;
+    terminalLabelsByResults.set(results, labels);
+  }
+  return labels;
 }

@@ -15,8 +15,10 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   const store = useComposerDraftStore.getState();
   const key = resolveComposerDraftKey(store, target);
   const draft = key === null ? undefined : store.draftsByThreadKey[key];
-  if (key === null || !draft) return;
+  if (key === null) return;
   const session = store.draftThreadsByThreadKey[key];
+  if (!draft && !session) return;
+  const attachments = draft ? [...draft.images, ...draft.files] : [];
   const logicalProjectKeys = Object.entries(store.logicalProjectDraftThreadKeyByLogicalProjectKey)
     .filter(([, draftKey]) => draftKey === key)
     .map(([logicalProjectKey]) => logicalProjectKey);
@@ -36,7 +38,7 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
     undo: async () => {
       const current = useComposerDraftStore.getState().draftsByThreadKey[key];
       if (current && composerDraftHasUserContent(current)) {
-        releaseDraftAttachments([...draft.images, ...draft.files]);
+        releaseDraftAttachments(attachments);
         return AsyncResult.failure(Cause.fail(new Error("The draft has new content.")));
       }
       useComposerDraftStore.setState((state) => {
@@ -47,19 +49,21 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
           logicalProjectDraftThreadKeyByLogicalProjectKey[logicalProjectKey] ??= key;
         }
         return {
-          draftsByThreadKey: {
-            ...state.draftsByThreadKey,
-            [key]: discardsSession
-              ? {
-                  ...draft,
-                  images: draft.images.map((image) =>
-                    image.previewUrl.startsWith("blob:")
-                      ? { ...image, previewUrl: URL.createObjectURL(image.file) }
-                      : image,
-                  ),
-                }
-              : draft,
-          },
+          draftsByThreadKey: draft
+            ? {
+                ...state.draftsByThreadKey,
+                [key]: discardsSession
+                  ? {
+                      ...draft,
+                      images: draft.images.map((image) =>
+                        image.previewUrl.startsWith("blob:")
+                          ? { ...image, previewUrl: URL.createObjectURL(image.file) }
+                          : image,
+                      ),
+                    }
+                  : draft,
+              }
+            : state.draftsByThreadKey,
           draftThreadsByThreadKey: session
             ? { ...state.draftThreadsByThreadKey, [key]: session }
             : state.draftThreadsByThreadKey,
@@ -68,6 +72,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
       });
       return AsyncResult.success(undefined);
     },
-    commit: () => releaseDraftAttachments([...draft.images, ...draft.files]),
+    commit: () => releaseDraftAttachments(attachments),
   });
 }

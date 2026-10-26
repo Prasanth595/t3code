@@ -58,6 +58,23 @@ describe("discardComposerDraft", () => {
     expect(releaseDraftAttachments).not.toHaveBeenCalled();
   });
 
+  it("discards and restores a draft session that has no composer record", async () => {
+    useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+    const before = useComposerDraftStore.getState();
+    expect(before.draftsByThreadKey).toEqual({});
+
+    discardComposerDraft(draftId);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+
+    await undoNotice().undo();
+    const after = useComposerDraftStore.getState();
+    expect(after.getDraftSession(draftId)).toEqual(before.getDraftSession(draftId));
+    expect(after.draftsByThreadKey).toEqual({});
+    expect(after.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual(
+      before.logicalProjectDraftThreadKeyByLogicalProjectKey,
+    );
+  });
+
   it("keeps text typed after the discard and releases the old uploads", async () => {
     useComposerDraftStore.getState().setPrompt(threadRef, "old reply");
     discardComposerDraft(threadRef);
