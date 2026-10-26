@@ -1106,7 +1106,7 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a file picker from a detached input stays open across its own DCL", () =>
+it.live("a detached file picker stays open across same-document navigation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -1115,9 +1115,9 @@ it.live("a file picker from a detached input stays open across its own DCL", () 
       vi.stubGlobal("document", pageDocument);
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllGlobals()));
       const detachedInput = { isConnected: false, ownerDocument: pageDocument };
-      const dclProbe = Promise.withResolvers<boolean>();
-      const dclProbeStarted = Promise.withResolvers<void>();
-      const dclProbeFinished = Promise.withResolvers<void>();
+      const navigationProbe = Promise.withResolvers<boolean>();
+      const navigationProbeStarted = Promise.withResolvers<void>();
+      const navigationProbeFinished = Promise.withResolvers<void>();
       let probeCount = 0;
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
@@ -1128,10 +1128,10 @@ it.live("a file picker from a detached input stays open across its own DCL", () 
           evaluate: (probe: (element: typeof detachedInput) => boolean) => {
             probeCount++;
             if (probeCount === 1) return Promise.resolve(probe(detachedInput));
-            dclProbeStarted.resolve();
-            return dclProbe.promise.then((current) => {
+            navigationProbeStarted.resolve();
+            return navigationProbe.promise.then((current) => {
               const result = probe(detachedInput);
-              dclProbeFinished.resolve();
+              navigationProbeFinished.resolve();
               return current && result;
             });
           },
@@ -1141,18 +1141,18 @@ it.live("a file picker from a detached input stays open across its own DCL", () 
       let offered = yield* Queue.take(viewer.output);
       while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
 
-      page.emit("domcontentloaded");
-      yield* Effect.promise(() => dclProbeStarted.promise);
-      dclProbe.resolve(true);
-      yield* Effect.promise(() => dclProbeFinished.promise);
+      page.emit("framenavigated", page);
+      yield* Effect.promise(() => navigationProbeStarted.promise);
+      navigationProbe.resolve(true);
+      yield* Effect.promise(() => navigationProbeFinished.promise);
       yield* viewer.input({ type: "releaseControl" });
-      let closedAfterDcl = false;
+      let closedAfterNavigation = false;
       let control = yield* Queue.take(viewer.output);
       while (control._tag !== "control" || control.controller === "you") {
-        if (control._tag === "fileChooserClosed") closedAfterDcl = true;
+        if (control._tag === "fileChooserClosed") closedAfterNavigation = true;
         control = yield* Queue.take(viewer.output);
       }
-      expect(closedAfterDcl).toBe(false);
+      expect(closedAfterNavigation).toBe(false);
       yield* viewer.input({ type: "takeControl" });
       let restoredControl = yield* Queue.take(viewer.output);
       while (restoredControl._tag !== "control" || restoredControl.controller !== "you") {
@@ -1171,52 +1171,54 @@ it.live("a file picker from a detached input stays open across its own DCL", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a file picker closes when its page is replaced by a new document", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* viewer.input({ type: "takeControl" });
-      const setFiles = vi.fn(async (_files: unknown) => {});
-      const probeStarted = Promise.withResolvers<void>();
-      const probeSettled = Promise.withResolvers<void>();
-      let probeCount = 0;
-      page.emit("filechooser", {
-        isMultiple: () => false,
-        element: () => ({
-          getAttribute: async () => "",
-          evaluate: () => {
-            probeCount++;
-            if (probeCount === 1) return Promise.resolve(true);
-            probeStarted.resolve();
-            return Promise.reject(new Error("Execution context was destroyed")).finally(() =>
-              probeSettled.resolve(),
-            );
-          },
-        }),
-        setFiles,
-      });
-      let offered = yield* Queue.take(viewer.output);
-      while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
+it.live.each(["main", "iframe"])(
+  "a file picker closes at %s document commit before DOMContentLoaded",
+  (frame) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, tabId } = yield* ready;
+        const page = contexts[0]!.page;
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* viewer.input({ type: "takeControl" });
+        const setFiles = vi.fn(async (_files: unknown) => {});
+        const probeStarted = Promise.withResolvers<void>();
+        const probeSettled = Promise.withResolvers<void>();
+        let probeCount = 0;
+        page.emit("filechooser", {
+          isMultiple: () => false,
+          element: () => ({
+            getAttribute: async () => "",
+            evaluate: () => {
+              probeCount++;
+              if (probeCount === 1) return Promise.resolve(true);
+              probeStarted.resolve();
+              return Promise.reject(new Error("Execution context was destroyed")).finally(() =>
+                probeSettled.resolve(),
+              );
+            },
+          }),
+          setFiles,
+        });
+        let offered = yield* Queue.take(viewer.output);
+        while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
 
-      page.emit("domcontentloaded");
-      yield* Effect.promise(() => probeStarted.promise);
-      yield* Effect.promise(() => probeSettled.promise);
-      let closed = yield* Queue.take(viewer.output);
-      while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(viewer.output);
-      expect(closed.id).toBe(offered.id);
-      expect(
-        yield* browser.answerFileChooser({
-          threadId: scope.thread.threadId,
-          tabId,
-          chooserId: offered.id,
-          files: [{ name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a") }],
-        }),
-      ).toBe(false);
-      expect(setFiles).not.toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(layer)),
+        page.emit("framenavigated", frame === "main" ? page : makeFrame());
+        yield* Effect.promise(() => probeStarted.promise);
+        yield* Effect.promise(() => probeSettled.promise);
+        let closed = yield* Queue.take(viewer.output);
+        while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(viewer.output);
+        expect(closed.id).toBe(offered.id);
+        expect(
+          yield* browser.answerFileChooser({
+            threadId: scope.thread.threadId,
+            tabId,
+            chooserId: offered.id,
+            files: [{ name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a") }],
+          }),
+        ).toBe(false);
+        expect(setFiles).not.toHaveBeenCalled();
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("a file picker closes when its page is replaced while control changes hands", () =>
@@ -1245,7 +1247,7 @@ it.live("a file picker closes when its page is replaced while control changes ha
       let offered = yield* Queue.take(first.output);
       while (offered._tag !== "fileChooser") offered = yield* Queue.take(first.output);
 
-      page.emit("domcontentloaded");
+      page.emit("framenavigated", page);
       yield* Effect.promise(() => probeStarted.promise);
       const second = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* first.input({ type: "releaseControl" });
@@ -1294,7 +1296,7 @@ it.live("a file picker is not offered after its document changes while reading a
       });
 
       yield* Effect.promise(() => acceptRead.promise);
-      page.emit("domcontentloaded");
+      page.emit("framenavigated", page);
       accept.resolve("");
       yield* Effect.promise(() => accept.promise);
       yield* Effect.promise(() => probeStarted.promise);

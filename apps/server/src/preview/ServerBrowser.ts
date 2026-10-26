@@ -799,16 +799,13 @@ const make = Effect.gen(function* () {
       tab.loading = false;
       void reportLoaded(tab);
     });
-    // A new document fires DCL; the probe distinguishes it from the chooser's own document.
-    page.on("domcontentloaded", () => {
+    page.on("framenavigated", (frame) => {
       const open = tab.fileChooser;
       if (open) {
         void isFileChooserCurrent(open.chooser).then((current) => {
           if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
         });
       }
-    });
-    page.on("framenavigated", (frame) => {
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
