@@ -2604,6 +2604,7 @@ describe("AcpAdapterV2", () => {
       assert.isDefined(agentPid);
       yield* Scope.close(sessionScope, Exit.void);
       assert.isFalse(isLive(agentPid!), "closing the session must still tear the agent down");
+      assert.isFalse(leaseExists, "closing the session must remove the lease");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

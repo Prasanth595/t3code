@@ -1508,8 +1508,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       catch: (cause) =>
         new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
     });
-    // With a cgroup lease, cgroup.kill tears the tree down and only the root
-    // captured above is read, so polling the ledger would be wasted /proc scans.
+    // Cgroup teardown needs only the root identity captured above.
     if (linuxCgroupLease === undefined) {
       yield* observePosixOwnershipLedgerContinuously({
         childQueues: posixOwnershipChildQueues,
