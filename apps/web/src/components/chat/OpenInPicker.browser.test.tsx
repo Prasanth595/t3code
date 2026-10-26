@@ -91,7 +91,7 @@ async function setup() {
   stack.use(_platform);
   const _storage = { [Symbol.dispose]: () => window.localStorage.clear() };
   stack.use(_storage);
-  // The chat root registers this command in the app.
+  // The app registers this command at startup (appInit).
   const _openFavorite = { [Symbol.dispose]: registerOpenFavoriteEditorCommand() };
   stack.use(_openFavorite);
   const screen = stack.use(await renderUi(null));
@@ -177,7 +177,8 @@ describe("host editor access", () => {
     state.allowed.delete(selected);
     state.allowed.add(primary);
     await click(primaryButton());
-    await pressOpenFavorite();
+    // The shortcut is consumed and opens nothing once the grant is gone.
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.run).not.toHaveBeenCalled();
     expect(state.setPreferred).not.toHaveBeenCalled();
 
