@@ -4428,10 +4428,21 @@ export function subscribeDraftThreadPromotion(input: {
   readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
   readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<DraftPromotionShell | null>;
 }): () => void {
-  const draftsAtom = Atom.make(composerDraftStore.getState());
-  const unsubscribeDrafts = composerDraftStore.subscribe((state) =>
-    input.registry.set(draftsAtom, state),
-  );
+  // Only the promotion slices: prompt edits replace the store state on every keystroke.
+  const promotionSlices = (state: ComposerDraftStoreState) => ({
+    draftThreadsByThreadKey: state.draftThreadsByThreadKey,
+    backgroundSubmissionThreadKeys: state.backgroundSubmissionThreadKeys,
+  });
+  const draftsAtom = Atom.make(promotionSlices(composerDraftStore.getState()));
+  const unsubscribeDrafts = composerDraftStore.subscribe((state, previous) => {
+    if (
+      state.draftThreadsByThreadKey === previous.draftThreadsByThreadKey &&
+      state.backgroundSubmissionThreadKeys === previous.backgroundSubmissionThreadKeys
+    ) {
+      return;
+    }
+    input.registry.set(draftsAtom, promotionSlices(state));
+  });
   const threadKeysAtom = Atom.map(
     input.threadRefsAtom,
     (refs) => new Set(refs.map(scopedThreadKey)),
