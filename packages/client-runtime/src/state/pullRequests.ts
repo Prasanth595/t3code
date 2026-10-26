@@ -263,13 +263,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
-  // Asked only when the menu's first page is not everybody, so a query cannot be answered from it.
-  const reviewerSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
-    label: "environment-data:pull-requests:reviewer-search",
-    tag: WS_METHODS.pullRequestsReviewerCandidates,
-    execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewerCandidates, input),
-    staleTimeMs: 60_000,
-  });
   const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
@@ -513,8 +506,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
     reviewerCandidates,
-    /** The host's search for reviewers past the first page, keyed by what was typed. */
-    reviewerSearch,
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
       tag: WS_METHODS.pullRequestsRequestReviewers,

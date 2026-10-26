@@ -38,6 +38,11 @@ describe("mergeReviewerCandidates", () => {
     expect(mergeReviewerCandidates(loaded, [reviewer("ada")], "ada")).toEqual(loaded);
   });
 
+  it("keeps a host match on a field absent from the loaded row", () => {
+    const loaded = [reviewer("ada", { isRequested: true })];
+    expect(mergeReviewerCandidates(loaded, [reviewer("ada")], "ada@example.com")).toEqual(loaded);
+  });
+
   it("tells a team from a person sharing its id", () => {
     const loaded = [reviewer("core", { kind: "team", isRequested: true })];
     expect(

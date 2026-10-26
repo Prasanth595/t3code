@@ -41,7 +41,7 @@ export function PullRequestReviewerPicker({
   const searched = searchesHost && searchQuery === query.trim();
   const searchResult = useEnvironmentQuery(
     open && searchesHost
-      ? pullRequestEnvironment.reviewerSearch({
+      ? pullRequestEnvironment.reviewerCandidates({
           environmentId,
           input: { ...reference, query: searchQuery },
         })
