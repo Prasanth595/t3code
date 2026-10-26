@@ -1,3 +1,8 @@
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
+import {
+  createComposerScrollGestureState,
+  listenForComposerScrollGestures,
+} from "./composerScrollGesture";
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
@@ -15,7 +20,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, render } from "../../../test/render";
+import { act, render, fakeTimers } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
@@ -850,4 +855,287 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+function setupComposerScrollGesture() {
+  let timeline: HTMLDivElement;
+  let content: HTMLDivElement;
+  let collapsed: boolean;
+  let atLogicalEnd: boolean;
+  let dispose: () => void;
+
+  function pointerDown(target: EventTarget, button = 0) {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button }));
+  }
+
+  function pointerUp(button = 0) {
+    window.dispatchEvent(new MouseEvent("pointerup", { button }));
+  }
+
+  function scrollTo(scrollTop: number) {
+    timeline.scrollTop = scrollTop;
+    timeline.dispatchEvent(new Event("scroll"));
+  }
+
+  const timers = fakeTimers();
+  timeline = document.createElement("div");
+  content = document.createElement("div");
+  timeline.append(content);
+  document.body.append(timeline);
+  timeline.style.cssText = "height: 500px; overflow-y: auto";
+  content.style.height = "1500px";
+  timeline.scrollTop = 500;
+  collapsed = false;
+  atLogicalEnd = false;
+  dispose = listenForComposerScrollGestures({
+    gestureState: createComposerScrollGestureState(),
+    getTimelineScrollableNode: () => timeline,
+    isTimelineAtLogicalEnd: (scrollOffset) =>
+      atLogicalEnd ||
+      resolveTimelineIsAtEnd(
+        { isAtEnd: false, contentLength: 1500, scroll: 500, scrollLength: 500 },
+        scrollOffset,
+      ) === true,
+    isCollapseEligible: () => !collapsed,
+    onCollapse: () => {
+      collapsed = true;
+    },
+    restoreAfterTimelineReachedEnd: () => {
+      collapsed = false;
+    },
+  });
+  return {
+    [Symbol.dispose]: () => {
+      dispose();
+      timeline.remove();
+      timers[Symbol.dispose]();
+    },
+    dispose,
+    timeline,
+    content,
+    pointerDown,
+    pointerUp,
+    scrollTo,
+    isCollapsed: () => collapsed,
+    setAtLogicalEnd: (value: boolean) => {
+      atLogicalEnd = value;
+    },
+  };
+}
+
+describe("composer timeline scroll input", () => {
+  it.each(["scrollbar", "touch", "middle click"])(
+    "collapses after enough %s movement and restores at the logical end",
+    (input) => {
+      using gesture = setupComposerScrollGesture();
+      gesture.scrollTo(600);
+      expect(gesture.isCollapsed()).toBe(false);
+
+      if (input === "scrollbar") gesture.pointerDown(gesture.timeline);
+      if (input === "touch")
+        gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+      if (input === "middle click") {
+        gesture.pointerDown(gesture.content, 1);
+        gesture.pointerUp(1);
+      }
+
+      gesture.scrollTo(590);
+      gesture.scrollTo(580);
+      expect(gesture.isCollapsed()).toBe(false);
+      gesture.scrollTo(576);
+      expect(gesture.isCollapsed()).toBe(true);
+      if (input === "middle click") vi.advanceTimersByTime(1000);
+
+      // The last message can be visible before the footer's physical bottom.
+      gesture.setAtLogicalEnd(true);
+      gesture.scrollTo(700);
+      expect(gesture.isCollapsed()).toBe(false);
+      gesture.scrollTo(730);
+      expect(gesture.isCollapsed()).toBe(false);
+    },
+  );
+
+  it("restores in the logical end band before the list records the new offset", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.scrollTo(900);
+    gesture.pointerDown(gesture.timeline);
+    gesture.scrollTo(950);
+    expect(gesture.isCollapsed()).toBe(true);
+
+    gesture.scrollTo(960);
+    expect(gesture.isCollapsed()).toBe(false);
+    gesture.scrollTo(985);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it("does not track middle-clicks on links as timeline scrolling", () => {
+    using gesture = setupComposerScrollGesture();
+    const link = document.createElement("a");
+    link.href = "https://example.com";
+    const label = document.createElement("span");
+    link.append(label);
+    gesture.content.append(link);
+
+    gesture.pointerDown(label, 1);
+    gesture.pointerUp(1);
+    gesture.scrollTo(550);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it("ends the release tail even when scrolls and duplicate releases keep arriving", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    gesture.scrollTo(490);
+    window.dispatchEvent(new Event("touchend"));
+    vi.advanceTimersByTime(100);
+    gesture.scrollTo(476);
+    expect(gesture.isCollapsed()).toBe(true);
+
+    gesture.setAtLogicalEnd(true);
+    gesture.scrollTo(700);
+    expect(gesture.isCollapsed()).toBe(false);
+    vi.advanceTimersByTime(100);
+    window.dispatchEvent(new Event("pointerup"));
+    gesture.scrollTo(710);
+    vi.advanceTimersByTime(51);
+
+    // A new streaming turn can move the logical end while follow scrolls continue.
+    gesture.setAtLogicalEnd(false);
+    gesture.scrollTo(750);
+    vi.advanceTimersByTime(100);
+    gesture.scrollTo(800);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it("does not turn a press and release without scrolling into a live-follow gesture", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.pointerDown(gesture.timeline);
+    window.dispatchEvent(new Event("pointerup"));
+    vi.advanceTimersByTime(10);
+    gesture.scrollTo(550);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it.each(["pointercancel", "touchcancel", "blur"])(
+    "does not collapse on live-follow scrolling after %s interrupts the gesture",
+    (event) => {
+      using gesture = setupComposerScrollGesture();
+      if (event === "touchcancel") {
+        gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+      } else {
+        gesture.pointerDown(gesture.timeline);
+      }
+      gesture.scrollTo(490);
+      window.dispatchEvent(new Event(event));
+      vi.advanceTimersByTime(10);
+      gesture.scrollTo(550);
+      expect(gesture.isCollapsed()).toBe(false);
+    },
+  );
+
+  it.each(["key", "primary release", "middle release", "wheel"])(
+    "ends toggle-mode middle-click autoscroll on %s without leaving a hold",
+    (stop) => {
+      using gesture = setupComposerScrollGesture();
+      gesture.pointerDown(gesture.content, 1);
+      gesture.pointerUp(1);
+      gesture.scrollTo(450);
+      vi.advanceTimersByTime(1000);
+      expect(gesture.isCollapsed()).toBe(true);
+      gesture.setAtLogicalEnd(true);
+      gesture.scrollTo(700);
+      expect(gesture.isCollapsed()).toBe(false);
+
+      if (stop === "key") document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      // Chromium suppresses pointerdown when a click stops active autoscroll.
+      if (stop === "primary release") gesture.pointerUp();
+      if (stop === "middle release") gesture.pointerUp(1);
+      if (stop === "wheel") {
+        gesture.content.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 30 }));
+      }
+      gesture.setAtLogicalEnd(false);
+      gesture.scrollTo(750);
+      expect(gesture.isCollapsed()).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "tracks delayed middle-click movement after an expired scroll: %s",
+    (interveningScroll) => {
+      using gesture = setupComposerScrollGesture();
+      gesture.pointerDown(gesture.content, 1);
+      gesture.pointerUp(1);
+      vi.advanceTimersByTime(500);
+      if (interveningScroll) gesture.scrollTo(550);
+      expect(gesture.isCollapsed()).toBe(false);
+      gesture.content.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, clientY: 20 }),
+      );
+      gesture.scrollTo(450);
+      expect(gesture.isCollapsed()).toBe(true);
+    },
+  );
+
+  it("does not rearm tracking when a middle press dismisses toggle autoscroll", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.pointerDown(gesture.content, 1);
+    gesture.pointerUp(1);
+    gesture.scrollTo(450);
+    expect(gesture.isCollapsed()).toBe(true);
+    gesture.setAtLogicalEnd(true);
+    gesture.scrollTo(700);
+    expect(gesture.isCollapsed()).toBe(false);
+
+    gesture.pointerDown(gesture.content, 1);
+    gesture.pointerUp(1);
+    gesture.setAtLogicalEnd(false);
+    gesture.scrollTo(750);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it("ends hold-mode middle autoscroll when the middle button is released", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.pointerDown(gesture.content, 1);
+    gesture.scrollTo(450);
+    expect(gesture.isCollapsed()).toBe(true);
+    gesture.setAtLogicalEnd(true);
+    gesture.scrollTo(700);
+    expect(gesture.isCollapsed()).toBe(false);
+
+    gesture.pointerUp(1);
+    gesture.setAtLogicalEnd(false);
+    gesture.scrollTo(750);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
+
+  it.each(["second release", "no autoscroll"])(
+    "does not track programmatic scrolling after a stationary middle click with %s",
+    (end) => {
+      using gesture = setupComposerScrollGesture();
+      gesture.pointerDown(gesture.content, 1);
+      gesture.pointerUp(1);
+      if (end === "second release") gesture.pointerUp(1);
+      else vi.advanceTimersByTime(121);
+      gesture.scrollTo(450);
+      expect(gesture.isCollapsed()).toBe(false);
+    },
+  );
+
+  it("keeps tracking when native touch panning cancels the pointer stream", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new Event("pointercancel"));
+    gesture.scrollTo(450);
+    expect(gesture.isCollapsed()).toBe(true);
+  });
+
+  it("leaves no gesture active after the composer stops tracking this timeline", () => {
+    using gesture = setupComposerScrollGesture();
+    gesture.pointerDown(gesture.timeline);
+    gesture.scrollTo(490);
+    gesture.dispose();
+    vi.advanceTimersByTime(1000);
+    gesture.scrollTo(400);
+    expect(gesture.isCollapsed()).toBe(false);
+  });
 });

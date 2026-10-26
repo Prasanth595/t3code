@@ -216,10 +216,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const readFollow = () => followStore.read(visit);
   // Async settles outlive their render; this reads the visit shown now.
   const readCurrentFollow = useStableCallback(readFollow);
-  const isTimelineAtLogicalEnd = () => {
+  const isTimelineAtLogicalEnd = (scrollOffset?: number) => {
     const current = readFollow();
     return (
-      resolveTimelineIsAtEnd(legendListRef.current?.getState()) ??
+      resolveTimelineIsAtEnd(legendListRef.current?.getState(), scrollOffset) ??
       (current.mode === "following" || current.atEnd)
     );
   };
