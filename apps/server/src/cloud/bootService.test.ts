@@ -94,6 +94,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    missingExitCode: number;
     drainPolls: number;
     onDrainPoll: Effect.Effect<void>;
   } = {
@@ -101,6 +102,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: "yes",
     enabled: true,
     active: true,
+    missingExitCode: 113,
     drainPolls: 0,
     onDrainPoll: Effect.void,
   };
@@ -152,7 +154,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           launchdPrint
             ? control.active || draining
               ? 0
-              : 113
+              : control.missingExitCode
             : failed ||
                 (input.args[1] === "is-active" && !control.active) ||
                 (input.args[1] === "is-enabled" && !control.enabled)
@@ -849,11 +851,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("ignores a bootout for an agent that is not loaded", () =>
+  it.effect.each([112, 113])("ignores a bootout for an agent missing with exit %s", (code) =>
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
       control.active = false;
+      control.missingExitCode = code;
       control.failCommand = "launchctl bootout gui/501/com.t3tools.t3code.service";
 
       yield* service.install();

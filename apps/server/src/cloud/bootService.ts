@@ -186,11 +186,7 @@ export interface BootServiceStep {
   /** Non-zero exit is logged and ignored. */
   readonly optional?: boolean;
   readonly timeout?: Duration.Input;
-  /**
-   * Re-run once a second while the command exits 0, for up to
-   * STOP_STEP_TIMEOUT, until it exits with one of these codes. Any other exit
-   * fails.
-   */
+  /** Poll successful probes until one of these exits, bounded by STOP_STEP_TIMEOUT. */
   readonly untilExit?: ReadonlyArray<number>;
 }
 
@@ -300,10 +296,8 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
-  // bootout returns while the job drains for up to ExitTimeOut, and a
-  // bootstrap during the drain fails EIO. `print` finds the job until launchd
-  // has removed it: 113 is no such service, 112 no such domain. The wait is
-  // strict, so a bootout that failed with the job still loaded fails here.
+  // bootout returns before draining finishes; bootstrap races fail EIO until print reports
+  // no such service (113) or domain (112). Other failures must not permit bootstrap.
   const waitForStop: BootServiceStep = {
     step: "waiting for the launch agent to stop",
     command: "launchctl",
@@ -631,39 +625,26 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     step: string,
     command: string,
     args: ReadonlyArray<string>,
-    options?: { readonly timeout?: Duration.Input },
+    options?: Pick<BootServiceStep, "timeout" | "untilExit">,
   ) {
-    return yield* runner.run({ command, args, timeout: options?.timeout }).pipe(
+    const untilExit = options?.untilExit;
+    const commandRun = runner.run({ command, args, timeout: options?.timeout });
+    const run =
+      untilExit === undefined
+        ? commandRun
+        : commandRun.pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced(Duration.seconds(1)),
+              while: (result) => result.code === 0,
+            }),
+            Effect.timeout(STOP_STEP_TIMEOUT),
+            Effect.withSpan("cloud.boot_service.wait_for_step"),
+          );
+    return yield* run.pipe(
       Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
       Effect.filterOrFail(
-        (result) => result.code === 0,
         (result) =>
-          new BootServiceCommandError({
-            step,
-            exitCode: Number(result.code),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-      ),
-      Effect.tapError(logFailure),
-    );
-  });
-
-  const waitForStep = Effect.fn("cloud.boot_service.wait_for_step")(function* (
-    step: string,
-    command: string,
-    args: ReadonlyArray<string>,
-    untilExit: ReadonlyArray<number>,
-  ) {
-    return yield* runner.run({ command, args }).pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(Duration.seconds(1)),
-        while: (result) => result.code === 0,
-      }),
-      Effect.timeout(STOP_STEP_TIMEOUT),
-      Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
-      Effect.filterOrFail(
-        (result) => untilExit.includes(Number(result.code)),
+          untilExit === undefined ? result.code === 0 : untilExit.includes(Number(result.code)),
         (result) =>
           new BootServiceCommandError({
             step,
@@ -680,15 +661,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.forEach(
       steps,
       (entry) => {
-        const run =
-          entry.untilExit === undefined
-            ? runStep(
-                entry.step,
-                entry.command,
-                entry.args,
-                entry.timeout === undefined ? undefined : { timeout: entry.timeout },
-              )
-            : waitForStep(entry.step, entry.command, entry.args, entry.untilExit);
+        const run = runStep(entry.step, entry.command, entry.args, entry);
         return entry.optional === true ? run.pipe(Effect.ignore) : run.pipe(Effect.asVoid);
       },
       { discard: true },
