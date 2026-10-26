@@ -44,8 +44,14 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
 
 function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   const asset = item.actionsSource?.asset;
-  const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
-  const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
+  const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null, {
+    scope: asset?.scope,
+  });
+  const refreshAssetUrl = useAssetUrlRefresh(
+    asset?.environmentId ?? null,
+    asset?.resource ?? null,
+    asset?.scope,
+  );
   const src = asset
     ? assetUrl._tag === "Success"
       ? assetUrl.url + (item.srcFragment ?? "")

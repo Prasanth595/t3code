@@ -263,6 +263,7 @@ import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fi
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import {
+  MarkdownImageAssetScopeContext,
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
   ThreadMarkdownImageUnavailable,
@@ -822,10 +823,10 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 }
 
 interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string) => void;
+  readonly onLinkPress: (href: string, scope?: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
-  readonly onFileContextMenuAction: (href: string, actionId: string) => void;
-  readonly onImagePress?: (href: string) => void;
+  readonly onFileContextMenuAction: (href: string, actionId: string, scope?: string) => void;
+  readonly onImagePress?: (href: string, scope?: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
@@ -907,6 +908,12 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
+  const scope = useContext(MarkdownImageAssetScopeContext);
+  const resolveImageSource = props.linkHandlers.resolveImageSource;
+  const scopedImageSource = useCallback<MarkdownImageSourceResolver>(
+    (image) => resolveImageSource?.(image, scope) ?? null,
+    [resolveImageSource, scope],
+  );
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
@@ -936,6 +943,12 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         skills={props.skills}
         textStyle={props.markdownStyles.nativeTextStyle}
         {...linkHandlers}
+        onLinkPress={(href) => props.linkHandlers.onLinkPress(href, scope)}
+        onImagePress={(href) => props.linkHandlers.onImagePress?.(href, scope)}
+        onFileContextMenuAction={(href, actionId) =>
+          props.linkHandlers.onFileContextMenuAction(href, actionId, scope)
+        }
+        resolveImageSource={scopedImageSource}
         renderImage={props.renderImage}
       />
     );
@@ -1760,15 +1773,17 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              environmentId={props.environmentId}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <MarkdownImageAssetScopeContext value={message.id}>
+              <AssistantMarkdownContent
+                markdown={renderedText}
+                environmentId={props.environmentId}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </MarkdownImageAssetScopeContext>
           </MarkdownImageAvailableWidthContext>
         ) : null}
         <MessageAttachmentList
@@ -2278,7 +2293,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       source
     );
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const onMarkdownLinkPress = (href: string, scope?: string, imageEmbed = false) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -2301,6 +2316,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       threadId: props.threadId,
       workspaceRoot: props.workspaceRoot,
       imageEmbed,
+      scope,
     });
     if (media && media.kind !== "file") {
       void Haptics.selectionAsync();
@@ -2436,7 +2452,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       ),
     onLinkPress: onMarkdownLinkPress,
     linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
+    onImagePress: (href, scope) => onMarkdownLinkPress(href, scope, true),
     resolveImageSource,
     fileContextMenu: (href) => {
       const skill = enrichedSkillReference(href, props.skills);
@@ -2467,7 +2483,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
-    onFileContextMenuAction: (href, actionId) => {
+    onFileContextMenuAction: (href, actionId, scope) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -2490,7 +2506,7 @@ export const ThreadFeed = memo(function ThreadFeed({
           return;
         }
         case "open-file":
-          onMarkdownLinkPress(href);
+          onMarkdownLinkPress(href, scope);
           return;
         case "save":
           shareFileChip(target);
@@ -2519,7 +2535,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <ThreadInlineFilePreview
           key={image.href}
           source={media.source}
-          onOpen={() => onMarkdownLinkPress(image.href, true)}
+          onOpen={() => onMarkdownLinkPress(image.href, undefined, true)}
           onPlaybackStart={onInlinePlaybackStart}
         />
       );
@@ -2534,7 +2550,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <Text
           accessibilityRole="link"
           accessibilityLabel={`Open ${name}`}
-          onPress={() => onMarkdownLinkPress(image.href, true)}
+          onPress={() => onMarkdownLinkPress(image.href, undefined, true)}
           style={{
             color: markdownStyles.assistant.nativeTextStyle.linkColor,
             fontSize: markdownStyles.assistant.nativeTextStyle.fontSize,
@@ -3333,7 +3349,12 @@ function MessageImageGalleryScope(props: {
   const images =
     entry.type === "message"
       ? [
-          ...messageImageGallery(entry.message, { environmentId, threadId, workspaceRoot }),
+          ...messageImageGallery(entry.message, {
+            environmentId,
+            threadId,
+            workspaceRoot,
+            scope: entry.message.role === "assistant" ? entry.message.id : undefined,
+          }),
           ...composerImageGallery(entry.pendingMessage?.attachments ?? []),
         ]
       : [];

@@ -337,6 +337,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceRoot?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly assetScope?: string | undefined;
 }) {
   const resource = props.resource;
   const assetUrl = useAssetUrlState(
@@ -345,10 +346,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     props.workspaceMutationId !== undefined &&
       props.kind !== "video" &&
       (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? props.workspaceMutationId
-      : undefined,
+      ? { revision: props.workspaceMutationId, scope: props.assetScope }
+      : { scope: props.assetScope },
   );
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource, props.assetScope);
   const path =
     resource._tag === "media-file"
       ? resource.path
@@ -382,7 +383,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     name: props.alt || (props.kind ?? "image"),
     src,
     ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
+      ? { asset: { environmentId: props.environmentId, resource, scope: props.assetScope } }
       : {}),
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")

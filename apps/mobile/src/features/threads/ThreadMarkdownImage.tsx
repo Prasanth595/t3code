@@ -25,6 +25,9 @@ import {
 /** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
+/** Later messages must re-sign workspace files that may have changed. */
+export const MarkdownImageAssetScopeContext = createContext<string | undefined>(undefined);
+
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
@@ -243,7 +246,12 @@ export function ThreadMarkdownImage(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const scope = useContext(MarkdownImageAssetScopeContext);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, scope);
+  const actionsSource =
+    props.actionsSource && "resource" in props.actionsSource
+      ? { ...props.actionsSource, scope }
+      : props.actionsSource;
 
   return (
     <ThreadMarkdownImageView
@@ -269,7 +277,7 @@ export function ThreadMarkdownImage(props: {
           : undefined
       }
       alt={props.alt}
-      actionsSource={props.actionsSource}
+      actionsSource={actionsSource}
       onPressPreview={(source) => {
         const { uri: _uri, ...rest } = source as FilePreviewSource & { uri?: string };
         props.onPressPreview(
@@ -278,6 +286,8 @@ export function ThreadMarkdownImage(props: {
             gallery: undefined,
             environmentId: props.environmentId,
             resource: props.resource,
+            scope,
+            actionsSource,
           }),
         );
       }}

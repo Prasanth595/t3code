@@ -89,22 +89,22 @@ export function makeRevisionedAssetUrlFamily(
 export const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 /**
- * Pass `revision` for a workspace file whose bytes can change under the same
- * path; each new revision gets a freshly minted URL.
+ * `revision` re-mints a workspace file whose bytes can change under the same path.
+ * `scope` gives one rendering its own URL, so a later message never reuses an earlier one's.
  */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
-  revision?: string | null,
+  options: { readonly revision?: string | null; readonly scope?: string | undefined } = {},
 ): AssetUrlState {
   const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : revision === undefined
-        ? assetEnvironment.createUrl({ environmentId, input: { resource } })
-        : revisionedAssetUrl({ environmentId, input: { resource }, revision }),
+      : options.revision === undefined
+        ? assetEnvironment.createUrl({ environmentId, input: { resource, scope: options.scope } })
+        : revisionedAssetUrl({ environmentId, input: { resource }, revision: options.revision }),
   );
   if (blocked !== null) return blocked;
   return {
@@ -119,6 +119,7 @@ export function useAssetUrlState(
 export function useAssetUrlRefresh(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  scope?: string,
 ): () => Promise<string | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
@@ -128,7 +129,7 @@ export function useAssetUrlRefresh(
   });
   return async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const result = await refresh({ environmentId, input: { resource } });
+    const result = await refresh({ environmentId, input: { resource, scope } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
   };

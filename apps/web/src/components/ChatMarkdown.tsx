@@ -242,6 +242,8 @@ interface ChatMarkdownProps {
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
   headingLevelOffset?: number | undefined;
+  /** Keeps rewritten workspace files from reusing an earlier message's cached URL. */
+  assetScope?: string | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -450,6 +452,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   sourceControlMedia = false,
+  assetScope,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -460,6 +463,7 @@ function useChatMarkdownState({
     explicitEnvironmentId,
     cwd,
     imageBaseDir,
+    assetScope,
   ].join("\u0000");
   // Hide requests from an old scope even if they resolve before effect cleanup.
   const [localMedia, setLocalMedia] = useState<{
@@ -522,6 +526,7 @@ function useChatMarkdownState({
       httpBaseUrl:
         environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
+      assetScope,
       onOpenFile: threadRef
         ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
         : undefined,
@@ -873,6 +878,7 @@ function useChatMarkdownState({
   };
 
   const componentState = {
+    assetScope,
     canOperateHost,
     canOperatePreview,
     cwd,
@@ -1339,6 +1345,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
     const {
+      assetScope,
       expandMedia,
       cwd,
       environmentId,
@@ -1489,6 +1496,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             threadId: threadRef.threadId,
             path: imageSource.path,
           }}
+          assetScope={assetScope}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}

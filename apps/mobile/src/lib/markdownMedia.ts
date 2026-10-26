@@ -41,6 +41,7 @@ export function resolveMarkdownMediaPreview(
     readonly workspaceRoot: string | null | undefined;
     readonly captured?: boolean;
     readonly imageEmbed?: boolean;
+    readonly scope?: string | undefined;
   },
 ):
   | { readonly kind: "image"; readonly source: FilePreviewSource }
@@ -139,6 +140,7 @@ export function resolveMarkdownMediaPreview(
       : {
           environmentId: input.environmentId,
           resource: media.resource,
+          scope: input.scope,
           ...(srcFragment ? { srcFragment } : {}),
         };
   const actionsSource: MediaActionsSource =
@@ -149,6 +151,7 @@ export function resolveMarkdownMediaPreview(
           environmentId: input.environmentId,
           threadId: input.threadId,
           resource: media.resource,
+          scope: input.scope,
           name,
           mimeType,
         };

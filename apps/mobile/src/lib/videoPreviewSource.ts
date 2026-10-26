@@ -20,6 +20,7 @@ export type MediaVideoPreviewSource = {
   | { readonly uri: string }
   | {
       readonly environmentId: EnvironmentId;
+      readonly scope?: string | undefined;
       readonly resource: Extract<
         AssetResource,
         {
@@ -42,7 +43,7 @@ export function mediaVideoPreviewUri(
 }
 
 export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string {
-  return JSON.stringify(
+  const key =
     "uri" in source
       ? ["media-video", source.uri]
       : source.resource._tag === "attachment"
@@ -71,8 +72,8 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
                 source.resource.cwd,
                 source.resource.path,
                 source.srcFragment ?? "",
-              ],
-  );
+              ];
+  return JSON.stringify("uri" in source ? key : [...key, source.scope ?? null]);
 }
 
 export interface LocalVideoPreviewSource {
