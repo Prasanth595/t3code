@@ -961,22 +961,45 @@ export const layerQueryRunner: Layer.Layer<
           const unit = launch?.unit;
           const stopScope =
             unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
-          // Windows has no process groups, so there the SDK spawns the CLI itself.
-          const spawnClaudeCodeProcess =
+          const spawnProcess =
             options.spawnClaudeCodeProcess ??
-            (platform === "win32"
-              ? undefined
-              : (spawnOptions: ClaudeSpawnOptions) =>
-                  spawnClaudeProcessGroup(spawnOptions, stopScope));
+            ((spawnOptions: ClaudeSpawnOptions) => {
+              if (platform !== "win32") return spawnClaudeProcessGroup(spawnOptions, stopScope);
+              const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
+                cwd: spawnOptions.cwd,
+                env: spawnOptions.env,
+                signal: spawnOptions.signal,
+                windowsHide: true,
+                stdio: ["pipe", "pipe", "pipe"],
+              });
+              child.stderr
+                .setEncoding("utf8")
+                .on("data", (chunk: string) => options.stderr?.(chunk));
+              return child;
+            });
+          let spawnedProcess: ClaudeSpawnedProcess | undefined;
+          let processExited = false;
+          let processExit: Promise<void> | undefined;
+          const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
+            const child = spawnProcess(spawnOptions);
+            spawnedProcess = child;
+            processExited = child.exitCode !== null || child.signalCode != null;
+            processExit = new Promise<void>((resolve) => {
+              if (processExited) resolve();
+              else
+                child.once("exit", () => {
+                  processExited = true;
+                  resolve();
+                });
+            });
+            return child;
+          };
           const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
             Effect.try({
               try: () =>
                 query({
                   prompt,
-                  options:
-                    spawnClaudeCodeProcess === undefined
-                      ? options
-                      : { ...options, spawnClaudeCodeProcess },
+                  options: { ...options, spawnClaudeCodeProcess },
                 }),
               catch: (cause) => queryRunnerError(cause, "query"),
             }).pipe(
@@ -1030,13 +1053,25 @@ export const layerQueryRunner: Layer.Layer<
                 ).pipe(
                   Effect.onError(() =>
                     Queue.shutdown(promptQueue).pipe(
+                      // SDK disposal can return before process exit; await the owned child's exit before retrying.
                       Effect.andThen(
+                        Effect.tryPromise({
+                          try: async () => {
+                            if (spawnedProcess !== undefined && !processExited) {
+                              spawnedProcess.kill("SIGKILL");
+                            }
+                            await processExit;
+                          },
+                          catch: (cause) => queryRunnerError(cause, "close"),
+                        }).pipe(Effect.timeout("10 seconds")),
+                      ),
+                      Effect.ensuring(
                         Effect.tryPromise({
                           try: () => queryRuntime[Symbol.asyncDispose](),
                           catch: (cause) => queryRunnerError(cause, "close"),
-                        }),
+                        }).pipe(Effect.orDie),
                       ),
-                      Effect.ignore,
+                      Effect.orDie,
                     ),
                   ),
                 ),
