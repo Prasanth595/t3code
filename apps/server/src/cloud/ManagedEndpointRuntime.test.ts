@@ -156,6 +156,13 @@ describe("CloudManagedEndpointRuntime", () => {
         "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 event=0 ip=198.41.200.23",
       ),
     ).toBe("unregistered");
+    for (const level of ["ERR", "WRN", "FTL", "PNC"]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-10-06T00:00:00Z ${level} Unregistered tunnel connection connIndex=0`,
+        ),
+      ).toBe("warning");
+    }
     for (const line of [
       "2026-10-06T00:00:00Z INF Initiating graceful shutdown due to signal terminated ...",
       "2026-10-06T00:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics",
