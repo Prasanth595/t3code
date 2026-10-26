@@ -751,16 +751,33 @@ export const layer: Layer.Layer<
           });
           if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
           const replacement = yield* loadFromProvider(
-            session.ensureThread({
-              threadId: projection.thread.id,
-              title: projection.thread.title,
-              modelSelection: run.modelSelection,
-              runtimePolicy: resolvedRuntimePolicy,
-              providerSessionId,
-              forceNewNativeThread: true,
-              // Keep the durable row but force the adapter to bind fresh native state.
-              existingProviderThread: { ...providerThread, nativeThreadRef: null },
-            }),
+            session
+              .ensureThread({
+                threadId: projection.thread.id,
+                title: projection.thread.title,
+                modelSelection: run.modelSelection,
+                runtimePolicy: resolvedRuntimePolicy,
+                providerSessionId,
+                forceNewNativeThread: true,
+                // Keep the durable row but force the adapter to bind fresh native state.
+                existingProviderThread: { ...providerThread, nativeThreadRef: null },
+              })
+              .pipe(
+                Effect.flatMap((replacement) =>
+                  replacementInput.reason === "handoff_overflow" &&
+                  (replacement.nativeThreadRef?.nativeId == null ||
+                    replacement.nativeThreadRef.nativeId ===
+                      providerThread.nativeThreadRef?.nativeId)
+                    ? Effect.fail(
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: session.driver,
+                          detail:
+                            "Provider did not create a fresh native thread for the context handoff",
+                        }),
+                      )
+                    : Effect.succeed(replacement),
+                ),
+              ),
           );
           if (replacement === undefined) return undefined;
           if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
@@ -1067,8 +1084,8 @@ export const layer: Layer.Layer<
           if (
             prospectivePlan.status === "ready" &&
             !(yield* (
-              session.hasPendingBackgroundWorkForThread?.(loadedProviderThread) ??
-                session.hasPendingBackgroundWork ??
+              session.hasPendingBackgroundWork ??
+                session.hasPendingBackgroundWorkForThread?.(loadedProviderThread) ??
                 Effect.succeed(false)
             ))
           ) {

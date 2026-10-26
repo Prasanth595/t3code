@@ -104,6 +104,7 @@ function makeTestAdapter(input: {
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
   readonly hasPendingBackgroundWork?: boolean;
+  readonly reuseNativeThread?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
@@ -147,6 +148,7 @@ function makeTestAdapter(input: {
           providerSession,
           events: Stream.fromPubSub(events),
           hasPendingBackgroundWork: Effect.succeed(input.hasPendingBackgroundWork ?? false),
+          hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
           ...(input.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: input.getModelContextWindow }),
@@ -159,7 +161,7 @@ function makeTestAdapter(input: {
               const generation =
                 input.nativeThreadGeneration === undefined
                   ? ""
-                  : `:${yield* Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1)}`;
+                  : `:${input.reuseNativeThread && threadInput.forceNewNativeThread ? 0 : yield* Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1)}`;
               const nativeThreadId = `${input.driver}:${threadInput.threadId}${generation}`;
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
@@ -417,6 +419,7 @@ describe("orchestration v2 provider switching", () => {
     "prior-images-reasoning-change-overflow-native",
     "prior-images-reasoning-change-overflow-inline",
     "prior-images-reasoning-change-overflow-background-native",
+    "prior-images-reasoning-change-overflow-reused-native",
     "prior-images-reasoning-change-overflow-oversized-native",
     "reasoning-change-overflow-prospective-payload-native",
     "turn-usage-model-change-overflow-unknown-window-native",
@@ -472,6 +475,7 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: {},
             hasPendingBackgroundWork: scenario.includes("overflow-background"),
+            reuseNativeThread: scenario.includes("overflow-reused"),
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
             ...(replaceNative
@@ -771,6 +775,7 @@ describe("orchestration v2 provider switching", () => {
             if (
               scenario.includes("overflow-oversized") ||
               scenario.includes("overflow-background") ||
+              scenario.includes("overflow-reused") ||
               scenario.includes("prospective-payload") ||
               scenario.includes("unknown-window")
             ) {
@@ -780,6 +785,15 @@ describe("orchestration v2 provider switching", () => {
               )!;
               assert.equal(yield* Ref.get(generation), 1);
               assert.equal(target.nativeThreadRef?.nativeId?.endsWith(":0"), true);
+              if (scenario.includes("overflow-reused")) {
+                assert.isFalse(
+                  replaced.contextHandoffs.some(
+                    (handoff) =>
+                      handoff.targetRunId === replaced.runs.at(-1)?.id &&
+                      handoff.fromProviderThreadIds.includes(target.id),
+                  ),
+                );
+              }
               return;
             }
             assert.equal(replaced.runs.at(-1)?.status, "completed");
