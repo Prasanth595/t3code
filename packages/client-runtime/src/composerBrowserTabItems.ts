@@ -74,7 +74,8 @@ export function browserTabContextRecord(
   return {
     version: 1,
     kind: "browser-tab",
-    contextId: toKindScopedComposerContextId("browser-tab", tab.tabId),
+    // Tab ids are per-process sequence numbers, so two threads can share one.
+    contextId: toKindScopedComposerContextId("browser-tab", `${threadRef.threadId}_${tab.tabId}`),
     label,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,

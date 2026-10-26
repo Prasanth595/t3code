@@ -87,7 +87,19 @@ function BrowserPreviewScreen({
   const [canControl, setCanControl] = useState(false);
   const streamRef = useRef<PreviewStreamRef>(null);
   const { tabs, loaded } = useThreadServerBrowserTabs({ environmentId, threadId, enabled: true });
-  const tab = tabs.find((entry) => entry.tabId === selectedTabId) ?? latestBrowserTab(tabs);
+  // A tab mention can outlive its tab; opening another tab in its place would mislead.
+  const [initialTabState, setInitialTabState] = useState<"pending" | "open" | "closed">(
+    initialTabId === null ? "open" : "pending",
+  );
+  let initialTabStatus = initialTabState;
+  if (initialTabStatus === "pending" && loaded) {
+    initialTabStatus = tabs.some((entry) => entry.tabId === initialTabId) ? "open" : "closed";
+    setInitialTabState(initialTabStatus);
+  }
+  const tab =
+    initialTabStatus === "closed"
+      ? undefined
+      : (tabs.find((entry) => entry.tabId === selectedTabId) ?? latestBrowserTab(tabs));
   const pdfUri =
     tab?.navStatus._tag === "Success" ? previewPdfAssetUrl(tab.navStatus.url, httpBaseUrl) : null;
   const tabId = tab?.tabId ?? null;
@@ -98,6 +110,12 @@ function BrowserPreviewScreen({
   useEffect(() => {
     if (focused && loaded && tabs.length === 0) onClose();
   }, [focused, loaded, tabs.length, onClose]);
+  const hasTabs = tabs.length > 0;
+  useEffect(() => {
+    if (initialTabStatus !== "closed" || !hasTabs) return;
+    Dialog.alert("Tab closed", "This browser tab is no longer open.");
+    onClose();
+  }, [initialTabStatus, hasTabs, onClose]);
   const onPictureInPicture = useCallback((state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
     if (detail) Dialog.alert("Picture in picture is unavailable", detail);

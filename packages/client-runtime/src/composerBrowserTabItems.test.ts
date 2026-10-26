@@ -1,7 +1,10 @@
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { matchComposerBrowserTabItems } from "./composerBrowserTabItems.ts";
+import {
+  browserTabContextRecord,
+  matchComposerBrowserTabItems,
+} from "./composerBrowserTabItems.ts";
 
 const session = (
   tabId: string,
@@ -51,5 +54,15 @@ describe("matchComposerBrowserTabItems", () => {
     expect(
       matchComposerBrowserTabItems({ sessions, query: "billing" }).map((item) => item.tab.tabId),
     ).toEqual(["stable"]);
+  });
+});
+
+describe("browserTabContextRecord", () => {
+  it("keeps the same tab id in two threads as two mentions", () => {
+    const environmentId = EnvironmentId.make("env");
+    const tab = { tabId: "tab-1", title: "Docs", url: "https://example.com/" };
+    const first = browserTabContextRecord({ environmentId, threadId: ThreadId.make("a") }, tab);
+    const second = browserTabContextRecord({ environmentId, threadId: ThreadId.make("b") }, tab);
+    expect(first.contextId).not.toBe(second.contextId);
   });
 });
