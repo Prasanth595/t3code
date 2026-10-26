@@ -406,14 +406,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "new-design",
     title: "New design",
-    to: "/settings/labs",
-    searchTerms: ["beta redesign look style sidebar composer black quieter classic"],
+    to: "/settings/appearance",
+    searchTerms: ["redesign look style sidebar composer black quieter classic"],
   },
   {
     id: "working-shelf",
     title: "Working section",
-    to: "/settings/labs",
-    searchTerms: ["beta hide fold running monitoring threads inbox sidebar shelf"],
+    to: "/settings/general",
+    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "guest-links",

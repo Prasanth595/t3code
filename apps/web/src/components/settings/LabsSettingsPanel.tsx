@@ -1,76 +1,20 @@
 import { useAuth } from "@clerk/react";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { Link } from "@tanstack/react-router";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
-import {
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-} from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
-        <SettingsRow
-          {...searchableSetting("new-design")}
-          description="A true black dark mode, dimmer read threads, and simpler composer controls. Turn it off for the classic look."
-          resetAction={
-            settings.redesignEnabled !== DEFAULT_UNIFIED_SETTINGS.redesignEnabled ? (
-              <SettingResetButton
-                label="new design"
-                onClick={() =>
-                  updateSettings({ redesignEnabled: DEFAULT_UNIFIED_SETTINGS.redesignEnabled })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.redesignEnabled}
-              onCheckedChange={(checked) => updateSettings({ redesignEnabled: Boolean(checked) })}
-              aria-label="New design"
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
-          resetAction={
-            settings.sidebarWorkingShelfEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
-              <SettingResetButton
-                label="working section"
-                onClick={() =>
-                  updateSettings({
-                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
-              }
-              aria-label="Working section"
-            />
-          }
-        />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
       </SettingsSection>
