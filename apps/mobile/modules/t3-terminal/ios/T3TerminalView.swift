@@ -128,6 +128,7 @@ private enum TerminalInputSequence {
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
   var onInsert: ((String) -> Void)?
+  var onPaste: (() -> Void)?
 
   private static let hardwareKeyCommands = TerminalHardwareKeyEncoder.makeKeyCommands(
     action: #selector(handleHardwareKeyCommand(_:))
@@ -140,6 +141,12 @@ private final class TerminalInputField: UITextField {
   override func deleteBackward() {
     onDeleteBackward?()
     super.deleteBackward()
+  }
+
+  /// ⌘V, the iPad shortcut bar, and the edit menu land here. Inserting the text instead
+  /// would send it as typed input, skipping paste encoding and write chunking.
+  override func paste(_ sender: Any?) {
+    onPaste?()
   }
 
   @objc
@@ -184,7 +191,7 @@ private extension UIColor {
   }
 }
 
-public final class T3TerminalView: ExpoView, UITextFieldDelegate {
+public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInteractionDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
 
@@ -192,6 +199,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private let inputField = TerminalInputField()
   private let focusTapGesture = UITapGestureRecognizer()
   private let scrollPanGesture = UIPanGestureRecognizer()
+  private let pasteMenuGesture = UILongPressGestureRecognizer()
+  private lazy var pasteMenuInteraction = UIEditMenuInteraction(delegate: self)
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
@@ -208,6 +217,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   let onInput = EventDispatcher()
   let onResize = EventDispatcher()
   let onCapture = EventDispatcher()
+  let onPaste = EventDispatcher()
   var captureRequest: Double = 0 {
     didSet {
       guard captureRequest > 0, captureRequest != oldValue else { return }
@@ -348,6 +358,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.onInsert = { [weak self] data in
       self?.emitInput(data)
     }
+    inputField.onPaste = { [weak self] in
+      self?.emitPaste()
+    }
 
     focusTapGesture.addTarget(self, action: #selector(handleViewportTap))
     terminalViewport.addGestureRecognizer(focusTapGesture)
@@ -355,6 +368,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     scrollPanGesture.maximumNumberOfTouches = 1
     scrollPanGesture.cancelsTouchesInView = false
     terminalViewport.addGestureRecognizer(scrollPanGesture)
+    pasteMenuGesture.addTarget(self, action: #selector(handleViewportLongPress(_:)))
+    terminalViewport.addGestureRecognizer(pasteMenuGesture)
+    terminalViewport.addInteraction(pasteMenuInteraction)
 
     addSubview(terminalViewport)
     addSubview(inputField)
@@ -464,6 +480,52 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       pendingVerticalScrollPoints = 0
       gesture.setTranslation(.zero, in: terminalViewport)
     }
+  }
+
+  @objc
+  private func handleViewportLongPress(_ gesture: UILongPressGestureRecognizer) {
+    guard gesture.state == .began, canPaste else { return }
+    pasteMenuInteraction.presentEditMenu(
+      with: UIEditMenuConfiguration(identifier: nil, sourcePoint: gesture.location(in: terminalViewport))
+    )
+  }
+
+  public func editMenuInteraction(
+    _ interaction: UIEditMenuInteraction,
+    menuFor configuration: UIEditMenuConfiguration,
+    suggestedActions: [UIMenuElement]
+  ) -> UIMenu? {
+    // The terminal has no text selection, so keep only Paste. The hidden input field
+    // would otherwise contribute actions such as Scan Text or Writing Tools.
+    UIMenu(children: Self.pasteCommand(in: suggestedActions).map { [$0] } ?? [])
+  }
+
+  private static func pasteCommand(in elements: [UIMenuElement]) -> UIMenuElement? {
+    for element in elements {
+      if let command = element as? UICommand,
+         command.action == #selector(UIResponderStandardEditActions.paste(_:)) {
+        return command
+      }
+      if let menu = element as? UIMenu, let command = pasteCommand(in: menu.children) {
+        return command
+      }
+    }
+    return nil
+  }
+
+  public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    if action == #selector(UIResponderStandardEditActions.paste(_:)) {
+      return canPaste
+    }
+    return super.canPerformAction(action, withSender: sender)
+  }
+
+  public override func paste(_ sender: Any?) {
+    emitPaste()
+  }
+
+  private var canPaste: Bool {
+    !readOnly && UIPasteboard.general.hasStrings
   }
 
   @objc
@@ -714,6 +776,13 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private func emitInput(_ data: String) {
     guard !readOnly, !data.isEmpty else { return }
     onInput(["data": data])
+  }
+
+  /// Reads the clipboard inside the user's paste action, so iOS does not ask for paste
+  /// permission. JS sends the text through the same paste path as the toolbar button.
+  private func emitPaste() {
+    guard !readOnly, let text = UIPasteboard.general.string, !text.isEmpty else { return }
+    onPaste(["text": text])
   }
 
   private func textInputModeDidChange() {

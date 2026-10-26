@@ -658,9 +658,9 @@ function ThreadTerminal(props: {
     return result._tag === "Success";
   };
 
-  const pasteFromClipboard = async () => {
+  const pasteFromClipboard = async (readText: () => Promise<string> = Clipboard.getStringAsync) => {
     await pasteSession.paste({
-      readText: Clipboard.getStringAsync,
+      readText,
       write: writeInput,
       onReadError: (cause) => {
         console.error(new TerminalClipboardReadError({ terminalId, cause }));
@@ -693,6 +693,11 @@ function ThreadTerminal(props: {
     }
 
     writeModifiedInput(data);
+  };
+
+  const handleNativePaste = (text: string) => {
+    setPendingModifier(null);
+    void pasteFromClipboard(async () => text);
   };
 
   const handleResize = (size: { readonly cols: number; readonly rows: number }) => {
@@ -971,6 +976,7 @@ function ThreadTerminal(props: {
                       Dialog.alert("No terminal output", "There is no visible output to attach.");
                   }}
                   onInput={handleInput}
+                  onPaste={handleNativePaste}
                   onResize={handleResize}
                   style={{ flex: 1 }}
                   terminalKey={terminalKey}
