@@ -5,19 +5,24 @@ import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLay
 import { observeResize } from "../../lib/observeResize";
 import { useClientSettings } from "~/hooks/useSettings";
 
-// Panel toggles animate the canvas width. Seeking the running width transitions to
-// both ends finds the narrowest width this animation passes through, so layout that
-// switches modes at a width threshold decides once instead of flipping mid-animation.
-function measureTransitionWidths(element: HTMLElement) {
-  if (typeof CSSTransition === "undefined") return null;
-  const transitions = element.ownerDocument
-    .getAnimations()
-    .filter(
-      (animation): animation is CSSTransition =>
-        animation instanceof CSSTransition &&
-        animation.transitionProperty === "width" &&
-        animation.playState === "running",
-    );
+function panelWidthTransitions(element: HTMLElement) {
+  const panels = element
+    .closest("[data-panel-animations]")
+    ?.querySelectorAll('[data-slot="sidebar-gap"], [data-preview-panel-mode="inline"]');
+  return Array.from(panels ?? []).flatMap((panel) =>
+    panel
+      .getAnimations()
+      .filter(
+        (animation): animation is CSSTransition =>
+          animation instanceof CSSTransition &&
+          animation.transitionProperty === "width" &&
+          animation.playState === "running",
+      ),
+  );
+}
+
+// Sample only the layout panels; seeking unrelated transitions can change their lifecycle.
+function measureTransitionWidths(element: HTMLElement, transitions: CSSTransition[]) {
   if (transitions.length === 0) return null;
   const times = transitions.map((animation) => animation.currentTime);
   const widthAt = (edge: "start" | "end") => {
@@ -94,14 +99,14 @@ export function ChatCanvas({
     let disposed = false;
     // Seeking forces layout, so it runs once when a transition starts, not every frame.
     let transitionWidths: ReturnType<typeof measureTransitionWidths> = null;
-    let measuredWidth: number | null = null;
     const measure = () => {
       const width = element.clientWidth;
+      const transitions = panelWidthTransitions(element);
       if (
-        width !== measuredWidth &&
-        !transitionWidths?.transitions.every((animation) => animation.playState === "running")
+        transitions.length !== (transitionWidths?.transitions.length ?? 0) ||
+        transitions.some((animation, index) => animation !== transitionWidths?.transitions[index])
       ) {
-        const settling = measureTransitionWidths(element);
+        const settling = measureTransitionWidths(element, transitions);
         transitionWidths = settling;
         // The last resize can arrive while the transitions still count as running.
         if (settling) {
@@ -114,7 +119,6 @@ export function ChatCanvas({
           );
         }
       }
-      measuredWidth = width;
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
