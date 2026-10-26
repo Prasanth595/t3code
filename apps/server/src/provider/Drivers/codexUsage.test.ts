@@ -394,6 +394,26 @@ describe("parseCodexLine", () => {
     }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
   });
 
+  it("bills a genuine restart with the same counters at a new timestamp", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const lines = [
+      counted(request, request),
+      counted(request, counters(200, 40)),
+      counted(request, request).replace("05:17:49.919Z", "05:18:49.919Z"),
+      counted(counters(30, 5), counters(130, 25)),
+    ];
+    const processed = lines.map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+    expect({ processed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed: [120, 120, 120, 35],
+      skipped: 0,
+    });
+  });
+
   it.each([
     {
       reset: true,

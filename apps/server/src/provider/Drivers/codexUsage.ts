@@ -58,7 +58,7 @@ function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
 // A zeroed baseline rebases the counters, so the sequence start measured against it is forgotten.
 function rebaseCodexUsage(state: CodexScanState, cumulative: CodexTokenUsage) {
   state.lastCumulativeUsage = cumulative;
-  if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartUsage;
+  if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartSignature;
 }
 
 function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsage) {
@@ -78,7 +78,7 @@ export const CodexScanState = Schema.Struct({
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
   // Optional so scan states cached before this field existed stay valid.
-  sequenceStartUsage: Schema.mutableKey(Schema.optionalKey(CodexTokenUsage)),
+  sequenceStartSignature: Schema.mutableKey(Schema.optionalKey(Schema.String)),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
   modelProvider: Schema.mutableKey(Schema.String),
@@ -244,13 +244,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   if (cumulative !== null) {
     // A session resumed in a new Codex process restarts its cumulative counters at this request.
     const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
-    const sequenceStart = state.sequenceStartUsage;
-    // Re-emitting the current sequence's first request is already billed and must not rewind the baseline.
-    if (
-      restarted &&
-      sequenceStart !== undefined &&
-      CODEX_USAGE_FIELDS.every((key) => cumulative[key] === sequenceStart[key])
-    ) {
+    const sequenceStart = JSON.stringify([timestampMs, last]);
+    // Only the same event is a replay; a later request can restart with identical counters.
+    if (restarted && sequenceStart === state.sequenceStartSignature) {
       state.lastCumulativeUsage = previous;
       return null;
     }
@@ -266,7 +262,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       state.malformedRecords += 1;
       return null;
     }
-    if (restarted) state.sequenceStartUsage = cumulative;
+    if (restarted) state.sequenceStartSignature = sequenceStart;
   } else {
     if (signature === state.lastUsageSignature) return null;
     // Advance expected totals for billed legacy requests so a cumulative re-emission is stale.
