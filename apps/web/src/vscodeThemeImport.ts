@@ -293,9 +293,11 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const searchMatchActiveBackground =
     solidOver(canvas, "editor.findMatchBackground") ?? derived.searchMatchActiveBackground;
 
+  const text = readableOn(canvasHex, derived.text, "editor.foreground", "foreground");
   const overrides: Partial<Record<ThemeColorRole, string>> = {
     canvas: canvasHex,
-    text: readableOn(canvasHex, derived.text, "editor.foreground", "foreground"),
+    text,
+    inlineCodeForeground: readableOn(canvasHex, text, "textPreformat.foreground"),
     textMuted: readableOn(
       canvasHex,
       derived.textMuted,
