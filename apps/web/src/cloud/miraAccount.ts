@@ -12,6 +12,9 @@ import { runtime } from "../lib/runtime";
 import { ensureLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
+// The paid plan Upgrade buys; admins set its Stripe price in the admin page.
+export const MIRA_UPGRADE_PLAN_ID = "pro";
+
 const MIRA_BASE_URL_ENV = "MIRA_BASE_URL";
 const MIRA_API_KEY_ENV = "MIRA_API_KEY";
 export const MIRA_PI_INSTANCE_ID = ProviderInstanceId.make("pi");

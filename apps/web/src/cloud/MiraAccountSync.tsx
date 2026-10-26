@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/react";
+import { useAuth, useClerk } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   RelayConnectionRegistration,
@@ -29,6 +29,9 @@ import {
   readAutoAddedComputers,
   rememberAutoAddedComputer,
 } from "./miraSharing";
+import { miraChatHistory, miraChatRemote, setMiraAccess } from "./miraChat";
+import { fetchMiraAccount } from "./miraAccount";
+import { resolveClerkSignInProps } from "../components/clerk/authRedirect";
 import { useCloudLinkController } from "./useCloudLinkController";
 
 const DISCOVERY_REFRESH_MS = 60_000;
@@ -40,6 +43,40 @@ const DISCOVERY_REFRESH_MS = 60_000;
 export function MiraAccountSync() {
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const accountId = isSignedIn && userId ? userId : null;
+  const clerk = useClerk();
+  const openSignIn = useEffectEvent(() =>
+    clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron)),
+  );
+
+  // The plan decides chat limits and agentic access everywhere in the app.
+  useEffect(() => {
+    const signIn = () => openSignIn();
+    if (accountId === null) {
+      setMiraAccess({ signedIn: false, account: null, openSignIn: signIn });
+      void miraChatHistory.setRemote(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () =>
+      fetchMiraAccount().then(
+        (account) => {
+          if (!cancelled) setMiraAccess({ signedIn: true, account, openSignIn: signIn });
+        },
+        (cause: unknown) => console.warn("[mira] Could not read the account", cause),
+      );
+    setMiraAccess({ signedIn: true, account: null, openSignIn: signIn });
+    void refresh();
+    void miraChatHistory.setRemote(miraChatRemote(accountId));
+    const onFocus = () => {
+      void refresh();
+      void miraChatHistory.sync();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [accountId]);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(primaryEnvironmentId));
   const environmentIds = useEnvironmentIds();

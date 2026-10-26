@@ -19,10 +19,16 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { hasAgenticAccess, useMiraAccess } from "../cloud/miraChat";
+import { ChatModeView } from "../components/chatMode/ChatModeView";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
   const { environments, isReady } = useEnvironments();
+  const access = useMiraAccess();
+
+  // Chat is home until the plan includes agentic mode.
+  if (!hasAgenticAccess(access)) return <ChatModeView chatId={null} />;
 
   if (authGateState.status === "hosted-static") {
     if (!isReady) return null;

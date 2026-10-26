@@ -159,9 +159,11 @@ export function FirstRunGate({
   // Setup opens by itself only from the home route. A direct link, such as
   // Settings, opens as asked so setup can never lock a user out of the app.
   const wizardOwnsRoute = pathname === "/";
+  // Mira opens straight into chat; signing in later sets up agentic mode by itself.
   useEffect(() => {
     if (decision === "wizard" && wizardOwnsRoute) {
-      void navigate({ to: "/welcome", replace: true });
+      void completeOnboarding().catch(() => undefined);
+      void navigate({ to: "/ask", replace: true });
     }
   }, [decision, navigate, wizardOwnsRoute]);
 
