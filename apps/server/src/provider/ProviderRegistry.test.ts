@@ -2423,10 +2423,7 @@ it.layer(
         };
         const check = (
           overrides: Partial<TestClaudeCapabilities>,
-          oauthUsage: Effect.Effect<
-            ClaudeOAuthUsage | undefined,
-            ClaudeOAuthUsageError
-          > = Effect.succeed(undefined),
+          oauthUsage?: Effect.Effect<ClaudeOAuthUsage | undefined, ClaudeOAuthUsageError>,
           usage: ClaudeOAuthUsage["usage"] = sdkUsage,
         ) =>
           checkClaudeProviderStatus(
@@ -2446,7 +2443,7 @@ it.layer(
             undefined,
             undefined,
             names,
-            () => oauthUsage,
+            oauthUsage ? () => oauthUsage : undefined,
           );
         const oauthUsage = {
           usage: {
@@ -2465,11 +2462,10 @@ it.layer(
           { subscriptionType: "max" },
           Effect.fail(new ClaudeOAuthUsageError({ cause: new Error("request failed") })),
         );
-        const unavailableKeychainLogin = yield* check(
-          { subscriptionType: "max" },
-          Effect.succeed(undefined),
-          { rate_limits_available: false, rate_limits: null },
-        );
+        const unavailableKeychainLogin = yield* check({ subscriptionType: "max" }, undefined, {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
         const bedrock = yield* check({ apiProvider: "bedrock" }, Effect.succeed(oauthUsage));
         assert.deepStrictEqual(
           subscription.usageLimits?.windows.map((window) => window.usedPercent),
