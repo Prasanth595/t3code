@@ -130,10 +130,11 @@ const layerSession = Layer.mergeAll(
 
 describe("AntigravityAdapterV2 harness recovery", () => {
   const recoverHarnessFailure = (
-    harnessFailure: "1" | "after-end-turn",
-    firstTurnStatus: "failed" | "completed",
-  ) =>
-    Effect.gen(function* () {
+    harnessFailure: "1" | "pending" | "after-end-turn",
+    firstTurnStatuses: ReadonlyArray<"failed" | "completed">,
+  ) => {
+    let terminationCount = 0;
+    return Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -145,6 +146,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       const requestLogPath = path.join(workspace, "requests.jsonl");
       let processCount = 0;
       const firstRuntimeTerminated = yield* Deferred.make<void>();
+      let firstRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-recovery-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -157,6 +159,11 @@ describe("AntigravityAdapterV2 harness recovery", () => {
               ...input,
               onTermination: (error) =>
                 (input.onTermination?.(error) ?? Effect.void).pipe(
+                  Effect.tap(
+                    Effect.sync(() => {
+                      terminationCount += 1;
+                    }),
+                  ),
                   Effect.andThen(
                     processNumber === 1
                       ? Deferred.succeed(firstRuntimeTerminated, undefined)
@@ -176,9 +183,17 @@ describe("AntigravityAdapterV2 harness recovery", () => {
                     : {}),
                 },
               },
-            }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.tap((runtime) =>
+                Effect.sync(() => {
+                  if (processNumber === 1) firstRuntime = runtime;
+                }),
+              ),
+            );
           }),
         withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - The optional model requires undefined rather than void.
         defaultModel: Effect.succeed(undefined),
       });
       const threadId = ThreadId.make("thread-antigravity-recovery");
@@ -214,7 +229,11 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       );
       const first = yield* terminal;
       assert.equal(first._tag, "Some");
-      if (first._tag === "Some") assert.equal(first.value.status, firstTurnStatus);
+      if (first._tag === "Some") assert.include(firstTurnStatuses, first.value.status);
+      if (harnessFailure === "after-end-turn") {
+        assert.exists(firstRuntime);
+        yield* firstRuntime!.notify("_test/harness-failure", {});
+      }
       // The adapter must retire the first process even when end_turn won the race.
       yield* Deferred.await(firstRuntimeTerminated);
       yield* session.startTurn(
@@ -232,6 +251,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       assert.equal(completed._tag, "Some");
       if (completed._tag === "Some") assert.equal(completed.value.status, "completed");
       assert.equal(processCount, 2);
+      assert.equal(terminationCount, 1);
       const requests = (yield* fileSystem.readFileString(requestLogPath))
         .trim()
         .split("\n")
@@ -239,14 +259,23 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       const resumeRequests = requests.filter((request) => request.method === "session/resume");
       assert.equal(resumeRequests.length, 1);
       assert.equal(resumeRequests[0]?.params?.sessionId, "mock-session-1");
-    }).pipe(Effect.provide(layerSession), Effect.scoped);
+    }).pipe(
+      Effect.provide(layerSession),
+      Effect.scoped,
+      Effect.tap(Effect.sync(() => assert.equal(terminationCount, 1))),
+    );
+  };
 
-  it.live("fails despite end_turn and resumes the saved session in a fresh process", () =>
-    recoverHarnessFailure("1", "failed"),
+  it.live("fails an open turn and resumes its saved session after a harness failure", () =>
+    recoverHarnessFailure("pending", ["failed"]),
+  );
+
+  it.live("resumes the saved session after a harness failure races end_turn", () =>
+    recoverHarnessFailure("1", ["failed", "completed"]),
   );
 
   it.live("resumes in a fresh process when the native failure arrives after end_turn", () =>
-    recoverHarnessFailure("after-end-turn", "completed"),
+    recoverHarnessFailure("after-end-turn", ["completed"]),
   );
 });
 

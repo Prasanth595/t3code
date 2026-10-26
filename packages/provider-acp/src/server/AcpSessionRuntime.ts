@@ -1263,6 +1263,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Option.none(),
   );
   const stoppingRef = yield* Ref.make(false);
+  const terminationRecorded = yield* Deferred.make<void>();
   const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
   const stderrTailRef = yield* Ref.make("");
   const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -1324,11 +1325,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         : ([true, Option.some(enriched)] as const),
     );
     if (!firstTermination) {
-      return;
+      return yield* Deferred.await(terminationRecorded);
     }
-    yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-    yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
-    yield* options.onTermination?.(enriched) ?? Effect.void;
+    yield* Effect.gen(function* () {
+      yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+      yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
+      yield* options.onTermination?.(enriched) ?? Effect.void;
+    }).pipe(Effect.ensuring(Deferred.succeed(terminationRecorded, undefined)));
   });
 
   const logRequest = (event: AcpSessionRequestLogEvent) =>

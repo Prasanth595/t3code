@@ -560,7 +560,7 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
-  const handleLine = (line: string) => {
+  const handleLine = Effect.fn("antigravityAuthSupport.handleStderrLine")((line: string) => {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (message.length > maxBrowserHelperLineLength) {
       return Effect.void;
@@ -595,7 +595,7 @@ export function makeAntigravityStderrHandler(
             : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
       }),
     );
-  };
+  });
 
   return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
     const lines = `${pending}${text}`.split("\n");
