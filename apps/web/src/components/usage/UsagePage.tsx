@@ -565,6 +565,7 @@ export function UsagePage() {
                 selectedEnvironments={selectedEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
+                isWaitingLong={isWaitingLong}
                 cursorAccessEnvironments={cursorAccessEnvironments}
                 showChatGptSharing={showChatGptSharing}
                 onCursorEnabled={() => {
@@ -618,6 +619,7 @@ function UsageOverview({
   selectedEnvironments,
   hiddenProviders,
   refreshingUsage,
+  isWaitingLong,
   cursorAccessEnvironments,
   showChatGptSharing,
   onCursorEnabled,
@@ -633,6 +635,7 @@ function UsageOverview({
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
+  readonly isWaitingLong: boolean;
   readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
   readonly showChatGptSharing: boolean;
   readonly onCursorEnabled: () => void;
@@ -646,7 +649,8 @@ function UsageOverview({
     refreshingUsage,
     hiddenProviders,
   );
-  const loading = useSettleWindow(reported.partial) ? reported : NOT_LOADING;
+  const loadingLasted = useSettleWindow(reported.partial);
+  const loading = loadingLasted || isWaitingLong ? reported : NOT_LOADING;
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
