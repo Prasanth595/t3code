@@ -687,10 +687,15 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
       : canvas;
   };
   const isDark = (color: ThemeRgbColor) => themeRelativeLuminance(color) < 0.179;
-  const darkText = isDark(onCanvas(colors.text));
-  const messageMatchesCanvas = isDark(onCanvas(colors.messageForeground)) === darkText;
+  const messageMatchesCanvas = isDark(onCanvas(colors.messageSurface)) === isDark(canvas);
   const surfaces = [canvas, onCanvas(colors.surface), onCanvas(colors.surfaceRaised)];
   if (messageMatchesCanvas) surfaces.push(onCanvas(colors.messageSurface));
+  const contrastOnSurfaces = (color: ThemeRgbColor) =>
+    Math.min(...surfaces.map((surface) => themeContrastRatio(color, surface)));
+  const blackContrast = contrastOnSurfaces(THEME_BLACK_FOREGROUND);
+  const whiteContrast = contrastOnSurfaces(THEME_WHITE_FOREGROUND);
+  const direction = blackContrast >= whiteContrast ? "darker" : "lighter";
+  const minContrast = Math.min(CONTEXT_CHIP_CONTRAST, Math.max(blackContrast, whiteContrast));
   const accents: Array<[string, string]> = [
     ...(Object.entries(CONTEXT_CHIP_ACCENTS) as Array<[ContextChipAccentKind, string]>).map(
       ([kind, accent]): [string, string] => [contextChipColorVariable(kind), accent],
@@ -701,12 +706,7 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
     accents.flatMap(([variable, accent]) => {
       const parsed = parseThemeColor(accent);
       if (!parsed) return [];
-      const solved = solveOklchLightness(
-        parsed.color,
-        surfaces,
-        CONTEXT_CHIP_CONTRAST,
-        darkText ? "darker" : "lighter",
-      );
+      const solved = solveOklchLightness(parsed.color, surfaces, minContrast, direction);
       return [[variable, themeRgbToHexColor(themeOklchToRgb(solved))]];
     }),
   );

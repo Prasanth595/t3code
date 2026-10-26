@@ -544,6 +544,27 @@ describe("theme files", () => {
 });
 
 describe("context chip colors", () => {
+  it.each([
+    ["#ffffff", 5],
+    ["#777777", 4.5],
+  ] as const)(
+    "chooses readable chip lightness on %s when the text is medium gray",
+    (surface, minimum) => {
+      const colors = {
+        ...getStandardThemeColors("light"),
+        canvas: surface,
+        surface,
+        surfaceRaised: surface,
+        messageSurface: surface,
+        text: "#767676",
+        messageForeground: "#767676",
+      };
+      for (const color of Object.values(contextChipVariables(colors))) {
+        expect(contrastRatio(color, surface)).toBeGreaterThanOrEqual(minimum);
+      }
+    },
+  );
+
   const toOklch = converter("oklch");
   const toRgb = converter("rgb");
   // Surfaces stay unrounded, as CSS paints them; the chip is the 8-bit hex the solver returns.
