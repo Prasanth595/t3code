@@ -72,7 +72,6 @@ function Drawer(props: {
       activeTerminalId="term-1"
       terminalGroups={[{ id: "group-1", terminalIds: ["term-1"] }]}
       activeTerminalGroupId="group-1"
-      focusRequestId={0}
       onSplitTerminal={() => {}}
       onSplitTerminalVertical={() => {}}
       onNewTerminal={() => {}}
@@ -85,7 +84,7 @@ function Drawer(props: {
   );
 }
 
-it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
+function setup() {
   const original: ScopedThreadRef = {
     environmentId: EnvironmentId.make("environment-a"),
     threadId: ThreadId.make("thread-a"),
@@ -99,6 +98,11 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
     [other.threadId, "running"],
   ]);
   fixture.pendingSurfaces = [];
+  return { original, other };
+}
+
+it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
+  const { original, other } = setup();
   const onCloseTerminal = vi.fn();
   await using screen = await render(
     <Drawer threadRef={original} onCloseTerminal={onCloseTerminal} />,

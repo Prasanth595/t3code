@@ -20,7 +20,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../state/entities";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { useEnvironmentScope } from "../state/session";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
@@ -219,14 +219,12 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     if (visible) focusTerminal(threadRef, terminalId);
   };
 
-  const closeTerminal = useStableCallback(
-    (terminalId: string, target: ScopedThreadRef = threadRef) => {
-      if (!readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
-      terminalActions.closeTerminalSession(terminalId, target);
-      storeCloseTerminal(target, terminalId);
-      if (visible) focusActiveDrawerTerminal(target);
-    },
-  );
+  const closeTerminal = useStableCallback((terminalId: string) => {
+    if (!terminalActions.canWrite()) return;
+    terminalActions.closeTerminalSession(terminalId);
+    storeCloseTerminal(threadRef, terminalId);
+    if (visible) focusActiveDrawerTerminal(threadRef);
+  });
 
   const handleAddTerminalContext = (selection: TerminalContextSelection) => {
     if (!visible) {
