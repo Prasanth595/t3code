@@ -1639,8 +1639,8 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
           const close = Effect.gen(function* () {
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
             const release = Effect.gen(function* () {
               const removed = yield* Ref.modify(subscribers, (current) => {
                 if (!current.has(subscriberId)) return [false, current] as const;
@@ -1648,9 +1648,10 @@ export const layerWithOptions = (
                 updated.delete(subscriberId);
                 return [true, updated] as const;
               });
-              if (!removed) return;
-              yield* Queue.clear(queue);
-              yield* Queue.end(queue);
+              if (removed) {
+                yield* Queue.clear(queue);
+                yield* Queue.end(queue);
+              }
               // Completion can restore its cached receipt after an idle invalidation was persisted.
               if (entry !== undefined) {
                 yield* Effect.forEach(
@@ -1894,11 +1895,7 @@ export const layerWithOptions = (
         if (threadId === null || offered.nativeMetadata?.acpInstructions !== null) return;
         // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
         yield* Effect.gen(function* () {
-          const current = (yield* Ref.get(sessions)).get(
-            sessionKey(entry.runtime.providerSessionId),
-          );
-          if (current?.runtime !== entry.runtime || !current.attachedThreadIds.has(threadId))
-            return true;
+          if (!entry.attachedThreadIds.has(threadId)) return true;
           const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
           const stored = projection.providerThreads.find(
             (candidate) => candidate.id === offered.id,

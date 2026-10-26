@@ -2900,7 +2900,14 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
   }),
 );
 
-it.effect.each(["current", "queued-completion", "newer-run", "newer-session"] as const)(
+it.effect.each([
+  "current",
+  "queued-completion",
+  "released-completion",
+  "repeated-close",
+  "newer-run",
+  "newer-session",
+] as const)(
   "ProviderSessionManagerV2 persists instruction invalidation only for its owner (%s)",
   (owner) =>
     Effect.gen(function* () {
@@ -2970,32 +2977,43 @@ it.effect.each(["current", "queued-completion", "newer-run", "newer-session"] as
           threadId,
           providerSessionId,
         });
+        const restoreCompletion = eventSink.write({
+          events: [
+            {
+              id: completionEventId,
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: before,
+            },
+          ],
+        });
         yield* subscription.events.pipe(
           Stream.tap(() =>
-            owner === "queued-completion"
-              ? eventSink.write({
-                  events: [
-                    {
-                      id: completionEventId,
-                      type: "provider-thread.updated",
-                      threadId,
-                      driver: CODEX_DRIVER,
-                      occurredAt: now,
-                      payload: before,
-                    },
-                  ],
-                })
-              : Effect.void,
+            Effect.gen(function* () {
+              if (owner === "released-completion")
+                yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+              if (owner === "queued-completion" || owner === "released-completion")
+                yield* restoreCompletion;
+            }),
           ),
           Stream.runHead,
         );
+        if (owner === "repeated-close") {
+          yield* restoreCompletion;
+          yield* subscription.close;
+        }
         const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
         const updated = projection.providerThreads.find(
           (candidate) => candidate.id === providerThread.id,
         );
         assert.deepEqual(
           updated,
-          owner === "current" || owner === "queued-completion"
+          owner === "current" ||
+            owner === "queued-completion" ||
+            owner === "released-completion" ||
+            owner === "repeated-close"
             ? {
                 ...before,
                 nativeMetadata: { ...before.nativeMetadata, acpInstructions: null },
