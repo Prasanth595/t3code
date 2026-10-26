@@ -31,7 +31,7 @@ export function selectGitHubBaseRepository(input: {
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [normalizedHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     const remoteHost =
-      host === "github.com" && normalizedHost && isSshRemoteUrl(remote.url)
+      normalizedHost && isSshRemoteUrl(remote.url)
         ? (apiHostForSshAlias(normalizedHost) ?? normalizedHost)
         : normalizedHost;
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;

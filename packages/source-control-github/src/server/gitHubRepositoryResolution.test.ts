@@ -232,14 +232,16 @@ describe("github.com-<name> SSH aliases", () => {
       "origin\thttps://github.com-scale/me/web.git (fetch)",
       "upstream\tgit@github.com-scale:acme/web.git (fetch)",
     ];
-    for (const [remotes, hostHint] of [
-      [entries.join("\n"), "github.com-scale"],
-      [entries.toReversed().join("\n"), undefined],
+    for (const [remotes, hostHint, resolved] of [
+      [entries.join("\n"), "github.com-scale", "remote.origin.gh-resolved base"],
+      [entries.join("\n"), "github.com-scale", ""],
+      [entries.toReversed().join("\n"), undefined, "remote.origin.gh-resolved base"],
+      [entries.toReversed().join("\n"), undefined, ""],
     ] as const) {
       assert.deepStrictEqual(
         resolveGitHubRepository({
           remotes,
-          resolved: "remote.origin.gh-resolved base",
+          resolved,
           hostHint,
           defaultHost: "github.com",
         }),
