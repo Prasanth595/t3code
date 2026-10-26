@@ -384,13 +384,38 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
 
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
 
+// Requests that carry a capability in their URL. Spans record the full URL, so these never
+// reach a trace: the webhook, asset and upload tokens in the path, and the WebSocket ticket
+// and its DPoP proof in the query.
+const UNTRACED_REQUEST_PREFIXES: ReadonlyArray<string> = [
+  `${WEBHOOK_ROUTE_PREFIX}/`,
+  `${ASSET_ROUTE_PREFIX}/`,
+  `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`,
+];
+
+const UNTRACED_QUERY_PARAMS: ReadonlyArray<string> = [
+  EnvironmentAuth.WEBSOCKET_TICKET_QUERY_PARAM,
+  EnvironmentAuth.WEBSOCKET_PROOF_QUERY_PARAM,
+];
+
+function isUntracedRequestUrl(url: string): boolean {
+  const queryIndex = url.indexOf("?");
+  const path = queryIndex === -1 ? url : url.slice(0, queryIndex);
+  if (
+    UNTRACED_REQUEST_PATHS.has(path) ||
+    UNTRACED_REQUEST_PREFIXES.some((prefix) => path.startsWith(prefix))
+  ) {
+    return true;
+  }
+  if (queryIndex === -1) return false;
+  const query = new URLSearchParams(url.slice(queryIndex + 1));
+  return UNTRACED_QUERY_PARAMS.some((name) => query.has(name));
+}
+
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
-const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
-  const queryIndex = request.url.indexOf("?");
-  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Webhook URLs carry their secret token in the path, so they never reach a trace.
-  return UNTRACED_REQUEST_PATHS.has(path) || path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`);
-});
+const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) =>
+  isUntracedRequestUrl(request.url),
+);
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
 
