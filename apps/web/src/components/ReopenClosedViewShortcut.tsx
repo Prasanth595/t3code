@@ -4,7 +4,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { type ScopedThreadRef, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -43,10 +43,35 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 
-const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
+/**
+ * While the app's browser has focus, the app keeps what a browser keeps from
+ * its pages (tabs, the address bar, zoom) plus its own navigation and layout.
+ * Composer, editing and back/forward chords stay with the page, and the
+ * desktop reloads the page itself.
+ */
+const PREVIEW_FORWARDED_COMMANDS = [
+  "chat.new",
+  "chat.newLocal",
+  "chat.newWithoutProject",
+  "rightPanel.new",
+  "rightPanel.close",
+  "thread.previous",
+  "thread.next",
+  ...THREAD_JUMP_KEYBINDING_COMMANDS,
+  "commandPalette.toggle",
+  "filePicker.toggle",
+  "projectSearch.toggle",
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "threadPanel.toggle",
+  "terminal.toggle",
+  "diff.toggle",
+  "preview.toggle",
+  "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
@@ -71,6 +96,9 @@ export function ReopenClosedViewShortcut() {
   );
   const previewOpen = useRightPanelStore(
     (state) => selectActiveRightPanel(state.byThreadKey, threadRef) === "preview",
+  );
+  const rightPanelOpen = useRightPanelStore(
+    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).isOpen,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hasHistory = useClosedViewStore((state) => state.entries.length > 0);
@@ -169,13 +197,7 @@ export function ReopenClosedViewShortcut() {
       if (!event.repeat) enqueueReopen();
     };
     window.addEventListener("keydown", onKeyDown, true);
-    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "view.reopenClosed" && !isCommandPaletteOpen()) enqueueReopen();
-    });
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      unsubscribe?.();
-    };
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, previewOpen, terminalOpen]);
 
   useEffect(() => {
@@ -185,6 +207,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,
@@ -193,25 +216,35 @@ export function ReopenClosedViewShortcut() {
         isWeb: false,
       },
     };
-    // Guest browser processes miss app keydown listeners; desktop forwards the chords as menu actions.
+    // Guest browser pages miss app keydown listeners, so the desktop claims Cmd/Ctrl chords there and replays each key here.
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
-      ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      // The default mod+w binding ignores rightPanelOpen, so a closed panel would swallow it.
+      ...PREVIEW_FORWARDED_COMMANDS.filter(
+        (command) => rightPanelOpen || command !== "rightPanel.close",
+      ),
     ];
     void preview
       .setForwardedShortcuts(
         commands.flatMap((command) =>
-          effectiveShortcutsForCommand(keybindings, command, options).map((shortcut) => ({
-            command,
-            shortcut,
-          })),
+          effectiveShortcutsForCommand(keybindings, command, options)
+            .filter((shortcut) => shortcut.metaKey || shortcut.ctrlKey || shortcut.modKey)
+            .map((shortcut) => ({ command, shortcut })),
         ),
       )
       .catch(() => undefined);
+    // The browser's <webview> keeps focus in this document, so a replayed key
+    // reaches every shortcut listener, which resolves it in its live context.
+    const stopReplay = preview.onForwardedKey?.((key) => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
+      );
+    });
     return () => {
+      stopReplay?.();
       void preview.setForwardedShortcuts?.([]).catch(() => undefined);
     };
-  }, [hasHistory, keybindings, terminalOpen]);
+  }, [hasHistory, keybindings, rightPanelOpen, terminalOpen]);
 
   return null;
 }

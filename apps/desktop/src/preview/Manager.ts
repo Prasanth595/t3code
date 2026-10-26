@@ -7,6 +7,7 @@ import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
+  DesktopPreviewForwardedKey,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
@@ -56,7 +57,10 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
-import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  PREVIEW_FORWARDED_KEY_CHANNEL,
+  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
@@ -1477,6 +1481,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);
       const host = wc.hostWebContents;
+      const pressed: DesktopPreviewForwardedKey = {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        shiftKey: input.shift,
+        altKey: input.alt,
+      };
       const forwarded =
         input.type === "keyDown" &&
         !input.isComposing &&
@@ -1489,23 +1501,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           input.alt &&
           /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key)
         ) &&
-        forwardedShortcuts.find(({ shortcut }) =>
+        forwardedShortcuts.some(({ shortcut }) =>
           matchesKeybindingShortcut(
-            {
-              key: input.key,
-              code: input.code,
-              metaKey: input.meta,
-              ctrlKey: input.control,
-              shiftKey: input.shift,
-              altKey: input.alt,
-            },
+            pressed,
             shortcut,
             hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
           ),
         );
       if (forwarded && host) {
         event.preventDefault();
-        if (!input.isAutoRepeat) host.send(MENU_ACTION_CHANNEL, forwarded.command);
+        if (!input.isAutoRepeat) host.send(PREVIEW_FORWARDED_KEY_CHANNEL, pressed);
         return;
       }
       if (isPreviewRefreshShortcut(input)) {

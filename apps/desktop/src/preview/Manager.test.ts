@@ -621,9 +621,19 @@ describe("PreviewManager", () => {
         ).toHaveBeenLastCalledWith(false);
 
         const preventDefault = vi.fn();
-        beforeInput({ preventDefault } as never, { ...key, key: "T", shift: true } as never);
+        beforeInput(
+          { preventDefault } as never,
+          { ...key, key: "T", code: "KeyT", shift: true } as never,
+        );
         expect(preventDefault).toHaveBeenCalledOnce();
-        expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
+        expect(send).toHaveBeenCalledExactlyOnceWith("desktop:preview-forwarded-key", {
+          key: "T",
+          code: "KeyT",
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        });
 
         Object.assign(newer.webContents, { focusedFrame: null });
         const agentInput = newer.listeners.get("before-input-event")!;

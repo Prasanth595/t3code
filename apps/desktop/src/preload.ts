@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopPreviewForwardedKey,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
@@ -320,6 +321,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   preview: {
     setForwardedShortcuts: (shortcuts) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL, shortcuts),
+    onForwardedKey: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, key: unknown) => {
+        if (typeof key !== "object" || key === null) return;
+        listener(key as DesktopPreviewForwardedKey);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FORWARDED_KEY_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_FORWARDED_KEY_CHANNEL, wrappedListener);
+    },
     createTab: (tabId, defaults) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, {
         tabId,

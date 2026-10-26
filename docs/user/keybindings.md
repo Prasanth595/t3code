@@ -176,6 +176,11 @@ can reopen until you reload or quit the app. This shortcut does not undo deleted
 Browsers also use it to reopen browser tabs; choose another binding in Settings
 if the browser takes it first.
 
+While a page in the desktop browser has focus, shortcuts that start, close, or
+switch threads and tabs, toggle panels, open the command palette, focus the
+address bar, or zoom still reach T3 Code when they use `mod`, `cmd`, or `ctrl`.
+Other shortcuts, such as undo, save, and `mod+f`, go to the page.
+
 Many defaults include `!terminalFocus` so they do not intercept terminal input.
 Keep that condition when remapping them if you want the same behavior.
 

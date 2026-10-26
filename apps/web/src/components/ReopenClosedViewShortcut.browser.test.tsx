@@ -1,4 +1,9 @@
-import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  DesktopPreviewForwardedKey,
+  PreviewForwardedShortcut,
+  ResolvedKeybindingsConfig,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -12,7 +17,7 @@ const state = vi.hoisted(() => ({
   workspaceAvailable: true,
   navigate: vi.fn(),
   openPreview: vi.fn(),
-  setShortcuts: vi.fn(async () => undefined),
+  setShortcuts: vi.fn(async (_shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => undefined),
   toast: vi.fn(),
 }));
 
@@ -85,7 +90,6 @@ const snapshot = {
   canGoForward: false,
   updatedAt: "2026-09-22T12:00:00.000Z",
 } as const;
-let menuAction: ((action: string) => void) | undefined;
 
 function setup() {
   vi.clearAllMocks();
@@ -106,14 +110,17 @@ function setup() {
 
 async function renderShortcut() {
   await using stack = new AsyncDisposableStack();
+  let forwardedKey: ((key: DesktopPreviewForwardedKey) => void) | undefined;
   stack.use(vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64"));
   window.desktopBridge = {
-    preview: { setForwardedShortcuts: state.setShortcuts },
-    onMenuAction: (listener: (action: string) => void) => {
-      menuAction = listener;
-      return () => {
-        menuAction = undefined;
-      };
+    preview: {
+      setForwardedShortcuts: state.setShortcuts,
+      onForwardedKey: (listener: (key: DesktopPreviewForwardedKey) => void) => {
+        forwardedKey = listener;
+        return () => {
+          forwardedKey = undefined;
+        };
+      },
     },
   } as unknown as NonNullable<typeof window.desktopBridge>;
   stack.defer(() => {
@@ -127,6 +134,17 @@ async function renderShortcut() {
       document.body.append(element);
       environment.defer(() => element.remove());
       return element;
+    },
+    /** A press the desktop claimed from a focused browser page. */
+    pressInBrowser() {
+      forwardedKey?.({
+        key: "T",
+        code: "KeyT",
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+      });
     },
     [Symbol.asyncDispose]: () => environment.disposeAsync(),
   };
@@ -194,7 +212,7 @@ describe("root reopen shortcut", () => {
     );
     expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([older]);
     await act(() => {
-      menuAction?.("view.reopenClosed");
+      _view.pressInBrowser();
     });
     expect(state.openPreview).toHaveBeenCalledOnce();
     expect(
@@ -243,7 +261,7 @@ describe("root reopen shortcut", () => {
       ]);
       expect(state.navigate).not.toHaveBeenCalled();
       await act(() => {
-        menuAction?.("view.reopenClosed");
+        _view.pressInBrowser();
       });
       expect(
         selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).activeSurfaceId,
@@ -262,4 +280,25 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+
+  it("claims tab chords from a focused browser page and leaves it undo and save", async () => {
+    setup();
+    state.params = { environmentId: ref.environmentId, threadId: ref.threadId };
+    useRightPanelStore.getState().openBrowser(ref, "open-tab");
+    await using _view = await renderShortcut();
+    const claimed = new Set(state.setShortcuts.mock.lastCall?.[0].map(({ command }) => command));
+    expect(claimed).toContain("chat.new");
+    expect(claimed).toContain("rightPanel.close");
+    expect(claimed).not.toContain("thread.undo");
+    expect(claimed).not.toContain("composer.stash");
+  });
+
+  it("leaves close tab to the page while the right panel is closed", async () => {
+    setup();
+    state.params = { environmentId: ref.environmentId, threadId: ref.threadId };
+    await using _view = await renderShortcut();
+    const claimed = new Set(state.setShortcuts.mock.lastCall?.[0].map(({ command }) => command));
+    expect(claimed).toContain("chat.new");
+    expect(claimed).not.toContain("rightPanel.close");
+  });
 });
