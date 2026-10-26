@@ -438,6 +438,7 @@ describe("ssh tunnel scripts", () => {
   it.effect.each([
     "original request",
     "persisted bootstrap",
+    "latest bootstrap",
     "failed first stop",
     "canonical before legacy",
   ] as const)(
@@ -486,7 +487,9 @@ describe("ssh tunnel scripts", () => {
           const first = yield* manager.ensureEnvironment(initialRequest);
           recovered = nextRequest !== "canonical before legacy";
           const cleanupTarget =
-            nextRequest === "persisted bootstrap" ? first.target : initialRequest;
+            nextRequest === "persisted bootstrap" || nextRequest === "latest bootstrap"
+              ? first.target
+              : initialRequest;
           const second = yield* manager.ensureEnvironment(
             nextRequest === "canonical before legacy" ? request : cleanupTarget,
           );
@@ -512,7 +515,11 @@ describe("ssh tunnel scripts", () => {
           });
           assert.equal(anotherUser.target.username, "bob");
           assert.equal(anotherUser.target.port, 3333);
-          const result = yield* Effect.result(manager.disconnectEnvironment(cleanupTarget));
+          const result = yield* Effect.result(
+            manager.disconnectEnvironment(
+              nextRequest === "latest bootstrap" ? second.target : cleanupTarget,
+            ),
+          );
           assert.equal(result._tag, nextRequest === "failed first stop" ? "Failure" : "Success");
           assert.deepEqual(killed, ["alice@devbox", "alice@devbox"]);
           assert.equal(stops.length, 2);

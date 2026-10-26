@@ -5,6 +5,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { SshCommandError } from "@t3tools/ssh/errors";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -460,9 +462,13 @@ const target = {
 };
 
 function runRecoveryScenario(
-  operation: "resolve" | "connect" | "disconnect" | "still-unavailable",
+  operation: "resolve" | "connect" | "disconnect" | "still-unavailable" | "capture-pending",
 ) {
   return Effect.gen(function* () {
+    const paused = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    let pauseCapture = false;
+    let stops = 0;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-path-" });
@@ -550,6 +556,22 @@ exec /bin/sh -c "$2"
       assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-missing.invalid");
       assert.equal(yield* fs.readFileString(probes), initialProbes);
       yield* TestClock.adjust("1 millis");
+      if (operation === "capture-pending") {
+        pauseCapture = true;
+        const preparing = yield* Effect.forkChild(Effect.result(ssh.ensureEnvironment(target)));
+        yield* Deferred.await(paused);
+        const stopping = yield* Effect.forkChild(Effect.result(ssh.disconnectEnvironment(target)), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("0 millis");
+        const stopsWhileCapturing = stops;
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(preparing);
+        yield* Fiber.join(stopping);
+        assert.equal(stopsWhileCapturing, 0);
+        assert.equal(stops, 1);
+        return;
+      }
       if (operation === "resolve") {
         assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
         assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
@@ -601,12 +623,21 @@ exec /bin/sh -c "$2"
 
     const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const spawner = ChildProcessSpawner.make((command) =>
-      nativeSpawner.spawn(
-        ChildProcess.isStandardCommand(command) &&
-          ["/bin/zsh", "/bin/bash"].includes(command.command)
-          ? ChildProcess.make("/bin/sh", ["-c", "exit 1"])
-          : command,
-      ),
+      Effect.gen(function* () {
+        if (ChildProcess.isStandardCommand(command)) {
+          if (command.args.some((arg) => arg.startsWith("HostName="))) stops += 1;
+          if (command.command === preferredShell && pauseCapture) {
+            yield* Deferred.succeed(paused, undefined);
+            yield* Deferred.await(resume);
+          }
+        }
+        return yield* nativeSpawner.spawn(
+          ChildProcess.isStandardCommand(command) &&
+            ["/bin/zsh", "/bin/bash"].includes(command.command)
+            ? ChildProcess.make("/bin/sh", ["-c", "exit 1"])
+            : command,
+        );
+      }),
     );
     yield* Effect.acquireUseRelease(
       Effect.sync(() => {
@@ -634,19 +665,25 @@ exec /bin/sh -c "$2"
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 }
 
-describe("SSH shell PATH recovery with real OpenSSH", () => {
-  it.effect(
-    "pins remote cleanup to the supplied host after PATH recovery changes alias resolution",
-    () => runRecoveryScenario("disconnect"),
-  );
-  it.effect(
-    "recovers a failed startup capture before resolving a host and caches the recovered PATH",
-    () => runRecoveryScenario("resolve"),
-  );
-  it.effect("recovers a failed startup capture before invoking a saved host's ProxyCommand", () =>
-    runRecoveryScenario("connect"),
-  );
-  it.effect("preserves the SSH error when PATH capture is still unavailable", () =>
-    runRecoveryScenario("still-unavailable"),
-  );
-});
+describe.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+  "SSH shell PATH recovery with real OpenSSH",
+  () => {
+    it.effect("waits for a pending shell capture before disconnecting", () =>
+      runRecoveryScenario("capture-pending"),
+    );
+    it.effect(
+      "pins remote cleanup to the supplied host after PATH recovery changes alias resolution",
+      () => runRecoveryScenario("disconnect"),
+    );
+    it.effect(
+      "recovers a failed startup capture before resolving a host and caches the recovered PATH",
+      () => runRecoveryScenario("resolve"),
+    );
+    it.effect("recovers a failed startup capture before invoking a saved host's ProxyCommand", () =>
+      runRecoveryScenario("connect"),
+    );
+    it.effect("preserves the SSH error when PATH capture is still unavailable", () =>
+      runRecoveryScenario("still-unavailable"),
+    );
+  },
+);

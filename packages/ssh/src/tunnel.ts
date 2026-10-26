@@ -69,6 +69,7 @@ export interface RemoteT3RunnerOptions {
 }
 
 export interface SshEnvironmentManagerOptions {
+  readonly prepareEnvironment?: Effect.Effect<void>;
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
@@ -1701,6 +1702,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     return yield* withAliasLock(
       (target.alias || target.hostname).trim(),
       Effect.gen(function* () {
+        if (options.prepareEnvironment !== undefined) yield* options.prepareEnvironment;
         const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
         const resolvedTarget: DesktopSshEnvironmentTarget = {
           ...baseResolved,
@@ -1721,9 +1723,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         });
         const requestKey = targetConnectionKey(target);
         const owned =
-          preparedTargets.get(requestKey)?.owned ?? new Map<string, DesktopSshEnvironmentTarget>();
+          preparedTargets.get(requestKey)?.owned ??
+          preparedTargets.get(key)?.owned ??
+          new Map<string, DesktopSshEnvironmentTarget>();
         owned.set(key, resolvedTarget);
-        preparedTargets.set(requestKey, { lastTarget: resolvedTarget, owned });
+        const prepared = { lastTarget: resolvedTarget, owned };
+        preparedTargets.set(requestKey, prepared);
+        preparedTargets.set(key, prepared);
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
         const pairingResult = requestOptions?.issuePairingToken

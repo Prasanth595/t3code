@@ -144,7 +144,6 @@ export const make = Effect.gen(function* () {
     }, Effect.provide(runtimeContext)),
     ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
       function* (target, ensureOptions) {
-        yield* shellEnvironment.installIntoProcess;
         return yield* manager.ensureEnvironment(target, ensureOptions);
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
@@ -163,10 +162,14 @@ export const make = Effect.gen(function* () {
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
-          ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+          return SshTunnel.SshEnvironmentManager.layer({
+            ...options,
+            prepareEnvironment: shellEnvironment.installIntoProcess.pipe(Effect.asVoid),
+          });
+        }),
       ),
     ),
   );
