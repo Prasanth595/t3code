@@ -426,6 +426,9 @@ it.layer(
     { method: "open", location: "managed" },
     { method: "attach", location: "managed" },
     { method: "restart", location: "managed" },
+    { method: "open", location: "subdirectory" },
+    { method: "attach", location: "subdirectory" },
+    { method: "restart", location: "subdirectory" },
     { method: "open", location: "unmanaged" },
     { method: "open", location: "no-worktree" },
   ] as const)(
@@ -436,17 +439,18 @@ it.layer(
         const path = yield* Path.Path;
         const { manager, ptyAdapter, baseDir } = yield* createManager();
         const worktreesDir = path.join(baseDir, "worktrees");
-        const cwd =
+        const worktreePath =
           location === "unmanaged"
             ? path.join(baseDir, "missing")
             : path.join(worktreesDir, "project", "feature");
+        const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
         const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
         let creations = 0;
         const withRecovery = yield* makeWithWorktreeRecovery(() =>
           Effect.succeed({
             id: ThreadId.make("thread-1"),
             projectId: ProjectId.make("project-1"),
-            worktreePath: location === "no-worktree" ? null : cwd,
+            worktreePath: location === "no-worktree" ? null : worktreePath,
             branch: "feature",
           }),
         ).pipe(
@@ -466,7 +470,7 @@ it.layer(
                     creations++;
                     yield* fs.makeDirectory(cwd, { recursive: true }).pipe(Effect.orDie);
                     const cleanup = yield* withWorkspaceLease(
-                      cwd,
+                      worktreePath,
                       Effect.sync(() => {
                         assert.equal(ptyAdapter.spawnInputs.length, 1);
                       }),
@@ -478,21 +482,24 @@ it.layer(
             ),
           ),
         );
-        const input = openInput({ cwd, worktreePath: cwd });
-        const launch =
+        const input = openInput({
+          cwd,
+          worktreePath: location === "subdirectory" ? null : worktreePath,
+        });
+        const launch = (input: TerminalOpenInput) =>
           method === "attach"
             ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
             : method === "restart"
-              ? manager.restart(restartInput({ cwd, worktreePath: cwd })).pipe(Effect.asVoid)
+              ? manager.restart({ ...input, cols: 100, rows: 20 }).pipe(Effect.asVoid)
               : manager.open(input).pipe(Effect.asVoid);
-        if (location !== "managed") {
-          const error = yield* withRecovery(input.threadId, launch).pipe(Effect.flip);
+        if (location === "unmanaged" || location === "no-worktree") {
+          const error = yield* withRecovery(input, launch).pipe(Effect.flip);
           assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
           assert.equal(creations, 0);
           assert.equal(ptyAdapter.spawnInputs.length, 0);
           return;
         }
-        yield* withRecovery(input.threadId, launch);
+        yield* withRecovery(input, launch);
         yield* Fiber.join(yield* Deferred.await(cleanupQueued));
         assert.equal(creations, 1);
         assert.equal(ptyAdapter.spawnInputs.length, 1);

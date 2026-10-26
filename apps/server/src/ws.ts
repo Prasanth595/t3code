@@ -3027,13 +3027,11 @@ export const layerWsRpc = (
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.terminalOpen]: (input) =>
-          withWorktreeRecovery(input.threadId, terminalManager.open(input)),
+        [WS_METHODS.terminalOpen]: (input) => withWorktreeRecovery(input, terminalManager.open),
         [WS_METHODS.terminalAttach]: (input) =>
           terminalOutputStream(
             (listener, registerCleanup) =>
-              withWorktreeRecovery(
-                input.threadId,
+              withWorktreeRecovery(input, (input) =>
                 terminalManager.attachStream(input, listener, registerCleanup),
               ),
             (listener, registerCleanup) =>
@@ -3043,7 +3041,7 @@ export const layerWsRpc = (
         [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
         [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
         [WS_METHODS.terminalRestart]: (input) =>
-          withWorktreeRecovery(input.threadId, terminalManager.restart(input)),
+          withWorktreeRecovery(input, terminalManager.restart),
         [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
         [WS_METHODS.terminalObserve]: (input) =>
           terminalOutputStream(

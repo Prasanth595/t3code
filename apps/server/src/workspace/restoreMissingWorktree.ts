@@ -65,28 +65,26 @@ export const makeWithWorktreeRecovery = Effect.fn("makeRetryAfterRestoringWorktr
 >(getThreadShell: (threadId: ThreadId) => Effect.Effect<WorktreeThread | null, LookupError>) {
   const path = yield* Path.Path;
   const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
-  return Effect.fn("restoreMissingWorktree.retryLaunch")(function* <A, E, R>(
-    threadId: string,
-    launch: Effect.Effect<A, E, R>,
-  ) {
-    return yield* launch.pipe(
-      Effect.provideService(TerminalCwdRecovery, (error) =>
-        getThreadShell(ThreadId.make(threadId)).pipe(
-          Effect.orElseSucceed(() => null),
-          Effect.flatMap((thread) => {
-            if (thread?.worktreePath == null) return Effect.fail(error);
-            const relative = path.relative(thread.worktreePath, error.cwd);
-            if (
-              relative === ".." ||
-              relative.startsWith(".." + path.sep) ||
-              path.isAbsolute(relative)
-            ) {
-              return Effect.fail(error);
-            }
-            return restoreMissingWorktree(thread);
-          }),
-        ),
-      ),
+  return Effect.fn("restoreMissingWorktree.retryLaunch")(function* <
+    Input extends {
+      readonly threadId: string;
+      readonly cwd?: string | undefined;
+      readonly worktreePath?: string | null | undefined;
+    },
+    A,
+    E,
+    R,
+  >(input: Input, launch: (input: Input) => Effect.Effect<A, E, R>) {
+    const thread = yield* getThreadShell(ThreadId.make(input.threadId)).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (thread?.worktreePath == null) return yield* launch(input);
+    const relative = path.relative(thread.worktreePath, input.cwd ?? thread.worktreePath);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      return yield* launch(input);
+    }
+    return yield* launch({ ...input, worktreePath: thread.worktreePath }).pipe(
+      Effect.provideService(TerminalCwdRecovery, () => restoreMissingWorktree(thread)),
     );
   });
 });
