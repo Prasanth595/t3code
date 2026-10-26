@@ -35,6 +35,35 @@ function commandsFor(
 }
 
 describe("thread arrangement drafts", () => {
+  it("wakes an already pinned thread when dropped into Pinned", () => {
+    const saved = [
+      thread("a", { pinnedAt: NOW, pinOrderKey: "g", snoozedUntil: "2099-01-01T00:00:00.000Z" }),
+    ];
+    const draft = applyThreadMove(
+      saved,
+      key(saved[0]!),
+      {
+        section: "pinned",
+        assignments: [{ id: key(saved[0]!), orderKey: "m" }],
+      },
+      NOW,
+    );
+
+    expect(draft[0]!.snoozedUntil).toBeNull();
+    expect(commandsFor(saved, draft)).toEqual({
+      a: [{ type: "unsnooze" }, { type: "reorderPin", orderKey: "m" }],
+    });
+  });
+
+  it("previews a newly settled thread at its new settlement time", () => {
+    const saved = [thread("a", { settledAt: "2026-09-01T00:00:00.000Z" })];
+    const draft = applyThreadMove(saved, key(saved[0]!), { section: "settled" }, NOW);
+
+    const shown = withThreadDrafts(saved, recordThreadMove(new Map(), saved, draft));
+    expect(shown[0]!.settledAt).toBe(NOW);
+    expect(commandsFor(saved, draft)).toEqual({ a: [{ type: "settle" }] });
+  });
+
   it.each([null, "settled"] as const)(
     "settling clears snooze with saved override %s",
     (settledOverride) => {

@@ -312,23 +312,31 @@ export function applyThreadMove<T extends EnvironmentThreadShell>(
         return {
           ...thread,
           settledOverride: "settled",
+          settledAt:
+            thread.settledOverride === "settled" &&
+            thread.settledAt != null &&
+            thread.pinnedAt == null
+              ? thread.settledAt
+              : now,
           unsettledAt: null,
           pinnedAt: null,
           pinOrderKey: null,
           activeOrderKey: null,
           snoozedUntil: null,
         };
-      if (plan.section === "pinned" && thread.pinnedAt == null)
+      if (plan.section === "pinned")
         next = {
           ...next,
-          pinnedAt: now,
+          pinnedAt: thread.pinnedAt ?? now,
           settledOverride: thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+          settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
           snoozedUntil: null,
         };
       if (plan.section === "active") {
         const lifecycle = threadDropLifecycle(thread, "active", now);
         if (lifecycle.unpin) next = { ...next, pinnedAt: null, pinOrderKey: null };
-        if (lifecycle.unsettle) next = { ...next, settledOverride: "active", unsettledAt: now };
+        if (lifecycle.unsettle)
+          next = { ...next, settledOverride: "active", settledAt: null, unsettledAt: now };
         if (lifecycle.unsnooze) next = { ...next, snoozedUntil: null };
       }
     }
@@ -345,6 +353,7 @@ const ARRANGEMENT_FIELDS = [
   "pinOrderKey",
   "activeOrderKey",
   "settledOverride",
+  "settledAt",
   "unsettledAt",
   "snoozedUntil",
 ] as const;
@@ -400,6 +409,7 @@ export function threadArrangementCommands(
   // Settle clears the pin and both keys; pin clears the parked states.
   if (draft.settledOverride === "settled")
     return saved.settledOverride === "settled" &&
+      saved.settledAt === draft.settledAt &&
       saved.pinnedAt === draft.pinnedAt &&
       saved.snoozedUntil === draft.snoozedUntil
       ? []

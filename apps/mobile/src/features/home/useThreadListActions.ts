@@ -865,6 +865,16 @@ export function useThreadListActions(): {
     appAtomRegistry.set(threadDropBusyAtom, true);
     try {
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+      const available = new Set(
+        shells.map((thread) => scopedThreadKey(thread.environmentId, thread.id)),
+      );
+      if ([...drafts.keys()].some((key) => !available.has(key))) {
+        Dialog.alert(
+          "Could not save arrangement",
+          "Some threads are no longer available. Reconnect their environment and retry, or close to discard your changes.",
+        );
+        return false;
+      }
       const results = await Promise.all(
         shells.map(async (thread) => {
           const patch = drafts.get(scopedThreadKey(thread.environmentId, thread.id));

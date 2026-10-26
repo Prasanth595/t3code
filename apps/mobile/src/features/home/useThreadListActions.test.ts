@@ -199,6 +199,28 @@ afterEach(() => {
 });
 
 describe("thread arrangement save recovery", () => {
+  it("keeps an unavailable thread's draft for retry instead of reporting a successful save", async () => {
+    const thread = makeThread({ pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" });
+    const drafts = new Map([
+      [scopedThreadKey(thread.environmentId, thread.id), { pinOrderKey: "b" }],
+    ]);
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(await saveThreadArrangement(drafts)).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+
+    state.shells = [thread];
+    expect(await saveThreadArrangement(drafts)).toBe(true);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: { threadId: thread.id, orderKey: "b" },
+      },
+    ]);
+  });
+
   it("previews consecutive moves without writes and saves only the last position", async () => {
     const threads = ["a", "b", "c"].map((id, index) =>
       makeThread({

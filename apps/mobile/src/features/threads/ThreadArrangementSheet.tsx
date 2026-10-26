@@ -183,8 +183,8 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   // Older settled threads load in pages, as in the thread list.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: [...configs.keys()].map((environmentId) => ({ environmentId, projectIds: null })),
-    expanded: expanded.settled,
-    visibleCount: settledVisibleCount,
+    expanded: expanded.settled || drafts.size > 0,
+    visibleCount: expanded.settled ? settledVisibleCount : 0,
   });
   useEffect(() => {
     const wakeAt = Math.min(
