@@ -318,6 +318,11 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
             options: [
               { label: "Simple", description: "Use fewer moving parts", preview },
               { label: "Safe", description: "Keep the current setup" },
+              {
+                label: "Write my own answer",
+                description: "Write my own answer",
+                customAnswer: true,
+              },
             ],
             multiSelect: true,
           },
@@ -331,6 +336,11 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           options: [
             { label: "Simple", description: "Use fewer moving parts", preview },
             { label: "Safe", description: "Keep the current setup" },
+            {
+              label: "Write my own answer",
+              description: "Write my own answer",
+              customAnswer: true,
+            },
           ],
           multiSelect: true,
         },
