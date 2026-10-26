@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +30,10 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import {
+  InjectedSecrets,
+  makeInjectedSecrets,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
@@ -485,6 +490,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly commandOutputLayer?: Layer.Layer<CommandOutputHub.CommandOutputHub>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -552,9 +558,10 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
-          CommandOutputHub.layer.pipe(
-            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
-          ),
+          input.commandOutputLayer ??
+            CommandOutputHub.layer.pipe(
+              Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+            ),
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
@@ -2543,6 +2550,66 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
           failEventStream: true,
         }),
       ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 redacts live command output split across chunks", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const appended = yield* Queue.unbounded<string>();
+    const secrets = makeInjectedSecrets();
+    secrets.put("instance", [
+      { name: "SHORT", value: "abc" },
+      { name: "LONG", value: "abcdef" },
+    ]);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-live-output");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+      const delta = (chunk: string) => ({
+        type: "command_output.delta" as const,
+        driver: CODEX_DRIVER,
+        threadId,
+        itemId: TurnItemId.make("item-provider-session-manager-live-output"),
+        chunk,
+      });
+      yield* Queue.offerAll(adapterEvents, [delta("x abc"), delta("def y abc")]);
+      // The stream ends before the command settles, holding a tail that is a whole shorter value.
+      yield* Queue.end(adapterEvents);
+
+      const chunks = yield* Effect.all([
+        Queue.take(appended),
+        Queue.take(appended),
+        Queue.take(appended),
+      ]);
+      assert.deepEqual(chunks, ["x ", "[redacted LONG] y ", "[redacted SHORT]"]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          commandOutputLayer: Layer.succeed(CommandOutputHub.CommandOutputHub, {
+            append: ({ chunk }) => Queue.offer(appended, chunk).pipe(Effect.asVoid),
+            finish: () => Effect.void,
+            subscribe: () => Stream.empty,
+          }),
+        }),
+      ),
+      Effect.provideService(InjectedSecrets, secrets),
     );
   }),
 );

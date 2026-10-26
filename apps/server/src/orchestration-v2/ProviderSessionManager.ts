@@ -7,6 +7,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
@@ -42,6 +43,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { InjectedSecrets } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -315,6 +317,7 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
+      const injectedSecrets = yield* InjectedSecrets;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -1876,22 +1879,100 @@ export const layerWithOptions = (
           ),
       );
 
+      const redactFields = <T extends object>(value: T, fields: ReadonlyArray<keyof T>): T => {
+        let next: T | undefined;
+        for (const field of fields) {
+          const text = value[field];
+          if (typeof text !== "string") continue;
+          const redacted = injectedSecrets.redactText(text);
+          if (redacted !== text) (next ??= { ...value })[field] = redacted as T[keyof T];
+        }
+        return next ?? value;
+      };
+      const redactEach = <T extends object>(
+        values: ReadonlyArray<T> | undefined,
+        fields: ReadonlyArray<keyof T>,
+      ) => {
+        if (values === undefined) return values;
+        const next = values.map((value) => redactFields(value, fields));
+        return next.some((value, index) => value !== values[index]) ? next : values;
+      };
+      // Rendered tool results only; ids, paths, and tool inputs keep routing the item.
+      const redactTurnItem = (item: OrchestrationV2TurnItem): OrchestrationV2TurnItem => {
+        switch (item.type) {
+          case "command_execution":
+            return redactFields(item, ["output"]);
+          case "dynamic_tool": {
+            const output = injectedSecrets.redact(item.output);
+            return output === item.output ? item : { ...item, output };
+          }
+          case "file_change":
+            return redactFields(item, ["diffStr", "oldStr", "newStr"]);
+          case "file_search": {
+            const results = redactEach(item.results, ["preview"]);
+            return results === item.results ? item : { ...item, results };
+          }
+          case "web_search": {
+            const results = redactEach(item.results, ["title", "snippet"]);
+            return results === item.results ? item : { ...item, results };
+          }
+          default:
+            return item;
+        }
+      };
+      const redactToolOutput = (
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ): ProviderAdapter.ProviderAdapterV2Event => {
+        if (event.type !== "turn_item.updated") return event;
+        const turnItem = redactTurnItem(event.turnItem);
+        return turnItem === event.turnItem ? event : { ...event, turnItem };
+      };
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
+        const heldOutput = new Map<
+          string,
+          CommandOutputHub.CommandOutputTarget & { readonly chunk: string }
+        >();
+        // The final tail may itself be a whole shorter secret.
+        const releaseHeld = (key: string) => {
+          const held = heldOutput.get(key);
+          if (held === undefined) return Effect.void;
+          heldOutput.delete(key);
+          return commandOutput.append({ ...held, chunk: injectedSecrets.redactText(held.chunk) });
+        };
         return entry.runtime.events.pipe(
-          Stream.runForEach((event) => {
+          Stream.runForEach((providerEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
-            if (event.type === "command_output.delta") {
-              return commandOutput.append(event);
+            if (providerEvent.type === "command_output.delta") {
+              const key = `${providerEvent.threadId}\u0000${providerEvent.itemId}`;
+              const { emit, pending } = injectedSecrets.redactChunk(
+                heldOutput.get(key)?.chunk ?? "",
+                providerEvent.chunk,
+              );
+              if (pending.length === 0) heldOutput.delete(key);
+              else
+                heldOutput.set(key, {
+                  threadId: providerEvent.threadId,
+                  itemId: providerEvent.itemId,
+                  chunk: pending,
+                });
+              return commandOutput.append({ ...providerEvent, chunk: emit });
             }
+            const event = redactToolOutput(providerEvent);
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
               !isOrchestrationV2WorkActive(event.turnItem.status)
-                ? commandOutput.finish({
-                    threadId: event.turnItem.threadId,
-                    itemId: event.turnItem.id,
+                ? Effect.suspend(() => {
+                    const target = {
+                      threadId: event.turnItem.threadId,
+                      itemId: event.turnItem.id,
+                    };
+                    return releaseHeld(`${target.threadId}\u0000${target.itemId}`).pipe(
+                      Effect.andThen(commandOutput.finish(target)),
+                    );
                   })
                 : Effect.void;
             if (
@@ -1973,6 +2054,12 @@ export const layerWithOptions = (
               ),
             );
           }),
+          // Output still held when the stream ends or is interrupted never completed its item.
+          Effect.ensuring(
+            Effect.suspend(() =>
+              Effect.forEach([...heldOutput.keys()], releaseHeld, { discard: true }),
+            ),
+          ),
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {

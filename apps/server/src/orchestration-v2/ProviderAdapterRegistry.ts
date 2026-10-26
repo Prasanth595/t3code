@@ -19,6 +19,7 @@ import {
   type AnyProviderAdapterDriver,
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { withSensitiveEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 
 const isProviderSetupError = Schema.is(ProviderSetupError);
 
@@ -274,7 +275,7 @@ const createAdapterEntryFromConfigEntry = Effect.fn(
     );
 
   return {
-    adapter,
+    adapter: yield* withSensitiveEnvironment(adapter, input.entry.environment ?? []),
     scope: childScope,
     entry: input.entry,
   };

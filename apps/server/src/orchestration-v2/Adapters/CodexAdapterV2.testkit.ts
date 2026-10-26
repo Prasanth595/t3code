@@ -1,7 +1,10 @@
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type ProviderReplayTranscript } from "@t3tools/contracts";
+import {
+  type ProviderInstanceEnvironment,
+  type ProviderReplayTranscript,
+} from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
@@ -184,6 +187,7 @@ export function makeReplayServerConfig(
 export function layer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
+  readonly environment?: ProviderInstanceEnvironment;
 }) {
   const layerReplay =
     input.driver === undefined
@@ -217,6 +221,7 @@ export function layer(input: {
     configMap: {
       [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
         driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        ...(input.environment === undefined ? {} : { environment: input.environment }),
       },
     },
   }).pipe(

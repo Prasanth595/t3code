@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { withSensitiveEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 
 export class ProviderInstanceRegistry extends Context.Service<
   ProviderInstanceRegistry,
@@ -144,7 +145,13 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   return {
     kind: "live" as const,
     live: {
-      instance: createResult.success,
+      instance: {
+        ...createResult.success,
+        orchestrationAdapter: yield* withSensitiveEnvironment(
+          createResult.success.orchestrationAdapter,
+          entry.environment ?? [],
+        ),
+      },
       scope: childScope,
       entry,
     },
