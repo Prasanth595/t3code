@@ -1562,6 +1562,17 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
    secondary tokens are substantially darker than those visible pixels. */
 html[data-theme-id="t3-chat"] {
   @variant light {
+    /* Inline code sits on the message surface here, so contrast it against that. */
+    --contrast-inline-code-foreground: color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--inline-code-foreground) var(--appearance-contrast-base),
+        var(--message-surface)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    );
+
     & .chat-markdown :not(pre) > code,
     & [data-changed-files-state],
     & [data-changed-files-header] {
