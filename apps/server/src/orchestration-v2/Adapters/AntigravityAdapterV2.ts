@@ -172,11 +172,13 @@ export function makeAntigravityAcpAdapterFlavor(
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
+      startResult,
       modelSelection,
     }) {
       const defaultModel = yield* options.defaultModel;
       return yield* applyAntigravityAcpModelSelection({
         runtime,
+        models: startResult.sessionSetupResult.models,
         model:
           modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
         defaultModel,

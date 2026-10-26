@@ -17,6 +17,7 @@ import {
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
+import { antigravity143Session } from "./antigravity143.fixture.ts";
 
 const modelConfig = {
   id: "model",
@@ -34,13 +35,20 @@ function makeModelRuntime(
   failure?: EffectAcpErrors.AcpError,
 ) {
   const selections: string[] = [];
+  const sessionModelSelections: string[] = [];
   const setModel = Effect.fn("AntigravityAcpSupportTest.setModel")(function* (model: string) {
     if (failure) return yield* failure;
     selections.push(model);
   });
+  const setSessionModel = (model: string) =>
+    Effect.sync(() => {
+      sessionModelSelections.push(model);
+      return {};
+    });
   return {
-    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel },
+    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel, setSessionModel },
     selections,
+    sessionModelSelections,
   };
 }
 
@@ -135,6 +143,31 @@ describe("applyAntigravityAcpModelSelection", () => {
 
       expect(model).toBe("gemini-saved");
       expect(selections).toEqual(["gemini-saved"]);
+    }),
+  );
+
+  it.effect("selects concrete models when ACP 1.4 groups thinking levels by family", () =>
+    Effect.gen(function* () {
+      const { runtime, selections, sessionModelSelections } = makeModelRuntime(
+        antigravity143Session.configOptions,
+      );
+      const select = (model: string) =>
+        applyAntigravityAcpModelSelection({
+          runtime,
+          models: antigravity143Session.models,
+          model,
+          defaultModel: "gemini-3.8-flash-high",
+          mapError: (cause) => cause,
+        });
+
+      expect(yield* select("claude-sonnet-5-5-low")).toBe("claude-sonnet-5-5-low");
+      expect(yield* select(ANTIGRAVITY_DEFAULT_MODEL)).toBe("gemini-3.8-flash-high");
+      expect(sessionModelSelections).toEqual(["claude-sonnet-5-5-low", "gemini-3.8-flash-high"]);
+      expect(selections).toEqual([]);
+
+      const error = yield* select("claude-opus-5-5-low").pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "AcpRequestError", code: -32602 });
+      expect(sessionModelSelections).toHaveLength(2);
     }),
   );
 });

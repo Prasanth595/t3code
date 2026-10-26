@@ -28,6 +28,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { antigravity143Session } from "./acp/antigravity143.fixture.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -354,6 +355,35 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         });
         yield* harness.provider.onConfigOptionsUpdated([]);
         expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("lists ACP 1.4 concrete models through grouped thinking-level updates", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity143Session,
+        });
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.models.map((model) => model.slug)).toEqual(
+          antigravity143Session.models.availableModels.map((model) => model.modelId),
+        );
+        expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(
+          "gemini-3.8-flash-high",
+        );
+
+        yield* harness.provider.onConfigOptionsUpdated(
+          antigravity143Session.configOptions.map((option) =>
+            option.id === "model"
+              ? { ...option, currentValue: "claude-sonnet-5-5" }
+              : { ...option, currentValue: "low" },
+          ),
+        );
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
       }),
     ),
   );

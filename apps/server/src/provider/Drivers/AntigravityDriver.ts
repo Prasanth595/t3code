@@ -241,6 +241,9 @@ export const AntigravityDriver: ProviderDriver<
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
+        ...(settings.acpClientName
+          ? { clientInfo: { ...input.clientInfo, name: settings.acpClientName } }
+          : {}),
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
         spawn: buildAntigravityAcpSpawnInput({

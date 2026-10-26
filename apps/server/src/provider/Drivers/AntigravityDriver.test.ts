@@ -333,6 +333,20 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect.skipIf(windowsHost)("reports the configured ACP client name to the agent", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ config: { acpClientName: "custom-client" } });
+      yield* h.refresh();
+      const requests = yield* h.readRequests;
+      expect(
+        requests
+          .filter((request) => request.method === "initialize")
+          .map((request) => request.params?.clientInfo),
+      ).toEqual([{ name: "custom-client", version: "0.0.0" }]);
+      yield* h.assertClosed;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "closes refresh processes and clears account metadata when Google sign-in is required",
     () =>
