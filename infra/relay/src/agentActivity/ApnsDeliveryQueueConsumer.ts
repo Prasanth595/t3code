@@ -9,16 +9,15 @@ export const processMessage = Effect.fn("relay.apn_delivery_queue.process_messag
   const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
   yield* deliveries.processSignedJob(message.body).pipe(
     Effect.matchEffect({
-      onFailure: (error) =>
-        Effect.gen(function* () {
-          // Decide this message's outcome before Alchemy acknowledges the batch.
-          // Cloudflare keeps the first ack/retry decision for each message.
-          message.retry();
-          yield* Effect.logWarning("APNs queue delivery failed; retrying message", {
-            messageId: message.id,
-            errorTag: error._tag,
-          });
-        }),
+      // The enclosing process_message span covers this handler.
+      onFailure: Effect.fnUntraced(function* (error) {
+        // Cloudflare keeps the first ack/retry decision, before Alchemy acknowledges the batch.
+        message.retry();
+        yield* Effect.logWarning("APNs queue delivery failed; retrying message", {
+          messageId: message.id,
+          errorTag: error._tag,
+        });
+      }),
       onSuccess: () => Effect.sync(() => message.ack()),
     }),
   );

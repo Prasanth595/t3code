@@ -1001,74 +1001,77 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect("fails a signed push job for redelivery when APNs answers 503", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const statuses = [503, 200];
-    const payload = makeApnsDeliveryJobPayload({
-      kind: "push_notification",
-      userId: target.user_id,
-      deviceId: target.device_id,
-      token: "apns-device-token",
-      aggregate: null,
-      notification: {
-        title: "Thread",
-        body: "Completed: Project",
-        environmentId: "env",
-        threadId: "thread",
-        deepLink: "/",
-      },
-      createdAt: "1970-01-01T00:00:00.000Z",
-      expiresAt: "1970-01-01T00:10:00.000Z",
-      jobId: "job-push-unavailable",
-    });
-    const signed = signApnsDeliveryJob({
-      secret: config.apnsDeliveryJobSigningSecret,
-      payload,
-    });
-    const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.sync(() => {
-        const status = statuses.shift() ?? 200;
-        return HttpClientResponse.fromWeb(
-          request,
-          status === 200
-            ? new Response("", { status })
-            : Response.json({ reason: "ServiceUnavailable" }, { status }),
-        );
+  it.effect.each([429, 500, 503, 599])(
+    "fails a signed push job for redelivery when APNs answers %i",
+    (status) => {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      const statuses = [status, 200];
+      const payload = makeApnsDeliveryJobPayload({
+        kind: "push_notification",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "apns-device-token",
+        aggregate: null,
+        notification: {
+          title: "Thread",
+          body: "Completed: Project",
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/",
+        },
+        createdAt: "1970-01-01T00:00:00.000Z",
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-push-unavailable",
       });
-
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const failure = yield* deliveries.processSignedJob(signed).pipe(Effect.flip);
-
-      expect(failure).toMatchObject({
-        _tag: "ApnsDeliveryJobRetryableFailure",
-        sourceJobId: "job-push-unavailable",
-        apnsStatus: 503,
-        apnsReason: "ServiceUnavailable",
+      const signed = signApnsDeliveryJob({
+        secret: config.apnsDeliveryJobSigningSecret,
+        payload,
       });
-      expect(attempts).toEqual([]);
+      const execute = (request: HttpClientRequest.HttpClientRequest) =>
+        Effect.sync(() => {
+          const status = statuses.shift() ?? 200;
+          return HttpClientResponse.fromWeb(
+            request,
+            status === 200
+              ? new Response("", { status })
+              : Response.json({ reason: "ServiceUnavailable" }, { status }),
+          );
+        });
 
-      const redelivered = yield* deliveries.processSignedJob(signed);
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        const failure = yield* deliveries.processSignedJob(signed).pipe(Effect.flip);
 
-      expect(redelivered).toMatchObject({ ok: true, apnsStatus: 200 });
-      expect(statuses).toEqual([]);
-      expect(attempts).toMatchObject([{ sourceJobId: "job-push-unavailable", apnsStatus: 200 }]);
-    }).pipe(
-      Effect.provide(
-        layerFor({
-          attempts,
-          currentTargets: [
-            {
-              ...target,
-              push_token: "apns-device-token",
-            },
-          ],
-          config: signingConfig,
-          execute,
-        }),
-      ),
-    );
-  });
+        expect(failure).toMatchObject({
+          _tag: "ApnsDeliveryJobRetryableFailure",
+          sourceJobId: "job-push-unavailable",
+          apnsStatus: status,
+        });
+        expect(failure).not.toHaveProperty("apnsReason");
+        expect(attempts).toEqual([]);
+
+        const redelivered = yield* deliveries.processSignedJob(signed);
+
+        expect(redelivered).toMatchObject({ ok: true, apnsStatus: 200 });
+        expect(statuses).toEqual([]);
+        expect(attempts).toMatchObject([{ sourceJobId: "job-push-unavailable", apnsStatus: 200 }]);
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            attempts,
+            currentTargets: [
+              {
+                ...target,
+                push_token: "apns-device-token",
+              },
+            ],
+            config: signingConfig,
+            execute,
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("fails a signed Live Activity job for redelivery when APNs is unreachable", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];

@@ -139,7 +139,6 @@ export class ApnsDeliveryJobRetryableFailure extends Schema.TaggedError<ApnsDeli
     sourceJobId: Schema.String,
     kind: RelayDeliveryKindSchema,
     apnsStatus: Schema.NullOr(Schema.Number),
-    apnsReason: Schema.NullOr(Schema.String),
   },
 ) {
   override get message(): string {
@@ -346,9 +345,8 @@ function isPermanentApnsTokenFailure(result: Apns.ApnsDeliveryResult): boolean {
   );
 }
 
-// APNs asks senders to retry these later.
 function isRetryableApnsStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+  return status === 429 || (status >= 500 && status < 600);
 }
 
 type ApnsSendResult = Apns.ApnsDeliveryResult & { readonly retryable: boolean };
@@ -691,9 +689,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // The queue redelivers a job only when its handler fails. Releasing the claim
-  // lets the redelivered copy send instead of waiting out the in-flight lease.
-  const failForRetry = Effect.fnUntraced(function* (input: {
+  const failForRetry = Effect.fn("relay.apns_deliveries.fail_for_retry")(function* (input: {
     readonly sourceJobId: string;
     readonly kind: RelayDeliveryKind;
     readonly result: ApnsSendResult;
@@ -703,7 +699,6 @@ export const make = Effect.gen(function* () {
       sourceJobId: input.sourceJobId,
       kind: input.kind,
       apnsStatus: input.result.status === 0 ? null : input.result.status,
-      apnsReason: input.result.reason ?? null,
     });
   });
 
