@@ -46,6 +46,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { applyUltracode, ULTRACODE_TURN_NOTE } from "@t3tools/provider-core/server/ultracode";
+import { personTypedWords } from "@t3tools/shared/workflowIntent";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -712,6 +713,7 @@ function makeLocalCommandHarness(input: {
             mode: "keyword",
             driver: root.providerThread.driver,
             text: root.message.text,
+            typedWords: personTypedWords(root.typedText),
             createdBy: root.message.createdBy,
             creationSource: root.message.creationSource,
             delegatedThread: false,
