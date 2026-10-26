@@ -62,6 +62,27 @@ describe("revisionedQuery", () => {
     expect(fetches()).toBe(3);
   });
 
+  it("refetches a query another reader already cached on its first revisioned read", () => {
+    const { mount, fetches } = setup();
+
+    mount(undefined)();
+    expect(fetches()).toBe(1);
+
+    mount("mutation-1")();
+    expect(fetches()).toBe(2);
+
+    mount("mutation-1")();
+    expect(fetches()).toBe(2);
+  });
+
+  it("does not refetch a cached query on a first read before any workspace change", () => {
+    const { mount, fetches } = setup();
+
+    mount(undefined)();
+    mount(null)();
+    expect(fetches()).toBe(1);
+  });
+
   it("leaves the query alone when read without a revision", () => {
     const { mount, query, fetches } = setup();
 
