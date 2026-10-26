@@ -122,7 +122,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
 });
 
 it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
-  it.effect.each(["0.8.0", "1.2.3"])("installs %s and retains the newest other version", (current) =>
+  it.effect.each(["0.8.0", "1.2.3"])("retains another version when installing %s", (current) =>
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness({ version: current });
       yield* fs.makeDirectory(path.join(installRoot, "0.9.0"), { recursive: true });
