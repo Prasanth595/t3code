@@ -1213,7 +1213,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (isAnnotationNode(event.target as Element)) {
+    if (event.composedPath().includes(host)) {
       clearHoverOutline();
       return;
     }
@@ -1245,7 +1245,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    if (event.button !== 0 || event.composedPath().includes(host)) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
@@ -1310,7 +1310,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onClick = (event: MouseEvent): void => {
-    if (isAnnotationNode(event.target as Element)) return;
+    if (event.composedPath().includes(host)) return;
     event.preventDefault();
     event.stopPropagation();
   };
@@ -1356,6 +1356,7 @@ function startAnnotation(sendEnabled: boolean): void {
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     modalObserver.disconnect();
+    for (const scope of observedScopes) scope.removeEventListener("focusin", syncOverlay, true);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     inputLayer?.remove();
@@ -1367,7 +1368,7 @@ function startAnnotation(sendEnabled: boolean): void {
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
+    if (event.composedPath().includes(host) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -1482,34 +1483,41 @@ function startAnnotation(sendEnabled: boolean): void {
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   const syncOverlay = (): void => {
-    // A modal makes the rest of the document inert. Keep the top-layer overlay
-    // inside it so the editor stays interactive, including when dialogs change.
-    // Focus still identifies the modal when its backdrop ignores pointer events.
-    const modal =
-      document.activeElement?.closest("dialog:modal") ??
-      document.elementFromPoint(0, 0)?.closest("dialog:modal");
+    // Modal descendants stay interactive; a popover alone is still inert outside it.
+    let focused = document.activeElement;
+    while (focused?.shadowRoot?.activeElement) {
+      observeModals(focused.shadowRoot);
+      focused = focused.shadowRoot.activeElement;
+    }
+    let modal: Element | null = focused;
+    while (modal && !modal.matches("dialog:modal")) {
+      const scope = modal.getRootNode();
+      if (scope instanceof ShadowRoot) observeModals(scope);
+      modal = modal.parentElement ?? (scope instanceof ShadowRoot ? scope.host : null);
+    }
+    modal ??= document.elementFromPoint(0, 0)?.closest("dialog:modal") ?? null;
+    const scope = modal?.getRootNode();
+    if (scope instanceof ShadowRoot) observeModals(scope);
     const parent = modal ?? document.documentElement;
     if (host.parentElement === parent && host.matches(":popover-open")) return;
     parent.appendChild(host);
     host.showPopover();
   };
-  const modalObserver = new MutationObserver((records) => {
-    if (
-      // Removing and reinserting a dialog in one task also hides its popovers.
-      !host.matches(":popover-open") ||
-      records.some(
-        (record) => record.type === "attributes" && record.target instanceof HTMLDialogElement,
-      )
-    )
-      syncOverlay();
-  });
+  const modalObserver = new MutationObserver(syncOverlay);
+  const observedScopes = new Set<Node>();
+  const observeModals = (scope: Node): void => {
+    if (observedScopes.has(scope)) return;
+    observedScopes.add(scope);
+    scope.addEventListener("focusin", syncOverlay, true);
+    modalObserver.observe(scope, {
+      attributes: true,
+      attributeFilter: ["open"],
+      childList: true,
+      subtree: true,
+    });
+  };
+  observeModals(document.documentElement);
   syncOverlay();
-  modalObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["open"],
-    childList: true,
-    subtree: true,
-  });
   if (inputLayer) {
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
