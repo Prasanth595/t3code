@@ -722,6 +722,7 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
         named ? base : undefined,
       ),
       model: project.model,
+      ...(resumed?.after === "existing-pr" && { pullRequestUrl: resumed.prUrl }),
     }),
   );
   if (launched._tag === "Failure") {

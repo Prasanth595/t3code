@@ -1868,6 +1868,7 @@ const assertPlainStart = (dataDir: string, t3: ReturnType<typeof fakeSessions>) 
   const request = t3.launchRequests.at(-1)!;
   assert.strictEqual(request.baseRef, "main");
   assert.strictEqual(request.startFromOrigin, false);
+  assert.strictEqual(request.pullRequestUrl, undefined);
   assert.strictEqual(request.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
   const line = launchLineOf(dataDir);
   assert.strictEqual((line.data as { resumed_from: unknown }).resumed_from, null);
@@ -1938,6 +1939,7 @@ describe("start: the resume after a time limit", () => {
       yield* startIn(dataDir, tracker, t3.sessions);
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.commandId, "softfac:rawphp__softfac__7__3:launch");
+      assert.strictEqual(request.pullRequestUrl, undefined);
       assert.strictEqual(request.baseRef, "t3code/abc");
       assert.ok(request.message.includes("git push origin HEAD:t3code/abc"), request.message);
       assert.deepStrictEqual(lookups(calls), [
@@ -2329,6 +2331,7 @@ describe("start: the resume after a time limit", () => {
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.baseRef, "main");
       assert.strictEqual(request.startFromOrigin, false);
+      assert.strictEqual(request.pullRequestUrl, undefined);
     }),
   );
 });
@@ -2419,6 +2422,7 @@ const assertResumedOntoPr = (dataDir: string, t3: ReturnType<typeof fakeSessions
   const request = t3.launchRequests.at(-1)!;
   assert.strictEqual(request.baseRef, "t3code/abc");
   assert.strictEqual(request.startFromOrigin, true);
+  assert.strictEqual(request.pullRequestUrl, URL12);
   assert.strictEqual(
     request.message,
     launchMessage(REPO, 7, USER, "/gh/rawphp", {
@@ -2540,6 +2544,7 @@ describe("start: the resume onto an open pull request of an earlier attempt", ()
         yield* startIn(dataDir, tracker, t3.sessions);
         const request = t3.launchRequests[0]!;
         assert.strictEqual(request.commandId, "softfac:rawphp__softfac__7__1:launch");
+        assert.strictEqual(request.pullRequestUrl, URL12);
         assert.strictEqual(request.baseRef, "t3code/abc");
         assert.strictEqual(request.startFromOrigin, true);
         assert.strictEqual(
