@@ -266,7 +266,7 @@ export function displayFontFamily(family: string): string {
     .replace(/^(['"])(.*)\1$/, "$2")
     .trim()
     .toLowerCase();
-  if (label === "sf pro") return DEFAULT_SANS_FONT_STACK;
+  if (label === "sf pro") return appearanceFontStack(family, DEFAULT_SANS_FONT_STACK);
   if (label === "sf mono") return DEFAULT_CODE_FONT_STACK;
   return cssFontFamilies(family) ?? "";
 }
