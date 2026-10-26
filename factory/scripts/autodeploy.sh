@@ -9,8 +9,13 @@
 #   `+fac.<sha>` or the commit whose deploy last failed;
 # - after a deploy or rollback by hand, records origin/main as that commit, so what the person
 #   installed stays until main moves;
+# - writes `<epoch seconds> <sha>` to `deploy-pending` in the factory data dir while origin/main
+#   has a commit it has not installed, keeping the first time across newer commits, and removes it
+#   when nothing is pending; the server stops claiming issues while the file is there;
 # - asks GET /api/factory/status whether a factory run is in progress or an agent is at work in
-#   any thread, and waits for the next tick when one is or when it cannot tell;
+#   any thread, and waits for the next tick when one is or when it cannot tell, logging how long
+#   the build has waited; past `deploy_wait_minutes` (machine config, default 120) it deploys
+#   anyway, and the runs in progress resume on the new build;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
 #   its limit is tried on the next two ticks before the commit is given up on;
@@ -23,7 +28,15 @@ set -euo pipefail
 
 root="$HOME/.local/share/t3fac"
 env_file="$HOME/.config/t3fac/env"
-machine_config="$HOME/.config/t3fac/factory/config.yml"
+data_dir="$HOME/.config/t3fac/factory"
+machine_config="$data_dir/config.yml"
+# `<epoch seconds> <sha>`: the first time a build was left waiting, and the newest build waiting.
+# The server reads it (claims.ts loadPendingDeploy) to stop claiming issues.
+pending_file="$data_dir/deploy-pending"
+# Minutes a build may wait for the runs in progress; config.ts DEFAULT_DEPLOY_WAIT_MINUTES is the
+# same number, change both together.
+deploy_wait_default=120
+said_overdue=""
 logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
@@ -41,6 +54,24 @@ build_limit=${T3FAC_BUILD_LIMIT:-3600}
 
 say() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) autodeploy: $*"
+}
+
+# Seconds as 12s, 5m, 2h05m or 1d01h, as ledger/time.ts duration() writes them.
+fmt_duration() {
+  local s=$1
+  if ((s < 60)); then
+    printf '%ds' "$s"
+  elif ((s < 3600)); then
+    printf '%dm' $((s / 60))
+  elif ((s < 86400)); then
+    printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  else
+    printf '%dd%02dh' $((s / 86400)) $((s % 86400 / 3600))
+  fi
+}
+
+clear_pending() {
+  rm -f "$pending_file"
 }
 
 if [[ -f $env_file ]]; then
@@ -88,6 +119,7 @@ installed=${installed##*+fac.}
 hand_deployed() {
   [[ -f $hold_file ]] || return 0
   rm -f "$hold_file"
+  clear_pending
   echo "$target" > "$failed_file"
   say "not deploying $short until main moves: a deploy or rollback was run by hand"
   return 1
@@ -96,10 +128,46 @@ hand_deployed() {
 # build.sh names the version with a short sha whose length git picks, so compare by prefix.
 if [[ -n $installed && $target == "$installed"* ]]; then
   rm -f "$hold_file"
+  clear_pending
   exit 0
 fi
 hand_deployed || exit 0
-if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then exit 0; fi
+if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then
+  clear_pending
+  exit 0
+fi
+
+# Records that $target is waiting to be installed. The time is that of the first build left
+# waiting, so it survives main moving: the wait is measured from the oldest undeployed build.
+mark_pending() {
+  local since="" sha="" tmp
+  mkdir -p "$data_dir"
+  read -r since sha 2> /dev/null < "$pending_file" || true
+  if [[ $since =~ ^[0-9]+$ ]]; then
+    [[ ${sha:-} != "$target" ]] || return 0
+  else
+    since=$(date +%s)
+  fi
+  tmp="$data_dir/.deploy-pending.$$"
+  echo "$since $target" > "$tmp"
+  mv -f "$tmp" "$pending_file"
+}
+
+# Sets deploy_limit (minutes) from deploy_wait_minutes in the machine config, read as keep_versions
+# is in prune_versions; deploy_limit_note says so when the key is there but cannot be read.
+read_deploy_limit() {
+  local value
+  deploy_limit=$deploy_wait_default
+  deploy_limit_note=""
+  if grep -qE '^[^#]*deploy_wait_minutes' "$machine_config" 2> /dev/null; then
+    value=$(sed -nE 's/^deploy_wait_minutes:[[:space:]]*([0-9]{1,9})[[:space:]]*(#.*)?$/\1/p' "$machine_config")
+    if [[ $value =~ ^[0-9]+$ ]] && ((10#$value > 0)); then
+      deploy_limit=$((10#$value))
+    else
+      deploy_limit_note=" (cannot read deploy_wait_minutes in $machine_config as one whole number up to 999999999; using $deploy_wait_default)"
+    fi
+  fi
+}
 
 # Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
 # and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
@@ -128,13 +196,26 @@ factory_idle() {
     return 1
   fi
   if [[ -n $busy ]]; then
-    say "waiting to deploy $short: $busy"
+    local since="" now waited
+    read -r since _ 2> /dev/null < "$pending_file" || true
+    now=$(date +%s)
+    [[ $since =~ ^[0-9]+$ ]] || since=$now
+    waited=$((now - since))
+    read_deploy_limit
+    if ((waited >= deploy_limit * 60)); then
+      # factory_idle runs again after the build; the line is said once.
+      [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; the runs in progress resume on the new build$deploy_limit_note"
+      said_overdue=1
+      return 0
+    fi
+    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
     return 1
   fi
 }
 
 failed() {
   rm -f "$attempts_file"
+  clear_pending
   echo "$target" > "$failed_file"
   say "deploy of $short failed; ${installed:+still on $installed; }not trying it again until main moves; see $build_log"
   exit 1
@@ -227,6 +308,7 @@ prune_versions() {
   done
 }
 
+mark_pending
 factory_idle || exit 0
 
 # deploy.sh's install.sh reloads every timer job; T3FAC_SKIP_RELOAD keeps it from booting this
@@ -250,5 +332,6 @@ export T3FAC_DEPLOY_LOCK=$$
 
 (cd "$clone" && factory/scripts/deploy.sh) >> "$build_log" 2>&1 || failed
 rm -f "$attempts_file"
+clear_pending
 say "deployed $short"
 prune_versions
