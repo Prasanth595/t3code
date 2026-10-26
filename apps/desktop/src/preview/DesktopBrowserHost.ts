@@ -345,7 +345,7 @@ export const make = Effect.gen(function* () {
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
                   // A viewer can outlive a refused stream; nothing is streaming for it.
-                  tab.screencasts.delete(owner);
+                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
                   releaseFocusWhenIdle(tab);
                   syncPainting(tab);
                   throw cause;

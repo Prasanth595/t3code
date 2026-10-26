@@ -32,7 +32,10 @@ const command = (
   );
 
 const makeDebuggee = (
-  options: { readonly deferFocus?: boolean; readonly refuse?: string } = {},
+  options: {
+    readonly deferFocus?: boolean;
+    readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
+  } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
@@ -41,9 +44,13 @@ const makeDebuggee = (
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
   const debuggee = Object.assign(emitter, {
-    sendCommand: (method: string, params?: { id?: number; enabled?: boolean }) =>
+    sendCommand: (
+      method: string,
+      params?: { id?: number; enabled?: boolean },
+      sessionId?: string,
+    ) =>
       new Promise((resolve, reject) => {
-        if (method === options.refuse) {
+        if (options.refuse?.(method, sessionId)) {
           reject(new Error("Refused"));
           return;
         }
@@ -591,7 +598,7 @@ describe("DesktopBrowserHost", () => {
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
-      const debuggee = makeDebuggee({ refuse: "Page.startScreencast" });
+      const debuggee = makeDebuggee({ refuse: (method) => method === "Page.startScreencast" });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
       const painting = yield* watchPainting(host);
@@ -635,6 +642,28 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a page's screencast when a child session's screencast is refused", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({
+        refuse: (method, sessionId) => method === "Page.startScreencast" && sessionId !== undefined,
+      });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+
+      yield* command(host, 1, "Page.startScreencast");
+      yield* settle;
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* raw({ id: 2, method: "Page.startScreencast", sessionId: "child-frame" });
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* TestClock.adjust("1 minute");
+      expect(debuggee.focusEmulation).toEqual([true]);
     }).pipe(Effect.scoped),
   );
 
