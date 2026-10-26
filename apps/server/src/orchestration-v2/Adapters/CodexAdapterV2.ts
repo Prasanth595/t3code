@@ -2674,15 +2674,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly emitInitialPrompt: boolean;
           }) {
             const registeredSubagents = yield* Ref.get(subagentThreads);
-            if (registeredSubagents.has(input.nativeThreadId)) {
-              return;
-            }
             if (input.model && !subagentSelections.has(input.nativeThreadId)) {
               yield* updateSubagentSelection(
                 input.nativeThreadId,
                 input.model,
                 input.reasoningEffort,
               );
+            }
+            if (registeredSubagents.has(input.nativeThreadId)) {
+              return;
             }
 
             const now = yield* DateTime.now;
