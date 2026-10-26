@@ -388,9 +388,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const handleSwitchCheckoutToThreadStable = useStableCallback(() => {
     void handleSwitchCheckoutToThread();
   });
-  // The interrupt path also accepts a completed run while its provider still
-  // has background work.
-  const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
   const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
   const isStoppingBackgroundWork =
     stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
@@ -533,7 +530,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const backgroundWorkBanner = activeThread
     ? backgroundWorkBannerItem({
         threadId: activeThread.id,
-        tasks: activeBackgroundTasks,
+        tasks: pendingBackgroundTasks,
+        isWorking,
         stopDisabled: !canOperateThread || isStoppingBackgroundWork,
         stopping: isStoppingBackgroundWork,
         onStop: handleStopBackgroundWorkStable,
