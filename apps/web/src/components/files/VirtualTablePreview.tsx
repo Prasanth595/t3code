@@ -23,6 +23,7 @@ export default function VirtualTablePreview(props: {
   const widthRef = useRef(0);
   const measureRef = useRef<HTMLTableElement>(null);
   const [measured, setMeasured] = useState<number[] | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Measure the viewport before paint and observe container resizes to invalidate column measurements.
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -38,6 +39,7 @@ export default function VirtualTablePreview(props: {
     update();
     return observeResize(node, update);
   }, []);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
     if (!width || !props.header || !measureRef.current || measured) return;
     const widths = [...measureRef.current.querySelectorAll("thead th")].map(
@@ -186,6 +188,7 @@ function RowPage(
   const rows = props.getRows(props.page);
   // A page stays mounted while the worker fills it, preserving the scroll position.
   const { loadPage, page } = props;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Request missing rows from the indexing worker while preserving the mounted page's scroll position.
   useEffect(() => {
     const expected = Math.min(PREVIEW_PAGE_ROWS, props.count - page * PREVIEW_PAGE_ROWS);
     if (!rows || rows.length < expected) loadPage?.(page);
@@ -275,6 +278,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   // The final mounted rows keep their measured height and scroll natively.
   const nativeTail = first - headerRows === maxFirst;
   const scrollModel = useRef({ scale, maxFirst, heights: [] as number[] });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Measure native tail rows and preserve the DOM scroll position when the virtual track scale changes.
   useLayoutEffect(() => {
     const previous = scrollModel.current;
     const heights = nativeTail
@@ -304,6 +308,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     node.scrollTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
     setTop(node.scrollTop);
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Scroll the DOM viewport to a requested line after its virtual track has committed.
   useLayoutEffect(() => {
     const node = ref.current;
     if (props.revealLine == null) {
@@ -334,6 +339,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     pendingEnd.current = false;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Install a non-passive native wheel listener so virtual scrolling can prevent the browser's default scroll.
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -345,6 +351,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   }, []);
   const page = Math.floor(first / PREVIEW_PAGE_ROWS);
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
     const node = contentRef.current;
@@ -363,6 +370,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     update();
     return observeResize(node, update);
   }, [first, atStart]);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Correct the DOM scroll position once a requested worker row has loaded and its actual bounds are measurable.
   useLayoutEffect(() => {
     const pending = pendingReveal.current;
     const node = ref.current;
@@ -402,6 +410,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / Math.max(29, bounds.height));
     setTop(node.scrollTop);
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Complete End-key scrolling after the final worker row has loaded and its DOM layout has settled.
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
