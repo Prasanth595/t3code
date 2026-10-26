@@ -834,11 +834,9 @@ export const PENDING_STALE_MS = 30 * 60_000;
 const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
 
 /**
- * Whether autodeploy has a build waiting. It installs only when no run is in progress, which a
- * steady queue never allows, so the pass claims nothing until the runs end and the build is
- * installed: one line and one `claim_skipped` event a pass. Once the build has waited past
- * `deploy_wait_minutes` autodeploy installs it with factory runs in progress, which resume on the
- * new build, and an attention item says so until the marker is gone. A marker older than
+ * Whether autodeploy has a build waiting; the pass then claims nothing (one line and one
+ * `claim_skipped` event a pass) so the runs can end. Past `deploy_wait_minutes` the build installs
+ * anyway and an attention item says so until the marker is gone. A marker older than
  * {@link PENDING_STALE_MS} is nothing pending. Relaunches of claimed runs are not held back.
  */
 const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (

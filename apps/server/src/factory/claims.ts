@@ -103,12 +103,10 @@ export interface PendingDeploy {
 }
 
 /**
- * The build autodeploy.sh has waiting: `deploy-pending` in the data dir holds `<epoch seconds>
- * <sha>` while origin/main has a commit that is not installed, and the script removes it when
- * nothing is pending. The pass claims nothing while it is there, so the runs in progress can end
- * and the build can be installed. A missing file, symlink or FIFO is nothing pending. A first
- * word that is not whole seconds falls back to the file's mtime; a file that exists but cannot be
- * opened is still pending since its mtime.
+ * The build autodeploy.sh has waiting, from `deploy-pending` (`<epoch seconds> <sha>`) in the data
+ * dir. A missing file, symlink or FIFO is nothing pending. A first word that is not whole seconds
+ * falls back to the file's mtime; a file that exists but cannot be opened is still pending since
+ * its mtime.
  */
 export const loadPendingDeploy = (dataDir: string): PendingDeploy | null => {
   const marker = readMarker(NodePath.join(dataDir, DEPLOY_PENDING_FILE));

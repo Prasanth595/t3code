@@ -65,11 +65,9 @@ const git = (cwd: string, ...args: Array<string>) => {
   return result.stdout.trim();
 };
 
-// A deploy.sh that records each call with its commit and flags, and on an install keeps the old
-// `current` as `previous` and points `current` at the commit, as install.sh would. Unlike
-// install.sh it leaves the install time of an existing version directory, so `current` can be
-// the oldest. DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, BACKDATE_PENDING, HOLD_DURING_BUILD and
-// CURRENT_AT vary it.
+// A deploy.sh that logs each call with its commit and flags and installs as install.sh would, but
+// keeps an existing version directory's install time, so `current` can be the oldest.
+// DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, BACKDATE_PENDING, HOLD_DURING_BUILD and CURRENT_AT vary it.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -541,9 +539,16 @@ describe("autodeploy.sh", () => {
 
 describe("autodeploy.sh waiting behind runs", () => {
   const pendingFile = () => NodePath.join(home, ".config/t3fac/factory/deploy-pending");
+  // The script reads the clock through `date` and `touch`, so times are taken from the mtime a
+  // write just stamped, as addVersion does.
+  const clockMs = () => {
+    const probe = NodePath.join(tmp, "clock-probe");
+    NodeFS.writeFileSync(probe, "");
+    return NodeFS.statSync(probe).mtimeMs;
+  };
   const writePending = (secondsAgo: number, sha = "0".repeat(40)) => {
     NodeFS.mkdirSync(NodePath.dirname(pendingFile()), { recursive: true });
-    const since = Math.floor(Date.now() / 1000) - secondsAgo;
+    const since = Math.floor(clockMs() / 1000) - secondsAgo;
     NodeFS.writeFileSync(pendingFile(), `${since} ${sha}\n`);
     return since;
   };
@@ -676,7 +681,7 @@ describe("autodeploy.sh waiting behind runs", () => {
   // A tick that cannot ask leaves the marker as it is: the server ignores one that goes stale, and
   // a blip does not lose the first-wait time.
   const minutesAgo = (minutes: number) => {
-    const time = Date.now() / 1000 - minutes * 60;
+    const time = clockMs() / 1000 - minutes * 60;
     NodeFS.utimesSync(pendingFile(), time, time);
     return NodeFS.statSync(pendingFile()).mtimeMs;
   };
@@ -733,7 +738,7 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toMatch(/waited [01]s of deploy_wait_minutes 120/);
     const [since] = NodeFS.readFileSync(pendingFile(), "utf8").split(" ");
-    expect(Math.abs(Number(since) - Date.now() / 1000)).toBeLessThan(10);
+    expect(Math.abs(Number(since) - clockMs() / 1000)).toBeLessThan(10);
   });
 
   it("keeps the first-wait time across a short blip", async () => {
@@ -757,7 +762,7 @@ describe("autodeploy.sh waiting behind runs", () => {
       T3FAC_PENDING_REFRESH: "1",
     });
     expect(result.output).toContain("took over 3s");
-    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
+    expect(clockMs() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
   });
 
@@ -768,7 +773,7 @@ describe("autodeploy.sh waiting behind runs", () => {
     statusBodies = [BUSY];
     await runAutodeploy();
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
-    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
+    expect(clockMs() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
   });
 
   it("marks the build pending on an idle tick too, so a run that starts during the build waits", async () => {
