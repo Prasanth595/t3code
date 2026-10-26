@@ -113,6 +113,24 @@ describe("beginQueuedRunEdit", () => {
     );
   });
 
+  it("reports a cleared edit as discarded when the run starts", () => {
+    const threadKey = "env-exit:thread-cleared";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    beginQueuedRunEdit(threadKey, edit([]), runs);
+    setComposerDraftText(queuedEditDraftKey(threadKey, runId), "");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("");
+    expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
+      "That message already started, so the edit was discarded.",
+    );
+  });
+
   it("treats a removed server attachment as a change when the run starts", () => {
     const threadKey = "env-exit:thread-removed";
     const runId = RunId.make("run-1");
