@@ -101,6 +101,8 @@ export function createSidebarSortingStrategy(input: {
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
+  // The New design renders card rows at slim height.
+  compactCards?: boolean;
 }): SortingStrategy {
   if (input.enabled === false) return () => stationary;
   const { items } = input;
@@ -137,9 +139,12 @@ export function createSidebarSortingStrategy(input: {
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
+    const baseCardHeight = input.compactCards ? 36 : 82;
     const scale =
-      slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
-    cardHeight ??= 82 * scale;
+      slimHeight !== undefined
+        ? slimHeight / 36
+        : (headerScale ?? (cardHeight ?? baseCardHeight) / baseCardHeight);
+    cardHeight ??= baseCardHeight * scale;
     slimHeight ??= 36 * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
     const group = groups[target.section];

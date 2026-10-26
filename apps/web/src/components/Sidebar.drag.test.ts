@@ -586,6 +586,25 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...args, index: 4 })?.y).toBe(-42);
   });
 
+  it("sizes an empty Active target at slim height when cards are compact", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      marker("active-placeholder"),
+      settledHeader,
+      thread("first", "settled"),
+      thread("second", "settled"),
+    ];
+    const settledHeaderOffset = (compactCards: boolean) =>
+      preview(
+        { items, settledOrder: ["first", "second"], settledExpanded: true, compactCards },
+        "first",
+        sidebarMarkerId("active-placeholder"),
+      ).get(sidebarMarkerId("settled-header"))?.y;
+    expect(settledHeaderOffset(false)).toBe(82);
+    expect(settledHeaderOffset(true)).toBe(36);
+  });
+
   it("keeps the route row visible after a settled drop pushes it beyond the page", () => {
     const items = [
       pinnedHeader,
