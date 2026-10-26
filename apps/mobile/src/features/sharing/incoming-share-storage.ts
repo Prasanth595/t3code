@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import type { File } from "expo-file-system";
 
 import { decodeIncomingShareDraft, type IncomingShareDraft } from "./incoming-share-model";
 
@@ -33,6 +34,20 @@ async function getFile(shareId: string, suffix = "") {
   return new File(await getDirectory(), `${fileName(shareId)}${suffix}`);
 }
 
+async function readSavedDraft(file: File) {
+  try {
+    return { file, draft: decodeIncomingShareDraft(JSON.parse(await file.text()) as unknown) };
+  } catch (cause) {
+    const { File } = await import("expo-file-system");
+    const backup = new File(file.parentDirectory, `${file.name}.bak`);
+    if (!backup.exists) throw cause;
+    return {
+      file: backup,
+      draft: decodeIncomingShareDraft(JSON.parse(await backup.text()) as unknown),
+    };
+  }
+}
+
 export async function loadIncomingShareDrafts(options?: {
   readonly strict?: boolean;
 }): Promise<ReadonlyArray<IncomingShareDraft>> {
@@ -47,7 +62,7 @@ export async function loadIncomingShareDrafts(options?: {
         continue;
       }
       try {
-        drafts.push(decodeIncomingShareDraft(JSON.parse(await entry.text()) as unknown));
+        drafts.push((await readSavedDraft(entry)).draft);
       } catch (cause) {
         const error = new IncomingShareStorageError({ operation: "load", shareId: null, cause });
         if (options?.strict) {
@@ -73,9 +88,10 @@ export async function writeIncomingShareDraft(draft: IncomingShareDraft): Promis
     // Inbox mutations are serialized, so each share can reuse its staging path.
     temp.create({ intermediates: true, overwrite: true });
     await temp.write(JSON.stringify(draft));
-    // Expo removes the destination before moving. Keep the saved JSON recoverable
-    // until replacement succeeds, including when a failed move leaves no final file.
-    if (file.exists) file.copySync(backup, { overwrite: true });
+    // Expo can remove or partially copy the destination before a move fails.
+    if (file.exists && (await readSavedDraft(file)).file === file) {
+      file.copySync(backup, { overwrite: true });
+    }
     temp.moveSync(file, { overwrite: true });
     try {
       if (backup.exists) backup.delete();

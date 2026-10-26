@@ -60,6 +60,13 @@ const fileSystemMocks = vi.hoisted(() => {
         failRelocationTo = "";
         throw new Error("move failed after destination removal");
       }
+      // Android can fall back to copy-and-delete after native moves fail.
+      files.set(destination.name, files.get(this.name)!.slice(0, 1));
+      record();
+      if (failRelocationTo === "partial") {
+        failRelocationTo = "";
+        throw new Error("move failed during fallback copy");
+      }
       files.set(destination.name, files.get(this.name)!);
       files.delete(this.name);
       this.name = destination.name;
@@ -204,25 +211,33 @@ describe("incoming share storage", () => {
     await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([updated]);
   });
 
-  it.each([".bak", ".json"])("recovers after a failed replacement of %s", async (suffix) => {
-    await writeIncomingShareDraft(VALID_DRAFT);
-    fileSystemMocks.failRelocationTo(suffix);
+  it.each([".bak", ".json", "partial"])(
+    "recovers after a failed replacement of %s",
+    async (suffix) => {
+      await writeIncomingShareDraft(VALID_DRAFT);
+      fileSystemMocks.failRelocationTo(suffix);
 
-    await expect(
-      writeIncomingShareDraft({ ...VALID_DRAFT, text: "Updated" }),
-    ).rejects.toBeInstanceOf(IncomingShareStorageError);
-    await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
+      await expect(
+        writeIncomingShareDraft({ ...VALID_DRAFT, text: "Updated" }),
+      ).rejects.toBeInstanceOf(IncomingShareStorageError);
+      await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
 
-    // A second failed write must not damage a backup left by the failed move.
-    fileSystemMocks.failNextWrite();
-    await expect(writeIncomingShareDraft(VALID_DRAFT)).rejects.toBeInstanceOf(
-      IncomingShareStorageError,
-    );
-    await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
-    await writeIncomingShareDraft(VALID_DRAFT);
-    await removeIncomingShareDraft(VALID_DRAFT.id);
-    await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([]);
-  });
+      // A second failed write must not damage a backup left by the failed move.
+      fileSystemMocks.failNextWrite();
+      await expect(writeIncomingShareDraft(VALID_DRAFT)).rejects.toBeInstanceOf(
+        IncomingShareStorageError,
+      );
+      await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
+      fileSystemMocks.failRelocationTo(".json");
+      await expect(writeIncomingShareDraft(VALID_DRAFT)).rejects.toBeInstanceOf(
+        IncomingShareStorageError,
+      );
+      await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
+      await writeIncomingShareDraft(VALID_DRAFT);
+      await removeIncomingShareDraft(VALID_DRAFT.id);
+      await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([]);
+    },
+  );
 
   it("loads one complete share after interruption at each replacement operation", async () => {
     await writeIncomingShareDraft(VALID_DRAFT);
