@@ -3,7 +3,6 @@ import type { ChatReplyError } from "@t3tools/client-runtime/chat";
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import type { SaasChatConversation } from "@t3tools/contracts/saas";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowUpIcon } from "lucide-react";
 import { createRef, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
@@ -15,15 +14,16 @@ import {
 import { isElectron } from "~/env";
 import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEntries";
 import { useTheme } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
 import type { ChatMessage } from "~/types";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
+import { ComposerSurface } from "../chat/ComposerSurface";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
 import { ScrollToEndButton } from "../chat/TimelineOverlays";
 import { useTimelineFollow } from "../chat/useTimelineFollow";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
+import { Spinner } from "../ui/spinner";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { AgenticUpgradeDialog } from "./AgenticUpgradeDialog";
 import { ChatModeSwitch } from "./ChatModeSwitch";
@@ -112,7 +112,7 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
       ) : (
         <ChatTimeline chat={chat} streaming={history.streaming} />
       )}
-      <div className="chat-content-lane shrink-0 px-4 pb-4">
+      <div className="chat-composer-lane w-full shrink-0 pt-1.5 pb-3 sm:pt-2 sm:pb-4">
         {error !== null ? (
           <ChatReplyErrorNotice
             error={error}
@@ -225,7 +225,7 @@ function ChatReplyErrorNotice({
   return (
     <div
       role="alert"
-      className="mb-2 flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm"
+      className="mx-auto mb-2 flex w-full max-w-(--chat-content-max-width) items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm"
     >
       <p className="min-w-0 flex-1">{error.message}</p>
       {action !== null ? (
@@ -243,6 +243,7 @@ function ChatReplyErrorNotice({
   );
 }
 
+// The thread composer's surface and send button, without attachments or model controls.
 function ChatModeComposer({
   busy,
   onSend,
@@ -251,9 +252,10 @@ function ChatModeComposer({
   readonly onSend: (text: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
+  const canSend = !busy && text.trim() !== "";
   const submit = () => {
+    if (!canSend) return;
     const trimmed = text.trim();
-    if (trimmed === "" || busy) return;
     setText("");
     void onSend(trimmed);
   };
@@ -266,34 +268,52 @@ function ChatModeComposer({
   };
   return (
     <form
-      className="flex flex-col gap-2 rounded-3xl border border-border bg-card px-4 pt-3 pb-2.5 shadow-composer dark:shadow-composer-dark"
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
-      <textarea
-        aria-label="Message"
-        placeholder="Ask Mira anything"
-        rows={2}
-        autoFocus
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={onKeyDown}
-        className="max-h-60 min-h-12 w-full resize-none bg-transparent text-sm outline-none field-sizing-content placeholder:text-placeholder"
-      />
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="submit"
-          aria-label="Send"
-          disabled={busy || text.trim() === ""}
-          className={cn(
-            "flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs hover:bg-message-action-hover focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
-          )}
-        >
-          <ArrowUpIcon aria-hidden className="size-4" />
-        </button>
-      </div>
+      <ComposerSurface.Shell>
+        <ComposerSurface.Host>
+          <ComposerSurface.Main>
+            <div data-chat-composer-surface="true" className="rounded-2xl">
+              <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
+                <textarea
+                  aria-label="Message"
+                  placeholder="Ask Mira anything"
+                  autoFocus
+                  value={text}
+                  onChange={(event) => setText(event.target.value)}
+                  onKeyDown={onKeyDown}
+                  className="-m-1 block max-h-52 min-h-12 w-[calc(100%+0.5rem)] resize-none bg-transparent p-1 font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) leading-relaxed text-foreground outline-none field-sizing-content placeholder:text-placeholder"
+                />
+              </div>
+              <div className="flex min-w-0 items-center justify-end gap-2 px-3 pb-3 sm:px-4 sm:pb-4">
+                <button
+                  type="submit"
+                  aria-label="Send message"
+                  disabled={!canSend}
+                  className="relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:shadow-message-action/24 enabled:inset-shadow-control-highlight hover:scale-105 hover:bg-message-action-hover active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none"
+                >
+                  {busy ? (
+                    <Spinner size="sm" aria-hidden="true" />
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                      <path
+                        d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+          </ComposerSurface.Main>
+        </ComposerSurface.Host>
+      </ComposerSurface.Shell>
     </form>
   );
 }
