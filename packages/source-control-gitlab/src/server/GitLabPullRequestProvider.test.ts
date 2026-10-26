@@ -73,7 +73,9 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       };
       const detail = yield* provider.getChangeRequest(reference);
       expect(yield* provider.getViewer(reference)).toBe("reviewer");
+      assert.isDefined(provider.listRepositoryLabels);
       yield* provider.listRepositoryLabels(reference);
+      assert.isDefined(provider.searchRepositoryAuthors);
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
