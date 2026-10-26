@@ -25,7 +25,7 @@ vi.mock("@effect/atom-react", () => ({
       : AsyncResult.initial(false),
 }));
 vi.mock("./session", () => ({
-  environmentSession: { sessionStateAtom: () => ({}) },
+  environmentSession: { sessionStateAtom: () => ({}), preparedConnectionValueAtom: () => ({}) },
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
 }));
 vi.mock("./presentation", () => ({
@@ -42,6 +42,13 @@ vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
+}));
+vi.mock("./atom-registry", () => ({
+  appAtomRegistry: { get: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }) },
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  executeAtomQuery: () => state.mint(),
 }));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
@@ -132,5 +139,26 @@ it("preserves the authored Bitbucket fragment through resolution, renewal, and f
   );
   expect(mediaVideoPreviewUri(source, await refresh())).toBe(
     "https://host.test/api/assets/renewed.mp4#t=2",
+  );
+});
+
+it("keeps the Bitbucket fallback in async native preview resolution", async () => {
+  const fallback = "https://bitbucket.org/acme/web/downloads/demo.mp4#t=2";
+  const { refreshAssetUrl } = await import("./assets");
+  const unsupported = new Error("Media signing unavailable");
+  state.mint.mockRejectedValue(unsupported);
+  await expect(refreshAssetUrl(environmentId, resource, undefined, fallback)).resolves.toBe(
+    fallback,
+  );
+  await expect(refreshAssetUrl(environmentId, resource)).rejects.toBe(unsupported);
+  state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(unsupported)));
+  await expect(refreshAssetUrl(environmentId, resource, undefined, fallback)).resolves.toBe(
+    fallback,
+  );
+  state.mint.mockResolvedValue(
+    AsyncResult.success({ relativeUrl: "/api/assets/renewed.mp4", expiresAt: 2 }),
+  );
+  await expect(refreshAssetUrl(environmentId, resource, undefined, fallback)).resolves.toBe(
+    "https://host.test/api/assets/renewed.mp4",
   );
 });
