@@ -4,9 +4,9 @@ import { getResolvedOrResolveTheme, registerCustomTheme, type DiffsTheme } from 
 export const READABLE_LIGHT_THEME_NAME = "t3-light";
 
 const MIN_CONTRAST = 4.5;
-// The darkest light code surface is a deleted line's red tint (#fef0f0, luminance 0.897),
-// rounded down for margin.
-const DARKEST_SURFACE_LUMINANCE = 0.89;
+// The darkest light code surface is a changed word on a deleted line (#f8d3d4, luminance
+// 0.695), rounded down for margin.
+const DARKEST_SURFACE_LUMINANCE = 0.69;
 
 function channelLuminance(channel: number): number {
   const value = channel / 255;
@@ -38,7 +38,7 @@ type ZedTheme = NonNullable<DiffsTheme["zed"]>;
 
 // Operators share numbers' teal and differ only in lightness, so they go further to stay apart.
 const OPERATOR_SCOPES = new Set(["operator", "keyword.operator"]);
-const OPERATOR_MIN_CONTRAST = 7;
+const OPERATOR_MIN_CONTRAST = 6;
 
 function withReadableSyntax(theme: ZedTheme): ZedTheme {
   const syntax = Object.fromEntries(
