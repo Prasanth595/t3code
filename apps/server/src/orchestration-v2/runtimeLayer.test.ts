@@ -34,7 +34,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -43,6 +45,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import { checkpointRefForThreadTurn } from "../checkpointing/Utils.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -59,6 +62,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
+import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -331,6 +335,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
+  EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -489,6 +494,236 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           remainingIds,
         );
       }),
+  );
+
+  it.effect("deleting a thread removes only its own checkpoint refs through the outbox", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-cleanup-" });
+      const git = (args: ReadonlyArray<string>) =>
+        vcsProcess
+          .run({ operation: "runtimeLayer.test.git", command: "git", cwd: repo, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const listRefs = git(["for-each-ref", "--format=%(refname)", "refs/t3/"]).pipe(
+        Effect.map((stdout) => stdout.split("\n").filter((ref) => ref !== "")),
+      );
+      yield* git(["init"]);
+      yield* git([
+        "-c",
+        "user.name=T3",
+        "-c",
+        "user.email=t3@example.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ]);
+
+      const seedThread = Effect.fn(function* (name: string) {
+        const threadId = ThreadId.make(name);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}-create`),
+          threadId,
+          projectId: ProjectId.make("checkpoint-cleanup-project"),
+          title: "Checkpoint cleanup",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: repo,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}-message`),
+          threadId,
+          messageId: MessageId.make(`${name}-message`),
+          text: "Create the checkpoint scope.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "not under test",
+        });
+        const scope = (yield* orchestrator.getThreadProjection(threadId)).checkpointScopes[0]!;
+        const capturedRef = yield* checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 0,
+        });
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          commandId: CommandId.make(`${name}-seed`),
+          events: [
+            {
+              id: EventId.make(`${name}-checkpoint-event`),
+              type: "checkpoint.captured",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: CheckpointId.make(`${name}-checkpoint`),
+                threadId,
+                scopeId: scope.id,
+                runId: null,
+                nodeId: scope.nodeId,
+                parentCheckpointId: null,
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                ref: capturedRef,
+                status: "ready",
+                files: [],
+                capturedAt: now,
+              },
+            },
+          ],
+        });
+        // An unrecorded ordinal from an interrupted capture and an imported V1 turn ref.
+        const refs = [
+          capturedRef,
+          yield* checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 }),
+          checkpointRefForThreadTurn(threadId, 1),
+        ];
+        for (const ref of refs) yield* git(["update-ref", ref, "HEAD"]);
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`${name}-archive`),
+          threadId,
+        });
+        return { threadId, refs };
+      });
+
+      const deleted = yield* seedThread("checkpoint-cleanup-deleted");
+      const archived = yield* seedThread("checkpoint-cleanup-archived");
+      yield* worker.drain();
+      assert.includeMembers(yield* listRefs, [...deleted.refs, ...archived.refs]);
+
+      const deleteCommandId = CommandId.make("checkpoint-cleanup-delete");
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: deleteCommandId,
+        threadId: deleted.threadId,
+      });
+      const cleanupEffect = Effect.map(outbox.listByCommandId(deleteCommandId), (effects) =>
+        effects.find((effect) => effect.request.type === "checkpoint.cleanup"),
+      );
+      assert.isNotNull(
+        (yield* orchestrator.getThreadProjection(deleted.threadId)).thread.deletedAt,
+      );
+      assert.equal((yield* cleanupEffect)?.status, "pending");
+      assert.includeMembers(yield* listRefs, deleted.refs);
+
+      const lockPath = `${repo}/.git/${deleted.refs[0]}.lock`;
+      yield* fileSystem.writeFileString(lockPath, "");
+      yield* worker.drain();
+      // Lock contention outlasting the worker's default attempt budget still leaves it retryable.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        yield* TestClock.adjust("30 seconds");
+        yield* worker.drain();
+      }
+      const failed = yield* cleanupEffect;
+      assert.isAbove(failed?.attemptCount ?? 0, 5);
+      assert.equal(failed?.status, "pending");
+      assert.isNotNull(failed?.lastError ?? null);
+      assert.isNotNull(
+        (yield* orchestrator.getThreadProjection(deleted.threadId)).thread.deletedAt,
+      );
+      assert.include(yield* listRefs, deleted.refs[0]);
+      // Queued last, so the failing cleanup does not hold the thread's other cleanup behind it.
+      assert.deepEqual(
+        Object.fromEntries(
+          (yield* outbox.listByCommandId(deleteCommandId))
+            .filter((effect) => effect.request.type.endsWith(".cleanup"))
+            .map((effect) => [effect.request.type, effect.status]),
+        ),
+        {
+          "scheduled-tasks.cleanup": "succeeded",
+          "terminal.cleanup": "succeeded",
+          "preview.cleanup": "succeeded",
+          "checkpoint.cleanup": "pending",
+        },
+      );
+
+      // The retry is claimed by a process that dies before finishing it.
+      yield* fileSystem.remove(lockPath);
+      yield* TestClock.adjust("30 seconds");
+      const claimed = yield* outbox.claimNext({
+        workerId: "lost-process",
+        leaseDurationMs: 60_000,
+      });
+      assert.equal(Option.getOrUndefined(claimed)?.id, failed?.id);
+      assert.equal((yield* outbox.reconcileAfterProcessLoss).requeued, 1);
+      yield* worker.drain();
+
+      assert.equal((yield* cleanupEffect)?.status, "succeeded");
+      const remaining = yield* listRefs;
+      assert.notIncludeMembers(remaining, deleted.refs);
+      assert.includeMembers(remaining, archived.refs);
+    }).pipe(Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+
+  it.effect(
+    "checkpoint cleanup skips non-repositories but retries a repository Git cannot read",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const vcsProcess = yield* VcsProcess.VcsProcess;
+        const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-checkpoint-detect-",
+        });
+        const repo = `${parent}/repo`;
+        const plain = `${parent}/plain`;
+        yield* fileSystem.makeDirectory(repo);
+        yield* fileSystem.makeDirectory(plain);
+        const git = (args: ReadonlyArray<string>) =>
+          vcsProcess
+            .run({ operation: "runtimeLayer.test.git", command: "git", cwd: repo, args })
+            .pipe(Effect.map((result) => result.stdout.trim()));
+        yield* git(["init"]);
+        yield* git([
+          "-c",
+          "user.name=T3",
+          "-c",
+          "user.email=t3@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ]);
+        const threadId = ThreadId.make("checkpoint-detect-thread");
+        const owned = checkpointRefForThreadTurn(threadId, 1);
+        const kept = checkpointRefForThreadTurn(ThreadId.make("checkpoint-detect-other"), 1);
+        yield* git(["update-ref", owned, "HEAD"]);
+        yield* git(["update-ref", kept, "HEAD"]);
+        const run = (cwds: ReadonlyArray<string>) =>
+          cleanup.cleanupCheckpoints({ threadId, cwds, scopeIds: [] });
+
+        yield* run([`${parent}/removed-worktree`, plain]);
+
+        const configPath = `${repo}/.git/config`;
+        const config = yield* fileSystem.readFileString(configPath);
+        yield* fileSystem.writeFileString(configPath, `${config}[broken\n`);
+        const exit = yield* Effect.exit(run([repo]));
+        assert.isTrue(Exit.isFailure(exit), "an unreadable repository must stay retryable");
+        yield* fileSystem.writeFileString(configPath, config);
+        assert.deepEqual(
+          (yield* git(["for-each-ref", "--format=%(refname)", "refs/t3/"])).split("\n").toSorted(),
+          [owned, kept].toSorted(),
+        );
+
+        yield* run([repo]);
+        assert.equal(yield* git(["for-each-ref", "--format=%(refname)", "refs/t3/"]), kept);
+      }).pipe(Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
   it.effect("waits for an in-flight thread update before planning deletion", () =>

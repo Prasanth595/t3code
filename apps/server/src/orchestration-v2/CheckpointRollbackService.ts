@@ -275,7 +275,14 @@ export const layer: Layer.Layer<
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+        // Orphaned refs are harmless and removed with the thread; they must not fail a rollback.
+        yield* checkpoints
+          .deleteStaleRefs({ scope, checkpoints: staleCheckpoints })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to delete stale checkpoint refs", { cause }),
+            ),
+          );
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

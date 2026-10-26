@@ -18,8 +18,16 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
+    | "thread"
+    | "runs"
+    | "attempts"
+    | "nodes"
+    | "runtimeRequests"
+    | "subagents"
+    | "providerSessions"
+    | "checkpointScopes"
   >;
+  readonly projectWorkspaceRoot: string | null;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -233,6 +241,29 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       commandId: command.commandId,
       threadId: command.threadId,
       request: { type: "attachment.cleanup", attachmentIds },
+    });
+  }
+  // Last: it retries until it succeeds, and per-thread ordering would hold everything queued after it.
+  // The project root covers V1 turn refs and refs shared by worktrees that are gone by cleanup time.
+  const checkpointCwds = Array.from(
+    new Set(
+      [
+        projection.thread.worktreePath,
+        input.projectWorkspaceRoot,
+        ...projection.checkpointScopes.map((scope) => scope.cwd),
+      ].filter((cwd) => cwd !== null),
+    ),
+  );
+  if (checkpointCwds.length > 0) {
+    effects.push({
+      id: `effect:${command.commandId}:checkpoint.cleanup`,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      request: {
+        type: "checkpoint.cleanup",
+        cwds: checkpointCwds,
+        scopeIds: projection.checkpointScopes.map((scope) => scope.id),
+      },
     });
   }
   return { events, effects };

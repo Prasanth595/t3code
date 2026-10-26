@@ -403,6 +403,7 @@ export const make = Effect.gen(function* () {
       "runtimeRequests",
       "subagents",
       "providerSessions",
+      "checkpointScopes",
     ]);
     if (projection.thread.deletedAt !== null || projection.thread.projectId !== input.projectId) {
       return;
@@ -413,9 +414,14 @@ export const make = Effect.gen(function* () {
       threadId,
     };
     const now = yield* DateTime.now;
+    const project = yield* projects.get(input.projectId, { includeDeleted: true });
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      projectWorkspaceRoot: Option.match(project, {
+        onNone: () => null,
+        onSome: (row) => row.workspaceRoot,
+      }),
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
       now,
       idAllocator,

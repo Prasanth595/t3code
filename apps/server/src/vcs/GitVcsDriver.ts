@@ -415,6 +415,9 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+const CHECKPOINT_REF_DELETE_BATCH = 1_000;
+// Plain path segments only, so a namespace can never act as a for-each-ref glob or broader prefix.
+const CHECKPOINT_REF_NAMESPACE = /^refs\/t3\/(?:[A-Za-z0-9_-]+\/)+$/;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1366,17 +1369,59 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
-        yield* Effect.forEach(
-          input.checkpointRefs,
-          (checkpointRef) =>
-            execute({
-              operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
-              cwd: input.cwd,
-              args: ["update-ref", "-d", checkpointRef],
-              allowNonZeroExit: true,
-            }),
-          { discard: true },
-        );
+        const operation = "GitVcsDriver.checkpoints.deleteCheckpointRefs";
+        const namespaces = input.refNamespaces ?? [];
+        const invalid = namespaces.find((namespace) => !CHECKPOINT_REF_NAMESPACE.test(namespace));
+        if (invalid !== undefined) {
+          return yield* new VcsUnsupportedOperationError({
+            operation,
+            kind: "git",
+            detail: `Refusing to delete refs below ${invalid}.`,
+          });
+        }
+        // Only Git's own verdict skips a cwd; any other probe failure surfaces from the deletes below.
+        const probe = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--git-dir"],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+        }).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
+        if (
+          probe === null ||
+          (probe.exitCode !== 0 && /not a git repository/i.test(probe.stderr))
+        ) {
+          return;
+        }
+        // One transaction per batch: a locked ref fails the deletion instead of being skipped.
+        const deleteRefs = (refs: ReadonlyArray<string>) =>
+          execute({
+            operation,
+            cwd: input.cwd,
+            args: ["update-ref", "--no-deref", "--stdin"],
+            stdin: refs.map((ref) => `delete ${ref}\n`).join(""),
+          });
+        if (input.checkpointRefs.length > 0) yield* deleteRefs(input.checkpointRefs);
+        if (namespaces.length === 0) return;
+        // Bounded batches until none remain; an over-cap listing fails rather than yielding partial refs.
+        while (true) {
+          const listed = (yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "for-each-ref",
+              `--count=${CHECKPOINT_REF_DELETE_BATCH}`,
+              "--format=%(refname)",
+              ...namespaces,
+            ],
+            outputMode: "error",
+          })).stdout
+            .split("\n")
+            .filter((ref) => ref !== "");
+          if (listed.length === 0) return;
+          yield* deleteRefs(listed);
+          if (listed.length < CHECKPOINT_REF_DELETE_BATCH) return;
+        }
       },
     ),
   };

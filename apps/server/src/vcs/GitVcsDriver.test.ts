@@ -153,6 +153,72 @@ const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   return { git, checkpointRef };
 });
 
+it.effect("checkpoint ref cleanup deletes namespaces whose listing exceeds the output cap", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-delete-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    const head = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+    const deleted = "refs/t3/checkpoints/deleted-thread-namespace/";
+    const kept = "refs/t3/checkpoints/kept/turn/1";
+    // Over 1 MB of ref names, past VcsProcess's default output cap.
+    const refs = Array.from(
+      { length: 20_000 },
+      (_, index) => `${deleted}ordinal/${String(index).padStart(10, "0")}`,
+    );
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".git", "packed-refs"),
+      `# pack-refs with: peeled fully-peeled sorted \n${[...refs, kept]
+        .toSorted()
+        .map((ref) => `${head} ${ref}\n`)
+        .join("")}`,
+    );
+    const listRefs = (namespace: string) =>
+      driver
+        .execute({
+          operation: "checkpoint-test",
+          cwd,
+          args: ["for-each-ref", "--format=%(refname)", namespace],
+          maxOutputBytes: 16 * 1024 * 1024,
+        })
+        .pipe(Effect.map((result) => result.stdout.split("\n").filter((ref) => ref !== "")));
+    assert.lengthOf(yield* listRefs(deleted), refs.length);
+
+    yield* driver.checkpoints.deleteCheckpointRefs({
+      cwd,
+      checkpointRefs: [],
+      refNamespaces: [deleted],
+    });
+
+    assert.deepEqual(yield* listRefs("refs/t3/"), [kept]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint ref cleanup deletes a symbolic ref without its target", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-symref-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    const kept = "refs/t3/checkpoints/kept/turn/1";
+    yield* git(["update-ref", kept, "HEAD"]);
+    yield* git(["symbolic-ref", "refs/t3/checkpoints/deleted/turn/1", kept]);
+
+    yield* driver.checkpoints.deleteCheckpointRefs({
+      cwd,
+      checkpointRefs: [],
+      refNamespaces: ["refs/t3/checkpoints/deleted/"],
+    });
+
+    assert.equal(
+      (yield* git(["for-each-ref", "--format=%(refname)", "refs/t3/"])).stdout,
+      `${kept}\n`,
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint capture skips untracked nested repositories without a commit", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

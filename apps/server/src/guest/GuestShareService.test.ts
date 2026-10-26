@@ -90,6 +90,7 @@ const layerCleanup = Layer.effect(
     const { attachmentsDir } = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     return {
+      cleanupCheckpoints: () => Effect.void,
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,

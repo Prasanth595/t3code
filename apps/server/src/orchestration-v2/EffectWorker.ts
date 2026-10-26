@@ -478,6 +478,23 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "checkpoint.cleanup":
+            return resourceCleanup
+              .cleanupCheckpoints({
+                threadId: effect.threadId,
+                cwds: effect.request.cwds,
+                scopeIds: effect.request.scopeIds,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "scheduled-tasks.cleanup":
             return resourceCleanup.cleanupScheduledTasks(effect.threadId).pipe(
               Effect.mapError(
@@ -594,6 +611,11 @@ export interface OrchestrationEffectWorkerOptions {
   readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
 }
+
+// Deferred cleanup with no user waiting on it; the capped backoff keeps lock contention from storming.
+const RETRY_UNTIL_SUCCESS_EFFECT_TYPES: ReadonlySet<
+  EffectOutbox.OrchestrationEffectRequestV2["type"]
+> = new Set(["checkpoint.cleanup"]);
 
 export const layerWithOptions = (
   options: OrchestrationEffectWorkerOptions = {},
@@ -745,8 +767,11 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
+          const exhausted =
+            effect.attemptCount >= maxAttempts &&
+            !RETRY_UNTIL_SUCCESS_EFFECT_TYPES.has(effect.request.type);
           const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+            .execute(effect, { willRetry: !exhausted })
             .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
@@ -782,7 +807,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : exhausted
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

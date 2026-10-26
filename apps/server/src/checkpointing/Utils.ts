@@ -3,8 +3,10 @@ import { CheckpointRef, type ThreadId } from "@t3tools/contracts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
+export function checkpointRefNamespaceForThread(threadId: ThreadId): string {
+  return `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(threadId)}/`;
+}
+
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
-  return CheckpointRef.make(
-    `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(threadId)}/turn/${turnCount}`,
-  );
+  return CheckpointRef.make(`${checkpointRefNamespaceForThread(threadId)}turn/${turnCount}`);
 }
