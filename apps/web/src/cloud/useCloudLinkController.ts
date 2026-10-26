@@ -25,6 +25,7 @@ import {
   updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
 import { readCachedPrimaryCloudLinkState, usePrimaryCloudLinkState } from "./primaryCloudLinkState";
+import { setComputerSharingOff } from "./miraSharing";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export interface CloudLinkDesiredState {
@@ -47,7 +48,7 @@ function isManagedTunnelActive(
 }
 
 export function useCloudLinkController() {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn, userId } = useAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
@@ -127,6 +128,8 @@ export function useCloudLinkController() {
     };
     if (!canManageLink()) return false;
     const wantsLink = desired.managedTunnel || desired.publish;
+    // Automatic account sync must not reshare a computer the user stopped sharing.
+    if (userId) setComputerSharingOff(userId, !desired.managedTunnel);
     if (wantsLink && readLinkState() === null) return false;
     const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
     if (!canManageLink()) return false;

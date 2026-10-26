@@ -21,7 +21,6 @@ export const Route = createFileRoute("/welcome")({
 });
 
 function WelcomeRouteView() {
-  const { authGateState } = Route.useRouteContext();
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
   const resumeEnvironmentId = hash.startsWith("agents:")
@@ -31,13 +30,11 @@ function WelcomeRouteView() {
   const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
   const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
-  const localAvailable = authGateState.status === "authenticated";
   return (
     <>
       <NoProjectsHero />
       {isWelcomeRoute && !dismissed ? (
         <WelcomeWizard
-          localAvailable={localAvailable}
           resumeEnvironmentId={resumeEnvironmentId}
           onDone={async (projectRef) => {
             setDismissed(true);

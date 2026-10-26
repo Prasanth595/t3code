@@ -27,6 +27,7 @@ vi.mock("../../connection/catalog", () => ({
 }));
 
 vi.mock("./cloud-drafts", () => ({ removeCloudEnvironments: {} }));
+vi.mock("./MiraAccountSync", () => ({ MiraAccountSync: () => null }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerCloudAccountId: vi.fn(async () => null),
   restoreCloudComposerDrafts: vi.fn(async () => undefined),

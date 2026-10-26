@@ -25,6 +25,7 @@ import {
 import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 import { removeCloudEnvironments } from "./cloud-drafts";
+import { MiraAccountSync } from "./MiraAccountSync";
 
 function resetManagedRelayTokenCache() {
   return settleAsyncResult(() =>
@@ -182,7 +183,12 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     [],
   );
 
-  return props.children;
+  return (
+    <>
+      <MiraAccountSync />
+      {props.children}
+    </>
+  );
 }
 
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {

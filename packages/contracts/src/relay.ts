@@ -1278,7 +1278,7 @@ const RelayAccountGroup = HttpApiGroup.make("account")
       headers: RelayBearerRequestHeaders,
       success: SaasLlmKeyResponse,
       error: RelayAuthAndInternalErrors,
-    }).annotate(OpenApi.Summary, "Issue a new model API key, revoking earlier ones"),
+    }).annotate(OpenApi.Summary, "Issue a model API key for one computer"),
     HttpApiEndpoint.post("createCheckout", "/v1/account/checkout", {
       headers: RelayBearerRequestHeaders,
       payload: SaasCheckoutRequest,

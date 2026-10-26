@@ -74,7 +74,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Set up T3 Connect"
+        title="Your computers"
         onClose={handleClose}
         trailing={
           Platform.OS === "android" ? (
@@ -116,6 +116,12 @@ function ConfiguredConnectOnboardingRouteScreen() {
         }
       >
         {isSignedIn ? (
+          <Text className="text-sm leading-normal text-foreground-muted">
+            Computers signed in to your Mira account show up here by themselves. To add one, install
+            Mira on it and sign in with this account.
+          </Text>
+        ) : null}
+        {isSignedIn ? (
           <CloudEnvironmentRows
             connectedCloudEnvironments={connectedCloudEnvironments}
             onSetEnvironmentEnabled={onSetEnvironmentEnabled}
@@ -125,7 +131,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              Sign in to your Mira account to see your computers.
             </Text>
           </View>
         )}

@@ -83,7 +83,7 @@ export class SaasAccounts extends Context.Service<
       readonly userId: string;
       readonly email: string | null;
     }) => Effect.Effect<SaasAccountView, SaasPersistenceError>;
-    /** Issues a fresh key and revokes the account's earlier keys. */
+    /** Issues a key for one computer; the account's other computers keep theirs. */
     readonly createLlmKey: (userId: string) => Effect.Effect<string, SaasPersistenceError>;
     readonly resolveLlmKey: (
       apiKey: string,
@@ -249,11 +249,6 @@ export const make = Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
     const apiKey = SaasCrypto.generateLlmApiKey();
     const keyHash = yield* SaasCrypto.hashLlmApiKey(apiKey);
-    yield* db
-      .update(saasLlmKeys)
-      .set({ revokedAt: now })
-      .where(and(eq(saasLlmKeys.userId, userId), isNull(saasLlmKeys.revokedAt)))
-      .pipe(persist("revoke-llm-keys"));
     yield* db
       .insert(saasLlmKeys)
       .values({ keyHash, userId, createdAt: now })
