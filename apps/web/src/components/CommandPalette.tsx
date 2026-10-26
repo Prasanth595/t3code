@@ -183,6 +183,7 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
+  shouldShowCommandPaletteEmptyState,
   createCommandPaletteSearchState,
   type AddProjectCloneFlow,
   type AddProjectEnvironmentOption,
@@ -2907,6 +2908,12 @@ function OpenCommandPaletteDialog(props: {
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults
+        hideEmptyState={
+          !shouldShowCommandPaletteEmptyState({
+            rowCount: resultRows.rows.length,
+            hasFormSummary: newProjectPathPreview !== null,
+          })
+        }
         rows={resultRows.rows}
         listRef={resultListRef}
         highlightedItemValue={highlightedItemValue}

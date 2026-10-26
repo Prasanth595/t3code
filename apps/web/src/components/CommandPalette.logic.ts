@@ -844,3 +844,15 @@ export function overlayModeForCommand(command: string | null): SearchOverlayMode
     ? OVERLAY_MODE_BY_COMMAND[command as keyof typeof OVERLAY_MODE_BY_COMMAND]
     : null;
 }
+
+/**
+ * The "No matching…" empty state only makes sense for a search. A form that renders its own
+ * summary row above the list (the new project form) is never empty, even when it offers no
+ * options, e.g. when no source control host can publish the repository.
+ */
+export function shouldShowCommandPaletteEmptyState(input: {
+  readonly rowCount: number;
+  readonly hasFormSummary: boolean;
+}): boolean {
+  return input.rowCount === 0 && !input.hasFormSummary;
+}

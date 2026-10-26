@@ -85,6 +85,8 @@ export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowI
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
+  /** Render nothing instead of the empty state when there are no rows. */
+  hideEmptyState?: boolean;
   rows: ReadonlyArray<CommandPaletteRow>;
   listRef: RefObject<LegendListRef | null>;
 }
@@ -106,7 +108,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   };
 
   if (props.rows.length === 0) {
-    return <CommandPaletteEmptyState {...props} />;
+    return props.hideEmptyState ? null : <CommandPaletteEmptyState {...props} />;
   }
 
   return (

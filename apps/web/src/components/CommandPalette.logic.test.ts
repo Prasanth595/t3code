@@ -11,6 +11,7 @@ import {
   reduceCommandPaletteUiState,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
+  shouldShowCommandPaletteEmptyState,
   type CommandPaletteUiState,
 } from "./CommandPalette.logic";
 
@@ -877,5 +878,21 @@ describe("returning from file and content search", () => {
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+describe("shouldShowCommandPaletteEmptyState", () => {
+  it("shows the empty state for a search with no results", () => {
+    expect(shouldShowCommandPaletteEmptyState({ rowCount: 0, hasFormSummary: false })).toBe(true);
+  });
+
+  it("hides it under the new project form when the form offers no options", () => {
+    // Moving a thread into a new project with no publish target leaves only the summary row.
+    expect(shouldShowCommandPaletteEmptyState({ rowCount: 0, hasFormSummary: true })).toBe(false);
+  });
+
+  it("hides it whenever there are rows", () => {
+    expect(shouldShowCommandPaletteEmptyState({ rowCount: 2, hasFormSummary: false })).toBe(false);
+    expect(shouldShowCommandPaletteEmptyState({ rowCount: 2, hasFormSummary: true })).toBe(false);
   });
 });
