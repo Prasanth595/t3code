@@ -1,4 +1,14 @@
-import { act, createElement, useEffect, useMemo, type ReactNode } from "react";
+import { RegistryProvider } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import {
+  act,
+  createElement,
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -11,6 +21,8 @@ import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
+
+const guestDetails = vi.hoisted(() => ({ read: vi.fn() }));
 
 const audio = vi.hoisted(() => ({
   status: {
@@ -158,11 +170,18 @@ vi.mock("../state/projects", () => ({
 }));
 vi.mock("../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../state/session", () => ({
+  useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: {},
+  threadEnvironment: {},
+  environmentThreadDetails: {
+    threadAtom: (ref: unknown) => guestDetails.read(ref) ?? Atom.make(null),
+  },
+}));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
@@ -225,7 +244,10 @@ vi.mock("../components/ui/Menu", () => ({
 vi.mock("../components/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../components/FilePreviewModal", () => ({
+  FilePreviewModal: (props: { source: { name: string } | null }) =>
+    props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
+}));
 vi.mock("../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../components/ComposerContextSheet", () => ({}));
 vi.mock("../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => vi.fn() }));
@@ -258,7 +280,6 @@ vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({}));
-vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
@@ -441,7 +462,6 @@ describe("ThreadInlineFilePreview playback", () => {
               typeof ThreadFeed
             >[0]["contentInsetEndAdjustment"],
             anchorMessageId: null,
-            submittedMessageId: null,
             keyboardOffset: 0,
           }),
         ),
@@ -1307,4 +1327,161 @@ describe("inline file previews", () => {
   ])("classifies %j as %s", (file, expected) => {
     expect(inlineFilePreviewKind(file)).toBe(expected);
   });
+});
+
+describe("ThreadFeed previews", () => {
+  it("does not commit an open preview over a different thread", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const environmentId = EnvironmentId.make("environment-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const feedFor = (threadId: ThreadId): ThreadFeedEntry[] => [
+      {
+        type: "message",
+        id: messageId,
+        createdAt: timestamp,
+        message: {
+          id: messageId,
+          role: "user",
+          text: "report",
+          attachments: [
+            {
+              type: "file",
+              id: "report",
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 12,
+            },
+          ],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          runId: null,
+          streaming: false,
+          visibility: "local",
+          sourceThreadId: threadId,
+        },
+      },
+    ];
+    const container = document.createElement("div");
+    // Records what each commit shows before passive effects get a chance to run.
+    const committedPreviews: Array<string | null> = [];
+    function CommitProbe() {
+      useLayoutEffect(() => {
+        committedPreviews.push(
+          container.querySelector("[data-file-preview]")?.getAttribute("data-file-preview") ?? null,
+        );
+      });
+      return null;
+    }
+    const element = (
+      threadId: ThreadId,
+      contentPresentation: Parameters<typeof ThreadFeed>[0]["contentPresentation"] = {
+        kind: "ready",
+      },
+    ) =>
+      createElement(
+        Fragment,
+        null,
+        createElement(ThreadFeed, {
+          threadDetailReady: true,
+          environmentId,
+          threadId,
+          threadTitle: "preview",
+          workspaceRoot: "/repo",
+          feed: feedFor(threadId),
+          queuedMessages: [],
+          dispatchingMessageId: null,
+          onEditPendingMessage: null,
+          contentPresentation,
+          agentLabel: "agent",
+          latestRun: null,
+          activeWorkStartedAt: null,
+          listRef: { current: null },
+          freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+          contentInsetEndAdjustment: { value: 0 } as Parameters<
+            typeof ThreadFeed
+          >[0]["contentInsetEndAdjustment"],
+          anchorMessageId: null,
+          keyboardOffset: 0,
+        }),
+        createElement(CommitProbe),
+      );
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(element(ThreadId.make("thread-1"))));
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
+      );
+      expect(container.querySelector('[data-file-preview="report.pdf"]')).not.toBeNull();
+      committedPreviews.length = 0;
+      await act(async () => root.render(element(ThreadId.make("thread-2"))));
+      expect(committedPreviews[0]).toBeNull();
+
+      // A preview hidden by a presentation change stays closed when the content comes back.
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
+      );
+      expect(container.querySelector('[data-file-preview="report.pdf"]')).not.toBeNull();
+      await act(async () => root.render(element(ThreadId.make("thread-2"), { kind: "loading" })));
+      await act(async () => root.render(element(ThreadId.make("thread-2"))));
+      expect(container.querySelector("[data-file-preview]")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+});
+
+it("does not read a newly created feed's guest details until creation completes", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const reads: string[] = [];
+  const threadAtom = Atom.family((id: string) =>
+    Atom.make(() => {
+      reads.push(id);
+      return null;
+    }),
+  );
+  guestDetails.read.mockImplementation((ref: { threadId: string }) => threadAtom(ref.threadId));
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const props: Parameters<typeof ThreadFeed>[0] = {
+    threadDetailReady: false,
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("pending-thread"),
+    threadTitle: "pending",
+    feed: [],
+    queuedMessages: [],
+    dispatchingMessageId: null,
+    onEditPendingMessage: null,
+    contentPresentation: { kind: "ready" },
+    agentLabel: "agent",
+    latestRun: null,
+    activeWorkStartedAt: null,
+    listRef: { current: null },
+    freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+    contentInsetEndAdjustment: { value: 0 } as Parameters<
+      typeof ThreadFeed
+    >[0]["contentInsetEndAdjustment"],
+    anchorMessageId: null,
+    keyboardOffset: 0,
+  };
+  try {
+    await act(async () =>
+      root.render(createElement(RegistryProvider, null, createElement(ThreadFeed, props))),
+    );
+    expect(reads).toEqual([]);
+    await act(async () =>
+      root.render(
+        createElement(
+          RegistryProvider,
+          null,
+          createElement(ThreadFeed, { ...props, threadDetailReady: true }),
+        ),
+      ),
+    );
+    expect(reads).toEqual(["pending-thread"]);
+  } finally {
+    await act(async () => root.unmount());
+    guestDetails.read.mockReset();
+    vi.unstubAllGlobals();
+  }
 });
