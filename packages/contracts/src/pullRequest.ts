@@ -711,10 +711,7 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
     Schema.Struct({
       path: FilePath,
       viewed: Schema.Boolean,
-      /**
-       * The version of the file the reader was shown, as the diff's `index` line names it.
-       * Absent where the diff names none; the server then records what the head has at the press.
-       */
+      /** The displayed revision; omitted clients fall back to a fresh head read. */
       revision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
     }),
   ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),

@@ -259,9 +259,6 @@ export const make = (dependencies: Dependencies) => {
       input: PullRequestSetFilesViewedInput,
     ): Effect.fn.Return<void, PullRequestError> {
       const viewer = yield* requiredViewerOf(project, "setFilesViewed");
-      // A press that names the version it was shown records that version, so a push landing
-      // after the diff was drawn reads as changed rather than as seen. Only a press that names
-      // none asks the host what the head has.
       const cleared = input.files
         .filter((file) => file.viewed && file.revision === undefined)
         .map((file) => file.path);

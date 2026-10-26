@@ -60,7 +60,6 @@ export function revertFileViewedOverlay(
 
 export interface FileViewedPress {
   readonly viewed: boolean;
-  /** The version the diff on screen named for the file, which the server records as seen. */
   readonly revision: string | undefined;
 }
 
