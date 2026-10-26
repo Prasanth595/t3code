@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
+  ThreadId,
+  TerminalCwdNotFoundError,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
@@ -33,6 +36,10 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import { makeWithWorktreeRecovery } from "../workspace/restoreMissingWorktree.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -415,6 +422,84 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each([
+    { method: "open", location: "managed" },
+    { method: "attach", location: "managed" },
+    { method: "restart", location: "managed" },
+    { method: "open", location: "unmanaged" },
+    { method: "open", location: "no-worktree" },
+  ] as const)(
+    "recovers $method with a $location cwd without a cleanup gap",
+    ({ method, location }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, ptyAdapter, baseDir } = yield* createManager();
+        const worktreesDir = path.join(baseDir, "worktrees");
+        const cwd =
+          location === "unmanaged"
+            ? path.join(baseDir, "missing")
+            : path.join(worktreesDir, "project", "feature");
+        const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
+        let creations = 0;
+        const withRecovery = yield* makeWithWorktreeRecovery(() =>
+          Effect.succeed({
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-1"),
+            worktreePath: location === "no-worktree" ? null : cwd,
+            branch: "feature",
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ServerConfig.ServerConfig)({
+                worktreesDir,
+              } as ServerConfig.ServerConfig["Service"]),
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
+              }),
+              Layer.mock(GitWorkflowService.GitWorkflowService)({
+                pruneWorktrees: () => Effect.void,
+                createWorktree: () =>
+                  Effect.gen(function* () {
+                    creations++;
+                    yield* fs.makeDirectory(cwd, { recursive: true }).pipe(Effect.orDie);
+                    const cleanup = yield* withWorkspaceLease(
+                      cwd,
+                      Effect.sync(() => {
+                        assert.equal(ptyAdapter.spawnInputs.length, 1);
+                      }),
+                    ).pipe(Effect.forkChild({ startImmediately: true }));
+                    yield* Deferred.succeed(cleanupQueued, cleanup);
+                    return {} as never;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const input = openInput({ cwd, worktreePath: cwd });
+        const launch =
+          method === "attach"
+            ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+            : method === "restart"
+              ? manager.restart(restartInput({ cwd, worktreePath: cwd })).pipe(Effect.asVoid)
+              : manager.open(input).pipe(Effect.asVoid);
+        if (location !== "managed") {
+          const error = yield* withRecovery(input.threadId, launch).pipe(Effect.flip);
+          assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
+          assert.equal(creations, 0);
+          assert.equal(ptyAdapter.spawnInputs.length, 0);
+          return;
+        }
+        yield* withRecovery(input.threadId, launch);
+        yield* Fiber.join(yield* Deferred.await(cleanupQueued));
+        assert.equal(creations, 1);
+        assert.equal(ptyAdapter.spawnInputs.length, 1);
+        assert.isTrue(yield* fs.exists(cwd));
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

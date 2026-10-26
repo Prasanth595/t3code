@@ -918,12 +918,20 @@ it.effect.each([WS_METHODS.terminalOpen, WS_METHODS.terminalAttach, WS_METHODS.t
       };
       let attempts = 0;
       const created: string[] = [];
-      const launch = Effect.gen(function* () {
+      const check = Effect.gen(function* () {
         attempts++;
         if (!(yield* fs.exists(cwd).pipe(Effect.orDie)))
           return yield* new TerminalCwdNotFoundError({ cwd });
         return snapshot;
       });
+      const launch = check.pipe(
+        Effect.catchTags({
+          TerminalCwdNotFoundError: (error) =>
+            Effect.flatMap(TerminalManager.TerminalCwdRecovery, (recover) =>
+              recover(error).pipe(Effect.andThen(check)),
+            ),
+        }),
+      );
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),

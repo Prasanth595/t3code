@@ -1,4 +1,4 @@
-import { ThreadId, type TerminalError, type ProjectId } from "@t3tools/contracts";
+import { ThreadId, type ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
-import { withWorkspaceLease } from "./workspaceLease.ts";
+import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
 interface WorktreeThread {
   readonly id: ThreadId;
@@ -60,39 +60,33 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
 });
 
 // Worktree setup uses terminals, so recovery must stay outside TerminalManager.
-export const makeRetryAfterRestoringWorktree = Effect.fn("makeRetryAfterRestoringWorktree")(
-  function* <LookupError>(
-    getThreadShell: (threadId: ThreadId) => Effect.Effect<WorktreeThread | null, LookupError>,
+export const makeWithWorktreeRecovery = Effect.fn("makeRetryAfterRestoringWorktree")(function* <
+  LookupError,
+>(getThreadShell: (threadId: ThreadId) => Effect.Effect<WorktreeThread | null, LookupError>) {
+  const path = yield* Path.Path;
+  const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
+  return Effect.fn("restoreMissingWorktree.retryLaunch")(function* <A, E, R>(
+    threadId: string,
+    launch: Effect.Effect<A, E, R>,
   ) {
-    const path = yield* Path.Path;
-    const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
-    return Effect.fn("restoreMissingWorktree.retryLaunch")(function* <A, R>(
-      threadId: string,
-      launch: Effect.Effect<A, TerminalError, R>,
-    ) {
-      return yield* launch.pipe(
-        Effect.catchTags({
-          TerminalCwdNotFoundError: (error) =>
-            getThreadShell(ThreadId.make(threadId)).pipe(
-              Effect.orElseSucceed(() => null),
-              Effect.flatMap((thread) => {
-                if (thread?.worktreePath == null) return Effect.fail(error);
-                const relative = path.relative(thread.worktreePath, error.cwd);
-                if (
-                  relative === ".." ||
-                  relative.startsWith(`..${path.sep}`) ||
-                  path.isAbsolute(relative)
-                ) {
-                  return Effect.fail(error);
-                }
-                return withWorkspaceLease(
-                  path.resolve(thread.worktreePath),
-                  restoreMissingWorktree(thread),
-                ).pipe(Effect.andThen(launch));
-              }),
-            ),
-        }),
-      );
-    });
-  },
-);
+    return yield* launch.pipe(
+      Effect.provideService(TerminalCwdRecovery, (error) =>
+        getThreadShell(ThreadId.make(threadId)).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.flatMap((thread) => {
+            if (thread?.worktreePath == null) return Effect.fail(error);
+            const relative = path.relative(thread.worktreePath, error.cwd);
+            if (
+              relative === ".." ||
+              relative.startsWith(".." + path.sep) ||
+              path.isAbsolute(relative)
+            ) {
+              return Effect.fail(error);
+            }
+            return restoreMissingWorktree(thread);
+          }),
+        ),
+      ),
+    );
+  });
+});
