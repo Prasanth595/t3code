@@ -152,7 +152,7 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
-    const recreateMissingWorktree = Effect.fn("providerTurnStart.recreateMissingWorktree")(
+    const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
       function* (input: {
         readonly cwd: string;
         readonly worktreePath: string;
