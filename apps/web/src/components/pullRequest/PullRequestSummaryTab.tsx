@@ -3,6 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   PullRequestComment,
@@ -65,6 +66,7 @@ import {
   pullRequestConversationItems,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  readableFailure,
   visibleBody,
   type PullRequestConversationItem,
   type PullRequestFinding,
@@ -80,6 +82,8 @@ import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
+
+const SAVE_FAILURE_HINT = "The host refused the change. Refresh and try again.";
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -504,7 +508,11 @@ export function PullRequestSummaryTab({
     const result = await update({ environmentId, input: { ...reference, body } });
     setBodySaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
+      toastManager.add({
+        type: "error",
+        title: "Could not save the description",
+        description: readableFailure(squashAtomCommandFailure(result), SAVE_FAILURE_HINT),
+      });
       return;
     }
     setBodyScope(null);
@@ -529,7 +537,11 @@ export function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({
+          type: "error",
+          title: "Could not save the comment",
+          description: readableFailure(squashAtomCommandFailure(result), SAVE_FAILURE_HINT),
+        });
         return;
       }
       setCommentScope(null);
