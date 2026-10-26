@@ -3,16 +3,21 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
-import { useContext, useEffect, useRef, useState } from "react";
+import * as Option from "effect/Option";
+import { useContext, useEffect, useRef } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import {
+  buildFileDiffIdentityKey,
+  getRenderablePatch,
+  resolveFileDiffPath,
+  type RenderablePatch,
+} from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
-const DEFAULT_INDICES = [0, 1, 2, 3];
 
 export function useReviewFilePatches({
   environmentId,
@@ -23,6 +28,7 @@ export function useReviewFilePatches({
   theme,
   revision,
   preview,
+  isFileExpanded,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -32,6 +38,7 @@ export function useReviewFilePatches({
   theme: "light" | "dark";
   revision: string | undefined;
   preview: RenderablePatch | null;
+  isFileExpanded: (file: FileDiffMetadata) => boolean;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -42,7 +49,21 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
   ]);
-  const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
+  const files = sortedReviewFiles(source);
+  const placeholders = files.map((file): FileDiffMetadata => ({
+    name: file.path,
+    ...(file.previousPath ? { prevName: file.previousPath } : {}),
+    type: file.previousPath ? "rename-changed" : "change",
+    hunks: [],
+    additionLines: [],
+    deletionLines: [],
+    additionCharacterCount: 0,
+    deletionCharacterCount: 0,
+    splitLineCount: 0,
+    unifiedLineCount: 0,
+    isPartial: true,
+    cacheKey: `${scope}:${file.path}:pending`,
+  }));
   const queries = reviewFileQueries({
     environmentId,
     cwd,
@@ -50,7 +71,7 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
     scope,
-    requested,
+    indices: placeholders.flatMap((file, index) => (isFileExpanded(file) ? [index] : [])),
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
@@ -67,37 +88,13 @@ export function useReviewFilePatches({
         !registry.get(query).waiting;
       if (changed || cached) registry.refresh(query);
     }
-  }, [scope, revision, queries, registry]);
+  }, [scope, revision, queries, registry, previousPreview]);
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
     const files = sortedReviewFiles(source);
     const query = queries.find(({ index }) => files[index]?.path === path)?.query;
     if (query) registry.refresh(query);
   });
-  const files = sortedReviewFiles(source);
-  const pendingIndex = files.findIndex((_, index) => {
-    const patch = patches.get(index);
-    return !patch || patch._tag === "Initial";
-  });
-  const settledFileCount = source
-    ? pendingIndex < 0
-      ? files.length
-      : pendingIndex
-    : preview?.kind === "files"
-      ? preview.files.length
-      : 0;
-  const requestFiles = (indices: number[]) =>
-    setRequested((current) => {
-      const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
-      const added = indices.filter((index) => !previous.includes(index));
-      return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
-    });
-  // The first unsettled file already requested means a batch is in flight; wait for it.
-  const loadNextFiles = () => {
-    if (queries.some(({ index }) => index === settledFileCount)) return;
-    requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
-  };
-  const requestFile = (index: number) => requestFiles([index]);
   const renderableFiles = source
     ? files.map((file, index): FileDiffMetadata => {
         const result = patches.get(index);
@@ -107,20 +104,7 @@ export function useReviewFilePatches({
           );
           if (loaded) return loaded;
         }
-        return {
-          name: file.path,
-          ...(file.previousPath ? { prevName: file.previousPath } : {}),
-          type: file.previousPath ? "rename-changed" : "change",
-          hunks: [],
-          additionLines: [],
-          deletionLines: [],
-          additionCharacterCount: 0,
-          deletionCharacterCount: 0,
-          splitLineCount: 0,
-          unifiedLineCount: 0,
-          isPartial: true,
-          cacheKey: `${scope}:${file.path}:pending`,
-        };
+        return placeholders[index]!;
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
@@ -143,24 +127,14 @@ export function useReviewFilePatches({
       ] as const;
     }),
   );
-  const readyFilePaths = new Set(
-    files
-      .filter((_, index) => {
-        const patch = patches.get(index);
-        return patch && patch._tag !== "Initial";
-      })
-      .map((file) => file.path),
-  );
   return {
     scope,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
-    requestFile,
-    readyFilePaths,
     renderableFiles,
-    settledFileCount,
-    loadNextFiles,
+    // Statistics cannot distinguish added/deleted files, so keep their provisional identity.
+    fileKeys: (source ? placeholders : renderableFiles).map(buildFileDiffIdentityKey),
   };
 }
 
@@ -171,7 +145,7 @@ function reviewFileQueries({
   baseRef,
   ignoreWhitespace,
   scope,
-  requested,
+  indices,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -179,9 +153,8 @@ function reviewFileQueries({
   baseRef: string | null;
   ignoreWhitespace: boolean;
   scope: string;
-  requested: { scope: string; indices: number[] };
+  indices: number[];
 }) {
-  const indices = requested.scope === scope ? requested.indices : DEFAULT_INDICES;
   const files = sortedReviewFiles(source);
   const queries =
     !environmentId || !cwd || !source
@@ -217,10 +190,18 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
+type ParsedPatch = { source: ReviewDiffPreviewSource; patch: RenderablePatch | null };
+
+// Parses outlive the panel like their source queries, and a revalidation that returns the same
+// text keeps the previous parse, so reopening the panel does not parse large files again.
 const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
-  return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
-    AsyncResult.map(result, (source) => {
+  return Atom.make((get) => {
+    const previous = Option.getOrUndefined(
+      Option.flatMap(get.self<AsyncResult.AsyncResult<ParsedPatch, unknown>>(), AsyncResult.value),
+    );
+    return AsyncResult.map(get(reviewEnvironment.diffFilePatch(target)), (source): ParsedPatch => {
+      if (previous?.source.diff === source.diff) return { source, patch: previous.patch };
       let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
         compactPartialHunkOffsets: true,
       });
@@ -232,8 +213,8 @@ const parsedPatchAtom = Atom.family((key: string) => {
         patch = { ...patch, files: [file] };
       }
       return { source, patch };
-    }),
-  );
+    });
+  }).pipe(Atom.setIdleTTL(5 * 60_000));
 });
 
 const reviewPatchesAtom = Atom.family((key: string) => {
