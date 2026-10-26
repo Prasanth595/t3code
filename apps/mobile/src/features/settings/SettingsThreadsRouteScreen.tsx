@@ -9,12 +9,13 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
@@ -90,6 +91,7 @@ function AutoSettleSettingsRows() {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      providerSessionIdleTimeoutMinutes?: number | null;
     },
   ) => {
     if (
@@ -191,6 +193,31 @@ function AutoSettleSettingsRows() {
             disabled={disabled}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected &&
+      syncTargets.every(
+        (target) =>
+          target.environment.serverConfig.environment.capabilities.providerSessionIdleTimeout ===
+          true,
+      ) ? (
+        <SettingsSection title="Release idle agents">
+          <Text className="px-4 text-sm text-foreground-muted">
+            Free memory while idle. Conversations resume when you send a message. Active turns and
+            background work delay release.
+          </Text>
+          {PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.map((option, index) => (
+            <SettingsChoiceRow
+              key={option.value ?? "never"}
+              label={option.label}
+              separated={index > 0}
+              disabled={disabled}
+              selected={displayTargets.every(
+                (target) => target.settings.providerSessionIdleTimeoutMinutes === option.value,
+              )}
+              onPress={() => writeToAll({ providerSessionIdleTimeoutMinutes: option.value })}
+            />
+          ))}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">

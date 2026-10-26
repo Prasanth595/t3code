@@ -378,6 +378,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "release-idle-sessions",
+    title: "Release idle agents",
+    to: "/settings/general",
+    scope: "environment",
+    searchTerms: ["memory RAM process idle timeout suspend resume inactivity agents"],
+  },
+  {
     id: "compact-idle-threads",
     title: "Compact idle threads",
     to: "/settings/general",
