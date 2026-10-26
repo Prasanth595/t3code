@@ -229,7 +229,7 @@ const writeFakeCodexCli = Effect.fn("writeFakeCodexCli")(function* (script: stri
   return { directory, binaryPath };
 });
 
-// The npm `@openai/codex` 0.1 CLI treats `app-server` as a prompt and exits 1 (#20351).
+// The npm `@openai/codex` 0.1 CLI treats `app-server` as a prompt and exits 1.
 const OBSOLETE_CODEX_APP_SERVER = `echo "Missing OpenAI API key." >&2; exit 1`;
 
 const codexModelCapabilities = createModelCapabilities({
