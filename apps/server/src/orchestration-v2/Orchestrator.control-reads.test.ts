@@ -1504,6 +1504,78 @@ it.effect("moves an idle thread into another project and lists it there", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("checks a queued move during a turn and still refuses the rest", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:queued-move-source");
+    const destinationId = ProjectId.make("project:queued-move-destination");
+    const threadId = ThreadId.make("thread:queued-move");
+    const worktreeThreadId = ThreadId.make("thread:queued-move-worktree");
+    yield* createProject(sourceId, "/work/queued-move-source");
+    yield* createProject(destinationId, "/work/queued-move-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+    yield* createThread({
+      threadId: worktreeThreadId,
+      projectId: sourceId,
+      worktreePath: "/work/queued-move-source/.worktrees/feature",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("queued-move-busy-message"),
+      threadId,
+      messageId: MessageId.make("queued-move-busy-message"),
+      text: "Create the project, then move this chat there",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const move = (
+      commandId: string,
+      input: Partial<{ projectId: ProjectId; threadId: ThreadId }>,
+    ) =>
+      ({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(commandId),
+        threadId: input.threadId ?? threadId,
+        projectId: input.projectId ?? destinationId,
+      }) as const;
+
+    yield* orchestrator.checkThreadProjectMove(move("queued-move-check", {}), {
+      ignoreActiveRun: true,
+    });
+    const busy = yield* orchestrator
+      .checkThreadProjectMove(move("queued-move-check-busy", {}), { ignoreActiveRun: false })
+      .pipe(Effect.flip);
+    assert.ok(
+      busy._tag === "OrchestratorDispatchError" &&
+        typeof busy.cause === "string" &&
+        busy.cause.includes("Stop it before moving"),
+    );
+    const missing = yield* orchestrator
+      .checkThreadProjectMove(
+        move("queued-move-check-missing", { projectId: ProjectId.make("project:missing") }),
+        { ignoreActiveRun: true },
+      )
+      .pipe(Effect.flip);
+    assert.ok(missing._tag === "OrchestratorDispatchError");
+    assert.equal(missing.cause, "No project project:missing.");
+    const worktree = yield* orchestrator
+      .checkThreadProjectMove(move("queued-move-check-worktree", { threadId: worktreeThreadId }), {
+        ignoreActiveRun: true,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      worktree._tag === "OrchestratorDispatchError" &&
+        typeof worktree.cause === "string" &&
+        worktree.cause.includes("Pass keepWorktree"),
+    );
+    // The check only reads; the thread stays where it is until the turn ends.
+    assert.equal((yield* projections.getThread(threadId)).projectId, sourceId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("refuses to move a thread that still has a subagent in the same project", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

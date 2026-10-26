@@ -125,6 +125,13 @@ session, so the next turn starts in the destination project. A subagent stays
 with its parent, and a thread that still has a subagent in the current project
 cannot be moved.
 
+An agent can move its own thread with `t3_thread_update` and
+`action: "move_project"`. Because the agent is always mid-turn when it asks,
+the move is checked right away and applied when the turn completes. The
+result says `movesWhenTurnEnds: true`. A failed or interrupted turn drops the
+move, and so does a queued message that starts the next turn first. Moving a
+different thread that is still running is refused.
+
 ## Remove an agent
 
 Approved agents appear under **Settings → Connections** like other clients.

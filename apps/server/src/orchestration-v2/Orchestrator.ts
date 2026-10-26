@@ -330,6 +330,12 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  /** Checks a project move without applying it. ignoreActiveRun skips only the
+   * idle check, so a thread's own agent can queue a move until its turn ends. */
+  readonly checkThreadProjectMove: (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.metadata.update" }>,
+    options: { readonly ignoreActiveRun: boolean },
+  ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly autoArmLimitRecovery: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -2800,6 +2806,78 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return decided.success;
   });
 
+  /** Refusals for a project move. ignoreActiveRun lets a thread's own agent queue
+   * a move during its turn; the move is checked again, idle, when it applies. */
+  const checkProjectMove = Effect.fn("orchestrationV2.checkProjectMove")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.metadata.update" }>,
+    projectId: OrchestrationV2AppThread["projectId"],
+    thread: Pick<OrchestrationV2AppThread, "id" | "projectId" | "lineage" | "worktreePath">,
+    options: { readonly ignoreActiveRun: boolean },
+  ) {
+    if (thread.lineage.relationshipToParent === "subagent") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is a subagent. Move its parent thread instead.`,
+      });
+    }
+    const destination = yield* projects.get(projectId).pipe(mapDispatchError(command));
+    if (Option.isNone(destination) || destination.value.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `No project ${projectId}.`,
+      });
+    }
+    const family = yield* projectionStore
+      .getShellSnapshot({ projectId: thread.projectId })
+      .pipe(mapDispatchError(command));
+    const child = [...family.threads, ...family.archivedThreads].find(
+      (candidate) =>
+        candidate.lineage.parentThreadId === thread.id &&
+        candidate.lineage.relationshipToParent === "subagent",
+    );
+    if (child !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} has subagent ${child.id}. Move is refused while a child thread still belongs to this project.`,
+      });
+    }
+    const shell = yield* projectionStore
+      .getThreadShell(command.threadId)
+      .pipe(mapDispatchError(command));
+    if (shell === null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} could not be read.`,
+      });
+    }
+    const busy =
+      !options.ignoreActiveRun &&
+      (shell.activeRunId !== null ||
+        shell.status === "preparing" ||
+        shell.status === "queued" ||
+        shell.status === "starting" ||
+        shell.status === "running" ||
+        shell.status === "waiting");
+    if (busy) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is ${shell.status}. Stop it before moving it to another project.`,
+      });
+    }
+    if (thread.worktreePath !== null && command.keepWorktree !== true) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} has a worktree at ${thread.worktreePath}. Pass keepWorktree to move it without changing that checkout.`,
+      });
+    }
+  });
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -2949,67 +3027,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.projectId !== undefined &&
       command.projectId !== thread.projectId
     ) {
-      if (thread.lineage.relationshipToParent === "subagent") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} is a subagent. Move its parent thread instead.`,
-        });
-      }
-      const destination = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
-      if (Option.isNone(destination) || destination.value.deletedAt !== null) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `No project ${command.projectId}.`,
-        });
-      }
-      const family = yield* projectionStore
-        .getShellSnapshot({ projectId: thread.projectId })
-        .pipe(mapDispatchError(command));
-      const child = [...family.threads, ...family.archivedThreads].find(
-        (candidate) =>
-          candidate.lineage.parentThreadId === thread.id &&
-          candidate.lineage.relationshipToParent === "subagent",
-      );
-      if (child !== undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} has subagent ${child.id}. Move is refused while a child thread still belongs to this project.`,
-        });
-      }
-      const shell = yield* projectionStore
-        .getThreadShell(command.threadId)
-        .pipe(mapDispatchError(command));
-      if (shell === null) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} could not be read.`,
-        });
-      }
-      const busy =
-        shell.activeRunId !== null ||
-        shell.status === "preparing" ||
-        shell.status === "queued" ||
-        shell.status === "starting" ||
-        shell.status === "running" ||
-        shell.status === "waiting";
-      if (busy) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} is ${shell.status}. Stop it before moving it to another project.`,
-        });
-      }
-      if (thread.worktreePath !== null && command.keepWorktree !== true) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} has a worktree at ${thread.worktreePath}. Pass keepWorktree to move it without changing that checkout.`,
-        });
-      }
+      yield* checkProjectMove(command, command.projectId, thread, { ignoreActiveRun: false });
       moveChangesWorkspace = thread.worktreePath === null;
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
@@ -12675,6 +12693,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
     dispatch: dispatchWithReceipt,
+    checkThreadProjectMove: Effect.fn("OrchestratorV2.checkThreadProjectMove")(
+      function* (command, options) {
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        if (thread.deletedAt !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is deleted.`,
+          });
+        }
+        if (command.projectId === undefined || command.projectId === thread.projectId) return;
+        yield* checkProjectMove(command, command.projectId, thread, options);
+      },
+    ),
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,

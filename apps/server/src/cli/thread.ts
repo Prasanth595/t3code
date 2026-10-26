@@ -167,6 +167,8 @@ const ThreadMoveResult = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   worktreePath: Schema.NullOr(Schema.String),
+  /** Set when the thread's own agent ran this mid-turn; the move applies at turn end. */
+  movesWhenTurnEnds: Schema.optional(Schema.Literal(true)),
 });
 
 const toolFailureDetail = (result: typeof ToolResult.Type) => {
@@ -743,7 +745,9 @@ const threadMoveCommand = Command.make("move", {
           );
           yield* flags.json
             ? printJson(moved)
-            : Console.log(`${moved.threadId}  ${moved.projectId}`);
+            : Console.log(
+                `${moved.threadId}  ${moved.projectId}${moved.movesWhenTurnEnds === true ? "  (moves when this turn ends)" : ""}`,
+              );
         }),
       );
     }).pipe(reportThreadErrors),

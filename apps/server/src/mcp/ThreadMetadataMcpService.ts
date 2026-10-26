@@ -4,6 +4,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type ThreadMetadataMcpAction,
+  type ThreadMetadataMcpQueuedMoveResult,
   type ThreadMetadataMcpUpdateInput,
   type ThreadMetadataMcpUpdateResult,
   ThreadId,
@@ -24,7 +25,10 @@ export class ThreadMetadataMcpService extends Context.Service<
     readonly update: (
       scope: McpInvocationScope,
       input: ThreadMetadataMcpUpdateInput,
-    ) => Effect.Effect<ThreadMetadataMcpUpdateResult, OrchestratorMcpFailure>;
+    ) => Effect.Effect<
+      ThreadMetadataMcpUpdateResult | ThreadMetadataMcpQueuedMoveResult,
+      OrchestratorMcpFailure
+    >;
   }
 >()("t3/mcp/ThreadMetadataMcpService") {}
 
@@ -209,15 +213,42 @@ const make = Effect.gen(function* () {
       action: input.action,
       requestKey,
     });
+    const command = metadataCommand({
+      commandId: updateCommandId,
+      threadId,
+      projectId: target.thread.projectId,
+      update: input,
+    });
+    // An agent moving its own thread is always mid-turn. Like settle, the move
+    // is checked now and applied when that turn completes.
+    if (
+      input.action === "move_project" &&
+      input.projectId !== undefined &&
+      input.projectId !== shell.projectId &&
+      scope.thread?.threadId === threadId &&
+      shell.activeRunId !== null
+    ) {
+      yield* threadManagement
+        .moveProjectAfterRun({ projectId: shell.projectId, runId: shell.activeRunId, command })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to ${input.action} for thread ${threadId}: ${failureDetail(error)}`,
+            ),
+          ),
+        );
+      return {
+        threadId,
+        action: "move_project",
+        commandId: updateCommandId,
+        projectId: input.projectId,
+        worktreePath: shell.worktreePath,
+        movesWhenTurnEnds: true,
+      } satisfies ThreadMetadataMcpQueuedMoveResult;
+    }
     const dispatched = yield* threadManagement
-      .dispatch(
-        metadataCommand({
-          commandId: updateCommandId,
-          threadId,
-          projectId: target.thread.projectId,
-          update: input,
-        }),
-      )
+      .dispatch(command)
       .pipe(
         Effect.mapError((error) =>
           failure(

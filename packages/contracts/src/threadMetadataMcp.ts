@@ -141,3 +141,17 @@ export const ThreadMetadataMcpUpdateResult = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type ThreadMetadataMcpUpdateResult = typeof ThreadMetadataMcpUpdateResult.Type;
+
+/**
+ * A thread's own agent asked to move it mid-turn. The move is checked now and
+ * applied when the turn completes; a failed or interrupted turn drops it.
+ */
+export const ThreadMetadataMcpQueuedMoveResult = Schema.Struct({
+  threadId: ThreadId,
+  action: Schema.Literal("move_project"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  worktreePath: Schema.NullOr(Schema.String),
+  movesWhenTurnEnds: Schema.Literal(true),
+});
+export type ThreadMetadataMcpQueuedMoveResult = typeof ThreadMetadataMcpQueuedMoveResult.Type;

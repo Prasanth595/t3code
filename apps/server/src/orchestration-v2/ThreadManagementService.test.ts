@@ -441,3 +441,114 @@ it.effect.each([
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
 );
+
+it.effect.each([
+  { status: "completed" as const, moves: true },
+  { status: "failed" as const, moves: false },
+  { status: "interrupted" as const, moves: false },
+])("moveProjectAfterRun moves the thread only when the run $status", ({ status, moves }) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:move-after-run");
+    const destinationId = ProjectId.make("project:thread-management:move-destination");
+    const threadId = ThreadId.make("thread:thread-management:move-after-run");
+    const runId = RunId.make("run:thread-management:move-after-run");
+    const checked: Array<boolean> = [];
+    const dispatched: Array<string> = [];
+    const runRead = yield* Deferred.make<void>();
+    const applied = yield* Deferred.make<void>();
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          checkThreadProjectMove: (_command, options) =>
+            Effect.sync(() => void checked.push(options.ignoreActiveRun)),
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          getThreadRecords: () =>
+            Deferred.succeed(runRead, undefined).pipe(
+              Effect.as({
+                thread: { id: threadId, projectId, deletedAt: null },
+                runs: [{ id: runId, status }],
+              } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.type);
+              return { sequence: 1, storedEvents: [] } as never;
+            }).pipe(Effect.tap(() => Deferred.succeed(applied, undefined))),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      yield* service.moveProjectAfterRun({
+        projectId,
+        runId,
+        command: {
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:thread-management:move-after-run"),
+          threadId,
+          projectId: destinationId,
+        },
+      });
+      expect(checked).toEqual([true]);
+      if (moves) {
+        yield* Deferred.await(applied);
+      } else {
+        yield* Deferred.await(runRead);
+        for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
+      }
+    }).pipe(Effect.provide(layerTest));
+
+    expect(dispatched).toEqual(moves ? ["thread.metadata.update"] : []);
+  }),
+);
+
+it.effect("moveProjectAfterRun queues nothing when the move is refused up front", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:move-refused");
+    const commandId = CommandId.make("command:thread-management:move-refused");
+    const reads: Array<string> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          checkThreadProjectMove: (command) =>
+            Effect.fail(
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: `Thread ${threadId} has a worktree at /work/tree. Pass keepWorktree to move it without changing that checkout.`,
+              }),
+            ),
+          getThreadRecords: () =>
+            Effect.sync(() => void reads.push("records")).pipe(Effect.andThen(Effect.never)),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    const error = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* service
+        .moveProjectAfterRun({
+          projectId: ProjectId.make("project:thread-management:move-refused"),
+          runId: RunId.make("run:thread-management:move-refused"),
+          command: {
+            type: "thread.metadata.update",
+            commandId,
+            threadId,
+            projectId: ProjectId.make("project:thread-management:move-refused-destination"),
+          },
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(layerTest));
+
+    expect(error._tag).toBe("OrchestratorDispatchError");
+    expect(reads).toEqual([]);
+  }),
+);

@@ -41,6 +41,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -420,6 +421,14 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
+  /** Checks a project move now, then applies it once the agent's run completes.
+   * A failed or interrupted run, or a refusal on the idle re-check, drops it.
+   * A newer queued move for the same thread replaces this one. */
+  readonly moveProjectAfterRun: (input: {
+    readonly projectId: ProjectId;
+    readonly runId: RunId;
+    readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }>;
+  }) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
@@ -959,6 +968,34 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // Keyed by thread so a newer queued move replaces the one still waiting.
+  const pendingProjectMoves = yield* FiberMap.make<ThreadId>();
+
+  const moveProjectAfterRun: ThreadManagementServiceShape["moveProjectAfterRun"] = Effect.fn(
+    "orchestrationV2.threadManagement.moveProjectAfterRun",
+  )(function* (input) {
+    const { command } = input;
+    yield* orchestrator.checkThreadProjectMove(command, { ignoreActiveRun: true });
+    const applyAfterRun = Effect.gen(function* () {
+      const { run } = yield* waitForThread({
+        projectId: input.projectId,
+        threadId: command.threadId,
+        runId: input.runId,
+        timeoutMs: SETTLE_AFTER_RUN_WAIT_MS,
+      });
+      if (run?.status !== "completed") {
+        yield* Effect.logInfo("Dropped a queued project move because the turn did not complete", {
+          threadId: command.threadId,
+          runId: input.runId,
+          status: run?.status ?? null,
+        });
+        return;
+      }
+      yield* dispatch(command);
+    }).pipe(Effect.ignoreCause({ log: true }));
+    yield* FiberMap.run(pendingProjectMoves, command.threadId, applyAfterRun);
+  });
+
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
     "orchestrationV2.threadManagement.settleThread",
   )(function* (input) {
@@ -1263,6 +1300,7 @@ const make = Effect.gen(function* () {
     hasReceipt,
     waitForThread,
     settleAfterRun,
+    moveProjectAfterRun,
     settleThread,
     interruptThread,
     stopDelegatedTasks,
