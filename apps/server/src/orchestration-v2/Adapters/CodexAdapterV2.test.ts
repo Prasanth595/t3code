@@ -6533,6 +6533,8 @@ describe("codexDynamicToolOutput", () => {
       { type: "inputText", text: "Script completed" },
       { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
       { type: "inputImage", imageUrl: "https://example.test/remote.png" },
+      { type: "inputImage", imageUrl: "data:image/png;base64," },
+      { type: "inputAudio", audioUrl: "data:audio/wav;base64,AAAA" },
     ]);
   });
 });
