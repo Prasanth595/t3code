@@ -769,7 +769,7 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
   }
   if (!allowBuild)
     return yield* new NativeClientError({
-      message: `No shared build of ${key} yet. Run \`vp run mobile:install ${platform}\` once on a machine with a local ${platform === "ios" ? "simulator" : "emulator"} of this checkout; it builds the client and shares it.`,
+      message: `No shared build of ${key} yet, and iOS clients build only on macOS. Run \`vp run mobile:install ios\` once on a Mac with this checkout; it builds the client and shares it.`,
     });
   const log = yield* BuildLog;
   yield* Console.error(
@@ -865,7 +865,8 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
 
 /**
  * Install into an agent-device session the caller already opened (a device pool, a cloud
- * provider, or a local device), using the shared cache only; such hosts cannot build.
+ * provider, or a local device). A cache miss builds here, as for a local device: the device
+ * only runs the client. iOS clients build only on macOS.
  */
 const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
   home: string,
@@ -913,10 +914,11 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         ),
       )
     : false;
+  const canBuild = platform === "android" || (yield* HostProcess.Platform) === "darwin";
   const artifact = fetched
     ? { source: "remote" as const, buildMs: 0 }
     : yield* Effect.gen(function* () {
-        const local = yield* resolveArtifact(home, platform, deviceAbi, current, false).pipe(
+        const local = yield* resolveArtifact(home, platform, deviceAbi, current, canBuild).pipe(
           Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
         );
         yield* Console.error(`Installing into agent-device session ${session}...`);
