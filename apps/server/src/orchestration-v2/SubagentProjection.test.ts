@@ -29,7 +29,7 @@ import {
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import { resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -120,48 +120,6 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
-it("creates a pinned parent's subagent child unpinned so it can settle", () => {
-  const pinnedParent = {
-    ...makeParentThread(),
-    pinnedAt: parentCreatedAt,
-    pinOrderKey: "a0",
-  };
-  for (const parentThread of [pinnedParent, makeParentThread()]) {
-    const childThread = makeSubagentChildThread({
-      parentThread,
-      childThreadId,
-      parentNodeId: NodeId.make("node:subagent-parent"),
-      activeProviderThreadId: null,
-      providerInstanceId: childProviderInstanceId,
-      modelSelection: childModelSelection,
-      title: "Child",
-      now: childCreatedAt,
-      createdBy: "agent",
-      creationSource: "provider",
-    });
-
-    assert.notExists(childThread.pinnedAt);
-    assert.notExists(childThread.pinOrderKey);
-    assert.isTrue(
-      isAutoSettlementCandidate(
-        {
-          ...childThread,
-          status: "idle",
-          activityRunStatus: null,
-          pendingRuntimeRequest: null,
-          pendingBackgroundTasks: [],
-          latestRunId: null,
-          latestRunRequestedAt: null,
-          latestRunStartedAt: null,
-          latestRunCompletedAt: null,
-          latestUserMessageAt: null,
-        },
-        DateTime.toEpochMillis(childCreatedAt),
-      ),
-    );
-  }
-});
-
 it.effect.each([
   ["sql", ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))],
   ["memory", ProjectionStore.layerMemory],
@@ -184,6 +142,8 @@ it.effect.each([
         creationSource: "provider",
       });
 
+      assert.equal(parentThread.pinnedAt, parentCreatedAt);
+      assert.equal(parentThread.pinOrderKey, "a0");
       assert.isNull(childThread.pinnedAt);
       assert.isNull(childThread.pinOrderKey);
 
@@ -196,6 +156,9 @@ it.effect.each([
           payload: thread,
         });
       }
+      const savedParent = yield* store.getThread(parentThreadId);
+      assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
+      assert.equal(savedParent.pinOrderKey, "a0");
       const candidates = yield* store.getSettlementCandidates();
       assert.deepEqual(
         candidates.map((candidate) => candidate.id),
