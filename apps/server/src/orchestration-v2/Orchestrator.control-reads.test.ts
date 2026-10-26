@@ -1366,9 +1366,18 @@ it.effect("guards armed limit recovery at dispatch while preserving manual settl
         assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
         assert.isNull((yield* projections.getThread(threadId)).settledOverride);
         yield* TestClock.setTime(DateTime.toEpochMillis(reset));
+        const staleError = yield* orchestrator
+          .dispatch({
+            ...automaticCommand,
+            commandId: CommandId.make("limit-stale-auto-settle-after-reset"),
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(staleError, Orchestrator.OrchestratorDispatchError);
+        assert.isNull((yield* projections.getThread(threadId)).settledOverride);
         yield* orchestrator.dispatch({
           ...automaticCommand,
           commandId: CommandId.make("limit-auto-settle-after-reset"),
+          snapshotLimitResetAtMs: DateTime.toEpochMillis(reset),
         });
       } else {
         yield* orchestrator.dispatch({

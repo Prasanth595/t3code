@@ -11798,6 +11798,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const limitResetAtMs = shell === null ? null : armedLimitResetAtMs(shell);
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (
+          limitResetAtMs !== (command.snapshotLimitResetAtMs ?? null) ||
           (limitResetAtMs !== null && limitResetAtMs > nowMs) ||
           thread.settledOverride !== null ||
           DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)

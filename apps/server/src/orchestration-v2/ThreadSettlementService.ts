@@ -352,6 +352,7 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
           threadId: thread.id,
           snapshotAt: thread.updatedAt,
+          snapshotLimitResetAtMs: armedLimitResetAtMs(thread),
           settledAt,
         });
         return null;

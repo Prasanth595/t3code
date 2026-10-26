@@ -2823,6 +2823,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snapshotAt: Schema.DateTimeUtc,
+    snapshotLimitResetAtMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
