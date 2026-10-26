@@ -90,6 +90,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  parseDelegatedResultValue,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -1570,6 +1571,12 @@ const make = Effect.gen(function* () {
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
           ? subagentResultForRun(childProjection, taskResultRun).text
           : null;
+    const typedResult =
+      task.resultValue !== undefined && status === "completed"
+        ? task.resultValue
+        : task.resultSchema !== undefined && status === "completed" && derivedResult !== null
+          ? parseDelegatedResultValue(derivedResult, task.resultSchema)
+          : null;
     const resultTransfers = parentProjection.contextTransfers.filter(
       (transfer) =>
         transfer.type === "subagent_result" &&
@@ -1611,6 +1618,7 @@ const make = Effect.gen(function* () {
       model: modelSelection.model,
       options: modelSelection.options ?? [],
       summary: derivedResult,
+      typedResult,
       resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
       latestTerminalStatus:
@@ -2068,6 +2076,20 @@ const make = Effect.gen(function* () {
       const { parent, limits } = yield* loadCaller(scope);
       const providers = yield* loadProviders;
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+      const outputSchemaCapableInstanceIds = new Set(
+        yield* Effect.forEach(
+          [...orchestrationCapableInstanceIds],
+          (instanceId) =>
+            providerAdapters.get(instanceId).pipe(
+              Effect.flatMap((adapter) => adapter.getCapabilities()),
+              Effect.map((capabilities) =>
+                capabilities.turns.supportsOutputSchema === true ? [instanceId] : [],
+              ),
+              Effect.orElseSucceed((): ReadonlyArray<typeof instanceId> => []),
+            ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((lists) => lists.flat())),
+      );
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
@@ -2118,6 +2140,8 @@ const make = Effect.gen(function* () {
               : { runtimeModes: [...provider.supportedRuntimeModes] }),
             canRunChildTask: constraints.length === 0,
             canRunCrossProviderChildTask: constraints.length === 0,
+            canEnforceResultSchema:
+              constraints.length === 0 && outputSchemaCapableInstanceIds.has(provider.instanceId),
             constraints: [...constraints],
           };
         }),
@@ -2162,6 +2186,23 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
+      if (input.resultSchema !== undefined) {
+        const capabilities = yield* providerAdapters.get(target.modelSelection.instanceId).pipe(
+          Effect.flatMap((adapter) => adapter.getCapabilities()),
+          Effect.mapError((error) =>
+            failure(
+              "provider_unavailable",
+              `Unable to read capabilities of ${target.modelSelection.instanceId}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+        if (capabilities.turns.supportsOutputSchema !== true) {
+          return yield* failure(
+            "result_schema_unsupported",
+            `Provider ${target.modelSelection.instanceId} cannot enforce a result schema.`,
+          );
+        }
+      }
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
@@ -2215,6 +2256,7 @@ const make = Effect.gen(function* () {
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
           ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.resultSchema === undefined ? {} : { resultSchema: input.resultSchema }),
           modelSelection: target.modelSelection,
           runtimeMode,
           interactionMode,

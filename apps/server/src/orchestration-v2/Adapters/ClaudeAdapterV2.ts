@@ -1766,6 +1766,12 @@ function resultTextFromSdkMessage(
   };
 }
 
+function claudeStructuredOutputFromSdkMessage(message: SDKMessage): unknown | null {
+  if (message.type !== "result" || message.subtype !== "success") return null;
+  const structuredOutput = Reflect.get(message, "structured_output");
+  return structuredOutput == null ? null : structuredOutput;
+}
+
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
@@ -8969,10 +8975,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
+          const missingStructuredOutput =
+            message.type === "result" &&
+            message.subtype === "success" &&
+            !message.is_error &&
+            context.input.appThread.delegatedResultSchema !== undefined &&
+            claudeStructuredOutputFromSdkMessage(message) === null;
           const resultText =
             message.type === "result" &&
             ((message.subtype === "success" && message.is_error) ||
-              terminalStatusFromResult(message) === "failed")
+              terminalStatusFromResult(message) === "failed" ||
+              missingStructuredOutput)
               ? null
               : resultTextFromSdkMessage(message);
           if (
@@ -9045,13 +9058,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : null;
             const resultFailure = interrupted
               ? null
-              : limitedCompaction !== null
+              : missingStructuredOutput
                 ? makeProviderFailure({
-                    class: "usage_limit",
-                    message: limitedCompaction.message ?? failureHint,
-                    code: "compaction_failed",
+                    message: "Claude did not return the requested structured output.",
+                    code: "structured_output_missing",
                   })
-                : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
+                : limitedCompaction !== null
+                  ? makeProviderFailure({
+                      class: "usage_limit",
+                      message: limitedCompaction.message ?? failureHint,
+                      code: "compaction_failed",
+                    })
+                  : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
@@ -9060,9 +9078,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               status: interrupted
                 ? "interrupted"
-                : limitedCompaction !== null
+                : missingStructuredOutput
                   ? "failed"
-                  : terminalStatusFromResult(message, failureHint),
+                  : limitedCompaction !== null
+                    ? "failed"
+                    : terminalStatusFromResult(message, failureHint),
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),

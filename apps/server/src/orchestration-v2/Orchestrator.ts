@@ -152,6 +152,7 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
   makeSubagentChildThread,
+  parseDelegatedResultValue,
   subagentResultForRun,
   delegatedTaskProgress,
   subagentThreadTitle,
@@ -7223,6 +7224,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           now,
           createdBy: command.createdBy,
           creationSource: command.creationSource,
+          ...(command.resultSchema === undefined
+            ? {}
+            : { delegatedResultSchema: command.resultSchema }),
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
@@ -7243,6 +7247,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         prompt: command.task,
         title: command.title ?? null,
         model: command.modelSelection.model,
+        ...(command.resultSchema === undefined ? {} : { resultSchema: command.resultSchema }),
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
         status: "running",
         result: null,
@@ -7460,8 +7465,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
     const taskId = idAllocator.derive.delegatedTaskNode({ commandId: command.commandId });
+    const { resultValue: _resultValue, ...originalWithoutResultValue } = original;
     const task: OrchestrationV2Subagent = {
-      ...original,
+      ...originalWithoutResultValue,
       createdBy: command.createdBy,
       driver: adapter.driver,
       id: taskId,
@@ -11250,6 +11256,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
+      const resultValue =
+        task.resultSchema !== undefined && terminalStatus === "completed"
+          ? parseDelegatedResultValue(result.text, task.resultSchema)
+          : null;
       const parentRun =
         task.runId === null
           ? undefined
@@ -11263,6 +11273,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
+        ...(resultValue === null ? {} : { resultValue }),
         completedAt: now,
         updatedAt: now,
       };

@@ -246,6 +246,7 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   activeSteeringInterruptsTools: Schema.optional(Schema.Boolean),
   supportsSteeringByInterruptRestart: Schema.Boolean,
   supportsQueuedMessages: Schema.Boolean,
+  supportsOutputSchema: Schema.optional(Schema.Boolean),
   terminalStatusQuality: Schema.Literals(["strong", "weak", "none"]),
 });
 export type OrchestrationV2TurnCapabilities = typeof OrchestrationV2TurnCapabilities.Type;
@@ -378,6 +379,10 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/** JSON Schema for a delegated child's final answer. */
+export const OrchestrationV2ResultSchema = Schema.Record(Schema.String, Schema.Unknown);
+export type OrchestrationV2ResultSchema = typeof OrchestrationV2ResultSchema.Type;
+
 /**
  * `score` is an open count that halves every two weeks, as of `openedAt`.
  * `picks` stores lowercase palette queries, newest first.
@@ -414,6 +419,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
+  /** Result contract carried by a delegated child thread. */
+  delegatedResultSchema: Schema.optional(OrchestrationV2ResultSchema),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -803,6 +810,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
+  resultSchema: Schema.optional(OrchestrationV2ResultSchema),
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
@@ -819,6 +827,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   progress: Schema.optional(Schema.String),
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
+  /** Parsed JSON answer when a result schema was requested and parsing succeeded. */
+  resultValue: Schema.optional(Schema.Struct({ value: Schema.Unknown })),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
@@ -3169,6 +3179,7 @@ export const OrchestrationV2Command = Schema.Union([
     parentNodeId: NodeId,
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
+    resultSchema: Schema.optional(OrchestrationV2ResultSchema),
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,

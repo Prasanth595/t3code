@@ -34,6 +34,7 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2ResultSchema,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -149,6 +150,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
+  resultSchema: Schema.optional(
+    OrchestrationV2ResultSchema.annotate({
+      description:
+        "JSON Schema for the child's final answer. The result exposes the parsed value as typedResult.",
+    }),
+  ),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
@@ -197,6 +204,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
+  typedResult: Schema.NullOr(Schema.Struct({ value: Schema.Unknown }))
+    .pipe(Schema.withDecodingDefault(Effect.succeed(null)))
+    .annotate({
+      description:
+        "Parsed JSON result when resultSchema was requested; null when absent, invalid, or failed.",
+    }),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
@@ -694,6 +707,7 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "capability_denied",
       "parent_not_active",
       "provider_unavailable",
+      "result_schema_unsupported",
       "model_unavailable",
       "runtime_mode_escalation_denied",
       "interaction_mode_escalation_denied",

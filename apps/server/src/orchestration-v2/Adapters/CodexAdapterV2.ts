@@ -258,6 +258,7 @@ export const CodexProviderCapabilitiesV2 = {
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
+    supportsOutputSchema: true,
     terminalStatusQuality: "strong",
   },
   streaming: {
@@ -736,6 +737,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
+    readonly outputSchema?: Readonly<Record<string, unknown>>;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -791,6 +793,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
+      ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       // Codex supplies its own mode instructions; send both modes to clear Plan on exit.
       collaborationMode: {
         mode: input.runtimePolicy.interactionMode,
@@ -2736,6 +2739,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               prompt: input.prompt,
               title: input.title,
               model: reportedSelection?.model ?? input.model,
+              ...(input.context.projectionAppThread.delegatedResultSchema === undefined
+                ? {}
+                : { resultSchema: input.context.projectionAppThread.delegatedResultSchema }),
+              completionWake: "always" as const,
               modelSelection: reportedSelection
                 ? {
                     instanceId: input.context.input.modelSelection.instanceId,
@@ -2767,6 +2774,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               now,
               createdBy: "agent",
               creationSource: "provider",
+              ...(input.context.projectionAppThread.delegatedResultSchema === undefined
+                ? {}
+                : {
+                    delegatedResultSchema: input.context.projectionAppThread.delegatedResultSchema,
+                  }),
             });
             const subagent = {
               parentContext: input.context,
@@ -6304,6 +6316,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
+              ...(turnInput.appThread.delegatedResultSchema === undefined
+                ? {}
+                : { outputSchema: turnInput.appThread.delegatedResultSchema }),
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
