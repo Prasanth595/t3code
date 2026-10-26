@@ -256,10 +256,7 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
-// Muse folds a saved session's event log before it answers these, so they take time in
-// proportion to the session's history: a 276 MB session took 36 s to read. Under the
-// ordinary command deadline such a session could never be opened again.
-const SESSION_LOAD_METHODS = new Set(["session/resume", "session/read"]);
+// Loading saved history can exceed the ordinary command deadline.
 const SESSION_LOAD_TIMEOUT_MS = 10 * 60_000;
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
@@ -382,7 +379,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             ),
         }).pipe(
           Effect.timeout(
-            SESSION_LOAD_METHODS.has(method)
+            method === "session/resume" || method === "session/read"
               ? SESSION_LOAD_TIMEOUT_MS
               : (options.requestTimeoutMs ?? 30_000),
           ),

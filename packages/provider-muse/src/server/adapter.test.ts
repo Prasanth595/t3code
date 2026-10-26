@@ -1444,20 +1444,27 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("closes the host when a saved session never finishes loading", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      fake.queueResponse("session/resume", pendingPromise<Record<string, unknown>>().promise);
-      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session").pipe(
-        Effect.exit,
-        Effect.forkScoped,
-      );
-      yield* fake.takeCall("session/resume");
-      yield* TestClock.adjust("10 minutes");
-      const result = yield* Fiber.join(opening);
-      assert.strictEqual(result._tag, "Failure");
-      assert.strictEqual(fake.closeCount(), 1);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  it.effect.each(["session/resume", "session/read", "session/start"])(
+    "closes the host when %s exceeds its deadline",
+    (method) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = method === "session/read" ? yield* makeHarness(fake) : undefined;
+        fake.queueResponse(method, pendingPromise<Record<string, unknown>>().promise);
+        const operation = harness
+          ? harness.runtime.readThreadSnapshot!({ providerThread: harness.providerThread })
+          : makeHarness(
+              fake,
+              INSTANCE_ID,
+              method === "session/resume" ? "saved-session" : undefined,
+            );
+        const opening = yield* operation.pipe(Effect.exit, Effect.forkScoped);
+        yield* fake.takeCall(method);
+        yield* TestClock.adjust(method === "session/start" ? "30 seconds" : "10 minutes");
+        const result = yield* Fiber.join(opening);
+        assert.strictEqual(result._tag, "Failure");
+        assert.strictEqual(fake.closeCount(), 1);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect.each([
