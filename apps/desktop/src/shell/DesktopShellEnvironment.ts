@@ -410,9 +410,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
-    const shellPath = trimNonEmpty(shellEnvironment.PATH);
     const mergedPath = mergePaths(config.platform, [
-      shellPath.pipe(Option.orElse(() => launchctlPath)),
+      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
     ]);
 
@@ -491,9 +490,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       }
     }
 
-    // Only a login-shell PATH counts; a launchctl-only PATH still leaves
-    // server hydration enabled.
-    return Option.isSome(shellPath);
+    return Option.isSome(trimNonEmpty(shellEnvironment.PATH));
   },
 );
 

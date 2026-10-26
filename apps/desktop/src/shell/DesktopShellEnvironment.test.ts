@@ -286,7 +286,6 @@ describe("DesktopShellEnvironment", () => {
 
   it.effect("leaves macOS preparation incomplete when no login shell returns a PATH", () =>
     Effect.gen(function* () {
-      // A probe that times out yields the same empty output as this reply.
       const prepared = yield* runShellEnvironment({
         env: { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
         platform: "darwin",
