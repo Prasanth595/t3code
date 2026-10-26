@@ -11011,11 +11011,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       // A finalized task keeps its own outcome; a later non-task run cannot qualify it.
-      // After a follow-up task, the latest follow-up's outcome decides instead.
+      // After a follow-up task, the latest one that left the queue decides instead, unless it
+      // was cancelled before it started.
       const followUpRun =
         taskRuns.length === 0
           ? childControls.runs
-              .filter((run) => run.delegatedTaskId !== undefined && run.status !== "queued")
+              .filter(
+                (run) =>
+                  run.delegatedTaskId !== undefined &&
+                  run.status !== "queued" &&
+                  !cancelledBeforeStart(run),
+              )
               .toSorted((a, b) => b.ordinal - a.ordinal)[0]
           : undefined;
       const taskStatus =
