@@ -763,19 +763,18 @@ export const layer: Layer.Layer<
                 existingProviderThread: { ...providerThread, nativeThreadRef: null },
               })
               .pipe(
-                Effect.flatMap((replacement) =>
-                  replacementInput.reason === "handoff_overflow" &&
-                  (replacement.nativeThreadRef?.nativeId == null ||
-                    replacement.nativeThreadRef.nativeId ===
-                      providerThread.nativeThreadRef?.nativeId)
-                    ? Effect.fail(
-                        new ProviderAdapter.ProviderAdapterProtocolError({
-                          driver: session.driver,
-                          detail:
-                            "Provider did not create a fresh native thread for the context handoff",
-                        }),
-                      )
-                    : Effect.succeed(replacement),
+                Effect.filterOrFail(
+                  (replacement) =>
+                    replacementInput.reason !== "handoff_overflow" ||
+                    (replacement.nativeThreadRef?.nativeId != null &&
+                      replacement.nativeThreadRef.nativeId !==
+                        providerThread.nativeThreadRef?.nativeId),
+                  () =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: session.driver,
+                      detail:
+                        "Provider did not create a fresh native thread for the context handoff",
+                    }),
                 ),
               ),
           );
