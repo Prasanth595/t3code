@@ -1243,7 +1243,7 @@ function ProviderMark({
 }
 
 function figureClass(loading: boolean) {
-  return cn("transition-opacity", loading && "opacity-40");
+  return cn("transition-opacity", loading && "opacity-40 starting:opacity-100");
 }
 
 function Metric({
