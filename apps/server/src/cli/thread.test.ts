@@ -1,8 +1,8 @@
 import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { type ThreadTools, waitForRun } from "./thread.ts";
+import { moveThread, ThreadToolFailedError, type ThreadTools, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -71,5 +71,32 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       runId,
       status: "completed",
     });
+  }),
+);
+
+it.effect("move names the --keep-worktree flag when the server refuses a worktree", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const call = ((tool: string, args: unknown) => {
+      calls.push(args);
+      return Effect.fail(
+        new ThreadToolFailedError({
+          tool,
+          detail: `Unable to move_project for thread ${threadId}: Thread ${threadId} has a worktree at /work/tree. Pass keepWorktree to move it without changing that checkout.`,
+        }),
+      );
+    }) as ThreadTools["call"];
+
+    const error = yield* Effect.flip(
+      moveThread({ call }, threadId, ProjectId.make("project-2"), false),
+    );
+
+    assert.strictEqual(
+      error.message,
+      `Unable to move_project for thread ${threadId}: Thread ${threadId} has a worktree at /work/tree. Pass --keep-worktree to move it without changing that checkout.`,
+    );
+    assert.deepStrictEqual(calls, [
+      { threadId, action: "move_project", projectId: ProjectId.make("project-2") },
+    ]);
   }),
 );

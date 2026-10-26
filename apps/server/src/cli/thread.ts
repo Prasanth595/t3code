@@ -716,6 +716,38 @@ const keepWorktreeFlag = Flag.Boolean("keep-worktree").pipe(
   Flag.withDefault(false),
 );
 
+/**
+ * The server names the MCP argument (`keepWorktree`) when it refuses a
+ * worktree; from the CLI that argument is the `--keep-worktree` flag.
+ */
+export const moveThread = (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  keepWorktree: boolean,
+) =>
+  tools
+    .call(
+      "t3_thread_update",
+      {
+        threadId,
+        action: "move_project",
+        projectId,
+        ...(keepWorktree ? { keepWorktree: true } : {}),
+      },
+      ThreadMoveResult,
+    )
+    .pipe(
+      Effect.mapError((error) =>
+        error._tag === "ThreadToolFailedError"
+          ? new ThreadToolFailedError({
+              tool: error.tool,
+              detail: error.detail.replace("Pass keepWorktree", "Pass --keep-worktree"),
+            })
+          : error,
+      ),
+    );
+
 const threadMoveCommand = Command.make("move", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -735,16 +767,7 @@ const threadMoveCommand = Command.make("move", {
         flags,
         Effect.fn("cli.thread.move")(function* (tools) {
           const project = yield* resolveProject(tools, flags.project);
-          const moved = yield* tools.call(
-            "t3_thread_update",
-            {
-              threadId,
-              action: "move_project",
-              projectId: project.id,
-              ...(flags.keepWorktree ? { keepWorktree: true } : {}),
-            },
-            ThreadMoveResult,
-          );
+          const moved = yield* moveThread(tools, threadId, project.id, flags.keepWorktree);
           yield* flags.json
             ? printJson(moved)
             : Console.log(
