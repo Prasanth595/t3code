@@ -3,10 +3,13 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import { resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+import { parsePatchOffMainThread } from "./parsePatchOffMainThread";
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
@@ -55,19 +58,17 @@ export function useReviewFilePatches({
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
   );
-  const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
+  // Opening the panel refreshes the preview, and its new revision revalidates the cached files.
+  // Refreshing them on mount as well would request and decode every patch twice.
+  const previousRevision = useRef(revision);
   useEffect(() => {
-    const previous = previousPreview.current;
-    previousPreview.current = { scope, revision, queries };
+    if (previousRevision.current === revision) return;
+    previousRevision.current = revision;
     for (const { query } of queries) {
-      const changed = previous.scope === scope && previous.revision !== revision;
-      const cached =
-        !previous.queries.some((entry) => entry.query === query) &&
-        registry.get(query)._tag !== "Initial" &&
-        !registry.get(query).waiting;
-      if (changed || cached) registry.refresh(query);
+      const result = registry.get(query);
+      if (result._tag !== "Initial" && !result.waiting) registry.refresh(query);
     }
-  }, [scope, revision, queries, registry]);
+  }, [revision, queries, registry]);
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
     const files = sortedReviewFiles(source);
@@ -217,13 +218,22 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
+type ParsedPatch = { source: ReviewDiffPreviewSource; patch: RenderablePatch | null };
+
+// Parses outlive the panel like their source queries, and a revalidation that returns the same
+// text keeps the previous parse, so reopening the panel parses nothing.
 const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
-  return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
-    AsyncResult.map(result, (source) => {
-      let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
-        compactPartialHunkOffsets: true,
-      });
+  return Atom.make((get) =>
+    Effect.gen(function* () {
+      const source = yield* get.result(reviewEnvironment.diffFilePatch(target));
+      const previous = Option.getOrUndefined(
+        Option.flatMap(get.self<AsyncResult.AsyncResult<ParsedPatch>>(), AsyncResult.value),
+      );
+      if (previous?.source.diff === source.diff) return { source, patch: previous.patch };
+      let patch = yield* Effect.promise(() =>
+        parsePatchOffMainThread(source.diff, `diff-panel:${theme}`),
+      );
       if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
         const stat = source.files[0]!;
         const file = { ...patch.files[0]!, name: stat.path };
@@ -233,7 +243,7 @@ const parsedPatchAtom = Atom.family((key: string) => {
       }
       return { source, patch };
     }),
-  );
+  ).pipe(Atom.setIdleTTL(5 * 60_000));
 });
 
 const reviewPatchesAtom = Atom.family((key: string) => {

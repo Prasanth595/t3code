@@ -1211,7 +1211,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const stopObserving = observeResize(content ? [viewport, content] : viewport, update);
     viewport.addEventListener("scroll", update, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: false });
-    update();
 
     return () => {
       tabListRef.current = null;
