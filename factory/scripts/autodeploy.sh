@@ -204,7 +204,8 @@ factory_idle() {
     return 1
   fi
   # A server from before the thread count has no `threads`; it counts as none, so a rollback to
-  # one does not stop autodeploy for good. A count T3 could not read is null, and waits.
+  # one does not stop autodeploy for good. A count T3 could not read is null, and waits like a
+  # thread at work: until deploy_wait_minutes.
   if ! busy=$(jq -r 'if .passes.running == true or any(.runs[];
       .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))
     then "a factory run is in progress"
