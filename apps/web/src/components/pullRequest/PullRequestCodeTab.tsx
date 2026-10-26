@@ -82,7 +82,7 @@ import {
   createDiffFocusNavigation,
   DiffFocusFileList,
   DiffFocusKeyboard,
-  useDiffFocusLayoutWidth,
+  useDiffFocusLayoutMeasure,
   type DiffFocusSelection,
 } from "../diffs/DiffFocusLayout";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
@@ -321,7 +321,7 @@ function PullRequestCodeTab({
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
     null,
   );
-  const [wideLayout, measureLayout] = useDiffFocusLayoutWidth();
+  const [wideLayout, setWideLayout] = useState(false);
   const [focusSelection, setFocusSelection] = useState<DiffFocusSelection | null>(null);
 
   const referenceKey = pullRequestReviewKey(reference);
@@ -715,9 +715,19 @@ function PullRequestCodeTab({
     }
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
+    setFocusSelection({ fileKey: item.id, changeIndex: -1 });
     if (item.collapsed === true) toggleFile(item.id);
     requestTreeReveal(item.id);
   };
+  const keepFocusedFileOnNarrow = () => {
+    const { selected } = focusNavigation;
+    if (selected === null) return;
+    if (isFileDiffCollapsed(selected.fileKey, effectiveFoldOverride, toggledFiles)) {
+      toggleFile(selected.fileKey);
+    }
+    focusNavigation.revealCurrent();
+  };
+  const measureLayout = useDiffFocusLayoutMeasure(setWideLayout, keepFocusedFileOnNarrow);
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");

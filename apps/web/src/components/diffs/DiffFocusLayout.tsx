@@ -4,8 +4,9 @@ import {
   type CodeViewScrollTarget,
   type FileDiffMetadata,
 } from "@pierre/diffs";
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useId, type KeyboardEvent, type ReactNode } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -17,7 +18,7 @@ import {
   type DiffFocusPosition,
 } from "./diffFocusNavigation.logic";
 
-const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 960;
+const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 800;
 
 export interface DiffFocusFile {
   readonly fileKey: string;
@@ -25,15 +26,18 @@ export interface DiffFocusFile {
   readonly path: string;
 }
 
-export function useDiffFocusLayoutWidth() {
-  const [wide, setWide] = useState(false);
-  const measureRef = (element: HTMLElement | null) => {
+export function useDiffFocusLayoutMeasure(setWide: (wide: boolean) => void, onNarrow: () => void) {
+  const handleNarrow = useStableCallback(onNarrow);
+  return (element: HTMLElement | null) => {
     if (element === null) return;
+    let wasWide = false;
     return observeResize(element, (entries) => {
-      setWide((entries.at(-1)?.contentRect.width ?? 0) >= DIFF_FOCUS_LAYOUT_MIN_WIDTH);
+      const next = (entries.at(-1)?.contentRect.width ?? 0) >= DIFF_FOCUS_LAYOUT_MIN_WIDTH;
+      if (wasWide && !next) handleNarrow();
+      wasWide = next;
+      setWide(next);
     });
   };
-  return [wide, measureRef] as const;
 }
 
 export interface DiffFocusSelection {
@@ -59,10 +63,9 @@ export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
   const changeIndex = foundIndex >= 0 && position !== null ? position.changeIndex : -1;
   const changeCount = selected === null ? 0 : diffChangeTargets(selected.fileDiff).length;
 
-  const goTo = (next: DiffFocusPosition) => {
+  const revealPosition = (next: DiffFocusPosition) => {
     const file = files[next.fileIndex];
     if (file === undefined) return;
-    setPosition({ fileKey: file.fileKey, changeIndex: next.changeIndex });
     const change =
       next.changeIndex < 0 ? undefined : diffChangeTargets(file.fileDiff)[next.changeIndex];
     reveal(
@@ -78,6 +81,12 @@ export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
           },
     );
   };
+  const goTo = (next: DiffFocusPosition) => {
+    const file = files[next.fileIndex];
+    if (file === undefined) return;
+    setPosition({ fileKey: file.fileKey, changeIndex: next.changeIndex });
+    revealPosition(next);
+  };
   const selectFile = (index: number) => {
     const clamped = Math.min(files.length - 1, Math.max(0, index));
     if (clamped !== fileIndex || changeIndex !== -1) goTo({ fileIndex: clamped, changeIndex: -1 });
@@ -90,6 +99,7 @@ export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
     changeIndex,
     changeCount,
     selectFile,
+    revealCurrent: () => revealPosition({ fileIndex, changeIndex }),
     selectPath: (path: string) => {
       const index = files.findIndex((file) => file.path === path);
       if (index >= 0) goTo({ fileIndex: index, changeIndex: -1 });

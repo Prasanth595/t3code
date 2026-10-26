@@ -61,7 +61,7 @@ import {
   createDiffFocusNavigation,
   DiffFocusFileList,
   DiffFocusKeyboard,
-  useDiffFocusLayoutWidth,
+  useDiffFocusLayoutMeasure,
   type DiffFocusSelection,
 } from "./diffs/DiffFocusLayout";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
@@ -222,7 +222,7 @@ export default function DiffPanel({
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
-  const [wideLayout, measureLayout] = useDiffFocusLayoutWidth();
+  const [wideLayout, setWideLayout] = useState(false);
   const [focusSelection, setFocusSelection] = useState<DiffFocusSelection | null>(null);
 
   const routeThreadRef = useThreadRouteRef();
@@ -582,17 +582,28 @@ export default function DiffPanel({
       focusNavigation.selectPath(filePath);
       return true;
     }
+    setFocusSelection({ fileKey: file.fileKey, changeIndex: -1 });
+    expandDiffFile(file.fileKey, index);
+    requestTreeReveal(file.fileKey);
+    return true;
+  };
+  const expandDiffFile = (fileKey: string, index: number) => {
     updateCollapsedDiffFiles((current) => {
       const next = new Set(current);
-      next.delete(file.fileKey);
+      next.delete(fileKey);
       return next;
     });
     if (lazySource && index >= settledFileCount) {
       requestFile(index);
     }
-    requestTreeReveal(file.fileKey);
-    return true;
   };
+  const keepFocusedFileOnNarrow = () => {
+    const { selected } = focusNavigation;
+    if (selected === null) return;
+    expandDiffFile(selected.fileKey, selected.index);
+    focusNavigation.revealCurrent();
+  };
+  const measureLayout = useDiffFocusLayoutMeasure(setWideLayout, keepFocusedFileOnNarrow);
 
   const externalRevealRef = useRef<string | null>(null);
   useEffect(() => {
