@@ -157,6 +157,8 @@ function AuthorizedPreviewStream({
   ...props
 }: PreviewStreamConfiguration & NativeStreamBridge) {
   const [attempt, setAttempt] = useState(0);
+  // Outlives reconnects, which remount the document view.
+  const [accessible, setAccessible] = useState(false);
   const [previousAccess, setPreviousAccess] = useState(props.access);
   // Wait for refreshed access, including cookie credentials with unchanged JSON.
   if (props.access !== previousAccess) {
@@ -185,6 +187,8 @@ function AuthorizedPreviewStream({
       {...props}
       ref={ref}
       configuration={configuration}
+      accessible={accessible}
+      onAccessibleChange={setAccessible}
       onUnauthorized={() => {
         const refusals = ++unauthorized.current;
         if (refusals >= MAX_REFUSALS) return false;
@@ -232,8 +236,12 @@ function PreviewStreamDocumentView({
   onRetry,
   onStreaming,
   onRecoverProcess,
+  accessible,
+  onAccessibleChange,
 }: Omit<NativeStreamBridge, "onUnauthorized"> & {
   readonly configuration: string;
+  readonly accessible: boolean;
+  readonly onAccessibleChange: (accessible: boolean) => void;
   readonly background: string;
   readonly onUnauthorized: () => boolean;
   readonly onRetry: () => void;
@@ -268,6 +276,8 @@ function PreviewStreamDocumentView({
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
+  const showAccessible = (next: boolean) =>
+    webView.current?.injectJavaScript(`window.T3PreviewStream?.accessibility(${next}); true;`);
   // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
   // this view and nulls its WebView ref, so the text can never type into another tab.
   const paste = () =>
@@ -330,16 +340,27 @@ function PreviewStreamDocumentView({
           <AppText className="text-xs text-foreground-muted">
             {previewStreamControlLabel(control)}
           </AppText>
-          {control?.canOperate ? (
+          <View className="flex-row items-center gap-2">
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label={accessible ? "Hide accessible view" : "Accessible view"}
               tone="secondary"
-              disabled={control.controller === "another-viewer"}
-              onPress={() =>
-                command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-              }
+              disabled={pdfUri != null}
+              onPress={() => {
+                onAccessibleChange(!accessible);
+                showAccessible(!accessible);
+              }}
             />
-          ) : null}
+            {control?.canOperate ? (
+              <Button
+                label={control.controller === "you" ? "Release control" : "Take control"}
+                tone="secondary"
+                disabled={control.controller === "another-viewer"}
+                onPress={() =>
+                  command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
+                }
+              />
+            ) : null}
+          </View>
         </View>
       ) : null}
       <View className="relative flex-1">
@@ -407,6 +428,8 @@ function PreviewStreamDocumentView({
                 onPictureInPicture?.(message, message.detail);
                 return;
               case "status":
+                // A restarted document starts with the view off.
+                if (!started && accessible) showAccessible(true);
                 setStarted(true);
                 if (message.status === "error") {
                   fail(message.detail ?? "Browser stream failed.");
