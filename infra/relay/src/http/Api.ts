@@ -71,6 +71,7 @@ import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as LiveActivities from "../agentActivity/LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as LlmProxy from "../saas/LlmProxy.ts";
 import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
 import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
@@ -348,6 +349,19 @@ export const layerClientAuth = Layer.effect(
         );
       }),
     };
+  }),
+);
+
+/** Chat mode accepts an optional Clerk bearer, so it verifies outside the auth middleware. */
+export const layerChatBearerVerifier = Layer.effect(
+  LlmProxy.ChatBearerVerifier,
+  Effect.gen(function* () {
+    const config = yield* RelayConfiguration.RelayConfiguration;
+    return (token: string) =>
+      verifyRelayClientBearerToken(config, token).pipe(
+        Effect.map((verified) => Option.some(verified.sub)),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
   }),
 );
 

@@ -123,6 +123,10 @@
       "types": "./src/t3ToolSummary.ts",
       "default": "./src/t3ToolSummary.ts"
     },
+    "./chat": {
+      "types": "./src/chat/index.ts",
+      "default": "./src/chat/index.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"

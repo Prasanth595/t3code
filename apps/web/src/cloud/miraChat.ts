@@ -1,0 +1,62 @@
+import {
+  ChatHistory,
+  type ChatHistoryState,
+  type MiraAccess,
+  MiraAccessStore,
+  relayChatHistoryRemote,
+  requestChatReply,
+} from "@t3tools/client-runtime/chat";
+import { ManagedRelay, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import * as Effect from "effect/Effect";
+import { useSyncExternalStore } from "react";
+
+import { runtime } from "../lib/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+
+export { hasAgenticAccess } from "@t3tools/client-runtime/chat";
+
+const STORAGE_KEY = "mira:chat-history:v1";
+
+/** The signed-in Clerk token, or null without an account. */
+function readMiraClerkToken(): Promise<string | null> {
+  const session = appAtomRegistry.get(managedRelaySessionAtom);
+  if (!session) return Promise.resolve(null);
+  return runtime.runPromise(session.readClerkToken().pipe(Effect.orElseSucceed(() => null)));
+}
+
+const relayUrl = () =>
+  runtime.runPromise(
+    Effect.gen(function* () {
+      return (yield* ManagedRelay.ManagedRelayClient).relayUrl;
+    }),
+  );
+
+export const miraChatHistory = new ChatHistory({
+  storage: {
+    load: async () => window.localStorage.getItem(STORAGE_KEY),
+    save: async (value) => window.localStorage.setItem(STORAGE_KEY, value),
+  },
+  requestReply: async (request, deviceId) => {
+    const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);
+    return requestChatReply({ ...request, relayUrl: url, clerkToken, deviceId });
+  },
+});
+
+void miraChatHistory.load();
+
+export const miraChatRemote = (accountId: string) =>
+  relayChatHistoryRemote({
+    accountId,
+    readClerkToken: readMiraClerkToken,
+    run: (effect) => runtime.runPromise(effect),
+  });
+
+export function useMiraChatHistory(): ChatHistoryState {
+  return useSyncExternalStore(miraChatHistory.subscribe, miraChatHistory.getSnapshot);
+}
+
+export const miraAccess = new MiraAccessStore();
+
+export function useMiraAccess(): MiraAccess {
+  return useSyncExternalStore(miraAccess.subscribe, miraAccess.getSnapshot);
+}

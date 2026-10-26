@@ -73,6 +73,7 @@ import * as AdminPanel from "./saas/adminPanel.ts";
 import * as LlmProxy from "./saas/LlmProxy.ts";
 import * as SaasAccounts from "./saas/SaasAccounts.ts";
 import * as SaasApi from "./saas/SaasApi.ts";
+import * as SaasChat from "./saas/SaasChat.ts";
 import * as SaasCrypto from "./saas/SaasCrypto.ts";
 import * as StripeBilling from "./saas/StripeBilling.ts";
 
@@ -285,6 +286,8 @@ export const layer = Api.make(
             Layer.provideMerge(
               Layer.mergeAll(
                 SaasApi.layerClerkUsers,
+                SaasChat.layer,
+                RelayHttpApi.layerChatBearerVerifier,
                 Layer.succeed(SaasApi.SaasAdmins, saasAdminEmails),
                 Layer.succeed(StripeBilling.StripeConfig, stripeSettings),
                 SaasAccounts.layer.pipe(
@@ -393,6 +396,8 @@ export const layer = Api.make(
       SaasApi.layerAccountApi,
       SaasApi.layerAdminApi,
       LlmProxy.layerApi,
+      LlmProxy.layerChatApi,
+      SaasApi.layerChatsApi,
       StripeBilling.layerApi,
       AdminPanel.layerApi.pipe(
         Layer.provide(

@@ -946,7 +946,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   });
 });
 
-function useMarkdownStyles(): MarkdownStyleSets {
+export function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
   const nativeMarkdownTypography = useMemo(
     () => resolveNativeMarkdownTypography(appearance.baseFontSize),

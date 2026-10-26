@@ -80,6 +80,10 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     createLlmKey: () => Effect.die("unused createLlmKey"),
     createCheckout: () => Effect.die("unused createCheckout"),
     createBillingPortal: () => Effect.die("unused createBillingPortal"),
+    listChats: () => Effect.die("unused listChats"),
+    getChat: () => Effect.die("unused getChat"),
+    saveChat: () => Effect.die("unused saveChat"),
+    deleteChat: () => Effect.die("unused deleteChat"),
     ...overrides,
   });
 }

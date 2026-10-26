@@ -38,6 +38,8 @@ import {
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ChatHome, ChatHomeHeader } from "../chat/ChatHome";
+import { hasAgenticAccess, useMiraAccess } from "../chat/miraChat";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
@@ -242,6 +244,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 }
 
 export function HomeScreen(props: HomeScreenProps) {
+  const agentic = hasAgenticAccess(useMiraAccess());
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const workspace = useWorkspaceTabs();
   const [initialScrollOffset] = useState(() => workspace?.getScrollOffset("threads") ?? 0);
@@ -678,6 +681,9 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
+  // Chat is home until the plan includes agentic mode.
+  if (!agentic) return <ChatHome />;
+
   if (!hasAnyThreads) {
     return (
       <View className={containerClassName}>
@@ -729,6 +735,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      <ChatHomeHeader />
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}

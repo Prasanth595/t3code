@@ -20,6 +20,10 @@ export const SaasPlan = Schema.Struct({
   stripePriceId: Schema.NullOr(TrimmedNonEmptyString),
   isDefault: Schema.Boolean,
   sortOrder: Schema.Int,
+  /** Agentic mode on a connected computer; `monthlyTokenLimit` meters it. */
+  agenticEnabled: Schema.Boolean,
+  /** Chat messages per UTC day; 0 means no cap. */
+  dailyChatLimit: NonNegativeInt,
 });
 export type SaasPlan = typeof SaasPlan.Type;
 
@@ -32,6 +36,13 @@ export const SaasUsage = Schema.Struct({
 });
 export type SaasUsage = typeof SaasUsage.Type;
 
+export const SaasChatAllowance = Schema.Struct({
+  messagesToday: NonNegativeInt,
+  /** Null when chat is not capped. */
+  dailyLimit: Schema.NullOr(NonNegativeInt),
+});
+export type SaasChatAllowance = typeof SaasChatAllowance.Type;
+
 export const SaasAccountResponse = Schema.Struct({
   userId: TrimmedNonEmptyString,
   email: Schema.NullOr(Schema.String),
@@ -39,6 +50,7 @@ export const SaasAccountResponse = Schema.Struct({
   usage: SaasUsage,
   isAdmin: Schema.Boolean,
   hasLlmKey: Schema.Boolean,
+  chat: SaasChatAllowance,
 });
 export type SaasAccountResponse = typeof SaasAccountResponse.Type;
 
@@ -75,6 +87,7 @@ export const SaasAdminUserPlanRequest = Schema.Struct({
 export const SaasAdminSettingsResponse = Schema.Struct({
   deepseekKeyConfigured: Schema.Boolean,
   deepseekModel: TrimmedNonEmptyString,
+  anonymousDailyChatLimit: NonNegativeInt,
 });
 export type SaasAdminSettingsResponse = typeof SaasAdminSettingsResponse.Type;
 
@@ -82,6 +95,7 @@ export const SaasAdminSettingsRequest = Schema.Struct({
   /** Omit to keep the stored key; send an empty string to clear it. */
   deepseekApiKey: Schema.optionalKey(Schema.String),
   deepseekModel: Schema.optionalKey(TrimmedNonEmptyString),
+  anonymousDailyChatLimit: Schema.optionalKey(NonNegativeInt),
 });
 export type SaasAdminSettingsRequest = typeof SaasAdminSettingsRequest.Type;
 
@@ -97,7 +111,7 @@ export class SaasForbiddenError extends Schema.TaggedError<SaasForbiddenError>()
 
 export class SaasNotFoundError extends Schema.TaggedError<SaasNotFoundError>()(
   "SaasNotFoundError",
-  { code: Schema.Literal("not_found"), resource: Schema.Literals(["plan", "user"]) },
+  { code: Schema.Literal("not_found"), resource: Schema.Literals(["plan", "user", "chat"]) },
   { httpApiStatus: 404 },
 ) {
   override get message(): string {
@@ -147,3 +161,62 @@ export class SaasBillingUnavailableError extends Schema.TaggedError<SaasBillingU
     }
   }
 }
+
+/** Sent by clients without an account so the relay can count their free chat messages. */
+export const SAAS_CHAT_DEVICE_HEADER = "x-mira-device-id";
+
+export const SaasChatId = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));
+export type SaasChatId = typeof SaasChatId.Type;
+
+export const SaasChatRole = Schema.Literals(["user", "assistant"]);
+export type SaasChatRole = typeof SaasChatRole.Type;
+
+export const SaasChatMessage = Schema.Struct({
+  id: SaasChatId,
+  role: SaasChatRole,
+  content: Schema.String,
+  createdAt: Schema.String,
+});
+export type SaasChatMessage = typeof SaasChatMessage.Type;
+
+export const SaasChatConversation = Schema.Struct({
+  id: SaasChatId,
+  title: Schema.String,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  messages: Schema.Array(SaasChatMessage),
+});
+export type SaasChatConversation = typeof SaasChatConversation.Type;
+
+export const SaasChatSummary = Schema.Struct({
+  id: SaasChatId,
+  title: Schema.String,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+});
+export type SaasChatSummary = typeof SaasChatSummary.Type;
+
+export const SaasChatListResponse = Schema.Struct({
+  chats: Schema.Array(SaasChatSummary),
+});
+
+/** The body clients post to `/v1/chat/completions`; the reply streams back as OpenAI SSE. */
+export const SaasChatCompletionRequest = Schema.Struct({
+  messages: Schema.Array(Schema.Struct({ role: SaasChatRole, content: Schema.String })),
+});
+export type SaasChatCompletionRequest = typeof SaasChatCompletionRequest.Type;
+
+/**
+ * Codes in a failed chat reply's `{ error: { code, message } }` body. `sign_up_required` means
+ * the messages without an account are used up today; `daily_limit` is the plan's daily cap.
+ */
+export const SaasChatErrorCode = Schema.Literals([
+  "sign_up_required",
+  "session_expired",
+  "daily_limit",
+  "agentic_not_in_plan",
+  "model_unavailable",
+  "invalid_request",
+  "upstream_unavailable",
+]);
+export type SaasChatErrorCode = typeof SaasChatErrorCode.Type;

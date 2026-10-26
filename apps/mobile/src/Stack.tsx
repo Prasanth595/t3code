@@ -66,6 +66,7 @@ import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
+import { ChatRouteScreen } from "./features/chat/ChatRouteScreen";
 import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -732,6 +733,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetAllowedDetents: formSheetDetents(0.75),
         sheetGrabberVisible: true,
       },
+    }),
+    Chat: createNativeStackScreen({
+      screen: ChatRouteScreen,
+      linking: "chat/:chatId?",
+      options: { ...SOLID_HEADER_OPTIONS, title: "Chat" },
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,

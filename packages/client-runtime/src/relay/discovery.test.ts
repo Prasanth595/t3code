@@ -120,6 +120,10 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     createLlmKey: () => Effect.die("unused createLlmKey"),
     createCheckout: () => Effect.die("unused createCheckout"),
     createBillingPortal: () => Effect.die("unused createBillingPortal"),
+    listChats: () => Effect.die("unused listChats"),
+    getChat: () => Effect.die("unused getChat"),
+    saveChat: () => Effect.die("unused saveChat"),
+    deleteChat: () => Effect.die("unused deleteChat"),
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
@@ -289,6 +293,10 @@ describe("RelayEnvironmentDiscovery", () => {
         createLlmKey: () => Effect.die("unused createLlmKey"),
         createCheckout: () => Effect.die("unused createCheckout"),
         createBillingPortal: () => Effect.die("unused createBillingPortal"),
+        listChats: () => Effect.die("unused listChats"),
+        getChat: () => Effect.die("unused getChat"),
+        saveChat: () => Effect.die("unused saveChat"),
+        deleteChat: () => Effect.die("unused deleteChat"),
       } satisfies ManagedRelay.ManagedRelayClient["Service"]);
       const layer = RelayEnvironmentDiscovery.layer.pipe(
         Layer.provide(

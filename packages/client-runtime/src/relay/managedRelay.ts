@@ -31,8 +31,11 @@ import {
 } from "@t3tools/contracts/relay";
 import {
   SaasBillingUnavailableError,
+  SaasInvalidRequestError,
   SaasNotFoundError,
   type SaasAccountResponse,
+  type SaasChatConversation,
+  type SaasChatSummary,
   type SaasLlmKeyResponse,
   type SaasRedirectResponse,
 } from "@t3tools/contracts/saas";
@@ -107,6 +110,10 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "create model key",
   "start checkout",
   "open billing portal",
+  "list chats",
+  "read chat",
+  "save chat",
+  "delete chat",
 ]);
 export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 
@@ -323,13 +330,28 @@ export class ManagedRelayClient extends Context.Service<
     readonly createBillingPortal: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<SaasRedirectResponse, ManagedRelayClientError>;
+    readonly listChats: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<ReadonlyArray<SaasChatSummary>, ManagedRelayClientError>;
+    readonly getChat: (input: {
+      readonly clerkToken: string;
+      readonly chatId: string;
+    }) => Effect.Effect<SaasChatConversation, ManagedRelayClientError>;
+    readonly saveChat: (input: {
+      readonly clerkToken: string;
+      readonly chat: SaasChatConversation;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly deleteChat: (input: {
+      readonly clerkToken: string;
+      readonly chatId: string;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
 const isRelayProtectedError = Schema.is(RelayProtectedError);
 const isSaasAccountError = Schema.is(
-  Schema.Union([SaasBillingUnavailableError, SaasNotFoundError]),
+  Schema.Union([SaasBillingUnavailableError, SaasNotFoundError, SaasInvalidRequestError]),
 );
 
 const TRACEPARENT_TRACE_ID = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/i;
@@ -464,6 +486,10 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     createLlmKey: unavailable("clientRuntime.managedRelay.createLlmKey"),
     createCheckout: unavailable("clientRuntime.managedRelay.createCheckout"),
     createBillingPortal: unavailable("clientRuntime.managedRelay.createBillingPortal"),
+    listChats: unavailable("clientRuntime.managedRelay.listChats"),
+    getChat: unavailable("clientRuntime.managedRelay.getChat"),
+    saveChat: unavailable("clientRuntime.managedRelay.saveChat"),
+    deleteChat: unavailable("clientRuntime.managedRelay.deleteChat"),
     resetTokenCache: Effect.void.pipe(
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
     ),
@@ -753,7 +779,10 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     span: string,
     request: Effect.Effect<
       A,
-      RelayHttpRequestError | SaasBillingUnavailableError | SaasNotFoundError
+      | RelayHttpRequestError
+      | SaasBillingUnavailableError
+      | SaasNotFoundError
+      | SaasInvalidRequestError
     >,
   ) =>
     request.pipe(
@@ -795,6 +824,42 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         "open billing portal",
         "clientRuntime.managedRelay.createBillingPortal",
         client.account.createBillingPortal({ headers: bearerHeaders(input.clerkToken) }),
+      ),
+    listChats: (input) =>
+      accountCall(
+        "list chats",
+        "clientRuntime.managedRelay.listChats",
+        client.chats
+          .listChats({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(Effect.map((response) => response.chats)),
+      ),
+    getChat: (input) =>
+      accountCall(
+        "read chat",
+        "clientRuntime.managedRelay.getChat",
+        client.chats.getChat({
+          headers: bearerHeaders(input.clerkToken),
+          params: { chatId: input.chatId },
+        }),
+      ),
+    saveChat: (input) =>
+      accountCall(
+        "save chat",
+        "clientRuntime.managedRelay.saveChat",
+        client.chats.saveChat({
+          headers: bearerHeaders(input.clerkToken),
+          params: { chatId: input.chat.id },
+          payload: input.chat,
+        }),
+      ),
+    deleteChat: (input) =>
+      accountCall(
+        "delete chat",
+        "clientRuntime.managedRelay.deleteChat",
+        client.chats.deleteChat({
+          headers: bearerHeaders(input.clerkToken),
+          params: { chatId: input.chatId },
+        }),
       ),
     listEnvironments: Effect.fnUntraced(
       function* (input) {

@@ -27,6 +27,8 @@ import * as SaasCrypto from "./SaasCrypto.ts";
 export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_MODEL_SETTING = "deepseek_model";
+const ANONYMOUS_CHAT_LIMIT_SETTING = "anonymous_daily_chat_limit";
+export const DEFAULT_ANONYMOUS_DAILY_CHAT_LIMIT = 10;
 
 export class SaasPersistenceError extends Schema.TaggedError<SaasPersistenceError>()(
   "SaasPersistenceError",
@@ -140,6 +142,8 @@ const toPlan = (row: PlanRow): SaasPlan => ({
   stripePriceId: row.stripePriceId,
   isDefault: row.isDefault,
   sortOrder: row.sortOrder,
+  agenticEnabled: row.agenticEnabled,
+  dailyChatLimit: row.dailyChatLimit,
 });
 
 const toUsage = (period: string, row: UsageRow | undefined): SaasUsage =>
@@ -151,6 +155,11 @@ const toUsage = (period: string, row: UsageRow | undefined): SaasUsage =>
         outputTokens: row.outputTokens,
         requests: row.requests,
       };
+
+const parseLimit = (stored: string | undefined) => {
+  const value = stored === undefined ? Number.NaN : Number(stored);
+  return Number.isInteger(value) && value >= 0 ? value : DEFAULT_ANONYMOUS_DAILY_CHAT_LIMIT;
+};
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
@@ -357,6 +366,8 @@ export const make = Effect.gen(function* () {
         stripePriceId: plan.stripePriceId,
         isDefault: plan.isDefault,
         sortOrder: plan.sortOrder,
+        agenticEnabled: plan.agenticEnabled,
+        dailyChatLimit: plan.dailyChatLimit,
         updatedAt: now,
       };
       if (plan.isDefault) {
@@ -385,6 +396,7 @@ export const make = Effect.gen(function* () {
     return {
       deepseekKeyConfigured: (settings.get(DEEPSEEK_KEY_SETTING) ?? "") !== "",
       deepseekModel: settings.get(DEEPSEEK_MODEL_SETTING) ?? DEFAULT_DEEPSEEK_MODEL,
+      anonymousDailyChatLimit: parseLimit(settings.get(ANONYMOUS_CHAT_LIMIT_SETTING)),
     };
   });
 
@@ -412,6 +424,9 @@ export const make = Effect.gen(function* () {
     }
     if (input.deepseekModel !== undefined) {
       yield* writeSetting(DEEPSEEK_MODEL_SETTING, input.deepseekModel);
+    }
+    if (input.anonymousDailyChatLimit !== undefined) {
+      yield* writeSetting(ANONYMOUS_CHAT_LIMIT_SETTING, String(input.anonymousDailyChatLimit));
     }
     return yield* getSettings;
   });

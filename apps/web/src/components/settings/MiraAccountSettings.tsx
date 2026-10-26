@@ -4,6 +4,7 @@ import { CloudIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
+  MIRA_UPGRADE_PLAN_ID,
   fetchMiraAccount,
   formatMiraTokens,
   openMiraBillingPortal,
@@ -14,9 +15,6 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-
-// The paid plan the Upgrade button buys; admins set its Stripe price in the admin page.
-const UPGRADE_PLAN_ID = "pro";
 
 const reportFailure = (title: string) => (cause: unknown) => {
   toastManager.add({
@@ -57,7 +55,7 @@ export function MiraAccountSettings() {
       <SettingsSection title="Mira account" icon={<CloudIcon aria-hidden className="size-4" />}>
         <SettingsRow
           title="Not signed in"
-          description="Sign in to use the Mira model and reach your computers remotely."
+          description="Chat works without an account for a few messages a day. Sign in for unlimited chat and to reach your computers remotely."
           control={
             <Button size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
               Sign in
@@ -90,7 +88,7 @@ export function MiraAccountSettings() {
               size="xs"
               disabled={busy || account === null}
               onClick={() =>
-                run("Could not start the upgrade", () => openMiraCheckout(UPGRADE_PLAN_ID))
+                run("Could not start the upgrade", () => openMiraCheckout(MIRA_UPGRADE_PLAN_ID))
               }
             >
               Upgrade
@@ -100,8 +98,22 @@ export function MiraAccountSettings() {
       />
       {account ? (
         <SettingsRow
-          title="Usage this month"
-          description={`${formatMiraTokens(used)} of ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokens. Resets on the 1st, in UTC.`}
+          title="Chat"
+          description={
+            account.chat.dailyLimit === null
+              ? "Unlimited."
+              : `${account.chat.messagesToday} of ${account.chat.dailyLimit} messages today. Resets at midnight UTC.`
+          }
+        />
+      ) : null}
+      {account ? (
+        <SettingsRow
+          title="Agentic mode"
+          description={
+            account.plan.agenticEnabled
+              ? `${formatMiraTokens(used)} of ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokens this month. Resets on the 1st, in UTC.`
+              : "Available with Pro: Mira works on your computer, editing files and running commands."
+          }
         />
       ) : null}
     </SettingsSection>

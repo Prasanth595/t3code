@@ -23,6 +23,8 @@ describe("SaaS accounts", () => {
       stripePriceId: null,
       isDefault: true,
       sortOrder: 0,
+      agenticEnabled: false,
+      dailyChatLimit: 0,
     };
     const usage = { period: "2026-10", inputTokens: 60, outputTokens: 39, requests: 2 };
     expect(hasQuotaLeft(plan, usage)).toBe(true);

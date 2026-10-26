@@ -188,6 +188,10 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     createLlmKey: () => Effect.die("unused createLlmKey"),
     createCheckout: () => Effect.die("unused createCheckout"),
     createBillingPortal: () => Effect.die("unused createBillingPortal"),
+    listChats: () => Effect.die("unused listChats"),
+    getChat: () => Effect.die("unused getChat"),
+    saveChat: () => Effect.die("unused saveChat"),
+    deleteChat: () => Effect.die("unused deleteChat"),
   });
   const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provide(

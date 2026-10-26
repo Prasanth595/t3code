@@ -9,12 +9,14 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as SaasAccounts from "./SaasAccounts.ts";
+import * as SaasChat from "./SaasChat.ts";
 import * as StripeBilling from "./StripeBilling.ts";
 
 export const DEFAULT_SAAS_ADMIN_EMAILS = ["contact@andreimiron.ro"];
@@ -92,6 +94,7 @@ export const layerAccountApi = HttpApiBuilder.group(
     const admins = yield* SaasAdmins;
     const config = yield* RelayConfiguration.RelayConfiguration;
     const billing = yield* StripeBilling.StripeBilling;
+    const chats = yield* SaasChat.SaasChat;
     return handlers
       .handle(
         "getAccount",
@@ -99,7 +102,15 @@ export const layerAccountApi = HttpApiBuilder.group(
           const { userId } = yield* RelayClientPrincipal;
           const email = yield* clerkUsers.primaryEmail(userId);
           const account = yield* accounts.getAccount({ userId, email });
-          return { ...account, isAdmin: isAdminEmail(email, admins) };
+          const dailyLimit = account.plan.dailyChatLimit;
+          return {
+            ...account,
+            isAdmin: isAdminEmail(email, admins),
+            chat: {
+              messagesToday: yield* chats.messagesToday(`user:${userId}`),
+              dailyLimit: dailyLimit === 0 ? null : dailyLimit,
+            },
+          };
         }, mapPersistence),
       )
       .handle(
@@ -192,5 +203,54 @@ export const layerAdminApi = HttpApiBuilder.group(
       )
       .handle("getSettings", () => asAdmin(accounts.getSettings))
       .handle("saveSettings", ({ payload }) => asAdmin(accounts.saveSettings(payload)));
+  }),
+);
+
+export const layerChatsApi = HttpApiBuilder.group(
+  RelayApi,
+  "chats",
+  Effect.fnUntraced(function* (handlers) {
+    const chats = yield* SaasChat.SaasChat;
+    return handlers
+      .handle(
+        "listChats",
+        Effect.fn("relay.api.chats.list")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          return { chats: yield* chats.listChats(userId) };
+        }, mapPersistence),
+      )
+      .handle(
+        "getChat",
+        Effect.fn("relay.api.chats.get")(function* ({ params }) {
+          const { userId } = yield* RelayClientPrincipal;
+          const chat = yield* chats.getChat({ userId, chatId: params.chatId });
+          if (Option.isNone(chat)) {
+            return yield* new SaasNotFoundError({ code: "not_found", resource: "chat" });
+          }
+          return chat.value;
+        }, mapPersistence),
+      )
+      .handle(
+        "saveChat",
+        Effect.fn("relay.api.chats.save")(function* ({ params, payload }) {
+          const { userId } = yield* RelayClientPrincipal;
+          if (payload.id !== params.chatId) {
+            return yield* new SaasInvalidRequestError({
+              code: "invalid_request",
+              message: "The chat id in the body must match the path.",
+            });
+          }
+          yield* chats.saveChat({ userId, chat: payload });
+          return { ok: true };
+        }, mapPersistence),
+      )
+      .handle(
+        "deleteChat",
+        Effect.fn("relay.api.chats.delete")(function* ({ params }) {
+          const { userId } = yield* RelayClientPrincipal;
+          yield* chats.deleteChat({ userId, chatId: params.chatId });
+          return { ok: true };
+        }, mapPersistence),
+      );
   }),
 );
