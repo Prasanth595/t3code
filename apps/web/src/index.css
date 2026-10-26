@@ -2305,10 +2305,7 @@ code {
   overflow: visible;
 }
 
-/* The edge fade can land on the gutter between columns and paint nothing, so a
-   clipped table looks complete. The horizontal scrollbar only mounts while the
-   table overflows; keep it visible at rest as the cue, with a thumb that stays
-   readable against a dark page. */
+/* Keep overflow discoverable when the edge fade falls between columns. */
 .chat-markdown
   .chat-markdown-table-container
   [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
