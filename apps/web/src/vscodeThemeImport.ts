@@ -400,7 +400,7 @@ export function pairVsCodeThemes(
   });
 
   const paired: Array<{ theme: ThemeDefinition; order: number }> = [];
-  for (const [key, group] of groups) {
+  for (const group of groups.values()) {
     if (group.light.length === 1 && group.dark.length === 1) {
       try {
         paired.push({
@@ -408,7 +408,12 @@ export function pairVsCodeThemes(
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
             ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
-            name: key,
+            name: stripAppearance(
+              group.light[0]!.label.replace(
+                /\(\s*(?:light|dark)\s*\)|\[\s*(?:light|dark)\s*\]|\{\s*(?:light|dark)\s*\}/gi,
+                " ",
+              ),
+            ),
             appearance: "light",
             colors: group.light[0]!.colors,
             variants: { dark: group.dark[0]!.colors },

@@ -413,6 +413,89 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
 
+  describe("paired theme labels", () => {
+    const make = (name: string, type: "light" | "dark") =>
+      parseVsCodeThemeFile({
+        name,
+        type,
+        colors: { "editor.background": type === "dark" ? "#002b36" : "#fdf6e3" },
+      });
+
+    it.each([
+      ["Solarized (dark)", "Solarized (light)"],
+      ["Solarized [dark]", "Solarized [light]"],
+      ["Solarized {dark}", "Solarized {light}"],
+      ["Solarized ( DARK )", "Solarized ( LIGHT )"],
+    ])("removes mode-only wrappers when pairing %s", (darkName, lightName) => {
+      const themes = pairVsCodeThemes([make(darkName, "dark"), make(lightName, "light")]);
+
+      expect(themes).toHaveLength(1);
+      const theme = themes[0]!;
+      expect(theme.label).toBe("Solarized");
+      expect(theme.id).toBe("solarized");
+      expect(asHex(getThemeColorsForMode(theme, "dark")!.canvas)).toBe("#002b36");
+      expect(asHex(getThemeColorsForMode(theme, "light")!.canvas)).toBe("#fdf6e3");
+    });
+
+    it.each([
+      ["Solarized (Soft) (Dark)", "Solarized (Soft) (Light)", "Solarized (Soft)"],
+      ["Solarized [Soft] [Dark]", "Solarized [Soft] [Light]", "Solarized [Soft]"],
+      ["Solarized {Soft} {Dark}", "Solarized {Soft} {Light}", "Solarized {Soft}"],
+      ["Solarized () Dark", "Solarized () Light", "Solarized ()"],
+      ["Solarized [] Dark", "Solarized [] Light", "Solarized []"],
+      ["Solarized {} Dark", "Solarized {} Light", "Solarized {}"],
+      ["Solarized - Dark", "Solarized - Light", "Solarized -"],
+      ["Solarized: Dark", "Solarized: Light", "Solarized:"],
+      ["Solarized (Dark Soft)", "Solarized (Light Soft)", "Solarized ( Soft)"],
+      ["Solarized (Dark]", "Solarized (Light]", "Solarized ( ]"],
+    ])("preserves other punctuation when pairing %s", (darkName, lightName, label) => {
+      const themes = pairVsCodeThemes([make(darkName, "dark"), make(lightName, "light")]);
+
+      expect(themes.map((theme) => theme.label)).toEqual([label]);
+    });
+
+    it("leaves unmatched and ambiguous families unchanged", () => {
+      const themes = [
+        make("Solarized (dark)", "dark"),
+        make("Solarized (DARK)", "dark"),
+        make("Solarized (light)", "light"),
+        make("Unmatched [dark]", "dark"),
+      ];
+      const paired = pairVsCodeThemes(themes);
+
+      expect(paired).toHaveLength(themes.length);
+      expect(paired).toEqual(expect.arrayContaining(themes));
+    });
+
+    it("does not introduce matches between different wrappers", () => {
+      const themes = [make("Solarized (dark)", "dark"), make("Solarized [light]", "light")];
+
+      expect(pairVsCodeThemes(themes)).toEqual(themes);
+    });
+
+    it("keeps wrapped and unwrapped families separate", () => {
+      const themes = pairVsCodeThemes([
+        make("Solarized (dark)", "dark"),
+        make("Solarized (light)", "light"),
+        make("Solarized Dark", "dark"),
+        make("Solarized Light", "light"),
+      ]);
+
+      expect(themes.map((theme) => theme.label)).toEqual(["Solarized", "Solarized"]);
+    });
+
+    it("preserves an explicitly supplied paired id", () => {
+      const themes = pairVsCodeThemes(
+        [make("Solarized (dark)", "dark"), make("Solarized (light)", "light")],
+        { pairedId: () => "extension-solarized" },
+      );
+
+      expect(themes.map((theme) => [theme.id, theme.label])).toEqual([
+        ["extension-solarized", "Solarized"],
+      ]);
+    });
+  });
+
   it("does not guess when a family is ambiguous", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
