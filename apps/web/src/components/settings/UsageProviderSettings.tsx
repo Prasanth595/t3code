@@ -51,7 +51,7 @@ export function UsageProviderSettings({
   const snapshots = serverConfig?.usageLimitSources ?? [];
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
-  const [savingHubId, setSavingHubId] = useState<string | null>(null);
+  const [savingHubIds, setSavingHubIds] = useState<ReadonlySet<string>>(() => new Set());
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
@@ -72,24 +72,25 @@ export function UsageProviderSettings({
     accountId: string,
     visible: boolean,
   ) => {
-    setSavingHubId(id);
-    try {
-      await updateHubAccounts({
-        environmentId,
-        input: {
-          patch: {
-            usageLimitSources: {
-              [id]: {
-                ...source,
-                hiddenAccounts: withAccountVisibility(source.hiddenAccounts, accountId, visible),
-              },
+    setSavingHubIds((previous) => new Set(previous).add(id));
+    await updateHubAccounts({
+      environmentId,
+      input: {
+        patch: {
+          usageLimitSources: {
+            [id]: {
+              ...source,
+              hiddenAccounts: withAccountVisibility(source.hiddenAccounts, accountId, visible),
             },
           },
         },
-      });
-    } finally {
-      setSavingHubId(null);
-    }
+      },
+    });
+    setSavingHubIds((previous) => {
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
   };
 
   return (
@@ -165,7 +166,7 @@ export function UsageProviderSettings({
                           <Switch
                             aria-label={`Show ${title}`}
                             checked={!source.hiddenAccounts.includes(account.id)}
-                            disabled={readOnly || savingHubId === id}
+                            disabled={readOnly || savingHubIds.has(id)}
                             onCheckedChange={(visible) =>
                               void setAccountVisible(id, source, account.id, visible)
                             }

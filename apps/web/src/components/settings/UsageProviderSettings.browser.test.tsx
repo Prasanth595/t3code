@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   UsageLimitSourceId,
+  type UnifiedSettings,
   type UsageLimitSourceAccount,
   type UsageLimitSourceHiddenAccount,
   type UsageLimitSourceSnapshot,
@@ -114,13 +115,16 @@ interface Options {
   readonly hidden: ReadonlyArray<UsageLimitSourceHiddenAccount>;
 }
 
-function settings(options: Options) {
+function settings(
+  options: Options,
+  sources: UnifiedSettings["usageLimitSources"] = { [hubId]: source(options.hiddenAccounts) },
+) {
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <UsageProviderSettings
         environmentId={environmentId}
         environmentLabel="Remote hub"
-        sources={{ [hubId]: source(options.hiddenAccounts) }}
+        sources={sources}
         cursorKeychainUsageEnabled={false}
         readOnly={false}
       />
@@ -128,7 +132,10 @@ function settings(options: Options) {
   );
 }
 
-async function setup(options: Options) {
+async function setup(
+  options: Options,
+  additionalSnapshots: ReadonlyArray<UsageLimitSourceSnapshot> = [],
+) {
   state.updateHubAccounts.mockReset();
   state.removeHub.mockReset();
   const snapshot: UsageLimitSourceSnapshot = {
@@ -142,9 +149,17 @@ async function setup(options: Options) {
   await act(async () =>
     appAtomRegistry.set(state.config, {
       environment: { platform: { os: "linux", arch: "x64" } },
-      usageLimitSources: [snapshot],
+      usageLimitSources: [snapshot, ...additionalSnapshots],
     }),
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
 
 describe("UsageProviderSettings account visibility", () => {
@@ -176,12 +191,8 @@ describe("UsageProviderSettings account visibility", () => {
       hidden: [hiddenAccount("hidden.json", "hidden@example.com")],
     };
     await setup(options);
-    const pending: { resolve?: (value: unknown) => void } = {};
-    state.updateHubAccounts.mockReturnValue(
-      new Promise((resolve) => {
-        pending.resolve = resolve;
-      }),
-    );
+    const pending = deferred<unknown>();
+    state.updateHubAccounts.mockReturnValue(pending.promise);
     await using _screen = await render(settings(options));
 
     await userEvent.click(page.getByRole("switch", { name: "Show a@example.com" }));
@@ -205,10 +216,60 @@ describe("UsageProviderSettings account visibility", () => {
       await expect.element(page.getByRole("switch", { name })).toBeDisabled();
     }
 
-    await act(async () => pending.resolve?.(undefined));
+    await act(async () => pending.resolve(undefined));
 
     for (const name of switches) {
       await expect.element(page.getByRole("switch", { name })).toBeEnabled();
     }
   });
+
+  it.each(["first", "second"] as const)(
+    "keeps concurrent hubs disabled independently when the %s save completes first",
+    async (completedFirst) => {
+      const otherHubId = UsageLimitSourceId.make("other-hub");
+      const options = {
+        hiddenAccounts: [],
+        accounts: [visibleAccount("a.json", "a@example.com")],
+        hidden: [],
+      };
+      await setup(options, [
+        {
+          id: otherHubId,
+          kind: "cliproxy",
+          label: "Other hub",
+          checkedAt,
+          accounts: [visibleAccount("b.json", "b@example.com")],
+        },
+      ]);
+      const first = deferred<unknown>();
+      const second = deferred<unknown>();
+      state.updateHubAccounts
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise);
+      await using _screen = await render(
+        settings(options, { [hubId]: source([]), [otherHubId]: source([]) }),
+      );
+      const firstSwitch = page.getByRole("switch", { name: "Show a@example.com" });
+      const secondSwitch = page.getByRole("switch", { name: "Show b@example.com" });
+
+      await userEvent.click(firstSwitch);
+      await expect.element(firstSwitch).toBeDisabled();
+      await expect.element(secondSwitch).toBeEnabled();
+      await userEvent.click(secondSwitch);
+      await expect.element(firstSwitch).toBeDisabled();
+      await expect.element(secondSwitch).toBeDisabled();
+      expect(state.updateHubAccounts).toHaveBeenCalledTimes(2);
+
+      const completed = completedFirst === "first" ? first : second;
+      const pending = completedFirst === "first" ? second : first;
+      const completedSwitch = completedFirst === "first" ? firstSwitch : secondSwitch;
+      const pendingSwitch = completedFirst === "first" ? secondSwitch : firstSwitch;
+      await act(async () => completed.resolve(undefined));
+      await expect.element(completedSwitch).toBeEnabled();
+      await expect.element(pendingSwitch).toBeDisabled();
+      await act(async () => pending.resolve(undefined));
+      await expect.element(firstSwitch).toBeEnabled();
+      await expect.element(secondSwitch).toBeEnabled();
+    },
+  );
 });
