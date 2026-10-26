@@ -386,7 +386,7 @@ export function ShimmeringWorkContent(props: {
 function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
   switch (icon) {
     case "agent":
-      return { ios: "sparkles", android: "auto_awesome" };
+      return "robot";
     case "alert":
       return { ios: "exclamationmark.triangle", android: "error" };
     case "browser":
@@ -1401,7 +1401,7 @@ export const ThreadAgentSpawnCard = function ThreadAgentSpawnCard(props: {
         <View className="flex-row items-center gap-2">
           <View className="h-6 w-6 shrink-0 items-center justify-center">
             <SymbolView
-              name={{ ios: "sparkles", android: "auto_awesome" }}
+              name="robot"
               size={14}
               weight="medium"
               tintColor={props.iconSubtleColor}
@@ -1637,7 +1637,7 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "reasoning":
       return { ios: "brain", android: "psychology" };
     case "agent-tool":
-      return { ios: "sparkles", android: "auto_awesome" };
+      return "robot";
     case "tone-tool":
       return { ios: "bolt", android: "bolt" };
     case "dynamic-tool":

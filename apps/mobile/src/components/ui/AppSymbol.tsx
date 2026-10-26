@@ -105,11 +105,11 @@ import IconPlayerStopFilled from "@tabler/icons-react-native/IconPlayerStopFille
 import IconPlus from "@tabler/icons-react-native/IconPlus";
 import IconQrcode from "@tabler/icons-react-native/IconQrcode";
 import IconRefresh from "@tabler/icons-react-native/IconRefresh";
+import IconRobot from "@tabler/icons-react-native/IconRobot";
 import IconSearch from "@tabler/icons-react-native/IconSearch";
 import IconShare from "@tabler/icons-react-native/IconShare";
 import IconServer from "@tabler/icons-react-native/IconServer";
 import IconSettings from "@tabler/icons-react-native/IconSettings";
-import IconSparkles from "@tabler/icons-react-native/IconSparkles";
 import IconStack2 from "@tabler/icons-react-native/IconStack2";
 import IconStar from "@tabler/icons-react-native/IconStar";
 import IconStarFilled from "@tabler/icons-react-native/IconStarFilled";
@@ -271,8 +271,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "exclamationmark.shield": IconShieldQuestion,
   "bubble.left.and.bubble.right": IconMessage,
   "bubble.left": IconMessage,
-  sparkles: IconSparkles,
   "plus.bubble": IconMessagePlus,
+  robot: IconRobot,
   "text.word.spacing": IconLetterSpacing,
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
@@ -281,23 +281,33 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   trash: IconTrash,
   wifi: IconWifi,
   "wifi.slash": IconWifiOff,
+  "wrench.and.screwdriver": IconTool,
   xmark: IconX,
   "xmark.circle.fill": IconCircleXFilled,
 } satisfies Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "robot",
     Icon
   >
 >;
 const SF_ICON_LOOKUP: Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "robot",
     Icon
   >
 > = ANDROID_ICON_BY_SF_SYMBOL;
 
 const ANDROID_ICON_BY_MATERIAL_NAME = {
-  auto_awesome: IconSparkles,
   bolt: IconBolt,
   build: IconTool,
   chat: IconMessage,
