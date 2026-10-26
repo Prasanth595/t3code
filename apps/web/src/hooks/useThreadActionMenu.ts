@@ -62,7 +62,7 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
-  readonly onFind?: (() => void) | undefined;
+  readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
 }) {
   const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
@@ -183,7 +183,7 @@ export function useThreadActionMenu(input: {
       };
       switch (action) {
         case "find":
-          onFind?.();
+          onFind?.(threadRef);
           return;
         case "project-settings": {
           const project = projects.find(

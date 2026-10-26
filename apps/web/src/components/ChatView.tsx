@@ -2628,8 +2628,10 @@ export default function ChatView(props: ChatViewProps) {
   const threadFindEnabled =
     isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
-  const openThreadFindStable = useStableCallback(() => {
-    if (activeThreadKey !== null) openThreadFind(activeThreadKey);
+  const openThreadFindStable = useStableCallback((threadRef: ScopedThreadRef) => {
+    if (threadFindEnabled && scopedThreadKey(threadRef) === activeThreadKey) {
+      openThreadFind(activeThreadKey);
+    }
   });
 
   useChatShortcuts({
