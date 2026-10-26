@@ -18,6 +18,13 @@ import "./pdfViewer.css";
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
 
+export type PdfViewState = {
+  page: number;
+  offset: number;
+  zoom: number | null;
+  left: number;
+};
+
 function PdfPage(props: {
   document: PDFDocumentProxy;
   index: number;
@@ -119,14 +126,17 @@ function PdfPage(props: {
 export default function PdfViewer(props: {
   src: string;
   title: string;
-  initialPage?: number;
-  onPageChange?: (page: number) => void;
+  initialView?: PdfViewState;
+  onViewChange?: (view: PdfViewState) => void;
 }) {
+  const [initialView] = useState<PdfViewState>(
+    () => props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
+  );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [ratios, setRatios] = useState<number[]>([]);
-  const [zoom, setZoom] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -138,7 +148,7 @@ export default function PdfViewer(props: {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
-  const [initialPage] = useState(props.initialPage ?? 0);
+  const initialPage = initialView.page;
   // oxlint-disable-next-line t3code/react-effect-budget -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
     const controller = new AbortController();
@@ -163,7 +173,7 @@ export default function PdfViewer(props: {
           throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
         const sizes = await Promise.all(
-          Array.from({ length: Math.min(initialPage, document.numPages) }, async (_, index) => {
+          Array.from({ length: Math.min(initialPage + 1, document.numPages) }, async (_, index) => {
             const size = (await document.getPage(index + 1)).getViewport({ scale: 1 });
             return size.height / size.width;
           }),
@@ -228,14 +238,30 @@ export default function PdfViewer(props: {
   const jumpToPage = useEffectEvent((index: number) => {
     scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
   });
-  const { onPageChange } = props;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Restore the saved PDF page after the loaded document's page layout commits.
-  useLayoutEffect(() => {
-    if (!pdf) return;
+  const saveView = (node: HTMLDivElement) => {
+    const page = pageAtOffset(node.scrollTop);
+    props.onViewChange?.({
+      page,
+      offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
+      zoom,
+      left: node.scrollLeft,
+    });
+  };
+  const restoreView = useEffectEvent(() => {
+    const node = scroll.current;
+    if (!pdf || !node) return;
     const page = Math.min(initialPage, pdf.numPages - 1);
-    jumpToPage(page);
-    onPageChange?.(page);
-  }, [pdf, initialPage, onPageChange]);
+    node.scrollTo({
+      top:
+        offsets[page]! - 16 + Math.min(initialView.offset, Math.max(0, width * ratios[page]! - 1)),
+      left: initialView.left,
+    });
+    saveView(node);
+  });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Restore the saved PDF scroll position after the loaded document's page layout commits.
+  useLayoutEffect(() => {
+    if (pdf) restoreView();
+  }, [pdf]);
   const showPage = (index: number) => {
     scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
   };
@@ -251,10 +277,14 @@ export default function PdfViewer(props: {
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
-    if (!anchor || anchor.width === width) return;
-    scroll.current?.scrollTo({
-      top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
-    });
+    const node = scroll.current;
+    if (!anchor || !node) return;
+    if (anchor.width !== width) {
+      node.scrollTo({
+        top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
+      });
+    }
+    saveView(node);
   });
   // oxlint-disable-next-line t3code/react-effect-budget -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
@@ -401,7 +431,7 @@ export default function PdfViewer(props: {
         onScroll={(event) => {
           const top = event.currentTarget.scrollTop;
           setScrollTop(top);
-          props.onPageChange?.(pageAtOffset(top));
+          saveView(event.currentTarget);
         }}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "f") {

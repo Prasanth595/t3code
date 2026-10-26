@@ -33,6 +33,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -75,17 +76,17 @@ const PdfViewer = lazy(() => import("./PdfViewer"));
 
 /**
  * documentKey includes the file's revision and remounts the viewer when it changes.
- * A stable documentId keeps this component mounted to track the current page number across reloads.
+ * A stable documentId keeps this component mounted to track the page, scroll, and zoom across reloads.
  */
 function PdfDocument(props: { src: string; title: string; documentKey: string }) {
-  const [page, setPage] = useState(0);
+  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
     <PdfDocumentRevision
       key={props.documentKey}
       src={props.src}
       title={props.title}
-      initialPage={page}
-      onPageChange={setPage}
+      initialView={view}
+      onViewChange={setView}
     />
   );
 }
@@ -97,8 +98,8 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
 function PdfDocumentRevision(props: {
   src: string;
   title: string;
-  initialPage: number;
-  onPageChange: (page: number) => void;
+  initialView: PdfViewState;
+  onViewChange: (view: PdfViewState) => void;
 }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
@@ -120,8 +121,8 @@ function PdfDocumentRevision(props: {
       <PdfViewer
         src={src}
         title={props.title}
-        initialPage={props.initialPage}
-        onPageChange={props.onPageChange}
+        initialView={props.initialView}
+        onViewChange={props.onViewChange}
       />
     </Suspense>
   );
@@ -139,7 +140,7 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
-  /** Resource identity without its revision, so PDF reloads can retain the page. */
+  /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
