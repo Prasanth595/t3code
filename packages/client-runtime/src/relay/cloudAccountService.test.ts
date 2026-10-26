@@ -26,17 +26,26 @@ function makeService() {
   const log: string[] = [];
   const activated: Array<PromiseWithResolvers<void>> = [];
   const cleanedUp: Array<PromiseWithResolvers<void>> = [];
-  const cleanUpGates = new Map<string, PromiseWithResolvers<void>>();
+  const gates = new Map<
+    string,
+    { readonly started: PromiseWithResolvers<void>; readonly release: PromiseWithResolvers<void> }
+  >();
   const service = createCloudAccountService<CloudAccountSource>({
     deactivate: () => log.push("deactivate"),
     detach: () => log.push("detach"),
-    cleanUp: async ({ accountId }) => {
-      log.push(`cleanUp:${accountId}`);
-      await cleanUpGates.get(accountId ?? "")?.promise;
+    onSignOutTransition: () => log.push("signOutTransition"),
+    cleanUp: async ({ accountId, wasActive }) => {
+      log.push(`cleanUp:${accountId}:${wasActive}`);
       cleanedUp.shift()?.resolve();
     },
-    activate: ({ accountId }) => {
-      log.push(`activate:${accountId}`);
+    prepare: async ({ accountId }) => {
+      log.push(`prepare:${accountId}`);
+      const gate = gates.get(accountId);
+      gate?.started.resolve();
+      await gate?.release.promise;
+    },
+    activate: ({ accountId, isAccountTransition }) => {
+      log.push(`activate:${accountId}:${isAccountTransition}`);
       activated.shift()?.resolve();
     },
   });
@@ -50,24 +59,29 @@ function makeService() {
     cleanedUp.push(deferred);
     return deferred.promise;
   };
-  const holdCleanUp = (accountId: string) => {
-    const deferred = Promise.withResolvers<void>();
-    cleanUpGates.set(accountId, deferred);
+  const gate = (accountId: string) => {
+    const deferred = {
+      started: Promise.withResolvers<void>(),
+      release: Promise.withResolvers<void>(),
+    };
+    gates.set(accountId, deferred);
     return deferred;
   };
-  return { service, log, nextActivation, nextCleanUp, holdCleanUp };
+  return { service, log, nextActivation, nextCleanUp, gate };
 }
 
 describe("planCloudAccountStep", () => {
-  it("plans the first observation from no previous account", () => {
+  it("treats the first observation as a non-transition", () => {
     expect(planCloudAccountStep(undefined, "a")).toEqual({
       _tag: "SignIn",
       accountId: "a",
       switchFromAccountId: null,
+      isAccountTransition: false,
     });
     expect(planCloudAccountStep(undefined, null)).toEqual({
       _tag: "SignOut",
       previousAccountId: null,
+      isAccountTransition: false,
     });
   });
 
@@ -78,6 +92,7 @@ describe("planCloudAccountStep", () => {
       _tag: "SignIn",
       accountId: "b",
       switchFromAccountId: "a",
+      isAccountTransition: true,
     });
   });
 });
@@ -89,14 +104,15 @@ describe("createCloudAccountService", () => {
     service.attach(source);
 
     emit(undefined);
-    expect(log).toEqual([]);
+    expect(service.getState()).toEqual({ _tag: "Unobserved" });
     const activation = nextActivation();
     emit({ id: "a" });
     emit({ id: "a" });
+    expect(service.getState()).toEqual({ _tag: "Activating", accountId: "a" });
     await activation;
-    emit({ id: "a" });
 
-    expect(log).toEqual(["activate:a"]);
+    expect(service.getState()).toEqual({ _tag: "Active", accountId: "a" });
+    expect(log).toEqual(["prepare:a", "activate:a:false"]);
   });
 
   it("drops credentials synchronously and cleans up before activating the next account", async () => {
@@ -113,7 +129,7 @@ describe("createCloudAccountService", () => {
     expect(log).toEqual(["deactivate"]);
     await second;
 
-    expect(log).toEqual(["deactivate", "cleanUp:a", "activate:b"]);
+    expect(log).toEqual(["deactivate", "cleanUp:a:true", "prepare:b", "activate:b:true"]);
   });
 
   it("cleans up on sign-out, including a signed-out first observation", async () => {
@@ -124,7 +140,7 @@ describe("createCloudAccountService", () => {
     const initialCleanUp = nextCleanUp();
     emit(null);
     await initialCleanUp;
-    expect(log).toEqual(["deactivate", "cleanUp:null"]);
+    expect(log).toEqual(["deactivate", "cleanUp:null:false"]);
 
     const activation = nextActivation();
     emit({ id: "a" });
@@ -134,27 +150,70 @@ describe("createCloudAccountService", () => {
     const cleanUp = nextCleanUp();
     emit(null);
     await cleanUp;
-    expect(log).toEqual(["deactivate", "cleanUp:a"]);
+    expect(service.getState()).toEqual({ _tag: "SignedOut" });
+    expect(log).toEqual(["signOutTransition", "deactivate", "cleanUp:a:true"]);
   });
 
   it("never activates an account that signed out while it was activating", async () => {
-    const { service, log, nextActivation, nextCleanUp, holdCleanUp } = makeService();
+    const { service, log, nextCleanUp, gate } = makeService();
     const { source, emit } = makeSource();
     service.attach(source);
-    const first = nextActivation();
+    const prepared = gate("a");
     emit({ id: "a" });
-    await first;
-    log.length = 0;
-
-    const heldCleanUp = holdCleanUp("a");
-    emit({ id: "b" });
+    await prepared.started.promise;
+    const cleanUp = nextCleanUp();
     emit(null);
-    void nextCleanUp();
-    const signOutCleanUp = nextCleanUp();
-    heldCleanUp.resolve();
-    await signOutCleanUp;
+    prepared.release.resolve();
+    await cleanUp;
 
-    expect(log).toEqual(["deactivate", "deactivate", "cleanUp:a", "cleanUp:b"]);
+    expect(service.getState()).toEqual({ _tag: "SignedOut" });
+    expect(log).toEqual(["prepare:a", "signOutTransition", "deactivate", "cleanUp:a:false"]);
+  });
+
+  it("retries a rejected activation on the next emission for the same account", async () => {
+    const log: string[] = [];
+    const failed = Promise.withResolvers<void>();
+    const activated = Promise.withResolvers<void>();
+    let attempts = 0;
+    const service = createCloudAccountService<CloudAccountSource>({
+      deactivate: () => log.push("deactivate"),
+      detach: () => log.push("detach"),
+      cleanUp: async ({ accountId, wasActive }) => {
+        log.push(`cleanUp:${accountId}:${wasActive}`);
+      },
+      prepare: async ({ accountId }) => {
+        attempts += 1;
+        log.push(`prepare:${accountId}`);
+        if (attempts === 1) {
+          // Queued before the rejection, so the service's catch runs before
+          // the test's `await failed.promise` continuation.
+          queueMicrotask(failed.resolve);
+          throw new Error("restore failed");
+        }
+      },
+      activate: ({ accountId, isAccountTransition }) => {
+        log.push(`activate:${accountId}:${isAccountTransition}`);
+        activated.resolve();
+      },
+    });
+    const { source, emit } = makeSource();
+    service.attach(source);
+    emit(null);
+    emit({ id: "a" });
+    await failed.promise;
+    expect(service.getState()).toMatchObject({ _tag: "Failed", accountId: "a" });
+
+    emit({ id: "a" });
+    await activated.promise;
+
+    expect(service.getState()).toEqual({ _tag: "Active", accountId: "a" });
+    expect(log).toEqual([
+      "deactivate",
+      "cleanUp:null:false",
+      "prepare:a",
+      "prepare:a",
+      "activate:a:true",
+    ]);
   });
 
   it("detaches from a replaced Clerk instance", () => {
@@ -179,6 +238,7 @@ describe("createCloudAccountService", () => {
 
     detach();
     expect(isSubscribed()).toBe(false);
-    expect(log).toEqual(["activate:a", "detach"]);
+    expect(service.getState()).toEqual({ _tag: "Unobserved" });
+    expect(log).toEqual(["prepare:a", "activate:a:false", "detach"]);
   });
 });
