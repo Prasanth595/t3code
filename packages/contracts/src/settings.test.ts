@@ -25,6 +25,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -333,7 +334,7 @@ describe("ServerSettings project overrides across versions", () => {
       },
     }).projectSettingsOverrides[projectId];
 
-    const sent = Schema.encodeSync(ServerSettingsPatch)({
+    const sent = encodeServerSettingsPatch({
       projectSettingsOverrides: { [projectId]: { ...entry, defaultAutoPull: false } },
     });
 

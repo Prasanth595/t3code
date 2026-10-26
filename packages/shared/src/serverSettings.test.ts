@@ -26,6 +26,9 @@ import {
   resolveProjectAutoPull,
 } from "./serverSettings.ts";
 
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("fallbackTextGenerationModelSelection", () => {
@@ -510,13 +513,13 @@ describe("serverSettings helpers", () => {
   // regression: #18334 a newer client must still see this server drop a key it does not know
   it("drops an override key this server does not know from a patch and keeps one it stored", () => {
     const projectId = ProjectId.make("project-a");
-    const current = Schema.decodeUnknownSync(ServerSettings)({
+    const current = decodeServerSettings({
       projectSettingsFolded: true,
       projectSettingsOverrides: {
         [projectId]: { defaultAutoPull: true, addedByNewerServer: 3 },
       },
     });
-    const patch = Schema.decodeUnknownSync(ServerSettingsPatch)({
+    const patch = decodeServerSettingsPatch({
       projectSettingsOverrides: {
         [projectId]: { defaultAutoPull: false, addedByNewerServer: 4, addedByNewerClient: "x" },
       },
