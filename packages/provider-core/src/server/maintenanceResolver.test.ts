@@ -755,6 +755,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               ProviderLatestVersions.ProviderLatestVersions,
               ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
             ),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("the npm version is already cached")),
+            ),
           ),
         ).toBe("1.0.0");
 
