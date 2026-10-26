@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.remove cannot remove an empty directory nonrecursively.
+import * as NodeFSP from "node:fs/promises";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import type {
@@ -16,7 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -115,15 +117,8 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
-// Locks record `pid:token`. A dead pid is an installer that exited, including
-// a quit mid-download, and is removed immediately. A lock with no pid is the
-// previous format and names no owner, so it only blocks for a short grace.
-// The retry loop outlasts that grace.
-const INSTALL_LOCK_LEGACY_GRACE_MS = 5_000;
-// Longer than the download timeout, so a live installer is not stolen while a
-// slow transfer is still running. A pid that is still alive after this is
-// wedged, or the pid was reused.
-const INSTALL_LOCK_LIVE_STALE_MS = 12 * 60 * 1_000;
+// Legacy locks have no owner; allow both ten-minute download stages and the install tail.
+const INSTALL_LOCK_LEGACY_STALE_MS = 30 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 
 const ACTIVATE_RETRY_COUNT = 40;
@@ -202,25 +197,29 @@ class VersionProbeKey extends Data.Class<{
   readonly mtimeMillis: number;
 }> {}
 
-function isAlreadyExists(error: PlatformError.PlatformError): boolean {
-  return error.reason._tag === "AlreadyExists";
+function isLockContention(error: PlatformError.PlatformError): boolean {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return (
+    error.reason._tag === "AlreadyExists" ||
+    error.reason._tag === "BadResource" ||
+    code === "ENOTEMPTY" ||
+    isWindowsRenameLock(error)
+  );
 }
 
-function parseLockOwnerPid(contents: string): number | null {
-  const separator = contents.indexOf(":");
+function parseLockOwnerPid(owner: string): number | null {
+  const separator = owner.indexOf("-");
   if (separator <= 0) return null;
-  const pid = Number(contents.slice(0, separator));
+  const pid = Number(owner.slice(0, separator));
   return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
 }
 
-// `EPERM` means the process exists but belongs to someone else. Any other
-// failure, including `ESRCH`, means the installer that wrote the lock is gone.
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as { readonly code?: unknown }).code === "EPERM";
+    return (error as { readonly code?: unknown }).code !== "ESRCH";
   }
 }
 
@@ -482,54 +481,65 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return bytes;
   });
 
-  const releaseOwnedLock = (lockPath: string, token: string) =>
-    fileSystem.readFileString(lockPath).pipe(
-      Effect.flatMap((contents) =>
-        contents.trim() === token ? fileSystem.remove(lockPath, { force: true }) : Effect.void,
-      ),
-      Effect.ignore,
-    );
+  const removeEmptyLock = (lockPath: string) =>
+    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+
+  const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
+    lockPath: string,
+    owner: string,
+  ) {
+    yield* fileSystem.remove(path.join(lockPath, owner), { force: true }).pipe(Effect.ignore);
+    // A replacement contains a different owner entry, so rmdir cannot remove it.
+    yield* removeEmptyLock(lockPath);
+  });
 
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
-    const token = `${process.pid}:${yield* crypto.randomUUIDv4()}`;
+    const owner = `${process.pid}-${yield* crypto.randomUUIDv4()}`;
+    const candidate = yield* Effect.acquireRelease(
+      fileSystem.makeTempDirectory({ directory: path.dirname(lockPath), prefix: ".lock-" }),
+      (directory) =>
+        fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+    );
+    yield* fileSystem.writeFileString(path.join(candidate, owner), "");
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* Effect.acquireRelease(
-        fileSystem.writeFileString(lockPath, token, { flag: "wx" }).pipe(Effect.as(token)),
-        (owned) => releaseOwnedLock(lockPath, owned),
+        // Publish a populated directory atomically, with no ownerless acquisition window.
+        fileSystem.rename(candidate, lockPath),
+        () => releaseOwnedLock(lockPath, owner),
       ).pipe(
         Effect.as(true),
-        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
+        Effect.catchIf(isLockContention, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
-      const now = yield* Clock.currentTimeMillis;
       const lockInfo = yield* fileSystem.stat(lockPath).pipe(Effect.option);
-      // The holder removed it between the exclusive create and this stat.
       if (Option.isNone(lockInfo)) continue;
-      const mtime = lockInfo.value.mtime;
-      const age = Option.isSome(mtime) ? now - mtime.value.getTime() : Number.POSITIVE_INFINITY;
-      const contents = yield* fileSystem.readFileString(lockPath).pipe(
-        Effect.map((value) => value.trim()),
-        Effect.orElseSucceed(() => ""),
-      );
-      const ownerPid = parseLockOwnerPid(contents);
-      const abandoned =
-        ownerPid === null
-          ? age > INSTALL_LOCK_LEGACY_GRACE_MS
-          : !processIsAlive(ownerPid) || age > INSTALL_LOCK_LIVE_STALE_MS;
-      if (abandoned) {
-        // Only unlink the contents just judged abandoned. A replacement belongs
-        // to whoever won the race.
-        const current = yield* fileSystem.readFileString(lockPath).pipe(
-          Effect.map((value) => value.trim()),
-          Effect.option,
-        );
-        if (Option.isSome(current) && current.value === contents) {
-          yield* fileSystem.remove(lockPath, { force: true });
+      if (lockInfo.value.type === "Directory") {
+        const owners = yield* fileSystem
+          .readDirectory(lockPath)
+          .pipe(Effect.orElseSucceed(() => []));
+        let recovered = owners.length === 0;
+        for (const entry of owners) {
+          const pid = parseLockOwnerPid(entry);
+          if (pid !== null && !processIsAlive(pid)) {
+            yield* releaseOwnedLock(lockPath, entry);
+            recovered = true;
+          }
         }
-        continue;
+        if (recovered) {
+          yield* removeEmptyLock(lockPath);
+          continue;
+        }
+      } else {
+        const now = yield* Clock.currentTimeMillis;
+        const mtime = lockInfo.value.mtime;
+        if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_LEGACY_STALE_MS) {
+          // Nonrecursive removal also refuses a populated directory that replaced this file.
+          yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
+          continue;
+        }
       }
       yield* Effect.sleep(INSTALL_LOCK_RETRY_DELAY);
     }
