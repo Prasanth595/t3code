@@ -59,37 +59,48 @@ const UsageResponse = Schema.Struct({
 // Select before decoding so a self-hosted connection cannot fall through to
 // another stored account. NULL-active rows predate the selection flag. T3 never
 // refreshes a sign-in: Console rotates refresh tokens, and OpenCode owns renewal.
-const readConsoleCredential = (databasePath: string) =>
+const readStoredCredential = (database: NodeSqlite.DatabaseSync, integrationId: string) => {
+  const row = database
+    .prepare(
+      `SELECT value FROM credential
+       WHERE integration_id = ? AND active IS NOT 0
+       ORDER BY active DESC, time_created DESC, id DESC LIMIT 1`,
+    )
+    .get(integrationId);
+  const stored =
+    typeof row?.value === "string"
+      ? Option.getOrUndefined(decodeConsoleCredential(row.value))
+      : undefined;
+  if (!stored) return undefined;
+  const { server, accountID, orgID } = stored.metadata ?? {};
+  // OpenCode sends a credential without a server string to the public Console,
+  // and service-account keys never store one.
+  if (typeof server === "string") {
+    const url = new URL(server);
+    if (!PUBLIC_CONSOLE_SERVERS.has(`${url.origin}${url.pathname.replace(/\/+$/, "")}`))
+      return undefined;
+  }
+  if (stored.type === "key") return { token: stored.key.trim() };
+  return {
+    token: stored.access.trim(),
+    // Each device signs in with its own token, so only the account matches across environments.
+    account:
+      typeof accountID === "string"
+        ? `${accountID}\0${typeof orgID === "string" ? orgID : ""}`
+        : undefined,
+  };
+};
+
+// OpenCode 2 keeps a standalone Go key in its database under "opencode-go";
+// auth.json only seeded that row once, so its copy can be stale.
+const readStoredCredentials = (databasePath: string) =>
   Effect.try(() => {
     const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
     try {
       database.exec("PRAGMA busy_timeout = 100");
-      const row = database
-        .prepare(
-          `SELECT value FROM credential
-           WHERE integration_id = 'opencode' AND active IS NOT 0
-           ORDER BY active DESC, time_created DESC, id DESC LIMIT 1`,
-        )
-        .get();
-      const stored =
-        typeof row?.value === "string"
-          ? Option.getOrUndefined(decodeConsoleCredential(row.value))
-          : undefined;
-      if (!stored) return undefined;
-      const { server, accountID, orgID } = stored.metadata ?? {};
-      if (typeof server === "string") {
-        const url = new URL(server);
-        if (!PUBLIC_CONSOLE_SERVERS.has(`${url.origin}${url.pathname.replace(/\/+$/, "")}`))
-          return undefined;
-      }
-      if (stored.type === "key") return { token: stored.key.trim() };
       return {
-        token: stored.access.trim(),
-        // Each device signs in with its own token, so only the account matches across environments.
-        account:
-          typeof accountID === "string"
-            ? `${accountID}\0${typeof orgID === "string" ? orgID : ""}`
-            : undefined,
+        console: readStoredCredential(database, "opencode"),
+        go: readStoredCredential(database, "opencode-go"),
       };
     } finally {
       database.close();
@@ -133,11 +144,17 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
     // overrides local credentials, including the Console connection.
     const databaseFile = env.OPENCODE_DB ?? "opencode.db";
-    const consoleCredential =
+    const stored =
       env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
         ? undefined
-        : yield* readConsoleCredential(path.resolve(dataHome, "opencode", databaseFile));
-    let apiKey = consoleCredential?.token || goKey;
+        : yield* readStoredCredentials(path.resolve(dataHome, "opencode", databaseFile));
+    const consoleCredential = stored?.console;
+    const candidates = [
+      ...new Set(
+        [consoleCredential?.token, stored?.go?.token, goKey].filter((key): key is string => !!key),
+      ),
+    ];
+    let apiKey = candidates.shift();
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;
@@ -148,8 +165,10 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         ),
       );
     let response = yield* readUsage(apiKey);
-    if ((response.status === 401 || response.status === 403) && goKey && goKey !== apiKey) {
-      apiKey = goKey;
+    // Try the next stored credential only when this one is rejected.
+    for (const key of candidates) {
+      if (response.status !== 401 && response.status !== 403) break;
+      apiKey = key;
       response = yield* readUsage(apiKey);
     }
     // A valid Zen key can exist without a Go subscription.

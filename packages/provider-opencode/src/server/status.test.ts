@@ -132,14 +132,18 @@ it.effect(
       const fingerprints = new Map([
         ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
+        ["db-go-key", "2113f8e76a6b6a8b33f4fc88dde557d591b11d3ffe30b718cf44428e59933918"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
         // Each device signs in separately, so one account must not split by token.
         ["console-token", consoleAccount],
         ["other-device-token", consoleAccount],
       ]);
+      const goRow = { type: "key", key: "db-go-key" };
       for (const {
         consoleRow = consoleKey,
         active = 1,
+        storedGo,
+        storedGoActive = 1,
         consoleStatus = 200,
         rejected,
         inline = false,
@@ -187,9 +191,28 @@ it.effect(
         { databaseFile: "selected.db", requested: ["console-key"] },
         { databaseFile: ":memory:", requested: ["go-key"] },
         { active: null, requested: ["console-key"] },
+        // OpenCode 2 uses its stored Go key; auth.json keeps only the stale imported copy.
+        { consoleRow: null, storedGo: goRow, requested: ["db-go-key"] },
+        {
+          consoleRow: null,
+          storedGo: goRow,
+          rejected: "db-go-key",
+          requested: ["db-go-key", "go-key"],
+        },
+        { consoleStatus: 401, storedGo: goRow, requested: ["console-key", "db-go-key"] },
+        { consoleRow: null, storedGo: goRow, storedGoActive: 0, requested: ["go-key"] },
+        {
+          consoleRow: null,
+          storedGo: { ...goRow, metadata: { server: "https://console.example" } },
+          requested: ["go-key"],
+        },
+        { consoleRow: null, storedGo: goRow, inline: true, requested: ["inline-key"] },
       ]) {
         database.exec("DELETE FROM credential");
-        insert.run("cred_selected", "opencode", JSON.stringify(consoleRow), active, 2, 2);
+        if (consoleRow !== null)
+          insert.run("cred_selected", "opencode", JSON.stringify(consoleRow), active, 2, 2);
+        if (storedGo)
+          insert.run("cred_go", "opencode-go", JSON.stringify(storedGo), storedGoActive, 3, 3);
         // Legacy selections follow creation order, even when an older key was updated later.
         insert.run(
           "cred_older",
