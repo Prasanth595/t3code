@@ -331,6 +331,7 @@ it("rejects dedupe templates without a request placeholder", () => {
 describe("schedule timezone labels", () => {
   it("uses short names instead of full IANA zones", () => {
     expect(scheduleTimeZoneLabel(undefined)).toBeUndefined();
+    expect(scheduleTimeZoneLabel("Unsupported/Zone")).toBeUndefined();
     expect(scheduleTimeZoneLabel("Etc/UTC")).toBe("UTC");
     expect(scheduleTimeZoneLabel("UTC")).toBe("UTC");
     const losAngeles = scheduleTimeZoneLabel("America/Los_Angeles");

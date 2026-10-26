@@ -109,17 +109,13 @@ const DAYS = [
 function scheduleTimeZoneLabel(timeZone: string | undefined): string | undefined {
   if (timeZone === undefined) return undefined;
   if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
-  for (const timeZoneName of ["short", "shortOffset"] as const) {
-    try {
-      const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName })
-        .formatToParts(new Date())
-        .find((part) => part.type === "timeZoneName")?.value;
-      if (name && name !== timeZone) return name;
-    } catch {
-      // Invalid IANA zone — try the next style, then fall through.
-    }
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+      .formatToParts(new Date())
+      .find((part) => part.type === "timeZoneName")?.value;
+  } catch {
+    return undefined;
   }
-  return timeZone;
 }
 
 function describeSchedule(task: ScheduledTask, timeZone?: string): string {

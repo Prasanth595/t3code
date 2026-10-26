@@ -7,7 +7,12 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-const state = vi.hoisted(() => ({ allowed: true, toggle: vi.fn(), run: vi.fn() }));
+const state = vi.hoisted(() => ({
+  allowed: true,
+  toggle: vi.fn(),
+  run: vi.fn(),
+  listResult: { tasks: [] } as ScheduledTaskListResult,
+}));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentScope: () => state.allowed,
@@ -31,7 +36,7 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => {
 });
 vi.mock(import("../../state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentQuery: (() => ({ data: listResult, error: null })) as never,
+  useEnvironmentQuery: (() => ({ data: state.listResult, error: null })) as never,
 }));
 
 import { act, render as renderUi } from "../../../test/render";
@@ -47,13 +52,12 @@ const task = {
   lastRunStatus: "never",
   nextRunAt: null,
 } as ScheduledTask;
-let listResult: ScheduledTaskListResult = { tasks: [task] };
 
 async function setup() {
   state.allowed = true;
   state.toggle.mockReset().mockResolvedValue({ _tag: "Success" });
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
-  listResult = { tasks: [task] };
+  state.listResult = { tasks: [task] };
 
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(await renderUi(null));
@@ -116,21 +120,21 @@ it("labels fixed times with a short server zone and preserves labels from older 
   const labels = () =>
     Array.from(container.querySelectorAll("li p.text-2xs"), (row) => row.textContent);
 
-  listResult = { tasks, timeZone: "America/Los_Angeles" };
+  state.listResult = { tasks, timeZone: "America/Los_Angeles" };
   await renderPanel();
   expect(labels()[0]).toMatch(/^Daily at 09:00 (P[DS]T|GMT-)/);
   expect(labels()[0]).not.toContain("America/");
   expect(labels().slice(1)).toEqual(["Every 1 min", "On webhook"]);
 
-  listResult = { tasks, timeZone: "Etc/UTC" };
+  state.listResult = { tasks, timeZone: "Etc/UTC" };
   await renderPanel();
   expect(labels()).toEqual(["Daily at 09:00 UTC", "Every 1 min", "On webhook"]);
 
-  listResult = { tasks, timeZone: "UTC" };
+  state.listResult = { tasks, timeZone: "UTC" };
   await renderPanel();
   expect(labels()).toEqual(["Daily at 09:00 UTC", "Every 1 min", "On webhook"]);
 
-  listResult = { tasks };
+  state.listResult = { tasks };
   await renderPanel();
   expect(labels()).toEqual(["Daily at 09:00", "Every 1 min", "On webhook"]);
 });
