@@ -2759,7 +2759,7 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
-it("restores a PDF's page and zoom when the viewer remounts", async () => {
+it("restores a PDF's page, scroll offset and zoom when the viewer remounts", async () => {
   // A short first page makes later offsets depend on measured page heights.
   const heights = [140, 792, 792];
   const objects = [
@@ -2787,7 +2787,7 @@ it("restores a PDF's page and zoom when the viewer remounts", async () => {
   const { default: PdfViewer } = await import("./PdfViewer");
   const url = URL.createObjectURL(new Blob([source], { type: "application/pdf" }));
   const viewer = (mount: number, positionKey: string) => (
-    <div style={{ display: "flex", height: 600, width: 320 }}>
+    <div className="flex h-[400px] w-[320px]">
       <PdfViewer key={mount} src={url} title="Restored PDF" positionKey={positionKey} />
     </div>
   );
@@ -2803,11 +2803,23 @@ it("restores a PDF's page and zoom when the viewer remounts", async () => {
     await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
     await screen.getByRole("button", { name: "Next page", exact: true }).click();
     await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+    const region = () => screen.getByRole("region", { name: "Restored PDF" }).element();
+    // The short viewport leaves room to scroll past page 3's top.
+    const scrolled = region().scrollTop + 40;
+    await act(async () => {
+      const event = new Promise((resolve) =>
+        region().addEventListener("scroll", resolve, { once: true }),
+      );
+      region().scrollTop = scrolled;
+      await event;
+    });
+    expect(region().scrollTop).toBeCloseTo(scrolled, 0);
 
     await screen.rerender(viewer(2, "restore-test:a"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"), {
       timeout: 15_000,
     });
+    expect(region().scrollTop).toBeCloseTo(scrolled, 0);
     expect(screen.container.textContent).toContain(zoom);
 
     await screen.rerender(viewer(3, "restore-test:b"));
