@@ -102,10 +102,6 @@ export interface ManualServerUpdate {
   readonly description: string;
 }
 
-/**
- * A server's supervisor restarts it at the version it pins, so a relaunch typed
- * by hand only collides with it; the command has to go through that unit.
- */
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 export function manualServerUpdate(
@@ -131,22 +127,13 @@ export function manualServerUpdate(
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
   const launch = `${runner} t3@${targetVersion}`;
-  if (unit?.scope === "user") {
-    const baseDir = installation?.baseDir ? ` --base-dir ${shellQuote(installation.baseDir)}` : "";
-    return {
-      command: `${systemctl} disable --now ${unitName} && ${launch} service install${baseDir}`,
-      label: "Copy update command",
-      title: "Update command copied",
-      description: `${unit.name} on ${serverLabel} keeps restarting this server on its old version. Run the command there: it turns ${unit.name} off and installs T3 Code's own service on t3@${targetVersion}, which updates in one click next time. Running agents stop. If the install fails, turn the old server back on with ${systemctl} enable --now ${unitName}.`,
-    };
-  }
   if (unit) {
     return {
       // Without a reload, restart reuses the ExecStart systemd loaded before the edit.
       command: `${systemctl} daemon-reload && ${systemctl} restart ${unitName}`,
       label: "Copy restart command",
       title: "Restart command copied",
-      description: `The system service ${unit.name} runs this server on ${serverLabel}. Change the t3 version in its ExecStart to t3@${targetVersion}, then run the command.`,
+      description: `On ${serverLabel}, change only the t3 version in ${unit.name}'s ExecStart to t3@${targetVersion}; keep its existing subcommand and options. Then run the command. Restarting stops running agents.`,
     };
   }
   return {

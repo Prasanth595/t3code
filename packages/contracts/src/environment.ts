@@ -66,7 +66,6 @@ export type ServerSystemdUnit = typeof ServerSystemdUnit.Type;
 const serverLaunchFields = {
   subcommand: Schema.optionalKey(Schema.Literal("serve")),
   systemdUnit: Schema.optionalKey(ServerSystemdUnit),
-  baseDir: Schema.optionalKey(TrimmedNonEmptyString),
 };
 
 export const ServerInstallation = Schema.Union([

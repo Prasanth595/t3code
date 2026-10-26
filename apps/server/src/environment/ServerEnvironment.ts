@@ -207,8 +207,7 @@ export const make = Effect.gen(function* () {
           ...(serverConfig.startupPresentation === "headless"
             ? { subcommand: "serve" as const }
             : {}),
-          // A service installed to replace the unit must keep the unit's data directory.
-          ...(systemdUnit === null ? {} : { systemdUnit, baseDir: serverConfig.baseDir }),
+          ...(systemdUnit === null ? {} : { systemdUnit }),
         };
   // Desktop and server ship together; a control fd guarantees requestDesktopUpdate support.
 

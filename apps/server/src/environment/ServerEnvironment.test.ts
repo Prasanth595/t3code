@@ -90,7 +90,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       yield* fs.symlink(entry, `${prefix}/bin/t3`);
       const config = yield* makeServerConfig(baseDir);
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
-      for (const mode of ["web", "desktop"] as const) {
+      for (const [mode, startupPresentation] of [
+        ["web", "browser"],
+        ["web", "headless"],
+        ["desktop", "browser"],
+      ] as const) {
         const descriptor = yield* Effect.gen(function* () {
           const environment = yield* ServerEnvironment.ServerEnvironment;
           return yield* environment.getDescriptor;
@@ -98,21 +102,30 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provide(
             ServerEnvironment.layer.pipe(
               Layer.provide(layerEmptySecretStore),
-              Layer.provide(ServerConfig.layer({ ...config, mode })),
+              Layer.provide(ServerConfig.layer({ ...config, mode, startupPresentation })),
             ),
           ),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readFileString: (path, ...args) =>
+              path === "/proc/self/cgroup"
+                ? Effect.succeed(
+                    "0::/user.slice/user-1000.slice/user@1000.service/app.slice/t3.service/payload",
+                  )
+                : fs.readFileString(path, ...args),
+          }),
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
           Effect.provideService(HostProcess.IsExecutable, false),
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
-        // The real /proc/self/cgroup decides systemdUnit, so CI runners may add one.
         if (mode === "web") {
-          expect(descriptor.capabilities.serverInstallation).toMatchObject({
+          expect(descriptor.capabilities.serverInstallation).toEqual({
             kind: "npm-global",
             prefix,
+            systemdUnit: { name: "t3.service", scope: "user" },
+            ...(startupPresentation === "headless" ? { subcommand: "serve" } : {}),
           });
-          expect(descriptor.capabilities.serverInstallation).not.toHaveProperty("subcommand");
         } else {
           expect(descriptor.capabilities.serverInstallation).toBeUndefined();
         }

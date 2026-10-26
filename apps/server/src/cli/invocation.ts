@@ -94,18 +94,12 @@ export const resolveServerInstallation = Effect.gen(function* () {
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
 }).pipe(Effect.orElseSucceed(() => null));
 
-/**
- * The service unit whose cgroup holds this process. Terminals, SSH and tmux
- * place what they start in `.scope` units, so only a supervisor that restarts
- * the server on exit leaves it directly under a `.service`.
- */
+/** Find the owning service even when Delegate=yes puts the process in a child cgroup. */
 export function parseSystemdUnit(cgroup: string): ServerSystemdUnit | null {
   const path = cgroup
     .split("\n")
     .map((line) => /^(?:0::|\d+:name=systemd:)(\/.*)$/.exec(line.trim())?.[1])
     .find((match) => match !== undefined);
-  // The owning unit, not the last segment: a `Delegate=yes` service may run us
-  // in a child cgroup of its own naming.
   const name = path
     ?.split("/")
     .find((segment) => segment.endsWith(".service") && !/^user@\d+\.service$/.test(segment));
