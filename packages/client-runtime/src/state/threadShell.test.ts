@@ -208,6 +208,32 @@ describe("v2 thread shell lists", () => {
     },
   );
 
+  it("updates quiet shells when a child releases a queued parent", () => {
+    const harness = makeHarness();
+    const parent = { ...parentShell(), status: "queued" as const };
+    const child = delegatedChild(parent);
+    const parentAtom = harness.threads.quietThreadShellAtom({ environmentId, threadId: parent.id });
+    const dispose = harness.registry.mount(parentAtom);
+    try {
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [parent, child],
+      });
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("idle");
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          parent,
+          { ...child, status: "completed", activityRunStatus: null, activeRunId: null },
+        ],
+      });
+      expect(harness.registry.get(parentAtom)?.runtime?.status).toBe("queued");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
   it("does not hold the parent for a child waiting in a stopped queue", () => {
     const harness = makeHarness();
     const parent = parentShell();

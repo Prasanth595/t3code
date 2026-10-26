@@ -222,12 +222,7 @@ function shellRuntime(
 ): ThreadRuntimeSummary | null {
   const ownRunLive =
     thread.activityRunStatus != null ||
-    (thread.activityRunStatus === undefined &&
-      (thread.status === "preparing" ||
-        thread.status === "queued" ||
-        thread.status === "starting" ||
-        thread.status === "running" ||
-        thread.status === "waiting"));
+    (thread.activityRunStatus === undefined && threadRunStatusIsActive(thread.status));
   const parkAtIdle =
     (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
       (hasUnfinishedSubagents && !ownRunLive)) &&

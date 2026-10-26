@@ -104,7 +104,7 @@ function parentsWithUnfinishedSubagents(
     let current: OrchestrationV2ThreadShell | undefined = child;
     while (current?.lineage.relationshipToParent === "subagent") {
       const parentId: ThreadId | null = current.lineage.parentThreadId;
-      if (parentId === null || seen.has(parentId)) break;
+      if (parentId === null || seen.has(parentId) || parents.has(parentId)) break;
       seen.add(parentId);
       parents.add(parentId);
       current = byId.get(parentId);
@@ -136,6 +136,7 @@ function sameApartFromStreaming(
   if (
     previous.environmentId !== next.environmentId ||
     previous.pendingSubagentRequest !== next.pendingSubagentRequest ||
+    previous.runtime?.status !== next.runtime?.status ||
     !threadRuntimeIsActive(next.runtime)
   ) {
     return false;
