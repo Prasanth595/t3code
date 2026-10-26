@@ -2002,14 +2002,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 disposition === undefined &&
                 responseTurn.promptMayBeCommandOnly &&
                 (!responseTurn.sawAgentActivity || responseTurn.adoptedWake);
-              if (
-                (responseTurn.settleWhenIdle || legacyCommandHandled) &&
-                !hasPendingSettleAcknowledgement(responseTurn)
-              )
+              if (responseTurn.settleWhenIdle || legacyCommandHandled) {
+                if (hasPendingSettleAcknowledgement(responseTurn)) {
+                  responseTurn.settleWhenIdle = true;
+                  return;
+                }
                 yield* scheduleSettleProbe(
                   responseTurn,
                   responseTurn.settleWhenIdle || responseTurn.adoptedWake,
                 );
+              }
               return;
             }
             if (event["success"] !== false) return;

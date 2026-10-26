@@ -3016,6 +3016,54 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("settles a legacy command after its pending steer is acknowledged", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/extension-command");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.isString(prompt["id"]);
+
+      const steering = yield* runtime
+        .steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: "message:thread-pi-test:handled-steer-probe" as never,
+            text: "pong",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      const steerPrompt = yield* fake.takeRequest("prompt");
+      assert.isString(steerPrompt["id"]);
+
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({
+        type: "response",
+        command: "prompt",
+        success: true,
+      });
+      assert.equal((yield* Fiber.join(steering))._tag, "Success");
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("holds compaction settlement until a timed-out steer is acknowledged", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
