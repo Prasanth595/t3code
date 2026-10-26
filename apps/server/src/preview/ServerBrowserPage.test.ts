@@ -149,7 +149,6 @@ describe("server browser element refs", () => {
       /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
     );
     expect(result.visibleText).not.toContain("editable-pass");
-    // Page text masks the same values, so it can't be compared against the tree.
     expect(result.visibleText).toContain("Order ••••••••-2");
     expect(tree).toMatch(/row "password: •+"/);
     expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
@@ -173,7 +172,6 @@ describe("server browser element refs", () => {
       <input type="password" aria-label="Long" value="long-secret">`);
     const cut = (await takeSnapshot()).visibleText;
     expect(cut.length).toBe(20_000);
-    // Masked before the cut, so no prefix of the value is left.
     expect(cut.slice(-8)).toBe("xxx•••••");
   });
 
@@ -273,8 +271,10 @@ describe("server browser drag", () => {
       );
       void settled.then(() => (finished = true));
       // Two macrotask turns: Node reports a rejection nobody observed after the first.
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      for (let turn = 0; turn < 2; turn++) {
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Node emits unhandledRejection only between macrotasks; no promise can mark that point.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       expect(finished).toBe(false);
       targetBox.resolve(box);
 
