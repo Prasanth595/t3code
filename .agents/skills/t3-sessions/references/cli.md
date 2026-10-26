@@ -56,11 +56,13 @@ tools when available; `--messages` limits printed output, not history retrieval.
 
 When sending or starting, add `--wait` if you want that command to wait for its
 run and print the reply. Use an interruptible execution session for long waits.
-Exit 1 means the run failed or stopped; exit 2 means it needs an answer in the
-app. With `--json`, inspect the returned status, IDs, reply and error. IDs are
-printed after the wait finishes, so a disconnected wait can leave an uncertain
-outcome. Without `--wait`, acceptance returns promptly and results can be read
-later; it does not create an automatic completion callback.
+For a returned run result, exit 1 means it failed or stopped; exit 2 means it
+needs an answer in the app. Command, transport and result-retrieval errors also
+fail the command, so exit 1 alone does not prove the run failed. Inspect stderr
+and any JSON status, IDs, reply and error; reconcile an unknown outcome before
+retrying. IDs are printed after the wait finishes, so a disconnected wait can
+leave no receipt. Without `--wait`, acceptance returns promptly and results can
+be read later; it does not create an automatic completion callback.
 
 ## Start a requested conversation
 
@@ -78,10 +80,14 @@ T3_TASK
 ```
 
 Replace the example brief and every symbolic argument with the actual request
-and checked destination values. `--provider` and `--model` go together; omit
-both only when destination defaults are acceptable. Omit `--worktree` and
-`--branch` when sharing the project folder is intended. `--branch` requires
-`--worktree`, and the base ref and committed inputs must exist remotely.
+and checked destination values. `--provider` and `--model` go together and
+replace the entire model selection; they do not inherit saved model options.
+To retain project options, verify the complete destination default selection
+and omit both flags. If the requested selection cannot be expressed by the CLI,
+use an authorized destination MCP interface or report the gap before launch.
+Omit `--worktree` and `--branch` when sharing the project folder is intended.
+`--branch` requires `--worktree`, and the base ref and committed inputs must
+exist remotely.
 
 Read the new thread with `show --json` to confirm its workspace, model and modes
 and obtain its link. It does not expose model options such as reasoning effort;

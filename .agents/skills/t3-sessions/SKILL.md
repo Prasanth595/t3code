@@ -24,7 +24,7 @@ route. The same CLI works locally for agents outside T3.
 [Outside agents](https://github.com/pingdotgg/t3code/blob/main/docs/user/outside-agents.md)
 describes supported MCP setup. Missing access, authentication or a running
 server is a prerequisite to report; do not extract credentials, hand-build
-tokens, write the live database or restart a service to reach a thread.
+tokens, edit the live database directly or restart a service to reach a thread.
 
 ## Read, message or start
 
