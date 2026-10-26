@@ -56,6 +56,7 @@ export function CustomSnoozeDialogHost() {
 function CustomSnoozeDialog() {
   const id = useId();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
+  const [today] = useState(() => new Date(new Date().setHours(0, 0, 0, 0)));
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(initial);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -137,7 +138,7 @@ function CustomSnoozeDialog() {
                             selected={date}
                             defaultMonth={date}
                             {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
-                            disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
+                            disabled={{ before: today }}
                             onSelect={(selected) => {
                               setDate(selected);
                               setCalendarOpen(false);
