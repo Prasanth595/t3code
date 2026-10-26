@@ -88,8 +88,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     /** The updater cannot detect installs outside `isCommandPath`, so leave those manual-only. */
     readonly requiresCommandPath?: boolean;
     readonly env?: NodeJS.ProcessEnv;
-    /** An installer-specific channel must not fall back to npm when unavailable. */
-    readonly lookupLatestVersion?: Effect.Effect<string | null>;
+    /** Null leaves the channel unknown; neither form falls back to npm. */
+    readonly lookupLatestVersion?: Effect.Effect<string | null> | null;
   } | null;
 }
 
@@ -457,8 +457,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeUpdate.lookupLatestVersion !== undefined ? { latestVersion: null } : {}),
         ...(nativeUpdate.lookupLatestVersion
-          ? { latestVersion: null, lookupLatestVersion: nativeUpdate.lookupLatestVersion }
+          ? { lookupLatestVersion: nativeUpdate.lookupLatestVersion }
           : {}),
       })
     : manual;

@@ -73,15 +73,6 @@ const CodexNativeReleaseMetadata = Schema.Struct({
 
 /** The standalone installer consumes this channel, whose rollout can lag npm. */
 const lookupCodexNativeVersion = Effect.gen(function* () {
-  const env = yield* HostProcess.Environment;
-  // Explicit installer overrides are not the default stable channel. An unknown
-  // advisory is safer than promising an npm release this updater will not install.
-  if (
-    (env.CODEX_RELEASE && env.CODEX_RELEASE !== "latest") ||
-    (env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM &&
-      !/^(1|true|yes)$/i.test(env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM))
-  )
-    return null;
   const http = yield* HttpClient.HttpClient;
   const response = yield* http.get("https://releases.openai.com/codex/channels/latest");
   if (response.status < 200 || response.status >= 300) return null;
@@ -134,10 +125,12 @@ function makeCodexMaintenanceResolver(
       isCommandPath: isCodexStandaloneCommandPath,
       requiresCommandPath: true,
       env: { CODEX_HOME: sharedHomePath },
-      lookupLatestVersion: lookupCodexNativeVersion.pipe(
-        Effect.provideService(HttpClient.HttpClient, http),
-        Effect.provideService(HostProcess.Environment, env),
-      ),
+      lookupLatestVersion:
+        (env.CODEX_RELEASE && env.CODEX_RELEASE !== "latest") ||
+        (env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM &&
+          !/^(1|true|yes)$/i.test(env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM))
+          ? null
+          : lookupCodexNativeVersion.pipe(Effect.provideService(HttpClient.HttpClient, http)),
     },
   });
 }

@@ -526,6 +526,23 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }).pipe(Effect.provideService(HttpClient.HttpClient, http));
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         expect(requests).toEqual([]);
+        if (fixture.env) {
+          const stable = yield* CodexDriver.create({
+            instanceId: ProviderInstanceId.make("codex-stable-channel"),
+            displayName: "Codex stable channel",
+            enabled: false,
+            environment: [],
+            config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: home },
+          }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+          const stableCapabilities = yield* stable.snapshot.resolveMaintenance();
+          expect(
+            yield* resolveLatestProviderVersion(stableCapabilities).pipe(
+              Effect.provideService(HostProcess.Platform, "darwin"),
+              Effect.provideService(HostProcess.Architecture, "arm64"),
+            ),
+          ).toBe("0.164.0");
+          requests.length = 0;
+        }
         const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           Effect.provideService(HostProcess.Platform, fixture.platform ?? "darwin"),
