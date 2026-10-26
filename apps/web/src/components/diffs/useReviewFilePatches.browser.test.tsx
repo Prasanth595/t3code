@@ -1,5 +1,4 @@
 import { RegistryContext } from "@effect/atom-react";
-import type { FileDiffMetadata } from "@pierre/diffs";
 import { EnvironmentId, type ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -33,6 +32,9 @@ vi.mock("~/state/review", () => ({
 
 import { useReviewFilePatches } from "./useReviewFilePatches";
 
+const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
+const firstBatch = paths.slice(0, 4);
+
 const source: ReviewDiffPreviewSource = {
   id: "working-tree",
   kind: "working-tree",
@@ -42,19 +44,14 @@ const source: ReviewDiffPreviewSource = {
   diff: "preview",
   diffHash: "hash",
   truncated: true,
-  files: ["added.ts", "large.d.ts", "package-lock.json"].map((path) => ({
-    path,
-    previousPath: null,
-    additions: 1,
-    deletions: 0,
-  })),
+  files: paths.map((path) => ({ path, previousPath: null, additions: 1, deletions: 0 })),
 };
 
 type HookResult = ReturnType<typeof useReviewFilePatches>;
 
 function Harness(props: {
+  enabled: boolean;
   revision: string;
-  expanded: ReadonlySet<string>;
   onResult: (result: HookResult) => void;
 }) {
   const result = useReviewFilePatches({
@@ -66,7 +63,7 @@ function Harness(props: {
     theme: "dark",
     revision: props.revision,
     preview: null,
-    isFileExpanded: (file) => props.expanded.has(file.name),
+    enabled: props.enabled,
   });
   props.onResult(result);
   return (
@@ -84,11 +81,11 @@ function setup() {
   mocks.requests = [];
   const registry = AtomRegistry.make();
   const results: HookResult[] = [];
-  const ui = (props: { revision?: string; expanded?: ReadonlySet<string> } = {}) => (
+  const ui = (props: { enabled?: boolean; revision?: string } = {}) => (
     <RegistryContext.Provider value={registry}>
       <Harness
+        enabled={props.enabled ?? true}
         revision={props.revision ?? "first"}
-        expanded={props.expanded ?? new Set()}
         onResult={(result) => results.push(result)}
       />
     </RegistryContext.Provider>
@@ -101,7 +98,13 @@ function setup() {
         patchQuery(path),
         AsyncResult.success({
           ...source,
-          diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+${contents}\n`,
+          diff: `diff --git a/${path} b/${path}
+new file mode 100644
+--- /dev/null
++++ b/${path}
+@@ -0,0 +1 @@
++${contents}
+`,
           files: source.files!.filter((file) => file.path === path),
           truncated: false,
         }),
@@ -110,45 +113,43 @@ function setup() {
   };
 }
 
-it("does not request collapsed files", async () => {
+it("loads nothing until the panel has settled", async () => {
   const h = setup();
-  await using screen = await render(h.ui(), { router: false });
-  await expect.element(screen.getByText("large.d.ts pending")).toBeInTheDocument();
+  await using screen = await render(h.ui({ enabled: false }), { router: false });
+  await expect.element(screen.getByText("a.ts pending")).toBeInTheDocument();
   expect(mocks.requests).toEqual([]);
+  await screen.rerender(h.ui());
+  expect(mocks.requests).toEqual(firstBatch);
 });
 
-it("loads only the expanded file and keeps its key when its real change type arrives", async () => {
+it("keeps loaded files and starts no new loads while the panel closes", async () => {
   const h = setup();
   await using screen = await render(h.ui(), { router: false });
-  const initialKeys = h.latest().fileKeys;
-  const expanded = new Set(["added.ts"]);
-  await screen.rerender(h.ui({ expanded }));
-  expect(mocks.requests).toEqual(["added.ts"]);
-  h.complete("added.ts");
-  await expect.element(screen.getByText("added.ts new")).toBeInTheDocument();
-  expect(h.latest().fileKeys).toEqual(initialKeys);
+  for (const path of firstBatch) h.complete(path);
+  await expect.element(screen.getByText("d.ts new")).toBeInTheDocument();
+  await screen.rerender(h.ui({ enabled: false }));
+  h.latest().loadNextFiles();
+  h.latest().requestFile(5);
+  await screen.rerender(h.ui({ enabled: false }));
+  expect(mocks.requests).toEqual(firstBatch);
+  await expect.element(screen.getByText("a.ts new")).toBeInTheDocument();
 });
 
 it("revalidates on reopen without reparsing identical content", async () => {
   const h = setup();
-  const expanded = new Set(["added.ts"]);
   {
-    await using screen = await render(h.ui({ expanded }), { router: false });
-    h.complete("added.ts");
-    await expect.element(screen.getByText("added.ts new")).toBeInTheDocument();
+    await using screen = await render(h.ui(), { router: false });
+    for (const path of firstBatch) h.complete(path);
+    await expect.element(screen.getByText("d.ts new")).toBeInTheDocument();
   }
   const loaded = h.latest().renderableFiles[0];
-  await using screen = await render(h.ui({ expanded }), { router: false });
-  expect(mocks.requests).toEqual(["added.ts", "added.ts"]);
-  h.complete("added.ts");
+  await using screen = await render(h.ui(), { router: false });
+  expect(mocks.requests).toEqual([...firstBatch, ...firstBatch]);
+  for (const path of firstBatch) h.complete(path);
   await vi.waitFor(() => expect(h.latest().isPending).toBe(false));
   expect(h.latest().renderableFiles[0]).toBe(loaded);
 
-  await screen.rerender(h.ui({ expanded, revision: "refresh" }));
-  h.complete("added.ts", "changed");
-  await vi.waitFor(() =>
-    expect((h.latest().renderableFiles[0] as FileDiffMetadata | undefined)?.additionLines).toEqual([
-      "changed",
-    ]),
-  );
+  await screen.rerender(h.ui({ revision: "refresh" }));
+  h.complete("a.ts", "changed");
+  await vi.waitFor(() => expect(h.latest().renderableFiles[0]?.additionLines).toEqual(["changed"]));
 });

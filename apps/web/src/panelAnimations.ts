@@ -67,3 +67,18 @@ export function usePanelPresence<T>(
   const visible = open || (animated && present && retained?.scopeKey === scopeKey);
   return { present: visible, value: open ? value : visible ? retainedValue : null };
 }
+
+/** True once an open panel has finished its enter transition, and false again while it closes. */
+export function usePanelSettled(open: boolean): boolean {
+  const { active, durationMs } = usePanelAnimationSettings();
+  const [settled, setSettled] = useState(false);
+
+  // oxlint-disable-next-line t3code/react-effect-budget -- Mark the panel settled when its CSS enter transition ends; the timer is cleared on close or unmount.
+  useEffect(() => {
+    if (!open || !active) return;
+    const timeout = window.setTimeout(() => setSettled(true), durationMs);
+    return () => window.clearTimeout(timeout);
+  }, [active, durationMs, open]);
+
+  return open && (!active || settled);
+}

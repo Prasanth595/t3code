@@ -4,20 +4,16 @@ import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts"
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import * as Option from "effect/Option";
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import {
-  buildFileDiffIdentityKey,
-  getRenderablePatch,
-  resolveFileDiffPath,
-  type RenderablePatch,
-} from "~/lib/diffRendering";
+import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
+const DEFAULT_INDICES = [0, 1, 2, 3];
 
 export function useReviewFilePatches({
   environmentId,
@@ -28,7 +24,7 @@ export function useReviewFilePatches({
   theme,
   revision,
   preview,
-  isFileExpanded,
+  enabled,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -38,7 +34,7 @@ export function useReviewFilePatches({
   theme: "light" | "dark";
   revision: string | undefined;
   preview: RenderablePatch | null;
-  isFileExpanded: (file: FileDiffMetadata) => boolean;
+  enabled: boolean;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -49,30 +45,22 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
   ]);
-  const files = sortedReviewFiles(source);
-  const placeholders = files.map((file): FileDiffMetadata => ({
-    name: file.path,
-    ...(file.previousPath ? { prevName: file.previousPath } : {}),
-    type: file.previousPath ? "rename-changed" : "change",
-    hunks: [],
-    additionLines: [],
-    deletionLines: [],
-    additionCharacterCount: 0,
-    deletionCharacterCount: 0,
-    splitLineCount: 0,
-    unifiedLineCount: 0,
-    isPartial: true,
-    cacheKey: `${scope}:${file.path}:pending`,
-  }));
-  const queries = reviewFileQueries({
-    environmentId,
-    cwd,
-    source,
-    baseRef,
-    ignoreWhitespace,
-    scope,
-    indices: placeholders.flatMap((file, index) => (isFileExpanded(file) ? [index] : [])),
-  });
+  const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
+  // Parsing a large file blocks the main thread for frames, so nothing loads until the panel has
+  // finished opening, and a closing panel keeps what it has without starting more.
+  const [started, setStarted] = useState(enabled);
+  if (enabled && !started) setStarted(true);
+  const queries = started
+    ? reviewFileQueries({
+        environmentId,
+        cwd,
+        source,
+        baseRef,
+        ignoreWhitespace,
+        scope,
+        requested,
+      })
+    : [];
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
   );
@@ -88,13 +76,39 @@ export function useReviewFilePatches({
         !registry.get(query).waiting;
       if (changed || cached) registry.refresh(query);
     }
-  }, [scope, revision, queries, registry, previousPreview]);
+  }, [scope, revision, queries, registry]);
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
     const files = sortedReviewFiles(source);
     const query = queries.find(({ index }) => files[index]?.path === path)?.query;
     if (query) registry.refresh(query);
   });
+  const files = sortedReviewFiles(source);
+  const pendingIndex = files.findIndex((_, index) => {
+    const patch = patches.get(index);
+    return !patch || patch._tag === "Initial";
+  });
+  const settledFileCount = source
+    ? pendingIndex < 0
+      ? files.length
+      : pendingIndex
+    : preview?.kind === "files"
+      ? preview.files.length
+      : 0;
+  const requestFiles = (indices: number[]) => {
+    if (!enabled) return;
+    setRequested((current) => {
+      const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
+      const added = indices.filter((index) => !previous.includes(index));
+      return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+    });
+  };
+  // The first unsettled file already requested means a batch is in flight; wait for it.
+  const loadNextFiles = () => {
+    if (queries.some(({ index }) => index === settledFileCount)) return;
+    requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
+  };
+  const requestFile = (index: number) => requestFiles([index]);
   const renderableFiles = source
     ? files.map((file, index): FileDiffMetadata => {
         const result = patches.get(index);
@@ -104,7 +118,20 @@ export function useReviewFilePatches({
           );
           if (loaded) return loaded;
         }
-        return placeholders[index]!;
+        return {
+          name: file.path,
+          ...(file.previousPath ? { prevName: file.previousPath } : {}),
+          type: file.previousPath ? "rename-changed" : "change",
+          hunks: [],
+          additionLines: [],
+          deletionLines: [],
+          additionCharacterCount: 0,
+          deletionCharacterCount: 0,
+          splitLineCount: 0,
+          unifiedLineCount: 0,
+          isPartial: true,
+          cacheKey: `${scope}:${file.path}:pending`,
+        };
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
@@ -127,14 +154,24 @@ export function useReviewFilePatches({
       ] as const;
     }),
   );
+  const readyFilePaths = new Set(
+    files
+      .filter((_, index) => {
+        const patch = patches.get(index);
+        return patch && patch._tag !== "Initial";
+      })
+      .map((file) => file.path),
+  );
   return {
     scope,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
+    requestFile,
+    readyFilePaths,
     renderableFiles,
-    // Statistics cannot distinguish added/deleted files, so keep their provisional identity.
-    fileKeys: (source ? placeholders : renderableFiles).map(buildFileDiffIdentityKey),
+    settledFileCount,
+    loadNextFiles,
   };
 }
 
@@ -145,7 +182,7 @@ function reviewFileQueries({
   baseRef,
   ignoreWhitespace,
   scope,
-  indices,
+  requested,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -153,8 +190,9 @@ function reviewFileQueries({
   baseRef: string | null;
   ignoreWhitespace: boolean;
   scope: string;
-  indices: number[];
+  requested: { scope: string; indices: number[] };
 }) {
+  const indices = requested.scope === scope ? requested.indices : DEFAULT_INDICES;
   const files = sortedReviewFiles(source);
   const queries =
     !environmentId || !cwd || !source
