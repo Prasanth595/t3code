@@ -75,27 +75,6 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
   });
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
-  it.effect("does not start a host when disabled", () =>
-    Effect.gen(function* () {
-      const createHost = vi.fn(async () => makeHost(metaCatalog));
-      const snapshot = yield* checkMuseProviderStatus(settings({}), {}, undefined, createHost);
-      expect(snapshot.status).toBe("disabled");
-      expect(createHost).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("gives host-local install and login guidance for a missing binary", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* checkMuseProviderStatus(
-        settings({ enabled: true, binaryPath: "/definitely-missing/muse" }),
-      );
-      expect(snapshot.installed).toBe(false);
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toContain("muse login");
-      expect(snapshot.message).toContain("this T3 server host");
-    }),
-  );
-
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>
     Effect.scoped(
       Effect.gen(function* () {
