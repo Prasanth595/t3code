@@ -105,6 +105,7 @@ import { checkRelayClock } from "./relayClock.ts";
 import {
   filterRelayClient,
   isRelayClockSkewError,
+  isRelayUnavailable,
   relayRequestError,
   type RelayRequestError,
   type RelayRequestTiming,
@@ -1258,7 +1259,7 @@ const make = Effect.gen(function* () {
               shouldRetryCloudLink(error) && error._tag !== "CloudLinkEndpointUnavailableError",
           }),
           Effect.tapError((error) =>
-            isRelayClockSkewError(error)
+            isRelayClockSkewError(error) || isRelayUnavailable(error)
               ? endpointRuntime.requestRecovery(endpointConfig)
               : Effect.void,
           ),
