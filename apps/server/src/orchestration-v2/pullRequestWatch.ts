@@ -43,9 +43,8 @@ export function evaluatePullRequestWatch(
   const changes: Array<PullRequestWatchChange> = [];
   // A read without a head says nothing about pushes, so it keeps the last known one.
   const headSha = detail.headSha ?? watch.headSha;
-  // Remarks already have their baseline in startedAt.
-  const checksBaseline = watch.awaitingBaseline !== undefined;
   const headMoved = watch.headSha !== null && headSha !== watch.headSha;
+  const checksBaseline = watch.awaitingBaseline !== undefined && !headMoved;
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
@@ -78,8 +77,10 @@ export function evaluatePullRequestWatch(
     const settled =
       failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
     owedChecks = owed;
-    if (!checksBaseline && passedNow && (!passed || gateGrew)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+    if (passedNow && (!passed || gateGrew)) {
+      if (!checksBaseline) {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      }
       owedChecks =
         required.length > 0
           ? detail.checks
@@ -100,9 +101,10 @@ export function evaluatePullRequestWatch(
   // repository runs no checks at all, nothing waits.
   let checksAwaitedSince = watch.checksAwaitedSince;
   if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore = headMoved
-      ? DateTime.formatIso(DateTime.makeUnsafe(now))
-      : (watch.checksAwaitedSince ?? null);
+    const awaitedBefore =
+      headMoved || watch.awaitingBaseline === "all"
+        ? DateTime.formatIso(DateTime.makeUnsafe(now))
+        : (watch.checksAwaitedSince ?? null);
     checksAwaitedSince = detail.checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
     if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
