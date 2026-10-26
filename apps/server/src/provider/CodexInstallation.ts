@@ -103,14 +103,11 @@ export class CodexInstallationError extends Schema.TaggedError<CodexInstallation
   {
     operation: Schema.String,
     detail: Schema.String,
-    httpStatus: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
-    return this.httpStatus === undefined
-      ? this.detail
-      : `The Codex download server returned HTTP ${this.httpStatus}. Try again later.`;
+    return this.detail;
   }
 }
 const isInstallationError = Schema.is(CodexInstallationError);
@@ -625,8 +622,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           detail:
             httpStatus === undefined
               ? "The Codex download was interrupted. Check your internet connection, then retry installation."
-              : "The Codex download server returned an HTTP error. Try again later.",
-          ...(httpStatus === undefined ? {} : { httpStatus }),
+              : `The Codex download server returned HTTP ${httpStatus}. Try again later.`,
           cause,
         });
       },
@@ -677,7 +673,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
                     message: cancelled
                       ? "Installation cancelled. The previous runtime is unchanged."
                       : Option.isSome(error)
-                        ? error.value.message
+                        ? error.value.detail
                         : "Could not finish the Codex installation. Check disk space and directory access.",
                   } satisfies ProviderInstallState;
                 })
