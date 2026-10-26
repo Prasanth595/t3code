@@ -719,7 +719,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               taskInventoryUncertain = false;
               registryTasks.clear();
               // Unsupported discovery says nothing about directly observed items' lifetimes.
-              return Effect.succeed(undefined);
+              return Effect.void;
             }
             taskInventoryUncertain = true;
             return Effect.logWarning("Could not read Muse's background tasks", cause).pipe(

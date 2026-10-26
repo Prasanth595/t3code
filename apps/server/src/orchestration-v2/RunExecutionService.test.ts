@@ -1997,6 +1997,7 @@ it.effect.each(["completed", "cancelled", "failed"] as const)(
     Effect.gen(function* () {
       const observed = yield* Ref.make<ReadonlyArray<string>>([]);
       const pending = yield* Ref.make(true);
+      const now = yield* DateTime.now;
       yield* captureRootRunTermination({
         key: `background-roster:${status}`,
         shouldFinalizeRun: () => Effect.succeed(true),
@@ -2009,12 +2010,24 @@ it.effect.each(["completed", "cancelled", "failed"] as const)(
               providerThread: {
                 id: ids.providerThreadId,
                 driver,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                providerSessionId: ProviderSessionId.make("session:background-roster"),
+                appThreadId: ids.threadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: 1,
                 lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
                 pendingBackgroundTasks: pending
                   ? [{ taskId: "monitor-1", kind: "background_task" }]
                   : [],
               },
-            }) as ProviderAdapter.ProviderAdapterV2Event;
+            }) satisfies ProviderAdapter.ProviderAdapterV2Event;
           return Stream.fromIterable([
             roster(true),
             backgroundTurnItemEvent(ids, "command_execution", "running", 1),

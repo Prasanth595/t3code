@@ -2167,7 +2167,10 @@ describe("MuseAdapterV2", () => {
             event.type === "turn_item.updated" &&
             event.turnItem.nativeItemRef?.nativeId === "background-1",
         );
-        assert.strictEqual(completion?.turnItem.status, "completed");
+        assert.strictEqual(
+          completion?.type === "turn_item.updated" ? completion.turnItem.status : undefined,
+          "completed",
+        );
         assert.isBelow(harness.allEvents.indexOf(completion!), harness.allEvents.indexOf(cleared));
         assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
