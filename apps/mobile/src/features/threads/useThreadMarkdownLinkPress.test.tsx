@@ -11,6 +11,11 @@ const harness = vi.hoisted(() => ({
   openPullRequest: vi.fn(async () => true),
 }));
 const navigation = { navigate: harness.navigate };
+vi.mock("./useOpenLinkedThread", () => ({
+  useOpenLinkedThread: () => (target: unknown) => harness.navigate("Thread", target),
+}));
+vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { get: () => [] } }));
+vi.mock("../../state/threads", () => ({ environmentThreadShells: { threadRefsAtom: {} } }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => navigation }));
 vi.mock("../../native/useOpenPullRequest", () => ({
   useOpenPullRequest: () => harness.openPullRequest,
@@ -47,6 +52,7 @@ describe("thread Markdown links", () => {
       "ThreadFile",
       { threadId: "thread-1", path: ["src", "main.ts"], line: "42" },
     ],
+    ["src/main.ts", "ThreadFile", { threadId: "thread-1", path: ["src", "main.ts"] }],
     ["/tmp/report.md", "ThreadFile", { threadId: "thread-1", path: ["", "tmp", "report.md"] }],
   ])("opens %s in the owning environment", async (href, route, params) => {
     harness.navigate.mockClear();

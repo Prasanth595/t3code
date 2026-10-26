@@ -1,3 +1,6 @@
+import { AppText as Text } from "../../components/ui/AppText";
+import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
+import type { NativeMarkdownTextStyle } from "../../native/SelectableMarkdownText";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   classifyMarkdownImageSource,
@@ -6,7 +9,10 @@ import {
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
-import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
+import {
+  normalizeNativeMarkdownUrl,
+  resolveMarkdownLinkPresentation,
+} from "../../lib/markdownLinks";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import {
   ThreadMarkdownImage,
@@ -19,6 +25,8 @@ export function useThreadMarkdownImageRenderer(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly workspaceRoot: string | null;
+  readonly onLinkPress: (href: string, imageEmbed?: boolean) => void;
+  readonly textStyle: NativeMarkdownTextStyle;
   readonly setExpandedFile: Dispatch<SetStateAction<FilePreviewSource | null>>;
 }): MarkdownImageRenderer {
   const { environmentId, threadId, workspaceRoot, setExpandedFile } = props;
@@ -36,6 +44,37 @@ export function useThreadMarkdownImageRenderer(props: {
             key={image.href}
             source={{ ...media.source, name: image.alt ?? media.source.name }}
           />
+        );
+      }
+      if (media?.kind === "audio") {
+        return (
+          <ThreadInlineFilePreview
+            key={image.href}
+            source={media.source}
+            onOpen={() => props.onLinkPress(image.href, true)}
+          />
+        );
+      }
+      const fileLink = resolveMarkdownLinkPresentation(image.href);
+      if (
+        (media && (media.kind === "pdf" || media.kind === "document" || media.kind === "file")) ||
+        (fileLink.kind === "file" && fileLink.line !== undefined)
+      ) {
+        const name =
+          media?.source.name ?? (fileLink.kind === "file" ? fileLink.label : "Open file");
+        return (
+          <Text
+            accessibilityRole="link"
+            accessibilityLabel={`Open ${name}`}
+            onPress={() => props.onLinkPress(image.href, true)}
+            style={{
+              color: props.textStyle.linkColor,
+              fontSize: props.textStyle.fontSize,
+              lineHeight: props.textStyle.lineHeight,
+            }}
+          >
+            {name}
+          </Text>
         );
       }
       const imageSource = classifyMarkdownImageSource(image.href, workspaceRoot);
@@ -75,6 +114,6 @@ export function useThreadMarkdownImageRenderer(props: {
         />
       );
     },
-    [environmentId, threadId, workspaceRoot, setExpandedFile],
+    [environmentId, threadId, workspaceRoot, setExpandedFile, props.onLinkPress, props.textStyle],
   );
 }

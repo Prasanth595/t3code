@@ -1,5 +1,9 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentThreadShells } from "../../state/threads";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useCallback, type Dispatch, type SetStateAction } from "react";
@@ -11,7 +15,7 @@ import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import {
   fileRoutePathSegments,
-  isAbsolutePath,
+  resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 
@@ -25,14 +29,21 @@ export function useThreadMarkdownLinkPress(props: {
   const { environmentId, threadId, workspaceRoot, setExpandedFile, setExpandedVideo } = props;
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
+  const openLinkedThread = useOpenLinkedThread();
   return useCallback(
     (href: string, imageEmbed = false) => {
       // A thread link names a thread in this feed's environment.
       const linkedThreadId = parseThreadLinkHref(href);
       if (linkedThreadId) {
-        navigation.navigate("Thread", {
-          environmentId: String(environmentId),
-          threadId: String(linkedThreadId),
+        const source = scopeThreadRef(environmentId, linkedThreadId);
+        const target =
+          resolveThreadLinkRef(
+            source,
+            appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
+          ) ?? source;
+        openLinkedThread({
+          environmentId: String(target.environmentId),
+          threadId: String(target.threadId),
         });
         return;
       }
@@ -42,7 +53,7 @@ export function useThreadMarkdownLinkPress(props: {
         workspaceRoot: workspaceRoot,
         imageEmbed,
       });
-      if (media) {
+      if (media && media.kind !== "file") {
         void Haptics.selectionAsync();
         if (media.kind === "video") {
           setExpandedVideo((current) => current ?? media.source);
@@ -54,27 +65,14 @@ export function useThreadMarkdownLinkPress(props: {
 
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
-        const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, presentation.path);
-        if (relativePath) {
-          void Haptics.selectionAsync();
-          navigation.navigate("ThreadFile", {
-            environmentId: String(environmentId),
-            threadId: String(threadId),
-            path: fileRoutePathSegments(relativePath),
-            ...(presentation.line ? { line: String(presentation.line) } : {}),
-          });
-          return;
-        }
-      }
-
-      // A host file outside the workspace, such as a report an agent wrote to
-      // a temp directory, opens read-only in the file screen.
-      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
+        const path = resolveFileLinkPath(workspaceRoot, presentation.path);
+        if (path === null) return;
+        const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
           environmentId: String(environmentId),
           threadId: String(threadId),
-          path: fileRoutePathSegments(presentation.path),
+          path: fileRoutePathSegments(relativePath ?? path),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
         return;
@@ -97,6 +95,7 @@ export function useThreadMarkdownLinkPress(props: {
       setExpandedFile,
       navigation,
       openPullRequest,
+      openLinkedThread,
     ],
   );
 }
