@@ -7523,11 +7523,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        const classifyAmbientTask = Effect.fnUntraced(function* (
+          liveQuery: ClaudeLiveQueryContext,
+          taskId: string,
+        ) {
+          liveQuery.ambientTaskIds.add(taskId);
+          const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+          const current = yield* Ref.get(activeTurn);
+          const context =
+            current?.nativeThreadId === liveQuery.nativeThreadId ? current : liveQuery.lastTurn;
+          if (yield* clearPendingBackgroundTask(liveQuery.nativeThreadId, taskId)) {
+            yield* emitRosterUpdate(liveQuery.nativeThreadId, current);
+          }
+          yield* clearTaskIdFromNativeThreadSet(
+            wakeEligibleBackgroundTasksByNativeThread,
+            liveQuery.nativeThreadId,
+            taskId,
+          );
+          if (
+            registered !== undefined &&
+            context !== null &&
+            !liveQuery.subagentsFromEarlierProcesses.has(registered)
+          ) {
+            // Retire the mistaken child projection without stopping the native watcher.
+            yield* updateClaudeSubagentNode({
+              context,
+              taskId,
+              status: "cancelled",
+              onlyIfRunningInRun: registered.task.runId,
+            });
+          }
+        });
+
         const reconcileAmbientSubagentOutcome = Effect.fnUntraced(function* (
           liveQuery: ClaudeLiveQueryContext,
           message: SDKMessage,
         ) {
-          // Classification removes activity, but only the native outcome settles an existing child.
+          // Preserve the native outcome after retiring a mistaken child projection.
           if (
             message.type === "system" &&
             message.subtype === "task_notification" &&
@@ -7550,7 +7582,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeOutcome: message,
                 result: message.summary,
                 status: claudeTaskOutcome(message.status),
-                onlyIfRunningInRun: registered.task.runId,
               });
             }
           }
@@ -9211,18 +9242,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const handleSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly bufferedReplay?: boolean;
         }) {
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
-          if (liveQuery?.query === input.query && message.type === "system") {
+          if (
+            input.bufferedReplay !== true &&
+            liveQuery?.query === input.query &&
+            message.type === "system"
+          ) {
             if (message.subtype === "background_tasks_changed") {
               for (const task of Array.isArray(message.tasks) ? message.tasks : []) {
                 if (typeof task?.task_id !== "string" || task.task_id.length === 0) {
                   continue;
                 }
                 if (task.ambient === true && isClaudeAmbientBackgroundTaskType(task.task_type)) {
-                  liveQuery.ambientTaskIds.add(task.task_id);
+                  yield* classifyAmbientTask(liveQuery, task.task_id);
                 } else if (task.ambient === false) {
                   liveQuery.ambientTaskIds.delete(task.task_id);
                 }
@@ -9235,7 +9271,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.ambient === true &&
                 isClaudeAmbientBackgroundTaskType(claudeTaskTypeFromSdkMessage(message))
               ) {
-                liveQuery.ambientTaskIds.add(message.task_id);
+                yield* classifyAmbientTask(liveQuery, message.task_id);
               } else if (message.ambient === false) {
                 liveQuery.ambientTaskIds.delete(message.task_id);
               }
@@ -9705,7 +9741,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             if (
               subagent.task.status === "running" &&
-              !live.ambientTaskIds.has(taskId) &&
               !live.subagentsFromEarlierProcesses.has(subagent) &&
               (options?.forGoalCheck !== true ||
                 subagent.nativeTaskType === undefined ||
@@ -9817,21 +9852,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
-            // Replacement can claim queryContext before the old stream's exit handler runs.
-            if (existing.lastTurn !== null) {
-              const subagents = yield* Ref.get(sessionSubagentsByTaskId);
-              for (const taskId of existing.ambientTaskIds) {
-                const subagent = subagents.get(taskId);
-                if (subagent === undefined || existing.subagentsFromEarlierProcesses.has(subagent))
-                  continue;
-                yield* updateClaudeSubagentNode({
-                  context: existing.lastTurn,
-                  taskId,
-                  status: "cancelled",
-                  onlyIfRunningInRun: subagent.task.runId,
-                });
-              }
-            }
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
               yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
@@ -10250,7 +10270,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     continue;
                   }
                   if (entry.type !== "result") {
-                    yield* handleSdkMessage({ query: querySession.query, message: entry });
+                    yield* handleSdkMessage({
+                      query: querySession.query,
+                      message: entry,
+                      bufferedReplay: true,
+                    });
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
                     const buffered = current.get(nativeThreadId);
@@ -10268,7 +10292,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   });
                 }
                 if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
-                  yield* handleSdkMessage({ query: querySession.query, message: lastResult });
+                  yield* handleSdkMessage({
+                    query: querySession.query,
+                    message: lastResult,
+                    bufferedReplay: true,
+                  });
                   return;
                 }
                 if (hasOpaqueTaskNotification && !context.nativeWakeStarted) {
@@ -10422,7 +10450,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolUseId === null ||
               subagent.task.status !== "running" ||
               subagent.task.parentNodeId !== subagent.rootNodeId ||
-              live.ambientTaskIds.has(taskId) ||
               live.subagentsFromEarlierProcesses.has(subagent) ||
               (yield* isNestedSubagentTask(taskId))
             ) {
@@ -10660,9 +10687,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return true;
               }
             }
-            const liveQuery = yield* Ref.get(queryContext);
-            for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
-              if (subagent.task.status === "running" && !liveQuery?.ambientTaskIds.has(taskId)) {
+            for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
+              if (subagent.task.status === "running") {
                 return true;
               }
             }
