@@ -500,8 +500,9 @@ const rigFor = (
         ? Effect.fail(answer)
         : Effect.succeed(answer);
     },
-    send: (threadId, commandId, text) => {
-      t3.push(`send ${threadId} ${commandId} ${text}`);
+    send: (threadId, commandId, text, model) => {
+      const on = model === undefined ? "" : ` [on ${model.instanceId} ${model.model}]`;
+      t3.push(`send ${threadId} ${commandId} ${text}${on}`);
       if (world.sendNotFound) return Effect.fail(notFound());
       const failure = world.sendFailure;
       world.sendFailure = null;
@@ -2339,8 +2340,13 @@ const COOLING_DOWN =
 const COOLED_MESSAGE =
   "The provider's rate limit cut your last turn off, so the factory is not treating it as your decision. It waited for the limit to cool down before sending this. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
-const cooledCall = (ordinal: number) =>
-  `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${COOLED_MESSAGE}`;
+const cooledCall = (ordinal: number, on = "") =>
+  `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${COOLED_MESSAGE}${on}`;
+
+/** The model the rig's session was launched on, and the one a rate limit moves it to. */
+const OPUS = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+const SONNET = { instanceId: "claudeAgent", model: "claude-sonnet-5-5" };
+const ON_SONNET = " [on claudeAgent claude-sonnet-5-5]";
 
 const cooledLine = (resumes: number, runOrdinal: number): RunEvent => ({
   event: "session_interrupted",
@@ -2365,7 +2371,7 @@ describe("a provider rate limit", () => {
         const before = bytesOf(rig);
         assert.deepStrictEqual(
           yield* advanceIn(rig),
-          { kind: "rate-limited", endedMs: T0 - MINUTE, retryAfterMs: null },
+          { kind: "rate-limited", endedMs: T0 - MINUTE, retryAfterMs: null, model: OPUS },
           status,
         );
         theIssueIsStillBuilding(rig);
@@ -2443,5 +2449,49 @@ describe("a provider rate limit", () => {
       assert.strictEqual(bytesOf(rig), before);
       assert.deepStrictEqual(sends(rig), []);
     }),
+  );
+
+  it.effect(
+    "moved to another model sends the resume on it, and the run is on that model after",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        endedAs(rig, "failed", 1, COOLING_DOWN);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run, SONNET), {
+          kind: "resumed",
+        });
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          { ...cooledLine(0, 1), data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" } },
+          sentStep(0),
+        ]);
+        assert.deepStrictEqual(rig.t3, ["status thread-1", cooledCall(1, ON_SONNET)]);
+        assert.deepStrictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).model, SONNET);
+        // The next rate limit is the new model's.
+        endedAs(rig, "failed", 2, COOLING_DOWN);
+        assert.deepStrictEqual(yield* advanceIn(rig), {
+          kind: "rate-limited",
+          endedMs: T0,
+          retryAfterMs: null,
+          model: SONNET,
+        });
+      }),
+  );
+
+  it.effect(
+    "moved to another model and cut short before its send is sent again on that model",
+    () =>
+      Effect.gen(function* () {
+        const switched: RunEvent = {
+          event: "session_interrupted",
+          data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" },
+        } as RunEvent;
+        const rig = rigFor([...STARTED, switched]);
+        endedAs(rig, "failed", 1, COOLING_DOWN);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+        assert.deepStrictEqual(sends(rig), [cooledCall(1, ON_SONNET)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, switched, sentStep(0)]);
+      }),
   );
 });

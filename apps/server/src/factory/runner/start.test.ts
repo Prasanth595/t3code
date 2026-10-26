@@ -494,6 +494,35 @@ describe("start: a fresh ready issue", () => {
     }),
   );
 
+  it.effect("launches on the model `launchModel` picks while the project's model cools down", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({});
+      const model = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
+      const fallback = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+      const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model } });
+      const asked: Array<string> = [];
+      yield* startIn(dataDir, tracker, t3.sessions, {
+        launchModel: (m) => {
+          asked.push(m.model);
+          return fallback;
+        },
+      });
+      assert.deepStrictEqual(asked, ["claude-fable-5-1"]);
+      assert.deepStrictEqual(t3.launchRequests[0]!.model, fallback);
+      assert.deepStrictEqual(entriesOf(dataDir)[4]!.data, {
+        thread_id: "thread-1",
+        worktree: WORKTREE,
+        branch: "t3code/abc",
+        model_instance: "claudeAgent",
+        model: "claude-opus-5-5",
+        model_options: null,
+        resumed_from: null,
+        base: "main",
+      });
+    }),
+  );
+
   it.effect("records the provider options the project's model carries", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();

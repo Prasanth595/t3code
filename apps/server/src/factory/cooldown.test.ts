@@ -9,7 +9,9 @@ import {
   COOLDOWN_CAP_MS,
   COOLDOWN_QUIET_MS,
   coolingDown,
+  cooldownKey,
   forgetQuietCooldowns,
+  launchModel,
   rateLimitOf,
   recordRateLimit,
   type Cooldown,
@@ -127,5 +129,39 @@ describe("coolingDown and forgetQuietCooldowns", () => {
     const later = until + COOLDOWN_QUIET_MS + MINUTE;
     recordRateLimit(cooldowns, "k", "m", later, later, null);
     assert.strictEqual(cooldowns.get("k")!.windows, 1);
+  });
+});
+
+describe("launchModel", () => {
+  const FABLE = {
+    instanceId: "claudeAgent",
+    model: "claude-fable-5-1",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const FALLBACKS = { "claude-fable-5-1": "claude-opus-5-5" };
+  const OPUS = { ...FABLE, model: "claude-opus-5-5" };
+
+  it("names a model by its provider instance and id", () => {
+    assert.strictEqual(cooldownKey(FABLE), "claudeAgent claude-fable-5-1");
+  });
+
+  it("is the model itself while it does not cool down", () => {
+    assert.deepStrictEqual(launchModel(new Map(), FALLBACKS, FABLE, T0), FABLE);
+  });
+
+  it("is the fallback on the same instance, with the same options, while the model cools down", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE.model, T0, T0, null);
+    assert.deepStrictEqual(launchModel(cooldowns, FALLBACKS, FABLE, T0 + MINUTE), OPUS);
+    // Back to the model once its window is over.
+    assert.deepStrictEqual(launchModel(cooldowns, FALLBACKS, FABLE, T0 + 5 * MINUTE), FABLE);
+  });
+
+  it("is none while the model cools down with no fallback, or a fallback that cools down too", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE.model, T0, T0, null);
+    assert.isNull(launchModel(cooldowns, {}, FABLE, T0 + MINUTE));
+    recordRateLimit(cooldowns, cooldownKey(OPUS), OPUS.model, T0, T0, null);
+    assert.isNull(launchModel(cooldowns, FALLBACKS, FABLE, T0 + MINUTE));
   });
 });

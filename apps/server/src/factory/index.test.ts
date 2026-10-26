@@ -776,6 +776,7 @@ describe("liveWorld", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1768,6 +1769,7 @@ describe("the gate in the background", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2111,6 +2113,7 @@ describe("the gate in the background", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2456,6 +2459,7 @@ describe("the gate in the background", () => {
         minFreeGib: 0,
         maxLoadPerCore: 0,
         deployWaitMinutes: 120,
+        modelFallbacks: {},
       };
       const world = liveWorld(
         machine,
@@ -2514,6 +2518,7 @@ describe("the gate in the background", () => {
             minFreeGib: 0,
             maxLoadPerCore: 0,
             deployWaitMinutes: 120,
+            modelFallbacks: {},
           },
           dataDir,
           { run: () => Effect.die("no gh") },

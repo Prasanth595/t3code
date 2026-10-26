@@ -77,6 +77,7 @@ describe("editMachineConfig", () => {
       minFreeGib: 10,
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
+      modelFallbacks: {},
     });
   });
 
@@ -100,6 +101,7 @@ describe("editMachineConfig", () => {
       minFreeGib: 10,
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
+      modelFallbacks: {},
     });
   });
 
@@ -174,6 +176,13 @@ describe("editMachineConfig", () => {
     it("keeps a hand-written deploy_wait_minutes through an edit", () => {
       const text = edited(COMMENTED + "deploy_wait_minutes: 240\n", { poll_seconds: 90 });
       assert.include(text, "deploy_wait_minutes: 240");
+    });
+
+    it("keeps a hand-written model_fallbacks through an edit", () => {
+      const text = edited(COMMENTED + "model_fallbacks:\n  claude-fable-5-1: claude-opus-5-5\n", {
+        poll_seconds: 90,
+      });
+      assert.include(text, "claude-fable-5-1: claude-opus-5-5");
     });
 
     it("keeps a hand-written max_load_per_core through an edit", () => {

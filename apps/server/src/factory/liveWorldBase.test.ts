@@ -60,6 +60,7 @@ const machine: MachineConfig = {
   minFreeGib: 0,
   maxLoadPerCore: 0,
   deployWaitMinutes: 120,
+  modelFallbacks: {},
 };
 
 const repo: Repo = {
