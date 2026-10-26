@@ -359,6 +359,11 @@ describe("downloadUrl", () => {
       assert.strictEqual(session.listenerCount("will-download"), 0);
       assert.strictEqual(contents.listenerCount("destroyed"), 0);
       yield* request();
+      Object.defineProperty(contents, "session", {
+        get: () => {
+          throw new Error("Object has been destroyed");
+        },
+      });
       contents.emit("destroyed");
       assert.strictEqual(session.listenerCount("will-download"), 0);
     }),

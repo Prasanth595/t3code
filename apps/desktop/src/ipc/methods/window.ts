@@ -313,9 +313,10 @@ export const downloadUrl = DesktopIpc.makeIpcMethod({
         contents.downloadURL(href);
         return;
       }
+      const session = contents.session;
       const cleanup = () => {
         clearTimeout(timeout);
-        contents.session.off("will-download", suggestName);
+        session.off("will-download", suggestName);
         contents.off("destroyed", cleanup);
       };
       const suggestName = (
@@ -333,7 +334,7 @@ export const downloadUrl = DesktopIpc.makeIpcMethod({
       // @effect-diagnostics-next-line globalTimersInEffect:off -- The Electron listener outlives the IPC effect.
       const timeout = setTimeout(cleanup, 30_000);
       timeout.unref();
-      contents.session.on("will-download", suggestName);
+      session.on("will-download", suggestName);
       contents.once("destroyed", cleanup);
       try {
         contents.downloadURL(href);
