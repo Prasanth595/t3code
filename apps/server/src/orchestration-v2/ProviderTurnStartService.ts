@@ -715,7 +715,7 @@ export const layer: Layer.Layer<
         if (!repaired.committed) return;
       }
       const sessionResult = yield* Effect.result(
-        providerSessions.openForTurn({
+        providerSessions.openScoped({
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
