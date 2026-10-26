@@ -117,6 +117,11 @@ describe("Codex App Server stderr excerpt", () => {
       excerpt: "Error: config.toml is invalid",
     },
     {
+      name: "C1 terminal controls",
+      stderr: "\u009b31mError: invalid config\u009b0m\nUsage: codex [OPTIONS]\n",
+      excerpt: "Error: invalid config",
+    },
+    {
       name: "oversized line",
       stderr: `Error: ${"x".repeat(1_000)}`,
       excerpt: `Error: ${"x".repeat(504)}…`,

@@ -1,3 +1,5 @@
+import * as NodeUtil from "node:util";
+
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -48,8 +50,6 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
 
 const STDERR_TAIL_MAX_CHARS = 8_192;
 const STDERR_EXCERPT_MAX_CHARS = 512;
-// eslint-disable-next-line no-control-regex -- ANSI escape sequences start with ESC.
-const TERMINAL_CONTROL_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 // `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `error: …`, `ERROR: …`, `fatal: …`
 const ERROR_LINE_PATTERN = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 
@@ -58,13 +58,9 @@ export const appendStderrTail = (current: string, chunk: string): string => {
   return next.length <= STDERR_TAIL_MAX_CHARS ? next : next.slice(-STDERR_TAIL_MAX_CHARS);
 };
 
-/**
- * The stderr line that names the failure: the last error-labelled line, else the last line.
- * A Node launcher prints its thrown error between a source excerpt and the stack frames.
- */
+// Node launchers print the actionable error between a source excerpt and stack frames.
 export const stderrExcerpt = (tail: string): string | undefined => {
-  const lines = tail
-    .replace(TERMINAL_CONTROL_PATTERN, "")
+  const lines = NodeUtil.stripVTControlCharacters(tail)
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/\s+/g, " "))
     .filter((line) => line.length > 0);
