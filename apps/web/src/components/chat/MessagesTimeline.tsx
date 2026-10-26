@@ -469,9 +469,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const element = listRef.current?.getScrollableNode();
     const row = element?.querySelector(`[data-timeline-row-id="${CSS.escape(anchorKey)}"]`);
     if (!element || !row) return Infinity;
-    const offset = row.getBoundingClientRect().top - element.getBoundingClientRect().top;
-    // A row already scrolled past keeps following the end, as there is no header to keep.
-    return offset < 0 ? Infinity : element.scrollTop + offset;
+    const bounds = row.getBoundingClientRect();
+    const viewportTop = element.getBoundingClientRect().top;
+    const offset = bounds.top - viewportTop;
+    if (offset >= 0) return element.scrollTop + offset;
+    // Keep a partly visible header; only fully hidden rows let following continue.
+    return bounds.bottom > viewportTop ? element.scrollTop : Infinity;
   };
 
   // Rows a disclosure inserts mount within its settle window; LegendList can
@@ -1249,6 +1252,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
+    const stopDisclosureNavigation = viewport?.subscribe((navigation) => {
+      if (navigation.source !== "pointer" || navigation.onScrollbar) {
+        disclosurePinsEndRef.current = false;
+      }
+    });
     let contentSizeFrame: number | null = null;
     // LegendList lays rows out from layout effects; the next frame sees them settled.
     let scheduledData: unknown = null;
@@ -1272,6 +1280,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return () => {
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
+      stopDisclosureNavigation?.();
       onContentOverflowChange?.(false);
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
       detachViewport?.();

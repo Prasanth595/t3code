@@ -24,7 +24,8 @@ import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
-import type { TimelineNavigation } from "./timelineViewport";
+import type { TimelineNavigation, TimelineViewport } from "./timelineViewport";
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 const environmentQuery = vi.hoisted(() => ({
@@ -636,6 +637,181 @@ describe("MessagesTimeline attachments", () => {
       void props.listRef.current!.scrollToIndex({ index: 20, animated: false });
     });
     await vi.waitFor(() => expect(one!.isConnected).toBe(false));
+  });
+});
+
+describe("MessagesTimeline disclosure scrolling", () => {
+  function entries(): Entry[] {
+    return [
+      message("Earlier reply ".repeat(20), { role: "assistant" }, "earlier"),
+      ...Array.from({ length: 6 }, (_, index): Entry => ({
+        id: `command-${index}`,
+        kind: "work",
+        createdAt: CREATED_AT,
+        entry: {
+          id: `command-${index}`,
+          createdAt: CREATED_AT,
+          label: "Ran command",
+          command: `echo ${index}`,
+          tone: "tool",
+        },
+      })),
+      message("Later reply", { role: "assistant" }, "later"),
+    ];
+  }
+
+  it("keeps a partly visible group header visible when opening at the end", async () => {
+    setup();
+    const props = baseProps();
+    const reported = vi.fn();
+    await using screen = await renderTimeline(entries(), {
+      ...props,
+      liveFollowEnabled: false,
+      onIsAtEndChange: reported,
+    });
+    const list = props.listRef.current!;
+    const scroll = list.getScrollableNode()!;
+    screen.container.style.height = "120px";
+    await vi.waitFor(() => {
+      expect(scroll.clientHeight).toBe(120);
+      expect(list.getState().scrollLength).toBe(120);
+    });
+    await act(() => {
+      scroll.scrollTop = scroll.scrollHeight;
+      scroll.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(resolveTimelineIsAtEnd(list.getState())).toBe(true));
+    const button = screen.button("Ran 6 commands");
+    const row = button.closest<HTMLElement>("[data-timeline-row-id]")!;
+    await vi.waitFor(() => {
+      expect(resolveTimelineIsAtEnd(list.getState())).toBe(true);
+      const rect = row.getBoundingClientRect();
+      const top = scroll.getBoundingClientRect().top;
+      expect(rect.top).toBeLessThan(top);
+      expect(rect.bottom).toBeGreaterThan(top);
+    });
+
+    // Keep settling active without depending on the transition's duration.
+    const marker = document.createElement("span");
+    marker.setAttribute("data-disclosure-motion", "");
+    scroll.append(marker);
+    using writes = vi.spyOn(scroll, "scrollTop", "set");
+    await click(button);
+    await vi.waitFor(() => expect(writes).toHaveBeenCalled());
+    reported.mockClear();
+    marker.remove();
+    await vi.waitFor(() => expect(reported).toHaveBeenCalled());
+    expect(row.getBoundingClientRect().bottom).toBeGreaterThan(scroll.getBoundingClientRect().top);
+  });
+
+  it.each(["wheel", "key", "touch", "pointer", "command"] as const)(
+    "lets %s navigation reach the end during disclosure motion",
+    async (source) => {
+      setup();
+      const props = baseProps();
+      const observed = { viewport: null as TimelineViewport | null };
+      const reported = vi.fn();
+      await using screen = await renderTimeline(entries(), {
+        ...props,
+        liveFollowEnabled: false,
+        onIsAtEndChange: reported,
+        onViewportAttach: (viewport) => {
+          observed.viewport = viewport;
+          return () => {
+            observed.viewport = null;
+          };
+        },
+      });
+      const list = props.listRef.current!;
+      const scroll = list.getScrollableNode()!;
+      screen.container.style.height = "200px";
+      await vi.waitFor(() => {
+        expect(scroll.clientHeight).toBe(200);
+        expect(list.getState().scrollLength).toBe(200);
+      });
+      await act(() => {
+        scroll.scrollTop = scroll.scrollHeight;
+        scroll.dispatchEvent(new Event("scroll"));
+      });
+      await vi.waitFor(() => expect(resolveTimelineIsAtEnd(list.getState())).toBe(true));
+      const button = screen.button("Ran 6 commands");
+      const row = button.closest<HTMLElement>("[data-timeline-row-id]")!;
+      const limit =
+        scroll.scrollTop + row.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+      // Keep settling active without depending on the transition's duration.
+      const marker = document.createElement("span");
+      marker.setAttribute("data-disclosure-motion", "");
+      scroll.append(marker);
+      using writes = vi.spyOn(scroll, "scrollTop", "set");
+      await click(button);
+      await vi.waitFor(() => {
+        expect(writes).toHaveBeenCalled();
+        expect(scroll.scrollHeight - scroll.clientHeight).toBeGreaterThan(limit + 5);
+      });
+      await vi.waitFor(() =>
+        expect(screen.container.querySelectorAll("[data-disclosure-motion]")).toHaveLength(1),
+      );
+      let destination = 0;
+      await act(() => {
+        switch (source) {
+          case "wheel":
+            scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: 100 }));
+            break;
+          case "key":
+            scroll.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+            break;
+          case "touch":
+            scroll.dispatchEvent(new Event("touchmove"));
+            break;
+          case "pointer":
+            scroll.dispatchEvent(new PointerEvent("pointerdown"));
+            break;
+          case "command":
+            observed.viewport!.navigate({ releasesFollow: false });
+            break;
+        }
+        scroll.scrollTop = scroll.scrollHeight;
+        destination = scroll.scrollTop;
+        scroll.dispatchEvent(new Event("scroll"));
+      });
+      reported.mockClear();
+      marker.remove();
+      await vi.waitFor(() => expect(reported).toHaveBeenCalled());
+      expect(scroll.scrollTop).toBeGreaterThanOrEqual(destination - 1);
+    },
+  );
+
+  it("stays at the end when closing content clamps the scroll position", async () => {
+    setup();
+    const props = baseProps();
+    await using screen = await renderTimeline(entries(), { ...props, liveFollowEnabled: false });
+    const list = props.listRef.current!;
+    const scroll = list.getScrollableNode()!;
+    screen.container.style.height = "200px";
+    await vi.waitFor(() => {
+      expect(scroll.clientHeight).toBe(200);
+      expect(list.getState().scrollLength).toBe(200);
+    });
+    const collapsedHeight = scroll.scrollHeight;
+    const button = screen.button("Ran 6 commands");
+    await click(button);
+    await vi.waitFor(() => {
+      expect(scroll.scrollHeight).toBeGreaterThan(collapsedHeight + 100);
+      expect(screen.container.querySelector("[data-disclosure-motion]")).toBeNull();
+    });
+    await act(() => {
+      scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: 100 }));
+      scroll.scrollTop = scroll.scrollHeight;
+      scroll.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(resolveTimelineIsAtEnd(list.getState())).toBe(true));
+
+    await click(button);
+    await vi.waitFor(() => {
+      expect(scroll.scrollHeight).toBeLessThanOrEqual(collapsedHeight);
+      expect(screen.container.querySelector("[data-disclosure-motion]")).toBeNull();
+    });
+    expect(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop).toBeLessThanOrEqual(1);
   });
 });
 
