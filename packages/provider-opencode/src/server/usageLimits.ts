@@ -85,8 +85,8 @@ const readStoredCredential = (database: NodeSqlite.DatabaseSync, integrationId: 
     token: stored.access.trim(),
     // Each device signs in with its own token, so only the account matches across environments.
     account:
-      typeof accountID === "string"
-        ? `${accountID}\0${typeof orgID === "string" ? orgID : ""}`
+      typeof accountID === "string" && typeof orgID === "string"
+        ? `${accountID}\0${orgID}`
         : undefined,
   };
 };

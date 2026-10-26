@@ -151,6 +151,7 @@ it.effect(
         inline = false,
         databaseFile,
         requested,
+        fingerprint,
       } of [
         {
           consoleRow: { ...consoleKey, metadata: { server: "https://opencode.ai/console" } },
@@ -161,6 +162,11 @@ it.effect(
         { consoleStatus: 500, requested: ["console-key"] },
         { active: 0, requested: ["go-key"] },
         { consoleRow: consoleLogin, requested: ["console-token"] },
+        {
+          consoleRow: { ...consoleLogin, metadata: { accountID: "acc_1" } },
+          requested: ["console-token"],
+          fingerprint: "7ed9889eb62f03ca5f54804921801e15500029780589a2599f92e49998dcd949",
+        },
         {
           consoleRow: { ...consoleLogin, access: "other-device-token" },
           requested: ["other-device-token"],
@@ -292,7 +298,7 @@ it.effect(
         NodeAssert.equal(limits.windows.length, consoleStatus === 500 ? 0 : 3);
         NodeAssert.equal(
           limits.credentialFingerprint,
-          consoleStatus === 500 ? undefined : fingerprints.get(requested.at(-1)!),
+          consoleStatus === 500 ? undefined : (fingerprint ?? fingerprints.get(requested.at(-1)!)),
         );
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
