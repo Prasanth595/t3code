@@ -1,11 +1,6 @@
 /**
  * Muse Code's subscription usage limits. Meta reports the account's windows
- * with every model response, and Muse forwards them as `usage/changed`. When a
- * window runs out, Meta refuses the next request and Muse fails the turn.
- *
- * Meta has no usage endpoint, so the last report is all there is between
- * responses. Windows are re-derived from it against the clock: a window whose
- * reset has passed starts over empty.
+ * with every model response; the last report is re-derived against the clock.
  */
 import type {
   ServerProviderAuth,

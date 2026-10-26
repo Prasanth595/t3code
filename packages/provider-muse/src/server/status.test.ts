@@ -171,7 +171,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(snapshot.status).toBe("error");
         expect(snapshot.auth).toEqual({ status: "unauthenticated" });
         expect(snapshot.message).toContain("muse login");
-        expect(snapshot.models.map((model) => model.slug)).toEqual(["muse-discovered"]);
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["muse-wonder-1.0"]);
       }),
     ),
   );

@@ -36,7 +36,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
-import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
@@ -182,10 +183,11 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
-    /** A notification about the host or account rather than a session, as `usage/changed` is. */    emitHostWide: (method: string, params: Record<string, unknown>) =>
-      Effect.sync(() => {
-        notify({ jsonrpc: "2.0", method, params });
-      }),
+    /** A notification about the host or account rather than a session, as `usage/changed` is. */ emitHostWide:
+      (method: string, params: Record<string, unknown>) =>
+        Effect.sync(() => {
+          notify({ jsonrpc: "2.0", method, params });
+        }),
     takeCall: Effect.fnUntraced(function* (method: string) {
       while (true) {
         const call = yield* Queue.take(requests);
@@ -361,7 +363,8 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
-// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.const SUBSCRIPTION_USAGE = {
+// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
+const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
   tier: "tier-1",
