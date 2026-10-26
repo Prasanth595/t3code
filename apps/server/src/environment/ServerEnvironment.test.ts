@@ -105,9 +105,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           const environment = yield* ServerEnvironment.make;
           return yield* environment.getDescriptor;
         }).pipe(
-          Effect.provide(ServerEnvironment.layerIdentity),
-          Effect.provide(layerEmptySecretStore),
-          Effect.provide(ServerConfig.layer({ ...config, mode, startupPresentation })),
+          Effect.provide(
+            Layer.mergeAll(ServerEnvironment.layerIdentity, layerEmptySecretStore).pipe(
+              Layer.provideMerge(ServerConfig.layer({ ...config, mode, startupPresentation })),
+            ),
+          ),
           Effect.provideService(ProcessRunner.ProcessRunner, {
             run: () =>
               Effect.succeed({
