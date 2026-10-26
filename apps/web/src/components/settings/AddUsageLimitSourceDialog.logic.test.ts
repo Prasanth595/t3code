@@ -23,29 +23,15 @@ describe("adding usage limit sources", () => {
         },
       });
     }
-    expect(Object.values(settings.usageLimitSources)).toEqual([
-      {
+    expect(Object.values(settings.usageLimitSources)).toEqual(
+      sources.map(([url, label, managementKey]) => ({
         kind: "cliproxy",
-        url: firstUrl,
-        label: "First hub",
-        managementKey: "first-key",
+        url,
+        label,
+        managementKey,
         enabled: true,
-      },
-      {
-        kind: "cliproxy",
-        url: secondUrl,
-        label: "Second hub",
-        managementKey: "second-key",
-        enabled: true,
-      },
-      {
-        kind: "cliproxy",
-        url: `${secondUrl}/extra`,
-        label: "Third hub",
-        managementKey: "third-key",
-        enabled: true,
-      },
-    ]);
+      })),
+    );
   });
 
   it("updates a saved hub when its URL is added again", () => {
