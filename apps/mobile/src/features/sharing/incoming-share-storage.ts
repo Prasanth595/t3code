@@ -89,8 +89,9 @@ export async function writeIncomingShareDraft(draft: IncomingShareDraft): Promis
     temp.create({ intermediates: true, overwrite: true });
     await temp.write(JSON.stringify(draft));
     // Expo can remove or partially copy the destination before a move fails.
-    if (file.exists && (await readSavedDraft(file)).file === file) {
-      file.copySync(backup, { overwrite: true });
+    if (file.exists) {
+      const saved = await readSavedDraft(file).catch(() => undefined);
+      if (!saved || saved.file === file) file.copySync(backup, { overwrite: true });
     }
     temp.moveSync(file, { overwrite: true });
     try {

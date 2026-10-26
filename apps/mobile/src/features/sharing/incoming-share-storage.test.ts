@@ -155,14 +155,16 @@ describe("incoming share storage", () => {
     expect(warning).toHaveBeenCalledOnce();
   });
 
-  it("ignores a partial initial write and allows retrying the share", async () => {
-    fileSystemMocks.failNextWrite();
+  it.each(["write", "partial"])("retries an interrupted initial %s", async (failure) => {
+    if (failure === "write") fileSystemMocks.failNextWrite();
+    else fileSystemMocks.failRelocationTo(failure);
 
     await expect(writeIncomingShareDraft(VALID_DRAFT)).rejects.toMatchObject({
       operation: "write",
       shareId: VALID_DRAFT.id,
     });
-    await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([]);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(loadIncomingShareDrafts()).resolves.toEqual([]);
 
     await writeIncomingShareDraft(VALID_DRAFT);
     await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([VALID_DRAFT]);
