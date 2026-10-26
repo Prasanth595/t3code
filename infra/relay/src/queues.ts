@@ -10,3 +10,6 @@ export const RelayFcmDeliveryQueue = Cloudflare.Queues.Queue("RelayFcmDeliveryQu
 export const RelayFcmDeliveryDeadLetterQueue = Cloudflare.Queues.Queue(
   "RelayFcmDeliveryDeadLetterQueue",
 );
+
+/** Photos and documents sent in chat mode. */
+export const RelayChatAttachmentsBucket = Cloudflare.R2.Bucket("RelayChatAttachments");

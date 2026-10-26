@@ -179,11 +179,43 @@ export type SaasChatId = typeof SaasChatId.Type;
 export const SaasChatRole = Schema.Literals(["user", "assistant"]);
 export type SaasChatRole = typeof SaasChatRole.Type;
 
+/** Largest photo or document a chat message can carry. */
+export const SAAS_CHAT_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+/** Upload header with the file's URI-encoded name; the body is the file's bytes. */
+export const SAAS_CHAT_FILE_NAME_HEADER = "x-mira-file-name";
+/** Photos the model can see. */
+export const SAAS_CHAT_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+/** Documents whose text Mira reads into the conversation. */
+export const SAAS_CHAT_DOCUMENT_EXTENSIONS = [
+  "pdf",
+  "docx",
+  "xlsx",
+  "pptx",
+  "txt",
+  "md",
+  "csv",
+  "json",
+];
+
+export const SaasChatAttachmentKind = Schema.Literals(["image", "document"]);
+export type SaasChatAttachmentKind = typeof SaasChatAttachmentKind.Type;
+
+/** A photo or document stored with the relay; its id is the only key to read it. */
+export const SaasChatAttachment = Schema.Struct({
+  id: SaasChatId,
+  kind: SaasChatAttachmentKind,
+  name: Schema.String,
+  mimeType: Schema.String,
+  sizeBytes: NonNegativeInt,
+});
+export type SaasChatAttachment = typeof SaasChatAttachment.Type;
+
 export const SaasChatMessage = Schema.Struct({
   id: SaasChatId,
   role: SaasChatRole,
   content: Schema.String,
   createdAt: Schema.String,
+  attachments: Schema.optionalKey(Schema.Array(SaasChatAttachment)),
 });
 export type SaasChatMessage = typeof SaasChatMessage.Type;
 
@@ -210,7 +242,13 @@ export const SaasChatListResponse = Schema.Struct({
 
 /** The body clients post to `/v1/chat/completions`; the reply streams back as OpenAI SSE. */
 export const SaasChatCompletionRequest = Schema.Struct({
-  messages: Schema.Array(Schema.Struct({ role: SaasChatRole, content: Schema.String })),
+  messages: Schema.Array(
+    Schema.Struct({
+      role: SaasChatRole,
+      content: Schema.String,
+      attachments: Schema.optionalKey(Schema.Array(SaasChatAttachment)),
+    }),
+  ),
 });
 export type SaasChatCompletionRequest = typeof SaasChatCompletionRequest.Type;
 
