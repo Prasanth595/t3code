@@ -9,6 +9,7 @@ import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { lastReviewGitSectionsAtom, reviewEnvironment } from "../../state/review";
+import { lastReviewTurnDiffsAtom } from "../../state/reviewTurnDiffs";
 import { environmentSession } from "../../state/session";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
@@ -17,6 +18,7 @@ import {
   getReadyReviewCheckpoints,
   getReviewSectionIdForCheckpoint,
   resolveReviewSelectedSectionId,
+  reviewTurnDiffsBySectionId,
   type ReviewSectionItem,
 } from "./reviewModel";
 import { setReviewSelectedSectionId, type ReviewCacheForThread } from "./reviewState";
@@ -26,6 +28,10 @@ const NO_GIT_SECTIONS_ATOM = Atom.make<ReadonlyArray<ReviewDiffPreviewSource>>([
   Atom.withLabel("mobile:review:git-sections:null"),
 );
 const NO_TURN_DIFFS = Object.freeze({});
+const NO_TURN_DIFFS_ATOM = Atom.make<Readonly<Record<number, string>>>(NO_TURN_DIFFS).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:review:turn-diffs:null"),
+);
 
 export function useReviewSections(input: {
   readonly enabled?: boolean;
@@ -62,24 +68,30 @@ export function useReviewSections(input: {
       : NO_GIT_SECTIONS_ATOM,
   );
 
+  const lastTurnDiffs = useAtomValue(
+    environmentId !== undefined && threadId !== undefined
+      ? lastReviewTurnDiffsAtom(environmentId, threadId)
+      : NO_TURN_DIFFS_ATOM,
+  );
+
   const readyCheckpoints = getReadyReviewCheckpoints(
     selectedThread === null ? [] : deriveThreadCheckpointSummaries(selectedThread.projection),
   );
   const checkpointBySectionId = new Map(
     readyCheckpoints.map((checkpoint) => [getReviewSectionIdForCheckpoint(checkpoint), checkpoint]),
   );
-  // Turn diffs come from the active checkpoint query below; section ids and the selection do
-  // not depend on them, so they are resolved first.
-  const sectionsWithoutTurnDiffs = buildReviewSectionItems({
+  // Turns show their last answered diff; the active turn's live query below overrides it.
+  // Section ids and the selection do not depend on the live query, so they are resolved first.
+  const cachedSections = buildReviewSectionItems({
     checkpoints: readyCheckpoints,
     gitSections:
       canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
-    turnDiffById: NO_TURN_DIFFS,
+    turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
     loadingTurnIds: NO_TURN_DIFFS,
     loadingGitSections: fileAccess.isPending || diffPreview.isPending,
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
-    sectionsWithoutTurnDiffs,
+    cachedSections,
     reviewCache.selectedSectionId,
   );
 
@@ -98,12 +110,12 @@ export function useReviewSections(input: {
     ignoreWhitespace: false,
   });
 
-  const reviewSections = sectionsWithoutTurnDiffs.map((section): ReviewSectionItem => {
+  const reviewSections = cachedSections.map((section): ReviewSectionItem => {
     if (section.kind === "turn") {
       return section.id === activeSectionId
         ? {
             ...section,
-            diff: activeTurnDiff.data?.diff ?? null,
+            diff: activeTurnDiff.data?.diff ?? section.diff,
             isLoading: activeTurnDiff.isPending,
           }
         : section;

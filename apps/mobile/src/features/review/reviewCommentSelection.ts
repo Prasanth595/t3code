@@ -45,9 +45,15 @@ export interface PendingReviewCommentRange extends Pick<
   readonly rowId: string;
 }
 
+/** The sheet, thread and section a selection was made in, and the diff it was made over. */
+export interface ReviewCommentSelectionScope {
+  readonly key: string;
+  /** Compared by `===`: a git section's diff hash, or a turn's diff as answered. */
+  readonly content: string | null;
+}
+
 export interface ReviewCommentSelection {
-  /** Identifies the sheet, thread and section the selection was made in. */
-  readonly scope: string | null;
+  readonly scope: ReviewCommentSelectionScope | null;
   readonly target: ReviewCommentTarget | null;
   readonly pending: PendingReviewCommentRange | null;
 }
@@ -86,14 +92,24 @@ export function nextReviewSheetId(): number {
 export function reviewCommentSelectionScope(
   sheetId: number,
   threadKey: string | null,
-  sectionId: string | null,
-): string | null {
-  return threadKey === null || sectionId === null
+  section: { readonly id: string; readonly content: string | null } | null,
+): ReviewCommentSelectionScope | null {
+  return threadKey === null || section === null
     ? null
-    : JSON.stringify([sheetId, threadKey, sectionId]);
+    : { key: JSON.stringify([sheetId, threadKey, section.id]), content: section.content };
 }
 
-export function setReviewCommentTarget(scope: string, target: ReviewCommentTarget) {
+function isSameScope(
+  a: ReviewCommentSelectionScope | null,
+  b: ReviewCommentSelectionScope | null,
+): boolean {
+  return a !== null && b !== null && a.key === b.key && a.content === b.content;
+}
+
+export function setReviewCommentTarget(
+  scope: ReviewCommentSelectionScope,
+  target: ReviewCommentTarget,
+) {
   setSelection({ scope, target, pending: null });
 }
 
@@ -101,15 +117,21 @@ export function setReviewCommentTarget(scope: string, target: ReviewCommentTarge
  * Keeps the pending range: when both ends are the same line the target is a single line, and
  * the range still waits for a different end.
  */
-export function completeReviewCommentRange(scope: string, target: ReviewCommentTarget) {
+export function completeReviewCommentRange(
+  scope: ReviewCommentSelectionScope,
+  target: ReviewCommentTarget,
+) {
   setSelection({
     scope,
     target,
-    pending: selection.scope === scope ? selection.pending : null,
+    pending: isSameScope(selection.scope, scope) ? selection.pending : null,
   });
 }
 
-export function startReviewCommentRange(scope: string, pending: PendingReviewCommentRange) {
+export function startReviewCommentRange(
+  scope: ReviewCommentSelectionScope,
+  pending: PendingReviewCommentRange,
+) {
   setSelection({ scope, target: null, pending });
 }
 
@@ -117,15 +139,17 @@ export function clearReviewCommentTarget() {
   setSelection(EMPTY_SELECTION);
 }
 
-/** A selection made in another sheet, thread or section reads as empty. */
+/** A selection made in another sheet, thread or section, or over another diff, reads as empty. */
 export function selectReviewCommentSelection(
   current: ReviewCommentSelection,
-  scope: string | null,
+  scope: ReviewCommentSelectionScope | null,
 ): ReviewCommentSelection {
-  return scope !== null && current.scope === scope ? current : EMPTY_SELECTION;
+  return isSameScope(current.scope, scope) ? current : EMPTY_SELECTION;
 }
 
-export function useReviewCommentSelection(scope: string | null): ReviewCommentSelection {
+export function useReviewCommentSelection(
+  scope: ReviewCommentSelectionScope | null,
+): ReviewCommentSelection {
   return selectReviewCommentSelection(
     useSyncExternalStore(
       subscribeReviewCommentSelection,

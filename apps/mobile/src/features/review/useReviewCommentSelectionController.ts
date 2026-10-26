@@ -31,12 +31,17 @@ export function useReviewCommentSelectionController(input: {
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
   const navigation = useNavigation();
   const [sheetId] = useState(nextReviewSheetId);
-  // Scoping the selection to this sheet, thread and section drops it when the sheet reopens or
-  // either changes.
+  // Scoping the selection to this sheet, thread, section and diff drops it when the sheet
+  // reopens, either changes, or a section comes back with different lines.
   const scope = reviewCommentSelectionScope(
     sheetId,
     environmentId && threadId ? scopedThreadKey(environmentId, threadId) : null,
-    selectedSection?.id ?? null,
+    selectedSection === null
+      ? null
+      : {
+          id: selectedSection.id,
+          content: selectedSection.source?.diffHash ?? selectedSection.diff,
+        },
   );
   const { target: activeCommentTarget, pending: pendingRange } = useReviewCommentSelection(scope);
   const hasRangeTarget =

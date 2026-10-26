@@ -6,9 +6,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import { request } from "../rpc/client.ts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -41,8 +42,11 @@ export function createReviewEnvironmentAtoms<R, E>(
   const previewRevisionFamily = Atom.family((key: string) => {
     const target = JSON.parse(key) as Parameters<typeof diffPreview>[0];
     return Atom.make((get) => {
-      const result = get(diffPreview(target));
-      return result._tag === "Success" ? DateTime.formatIso(result.value.generatedAt) : null;
+      // A failed refresh keeps the last revision, so an error does not refresh every patch.
+      return Option.match(AsyncResult.value(get(diffPreview(target))), {
+        onNone: () => null,
+        onSome: (preview) => DateTime.formatIso(preview.generatedAt),
+      });
     });
   });
   return {

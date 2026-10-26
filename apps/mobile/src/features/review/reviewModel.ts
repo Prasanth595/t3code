@@ -499,6 +499,18 @@ export function getReadyReviewCheckpoints(
   );
 }
 
+export function reviewTurnDiffsBySectionId(
+  checkpoints: ReadonlyArray<Pick<ThreadCheckpointSummary, "checkpointTurnCount">>,
+  diffByTurnCount: Readonly<Record<number, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  return Object.fromEntries(
+    checkpoints.map((checkpoint) => [
+      getReviewSectionIdForCheckpoint(checkpoint),
+      diffByTurnCount[checkpoint.checkpointTurnCount],
+    ]),
+  );
+}
+
 export function buildReviewSectionItems(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
