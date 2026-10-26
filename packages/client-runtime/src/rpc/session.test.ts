@@ -464,9 +464,10 @@ describe("RpcSessionFactory", () => {
       const connectWith = (config: unknown) =>
         Effect.scoped(
           Effect.gen(function* () {
+            const socketIndex = sockets.length;
             const session = yield* factory.connect(PREPARED);
             const ready = yield* Effect.forkChild(session.ready);
-            const socket = yield* awaitSocket(sockets, sockets.length);
+            const socket = yield* awaitSocket(sockets, socketIndex);
             socket.open();
             yield* completeInitialConfig(socket, config);
             yield* Fiber.join(ready);
