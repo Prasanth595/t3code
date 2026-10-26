@@ -352,7 +352,12 @@ export function createAccessibleDocumentView(
     const element = entry.control as HTMLElement;
     // Copied: removing from the live attribute map while iterating it skips entries.
     for (const attribute of Array.from(element.attributes)) {
-      if (attribute.name !== "data-node" && !(attribute.name in plan.attributes)) {
+      if (
+        attribute.name !== "data-node" &&
+        attribute.name !== "data-dirty" &&
+        attribute.name !== "data-server-value" &&
+        !(attribute.name in plan.attributes)
+      ) {
         element.removeAttribute(attribute.name);
       }
     }

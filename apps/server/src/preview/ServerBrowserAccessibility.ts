@@ -424,20 +424,43 @@ export class ServerBrowserAccessibility {
     const session = target ? this.sessions.get(target.key) : undefined;
     if (!target || !session) return AccessibilityNotice.stale;
     if (target.disabled) return AccessibilityNotice.disabled;
+    const frameChanges = this.frameChanges;
+    const run = this.run;
+    const interrupted = new Error(AccessibilityNotice.stale);
+    const isCurrent = () =>
+      this.run === run &&
+      this.frameChanges === frameChanges &&
+      this.main === main &&
+      this.sessions.get(target.key) === session;
+    const assertCurrent = () => {
+      if (!isCurrent()) {
+        throw interrupted;
+      }
+    };
     const backendNodeId = target.backendNodeId;
-    if (action.action === "activate") {
-      if (!ACTIVATABLE_ROLES.has(target.role)) return AccessibilityNotice.notActivatable;
-      await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(constVoid);
-      await callOn(session, backendNodeId, ACTIVATE_FUNCTION);
-    } else {
-      if (!target.editable || target.readonly) return AccessibilityNotice.notEditable;
-      await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(constVoid);
-      await session.send("DOM.focus", { backendNodeId });
-      await callOn(session, backendNodeId, SELECT_CONTENTS_FUNCTION);
-      // Real input events keep framework-controlled fields in sync.
-      if (action.value) await main.send("Input.insertText", { text: action.value });
-      else await pressKey(main, "Backspace", 8);
-      if (action.submit) await pressKey(main, "Enter", 13, "\r");
+    try {
+      if (action.action === "activate") {
+        if (!ACTIVATABLE_ROLES.has(target.role)) return AccessibilityNotice.notActivatable;
+        await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(constVoid);
+        assertCurrent();
+        await callOn(session, backendNodeId, ACTIVATE_FUNCTION, assertCurrent);
+      } else {
+        if (!target.editable || target.readonly) return AccessibilityNotice.notEditable;
+        await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(constVoid);
+        assertCurrent();
+        await session.send("DOM.focus", { backendNodeId });
+        assertCurrent();
+        await callOn(session, backendNodeId, SELECT_CONTENTS_FUNCTION, assertCurrent);
+        assertCurrent();
+        // Real input events keep framework-controlled fields in sync.
+        if (action.value) await main.send("Input.insertText", { text: action.value });
+        else await pressKey(main, "Backspace", 8, undefined, isCurrent);
+        assertCurrent();
+        if (action.submit) await pressKey(main, "Enter", 13, "\r", isCurrent);
+      }
+    } catch (cause) {
+      if (cause === interrupted) return AccessibilityNotice.stale;
+      throw cause;
     }
     // Outside the caller's control queue, so a large page never delays the next input.
     void this.refresh();
@@ -674,10 +697,16 @@ async function secretFields(session: CDPSession, nodes: ReadonlyArray<RawAccessi
   return secret;
 }
 
-async function callOn(session: CDPSession, backendNodeId: number, functionDeclaration: string) {
+async function callOn(
+  session: CDPSession,
+  backendNodeId: number,
+  functionDeclaration: string,
+  assertCurrent: () => void,
+) {
   const { object } = await session.send("DOM.resolveNode", { backendNodeId });
   if (!object.objectId) throw new Error("The element is gone.");
   try {
+    assertCurrent();
     await session.send("Runtime.callFunctionOn", {
       objectId: object.objectId,
       functionDeclaration,
@@ -689,7 +718,13 @@ async function callOn(session: CDPSession, backendNodeId: number, functionDeclar
   }
 }
 
-async function pressKey(session: CDPSession, key: string, keyCode: number, text?: string) {
+async function pressKey(
+  session: CDPSession,
+  key: string,
+  keyCode: number,
+  text: string | undefined,
+  isCurrent: () => boolean,
+) {
   await session.send("Input.dispatchKeyEvent", {
     type: text ? "keyDown" : "rawKeyDown",
     key,
@@ -697,6 +732,7 @@ async function pressKey(session: CDPSession, key: string, keyCode: number, text?
     windowsVirtualKeyCode: keyCode,
     ...(text ? { text, unmodifiedText: text } : {}),
   });
+  if (!isCurrent()) return;
   await session.send("Input.dispatchKeyEvent", {
     type: "keyUp",
     key,

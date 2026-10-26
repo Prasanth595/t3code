@@ -259,6 +259,7 @@ const fakeSession = (
       if (method === "Accessibility.getFullAXTree") return { nodes: nodes() };
       if (method === "DOM.getFrameOwner") return { backendNodeId: 7 };
       if (method === "DOM.resolveNode") return { object: { objectId: "object" } };
+      if (method === "DOM.describeNode") return { node: { nodeName: "INPUT", attributes: [] } };
       return {};
     }),
   };
@@ -287,6 +288,101 @@ const fakePage = (
 };
 const captures = (session: ReturnType<typeof fakeSession>) =>
   session.send.mock.calls.filter(([method]) => method === "Accessibility.getFullAXTree").length;
+
+it.each([
+  "DOM.scrollIntoViewIfNeeded",
+  "DOM.focus",
+  "DOM.resolveNode",
+  "Runtime.callFunctionOn",
+  "Input.insertText",
+])("refuses the remaining edit after navigation during %s", async (interruptedMethod) => {
+  const main = fakeSession(
+    () => [
+      node("1", "RootWebArea", { childIds: ["2"] }),
+      node("2", "textbox", { label: "Name", backendDOMNodeId: 9 }),
+    ],
+    { id: "main" },
+  );
+  const page = fakePage(main, new Map());
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+  try {
+    const offer = vi.fn(() => true);
+    await mirror.subscribe("viewer", offer);
+    expect(offer).toHaveBeenCalledOnce();
+    const send = main.send.getMockImplementation()!;
+    main.send.mockImplementation(async (method, input) => {
+      const result = await send(method, input);
+      if (method === interruptedMethod) page.events.emit("framenavigated", page);
+      return result;
+    });
+    main.send.mockClear();
+
+    expect(
+      await mirror.act({
+        type: "accessibilityAction",
+        document: "1:main-loader",
+        node: "0.2",
+        action: "setValue",
+        value: "Old page draft",
+        submit: true,
+      }),
+    ).toBe("The page changed. Try again.");
+
+    const methods = main.send.mock.calls.map(([method]) => method);
+    expect(methods).toContain(interruptedMethod);
+    const later = methods.slice(methods.indexOf(interruptedMethod) + 1);
+    expect(later).not.toContain("Input.insertText");
+    expect(later).not.toContain("Input.dispatchKeyEvent");
+    expect(later).not.toContain("Runtime.callFunctionOn");
+    expect(later).not.toContain("DOM.focus");
+  } finally {
+    await mirror.close();
+  }
+});
+
+it.each(["activate", "setValue"] as const)("allows %s to navigate the page", async (action) => {
+  const main = fakeSession(
+    () => [
+      node("1", "RootWebArea", { childIds: ["2"] }),
+      node("2", action === "activate" ? "link" : "textbox", { backendDOMNodeId: 9 }),
+    ],
+    { id: "main" },
+  );
+  const page = fakePage(main, new Map());
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+  try {
+    await mirror.subscribe("viewer", () => true);
+    const send = main.send.getMockImplementation()!;
+    const navigatingMethod =
+      action === "activate" ? "Runtime.callFunctionOn" : "Input.dispatchKeyEvent";
+    main.send.mockImplementation(async (method, input) => {
+      const result = await send(method, input);
+      if (method === navigatingMethod) page.events.emit("framenavigated", page);
+      return result;
+    });
+    main.send.mockClear();
+
+    expect(
+      await mirror.act({
+        type: "accessibilityAction",
+        document: "1:main-loader",
+        node: "0.2",
+        action,
+        value: "Draft",
+        submit: true,
+      }),
+    ).toBeNull();
+    expect(main.send).toHaveBeenCalledWith(navigatingMethod, expect.anything());
+    if (action === "setValue") {
+      expect(main.send).toHaveBeenCalledWith("Input.insertText", { text: "Draft" });
+      expect(main.send.mock.calls.filter(([method]) => method === navigatingMethod)).toHaveLength(
+        1,
+      );
+    }
+  } finally {
+    await mirror.close();
+  }
+});
 
 it("follows semantic changes inside out-of-process frames and releases their sessions", async () => {
   vi.useFakeTimers();
