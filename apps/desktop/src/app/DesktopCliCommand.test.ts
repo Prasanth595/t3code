@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, beforeEach, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -177,7 +178,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "skips a t3 directory or a file this user cannot execute",
     () =>
       Effect.gen(function* () {

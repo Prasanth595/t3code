@@ -1,5 +1,5 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.access has no execute check.
-import { access, constants } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -124,7 +124,7 @@ export const make = Effect.gen(function* () {
   const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
     function* (target: string) {
       if ((yield* fs.stat(target)).type !== "File") return false;
-      yield* Effect.tryPromise(() => access(target, constants.X_OK));
+      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
       return true;
     },
     Effect.orElseSucceed(() => false),
