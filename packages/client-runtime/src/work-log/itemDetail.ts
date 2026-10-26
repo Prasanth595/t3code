@@ -2,6 +2,8 @@ import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts"
 import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
+import { coordinationNotificationNeedsDetail } from "../state/threadCommunication.ts";
+
 const MAX_TEXT_BLOCK_DEPTH = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,6 +138,8 @@ export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean
       return item.outputOmitted === true;
     case "dynamic_tool":
       return item.outputOmitted === true || isSummarizedValue(item.input);
+    case "notification":
+      return coordinationNotificationNeedsDetail(item);
     default:
       return false;
   }
@@ -236,7 +240,7 @@ export function turnItemHasDetail(item: OrchestrationV2TurnItem): boolean {
     case "user_input_request":
       return item.questions.length > 0;
     case "notification":
-      return Boolean(item.detail?.trim());
+      return Boolean(item.detail?.trim()) || coordinationNotificationNeedsDetail(item);
     case "system_notice":
       return item.message.trim().length > 0;
     case "error":

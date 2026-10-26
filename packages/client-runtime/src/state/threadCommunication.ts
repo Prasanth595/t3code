@@ -1,4 +1,3 @@
-import { turnItemIsWorkspacePreparation } from "./turnItemPresentation.ts";
 import type {
   CommunicationEnvelope,
   OrchestrationV2ProjectedTurnItem,
@@ -34,102 +33,91 @@ export function isCoordinationTurnItem(
   return !ALWAYS_VISIBLE_TYPES.has(item.type);
 }
 
-export function coordinationTurnItems(
-  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  lanesEnabled: boolean,
-): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
-  return rows.filter(
-    ({ item }) =>
-      isCoordinationTurnItem(item, lanesEnabled) &&
-      item.type !== "checkpoint" &&
-      !turnItemIsWorkspacePreparation(item),
+/** Plain-language row label for a message between agents; null for user-facing traffic. */
+export function coordinationMessageLabel(
+  communication: CommunicationEnvelope | undefined,
+): string | null {
+  switch (communication?.route.port) {
+    case "internal.in":
+      switch (communication.producer.kind) {
+        case "agent":
+          return "Message from agent";
+        case "scheduler":
+          return "Message from scheduled task";
+        case "monitor":
+          return "Message from monitor";
+        default:
+          return "Message from T3 Code";
+      }
+    case "internal.out":
+      switch (communication.route.audience) {
+        case "agent":
+          return "Message to agent";
+        case "program":
+          return "Message to program";
+        default:
+          return "Agent note";
+      }
+    default:
+      return null;
+  }
+}
+
+// Servers send this summary when an internal message has no text preview.
+const COORDINATION_FALLBACK_SUMMARY = "Coordination activity";
+
+/** Row label for coordination traffic: who it was between, then the message's first line. */
+export function coordinationRowLabel(item: OrchestrationV2TurnItem): string | null {
+  const isMessage = item.type === "user_message" || item.type === "assistant_message";
+  // An unaddressed message in an enabled thread is the agent's own unpublished output.
+  const label = coordinationMessageLabel(item.communication) ?? (isMessage ? "Agent note" : null);
+  if (label === null) return null;
+  const preview =
+    item.type === "notification"
+      ? item.summary
+      : isMessage
+        ? item.text.trim().split(/\r?\n/u, 1)[0]
+        : undefined;
+  return preview && preview !== COORDINATION_FALLBACK_SUMMARY ? `${label}: ${preview}` : label;
+}
+
+/** A coordination message with no text; feeds drop it like an empty assistant message. */
+export function isEmptyCoordinationMessage(item: OrchestrationV2TurnItem): boolean {
+  if (item.type === "notification") {
+    return coordinationMessageLabel(item.communication) !== null && item.detail?.trim() === "";
+  }
+  return (
+    (item.type === "user_message" || item.type === "assistant_message") &&
+    item.text.trim() === "" &&
+    (item.attachments?.length ?? 0) === 0
   );
 }
 
-function clip(text: string, max: number): string {
-  const line = text.trim().replace(/\s+/g, " ");
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
-}
-
-function stringify(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2) ?? "";
-  } catch {
-    return String(value);
+/**
+ * The live wire carries internal messages as text-free notifications; the full turn item fetched
+ * on expand is a message, so fold its text into the notification the row already renders.
+ */
+export function coordinationNotificationWithDetail(
+  wireItem: OrchestrationV2TurnItem,
+  fetchedItem: OrchestrationV2TurnItem | null | undefined,
+): OrchestrationV2TurnItem | null {
+  if (
+    wireItem.type !== "notification" ||
+    coordinationMessageLabel(wireItem.communication) === null ||
+    (fetchedItem?.type !== "user_message" && fetchedItem?.type !== "assistant_message")
+  ) {
+    return null;
   }
+  return { ...wireItem, detail: fetchedItem.text };
 }
 
-/** One short line for the Coordination list; the full body comes from getTurnItem on demand. */
-export function coordinationItemPreview(item: OrchestrationV2TurnItem): string {
-  switch (item.type) {
-    case "user_message":
-    case "assistant_message":
-    case "reasoning":
-      return clip(item.text, 160);
-    case "notification":
-      return clip(item.summary, 160);
-    case "command_execution":
-      return clip(`$ ${item.input}`, 160);
-    case "file_change":
-      return clip(`Edited ${item.fileName}`, 160);
-    case "file_search":
-      return clip(`Searched files${item.pattern ? `: ${item.pattern}` : ""}`, 160);
-    case "web_search":
-      return clip(`Web search${item.patterns?.length ? `: ${item.patterns.join(", ")}` : ""}`, 160);
-    case "dynamic_tool":
-      return clip(`Tool: ${item.toolName ?? "unknown"}`, 160);
-    case "subagent":
-      return clip(`Subagent: ${item.title ?? item.prompt}`, 160);
-    case "system_notice":
-    case "run_interrupt_request":
-    case "run_interrupt_result":
-      return clip(item.message, 160);
-    case "compaction":
-      return clip(item.summary ? `Context compacted: ${item.summary}` : "Context compacted", 160);
-    case "todo_list":
-      return clip(item.explanation ?? `Plan with ${item.steps.length} steps`, 160);
-    default:
-      return clip(item.title ?? item.type.replaceAll("_", " "), 160);
-  }
-}
-
-/** Full body for the expanded Coordination row. */
-export function coordinationItemText(item: OrchestrationV2TurnItem): string {
-  switch (item.type) {
-    case "user_message":
-    case "assistant_message":
-    case "reasoning":
-      return item.text;
-    case "notification":
-      return item.detail ?? item.summary;
-    case "command_execution":
-      return item.output ? `$ ${item.input}\n\n${item.output}` : `$ ${item.input}`;
-    case "file_change":
-      return item.diffStr ?? coordinationItemPreview(item);
-    case "dynamic_tool":
-      return item.output === undefined
-        ? stringify(item.input)
-        : `${stringify(item.input)}\n\n${stringify(item.output)}`;
-    case "subagent":
-      return item.result ? `${item.prompt}\n\n${item.result}` : item.prompt;
-    default:
-      return coordinationItemPreview(item);
-  }
-}
-
-/** Header line for a Coordination row: where it was routed, what it is, who made it, how far it got. */
-export function coordinationItemHeader(item: OrchestrationV2TurnItem): string {
-  const { communication } = item;
-  return [
-    communication?.route.port ?? "unclassified",
-    item.type.replaceAll("_", " "),
-    communication?.producer.kind,
-    communicationDeliveryLabel(communication?.delivery),
-    communicationCorrelationLabel(communication),
-  ]
-    .filter((part) => part != null)
-    .join(" · ");
+/** A coordination notification whose text must be fetched before it can be shown. */
+export function coordinationNotificationNeedsDetail(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "notification" &&
+    item.detail === undefined &&
+    coordinationMessageLabel(item.communication) !== null
+  );
 }
 
 /**
@@ -162,48 +150,22 @@ export function runFinishedWithoutUserUpdate(
 }
 
 export const FINISHED_WITHOUT_USER_UPDATE_NOTICE =
-  "Agent finished without a user update. No message was published to the user conversation; the output is in Coordination.";
+  "The agent finished without replying here. Its notes are in the work log above.";
 
-export function communicationDeliveryLabel(
-  delivery: CommunicationEnvelope["delivery"] | undefined,
-): string | null {
-  switch (delivery?.state) {
-    case "accepted":
-      return "Accepted";
-    case "pending":
-      return "Pending delivery";
-    case "offered":
-      return "Offered to provider";
-    case "provider_accepted":
-      return "Provider accepted";
-    case "consumption_unknown":
-      return "Provider consumption unknown";
-    case "consumed":
-      return "Consumed";
-    case "cancelled":
-      return "Cancelled";
-    case "failed":
-      return "Delivery failed";
-    default:
-      return null;
-  }
-}
-
-/** Badge text for a human message: settled delivery needs no badge, only the in-between states. */
+/** Badge for a human message; only states the user may need to act on or wait for get one. */
 export function pendingDeliveryLabel(
   delivery: CommunicationEnvelope["delivery"] | undefined,
 ): string | null {
-  return delivery?.state === "consumed" ? null : communicationDeliveryLabel(delivery);
-}
-
-/** Correlation shown on coordination rows so a user.out reply can be traced to its request. */
-export function communicationCorrelationLabel(
-  communication: CommunicationEnvelope | undefined,
-): string | null {
-  if (communication === undefined) return null;
-  return communication.replyTo !== undefined
-    ? `reply to ${communication.replyTo}`
-    : communication.causationId !== undefined
-      ? `caused by ${communication.causationId}`
-      : null;
+  switch (delivery?.state) {
+    case "pending":
+      return "Waiting to send";
+    case "offered":
+      return "Sending";
+    case "cancelled":
+      return "Not sent";
+    case "failed":
+      return "Failed to send";
+    default:
+      return null;
+  }
 }

@@ -935,8 +935,8 @@ export function NewTaskDraftScreen(props: {
       );
     if (communicationLanesOptIn && !selectedProviderSupportsCommunicationLanes) {
       Dialog.alert(
-        "Coordination lanes unavailable",
-        "The selected provider does not support coordination lanes. Choose a supported provider before sending this task.",
+        "Agent messages can't be separated",
+        "The selected provider can't keep agent-to-agent messages in the work log. Choose another provider or turn the switch off.",
       );
       return null;
     }
@@ -1222,9 +1222,8 @@ export function NewTaskDraftScreen(props: {
               {flow.canChooseWorkspace ? workspaceControls : null}
               {supportsCommunicationLanes ? (
                 <ComposerInlineControl
-                  accessibilityLabel="Separate coordination activity"
-                  accessibilityHint="Compatibility mode for this new thread"
-                  label={`Coordination lanes: ${communicationLanesOptIn ? "On" : "Off"}`}
+                  accessibilityLabel="Keep agent-to-agent messages in the work log"
+                  label={`Agent messages: ${communicationLanesOptIn ? "Work log" : "Chat"}`}
                   selected={communicationLanesOptIn}
                   disabled={isComposerInteractionLocked}
                   showChevron={false}

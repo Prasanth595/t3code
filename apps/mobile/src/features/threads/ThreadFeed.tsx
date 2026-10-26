@@ -36,11 +36,8 @@ import {
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
-  coordinationItemHeader,
-  coordinationItemPreview,
   FINISHED_WITHOUT_USER_UPDATE_NOTICE,
   pendingDeliveryLabel,
-  coordinationItemText,
 } from "@t3tools/client-runtime/state/thread-communication";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -124,7 +121,6 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
   type ColorValue,
   useWindowDimensions,
@@ -250,7 +246,6 @@ import {
 } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
-import { useTurnItemDetail } from "../../state/queries";
 import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -344,8 +339,6 @@ export interface ThreadFeedProps {
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
-  readonly coordinationItems?: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
-  readonly communicationLanesEnabled?: boolean;
   readonly finishedWithoutUserUpdate?: boolean;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -2115,17 +2108,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
-  const [coordinationOpen, setCoordinationOpen] = useState(false);
-  const [coordinationVisibleCount, setCoordinationVisibleCount] = useState(100);
-  const [selectedCoordinationId, setSelectedCoordinationId] = useState<string | null>(null);
-  const selectedCoordinationItem = coordinationOpen
-    ? props.coordinationItems?.find(({ item }) => item.id === selectedCoordinationId)
-    : undefined;
-  const coordinationDetail = useTurnItemDetail(
-    selectedCoordinationItem
-      ? { environmentId: props.environmentId, row: selectedCoordinationItem }
-      : null,
-  );
   const workflowOpening = useWorkflowOpening(props.environmentId, props.threadId);
   const guestThreadRef = useMemo(
     () => scopeThreadRef(props.environmentId, props.threadId),
@@ -3168,83 +3150,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
       <View className="flex-1" onLayout={handleViewportLayout}>
-        {props.communicationLanesEnabled ? (
-          <View className="border-b border-border bg-background">
-            {props.finishedWithoutUserUpdate ? (
-              <Text className="px-5 pt-2 text-xs text-foreground-muted">
-                {FINISHED_WITHOUT_USER_UPDATE_NOTICE}
-              </Text>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Coordination activity, ${props.coordinationItems?.length ?? 0} items`}
-              onPress={() => setCoordinationOpen((open) => !open)}
-              className="px-5 py-3"
-            >
-              <Text className="text-xs font-t3-medium text-foreground-muted">
-                Coordination ({props.coordinationItems?.length ?? 0}) · Compatibility mode{" "}
-                {coordinationOpen ? "▴" : "▾"}
-              </Text>
-            </Pressable>
-            {coordinationOpen ? (
-              <ScrollView
-                nestedScrollEnabled
-                style={{ maxHeight: 280 }}
-                className="border-t border-border px-5 py-2"
-              >
-                {(props.coordinationItems?.length ?? 0) === 0 ? (
-                  <Text className="text-xs text-foreground-muted">
-                    No coordination activity yet.
-                  </Text>
-                ) : (
-                  <>
-                    {(props.coordinationItems?.length ?? 0) > coordinationVisibleCount ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() => setCoordinationVisibleCount((count) => count + 100)}
-                        className="pb-3"
-                      >
-                        <Text className="text-xs text-foreground-muted">
-                          Show earlier coordination activity
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    {props.coordinationItems?.slice(-coordinationVisibleCount).map(({ item }) => (
-                      <View key={item.id} className="mb-3">
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ expanded: selectedCoordinationId === item.id }}
-                          onPress={() =>
-                            setSelectedCoordinationId((id) => (id === item.id ? null : item.id))
-                          }
-                        >
-                          <Text className="text-xs font-t3-medium text-foreground-muted">
-                            {coordinationItemHeader(item)}
-                          </Text>
-                          <Text className="text-xs text-foreground">
-                            {coordinationItemPreview(item)}
-                          </Text>
-                        </Pressable>
-                        {selectedCoordinationId === item.id ? (
-                          <View className="mt-2 rounded border border-border p-2">
-                            <Text className="text-xs text-foreground" selectable>
-                              {coordinationDetail.isPending
-                                ? "Loading full activity…"
-                                : (coordinationDetail.error ??
-                                  (coordinationDetail.data?.item
-                                    ? coordinationItemText(coordinationDetail.data.item)
-                                    : "Full activity unavailable."))}
-                            </Text>
-                          </View>
-                        ) : null}
-                      </View>
-                    ))}
-                  </>
-                )}
-              </ScrollView>
-            ) : null}
-          </View>
-        ) : null}
         <View className="flex-1">
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
@@ -3357,15 +3262,22 @@ export const ThreadFeed = memo(function ThreadFeed({
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff ? (
-                <ThreadHandoffDivider
-                  environmentId={props.environmentId}
-                  endpoints={props.pendingHandoff}
-                  iconColor={iconSubtleColor}
-                  surfaceColor={screenColor}
-                  label="Context handoff pending"
-                />
-              ) : null
+              <>
+                {props.pendingHandoff ? (
+                  <ThreadHandoffDivider
+                    environmentId={props.environmentId}
+                    endpoints={props.pendingHandoff}
+                    iconColor={iconSubtleColor}
+                    surfaceColor={screenColor}
+                    label="Context handoff pending"
+                  />
+                ) : null}
+                {props.finishedWithoutUserUpdate ? (
+                  <Text className="py-2 text-xs text-foreground-muted">
+                    {FINISHED_WITHOUT_USER_UPDATE_NOTICE}
+                  </Text>
+                ) : null}
+              </>
             }
             contentContainerStyle={{
               paddingTop: FEED_PADDING_TOP,

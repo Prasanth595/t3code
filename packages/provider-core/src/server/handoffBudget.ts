@@ -127,7 +127,7 @@ export function handoffBudget(input: {
 export type HistoricalOrigin = "human" | "scheduled" | "internal";
 
 /** Provider role "user" is transport evidence only; this is who actually sent the item. */
-export function historicalOrigin(item: OrchestrationV2TurnItem): HistoricalOrigin | null {
+function historicalOrigin(item: OrchestrationV2TurnItem): HistoricalOrigin | null {
   if (item.type !== "user_message") return null;
   if (item.communication !== undefined) {
     return item.communication.route.port === "user.in" ? "human" : "internal";
@@ -142,7 +142,7 @@ const ORIGIN_KIND = {
   internal: "internal_message",
 } as const satisfies Record<HistoricalOrigin, string>;
 
-export function isHumanHistoricalMessage(message: OrchestrationV2HistoricalMessage): boolean {
+function isHumanHistoricalMessage(message: OrchestrationV2HistoricalMessage): boolean {
   return message.role === "user" && message.kind === ORIGIN_KIND.human;
 }
 

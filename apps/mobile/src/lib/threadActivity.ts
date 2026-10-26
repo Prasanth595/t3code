@@ -5,7 +5,12 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { isCoordinationTurnItem } from "@t3tools/client-runtime/state/thread-communication";
+import {
+  coordinationMessageLabel,
+  coordinationRowLabel,
+  isCoordinationTurnItem,
+  isEmptyCoordinationMessage,
+} from "@t3tools/client-runtime/state/thread-communication";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
@@ -319,6 +324,7 @@ const projectedEntriesCache = new WeakMap<
   OrchestrationV2ProjectedTurnItem,
   {
     readonly attemptId: RunAttemptId | null;
+    readonly communicationLanesEnabled: boolean;
     readonly entry: RawThreadFeedEntry;
   }
 >();
@@ -566,6 +572,11 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
   }
 }
 
+/** System notices stand alone; agent-to-agent messages are ordinary work and group with it. */
+function isStandaloneNotification(item: OrchestrationV2TurnItem): boolean {
+  return item.type === "notification" && coordinationMessageLabel(item.communication) === null;
+}
+
 function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
   if (item.type === "notification") {
     const source = item.source;
@@ -651,7 +662,8 @@ function itemSummary(
   item: OrchestrationV2TurnItem,
   toolPresentation: T3McpToolPresentation | null = null,
 ): string {
-  if (item.type === "notification") return item.summary;
+  if (item.type === "notification")
+    return coordinationMessageLabel(item.communication) ?? item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
@@ -712,9 +724,8 @@ function itemSummary(
     case "todo_list":
       return "Plan updated";
     case "user_message":
-      return "User message";
     case "assistant_message":
-      return "Assistant message";
+      return coordinationRowLabel(item) ?? "Agent note";
   }
 }
 
@@ -1011,7 +1022,7 @@ function groupAdjacentActivities(
       entry.activity.workEntry.questionAnswer !== undefined ||
       entry.activity.projectedItem.item.type === "compaction" ||
       entry.activity.projectedItem.item.type === "handoff" ||
-      entry.activity.projectedItem.item.type === "notification";
+      isStandaloneNotification(entry.activity.projectedItem.item);
     if (
       isStandaloneActivity ||
       entry.activity.prominent ||
@@ -1231,7 +1242,7 @@ function deriveThreadFeedRunFolds(
                 (activity) =>
                   activity.prominent ||
                   activity.workEntry.questionAnswer !== undefined ||
-                  activity.projectedItem.item.type === "notification" ||
+                  isStandaloneNotification(activity.projectedItem.item) ||
                   activity.projectedItem.item.type === "handoff" ||
                   // A child still working outlives its settled launching run;
                   // its group stays visible while any member is live.
@@ -1666,7 +1677,7 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
         row.activities.every(
           (activity) =>
             !activity.prominent &&
-            activity.projectedItem.item.type !== "notification" &&
+            !isStandaloneNotification(activity.projectedItem.item) &&
             activity.projectedItem.item.type !== "subagent",
         )))
   );
@@ -1769,7 +1780,7 @@ function appendActivityGroupRows(
   for (const activity of activities) {
     const item = activity.projectedItem.item;
     const severeProviderError = item.type === "error" && item.status === "failed";
-    if (!activity.prominent && !severeProviderError && item.type !== "notification") {
+    if (!activity.prominent && !severeProviderError && !isStandaloneNotification(item)) {
       groupableRun.push(activity);
       continue;
     }
@@ -2178,16 +2189,19 @@ export function buildThreadFeed(
   for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
     const row = visibleTurnItems[index]!;
     const item = row.item;
-    if (isCoordinationTurnItem(item, communicationLanesEnabled)) continue;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (communicationLanesEnabled && isEmptyCoordinationMessage(item)) continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     if (item.type === "run_interrupt_request") {
       continue;
     }
     const attemptId = resolveAttemptId(item);
     const cached = projectedEntriesCache.get(row);
-    if (cached?.attemptId === attemptId) {
+    if (
+      cached?.attemptId === attemptId &&
+      cached.communicationLanesEnabled === communicationLanesEnabled
+    ) {
       entries.push(cached.entry);
       entryRows.push(index);
       continue;
@@ -2205,7 +2219,7 @@ export function buildThreadFeed(
         runId: item.runId,
         render,
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, communicationLanesEnabled, entry });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2225,12 +2239,15 @@ export function buildThreadFeed(
         revision: turnItemDetailRevision(item),
         app,
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, communicationLanesEnabled, entry });
       entries.push(entry);
       entryRows.push(index);
       continue;
     }
-    if (item.type === "user_message" || item.type === "assistant_message") {
+    if (
+      (item.type === "user_message" || item.type === "assistant_message") &&
+      !isCoordinationTurnItem(item, communicationLanesEnabled)
+    ) {
       const updatedAt = DateTime.formatIso(item.updatedAt);
       const entry: RawThreadFeedEntry = {
         type: "message",
@@ -2261,7 +2278,7 @@ export function buildThreadFeed(
           projectedItem: row,
         },
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, communicationLanesEnabled, entry });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2274,7 +2291,7 @@ export function buildThreadFeed(
       runId: item.runId,
       activity,
     };
-    projectedEntriesCache.set(row, { attemptId, entry });
+    projectedEntriesCache.set(row, { attemptId, communicationLanesEnabled, entry });
     entries.push(entry);
     entryRows.push(index);
   }

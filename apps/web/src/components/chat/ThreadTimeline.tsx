@@ -1,18 +1,12 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
-  coordinationItemHeader,
-  coordinationItemPreview,
-  coordinationItemText,
-  coordinationTurnItems,
   FINISHED_WITHOUT_USER_UPDATE_NOTICE,
   runFinishedWithoutUserUpdate,
 } from "@t3tools/client-runtime/state/thread-communication";
-import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
-import { type ComponentProps, useLayoutEffect, useState } from "react";
+import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useThreadVisibleTurnItems } from "../../state/entities";
-import { useTurnItemDetail } from "../../state/queries";
 import {
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
@@ -51,23 +45,6 @@ export function ThreadTimeline({
   communicationLanesEnabled?: boolean;
 }) {
   const visibleTurnItems = useThreadVisibleTurnItems(threadDetailRef);
-  const [coordinationOpen, setCoordinationOpen] = useState(false);
-  const [coordinationVisibleCount, setCoordinationVisibleCount] = useState(100);
-  const [selectedCoordinationId, setSelectedCoordinationId] = useState<string | null>(null);
-  const coordinationItems = coordinationTurnItems(visibleTurnItems, communicationLanesEnabled);
-  const selectedCoordinationItem = coordinationOpen
-    ? coordinationItems.find(({ item }) => item.id === selectedCoordinationId)
-    : undefined;
-  const coordinationDetail = useTurnItemDetail(
-    selectedCoordinationItem && threadDetailRef
-      ? {
-          environmentId: threadDetailRef.environmentId,
-          threadId: selectedCoordinationItem.sourceThreadId,
-          itemId: selectedCoordinationItem.sourceItemId,
-          revision: turnItemDetailRevision(selectedCoordinationItem.item),
-        }
-      : null,
-  );
   const finishedWithoutUpdate =
     communicationLanesEnabled &&
     runFinishedWithoutUserUpdate(
@@ -98,80 +75,17 @@ export function ThreadTimeline({
       workspaceRoot: readyWorkspaceRoot,
     });
   }, [activeThreadKey, detailLoading, entries, readyMarkdownCwd, readyWorkspaceRoot]);
-  return (
+  const footer = finishedWithoutUpdate ? (
     <>
-      {communicationLanesEnabled ? (
-        <section
-          className="shrink-0 border-b border-border bg-background"
-          aria-label="Coordination activity"
-        >
-          {finishedWithoutUpdate ? (
-            <p className="px-4 pt-2 text-xs text-muted-foreground">
-              {FINISHED_WITHOUT_USER_UPDATE_NOTICE}
-            </p>
-          ) : null}
-          <button
-            type="button"
-            aria-expanded={coordinationOpen}
-            onClick={() => setCoordinationOpen((open) => !open)}
-            className="w-full px-4 py-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            Coordination ({coordinationItems.length}) · Compatibility mode{" "}
-            {coordinationOpen ? "▴" : "▾"}
-          </button>
-          {coordinationOpen ? (
-            <div className="max-h-[40vh] overflow-y-auto border-t border-border px-4 py-2">
-              {coordinationItems.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No coordination activity yet.</p>
-              ) : (
-                <ol className="space-y-3">
-                  {coordinationItems.length > coordinationVisibleCount ? (
-                    <li>
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground underline"
-                        onClick={() => setCoordinationVisibleCount((count) => count + 100)}
-                      >
-                        Show earlier coordination activity
-                      </button>
-                    </li>
-                  ) : null}
-                  {coordinationItems.slice(-coordinationVisibleCount).map(({ item }) => (
-                    <li key={item.id} className="text-xs">
-                      <button
-                        type="button"
-                        className="w-full text-left"
-                        aria-expanded={selectedCoordinationId === item.id}
-                        onClick={() =>
-                          setSelectedCoordinationId((id) => (id === item.id ? null : item.id))
-                        }
-                      >
-                        <span className="block font-medium text-muted-foreground">
-                          {coordinationItemHeader(item)}
-                        </span>
-                        <span className="block whitespace-pre-wrap break-words text-foreground">
-                          {coordinationItemPreview(item)}
-                        </span>
-                      </button>
-                      {selectedCoordinationId === item.id ? (
-                        <div className="mt-2 whitespace-pre-wrap break-words rounded border border-border p-2 text-foreground">
-                          {coordinationDetail.isPending
-                            ? "Loading full activity…"
-                            : (coordinationDetail.error ??
-                              (coordinationDetail.data?.item
-                                ? coordinationItemText(coordinationDetail.data.item)
-                                : "Full activity unavailable."))}
-                        </div>
-                      ) : null}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-      <MessagesTimeline {...timelineProps} timelineEntries={displayed.entries} />
+      {timelineProps.footer}
+      <p className="chat-content-lane py-2 text-xs text-muted-foreground">
+        {FINISHED_WITHOUT_USER_UPDATE_NOTICE}
+      </p>
     </>
+  ) : (
+    timelineProps.footer
+  );
+  return (
+    <MessagesTimeline {...timelineProps} footer={footer} timelineEntries={displayed.entries} />
   );
 }

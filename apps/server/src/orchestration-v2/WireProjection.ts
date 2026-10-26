@@ -104,6 +104,13 @@ function summarizeDynamicValue(value: unknown): unknown {
   };
 }
 
+function coordinationPreview(text: string): string | null {
+  const firstLine = text.trimStart().slice(0, 400).split(/\r?\n/u, 1)[0]!.replace(/\s+/gu, " ");
+  const line = firstLine.trim();
+  if (line === "") return null;
+  return line.length <= 160 ? line : `${line.slice(0, 159).trimEnd()}…`;
+}
+
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   const communication = item.communication;
   if (
@@ -130,7 +137,9 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       type: "notification",
       source: { kind: "system" },
       outcome: "updated",
-      summary: "Coordination activity",
+      // The full text stays behind getTurnItem; an empty detail tells clients there is nothing to show.
+      summary: coordinationPreview(item.text) ?? "Coordination activity",
+      ...(item.text.trim() === "" ? { detail: "" } : {}),
     };
   }
   switch (item.type) {

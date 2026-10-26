@@ -116,10 +116,27 @@ describe("orchestration V2 wire projection", () => {
       communication,
     };
     const projected = projectTurnItemForWire(item);
-    expect(projected.type).toBe("notification");
-    expect(JSON.stringify(projected)).not.toContain("PRIVATE_COORDINATION_RESULT");
+    expect(projected).toMatchObject({
+      type: "notification",
+      summary: "PRIVATE_COORDINATION_RESULT",
+    });
+    expect(projected).not.toHaveProperty("detail");
     expect(JSON.stringify(projected)).not.toContain("PRIVATE_ENVELOPE_TEXT");
     expect(projectTurnItemForDetail(item)).toMatchObject({ text: "PRIVATE_COORDINATION_RESULT" });
+
+    const long = projectTurnItemForWire({
+      ...item,
+      text: `  ${"word ".repeat(60)}\nSECOND_LINE_ONLY_IN_DETAIL`,
+    });
+    expect(long).toMatchObject({ type: "notification" });
+    const summary = long.type === "notification" ? long.summary : "";
+    expect(summary.length).toBeLessThanOrEqual(160);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(JSON.stringify(long)).not.toContain("SECOND_LINE_ONLY_IN_DETAIL");
+    expect(projectTurnItemForWire({ ...item, text: "  \n " })).toMatchObject({
+      summary: "Coordination activity",
+      detail: "",
+    });
   });
 
   it("keeps copied handoff transcripts out of activity items and live events", () => {

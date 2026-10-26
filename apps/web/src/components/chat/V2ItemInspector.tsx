@@ -12,6 +12,7 @@ import {
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { coordinationNotificationWithDetail } from "@t3tools/client-runtime/state/thread-communication";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
@@ -131,7 +132,10 @@ function useFetchedTurnItem(
     source?.detail,
   );
   const fetchedItem = detail.data?.item;
-  const item = fetchedItem?.type === wireItem.type ? fetchedItem : wireItem;
+  const item =
+    fetchedItem?.type === wireItem.type
+      ? fetchedItem
+      : (coordinationNotificationWithDetail(wireItem, fetchedItem) ?? wireItem);
   return {
     item,
     output: {
@@ -408,7 +412,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             .join("\n\n")}
         />
       ) : null}
-      {item.type === "notification" ? <StructuredValue value={item.detail} /> : null}
+      {item.type === "notification" ? (
+        item.detail !== undefined ? (
+          <StructuredValue value={item.detail} />
+        ) : (
+          <div className={monoClassName}>
+            <ToolOutput {...outputState} />
+          </div>
+        )
+      ) : null}
       {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
       {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
       {item.type === "proposed_plan" ? <StructuredValue value={item.markdown} /> : null}

@@ -40,7 +40,11 @@ import type {
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
-import { isCoordinationTurnItem } from "@t3tools/client-runtime/state/thread-communication";
+import {
+  coordinationRowLabel,
+  isCoordinationTurnItem,
+  isEmptyCoordinationMessage,
+} from "@t3tools/client-runtime/state/thread-communication";
 
 import {
   isImageAttachment,
@@ -665,11 +669,12 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         : [],
     ),
   );
+  const lanesEnabled = input.communicationLanesEnabled === true;
   for (const row of input.visibleTurnItems) {
     const { item } = row;
-    if (isCoordinationTurnItem(item, input.communicationLanesEnabled === true)) continue;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (lanesEnabled && isEmptyCoordinationMessage(item)) continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
@@ -683,11 +688,33 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           id: item.id,
           createdAt,
           runId: item.runId,
-          label: item.summary,
+          label: coordinationRowLabel(item) ?? item.summary,
           tone: "info",
           itemType: item.type,
           structuredPayload: item,
           projectedItem: row,
+        },
+        ...attemptMetadata,
+      });
+      continue;
+    }
+    if (
+      (item.type === "user_message" || item.type === "assistant_message") &&
+      isCoordinationTurnItem(item, lanesEnabled)
+    ) {
+      entries.push({
+        id: item.id,
+        kind: "work",
+        createdAt,
+        entry: {
+          id: item.id,
+          createdAt,
+          runId: item.runId,
+          label: coordinationRowLabel(item) ?? "Agent note",
+          detail: item.text,
+          tone: "info",
+          itemType: item.type,
+          structuredPayload: item,
         },
         ...attemptMetadata,
       });

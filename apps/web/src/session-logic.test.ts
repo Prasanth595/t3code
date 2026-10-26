@@ -45,7 +45,7 @@ import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./tes
 import type { ChatMessage } from "./types";
 
 describe("V2 session presentation", () => {
-  it("shows only explicitly addressed messages in enabled human chat", () => {
+  it("keeps unaddressed messages inline as work rows in enabled human chat", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-lanes");
     const item = (id: string, communication?: { route: { port: string } }) =>
@@ -99,8 +99,10 @@ describe("V2 session presentation", () => {
             updatedAt: "2026-06-20T00:00:00.000Z",
           },
         ],
-      }).map((entry) => entry.id),
-    ).toEqual([MessageId.make("public")]);
+      }).map((entry) =>
+        entry.kind === "work" ? `${entry.id}: ${entry.entry.label}` : `${entry.kind} ${entry.id}`,
+      ),
+    ).toEqual(["legacy: Agent note: legacy", "internal: Agent note: internal", "message public"]);
     expect(
       deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: rows,
@@ -109,7 +111,7 @@ describe("V2 session presentation", () => {
     ).toHaveLength(3);
   });
 
-  it("routes unaddressed work rows to coordination but keeps blocking controls visible", () => {
+  it("keeps unaddressed work rows inline in enabled threads", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-lanes-work");
     const base = (id: string) => ({
@@ -149,8 +151,8 @@ describe("V2 session presentation", () => {
         communicationLanesEnabled,
       }).flatMap((entry) => (entry.kind === "work" ? [entry.entry.id] : []));
 
-    expect(ids(true)).toEqual(["fail"]);
-    expect(ids(false)).toEqual(expect.arrayContaining(["tool", "think", "notice", "fail"]));
+    expect(ids(true)).toEqual(ids(false));
+    expect(ids(true)).toEqual(expect.arrayContaining(["tool", "think", "notice", "fail"]));
   });
 
   it("uses run status as the settlement boundary", () => {

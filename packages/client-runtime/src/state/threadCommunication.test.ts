@@ -2,12 +2,11 @@ import { expect, it } from "vite-plus/test";
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 
 import {
-  communicationCorrelationLabel,
-  communicationDeliveryLabel,
-  coordinationItemHeader,
-  coordinationItemPreview,
-  coordinationItemText,
-  coordinationTurnItems,
+  coordinationMessageLabel,
+  coordinationRowLabel,
+  isEmptyCoordinationMessage,
+  coordinationNotificationNeedsDetail,
+  coordinationNotificationWithDetail,
   isCoordinationTurnItem,
   pendingDeliveryLabel,
   runFinishedWithoutUserUpdate,
@@ -35,50 +34,48 @@ it("keeps only explicit user routes and control items in the enabled conversatio
     row({ id: "plan", type: "proposed_plan" }),
     row({ id: "ckpt", type: "checkpoint" }),
   ];
-  const ids = (list: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) =>
-    list.map(({ item }) => item.id);
+  const ids = (lanesEnabled: boolean) =>
+    rows
+      .filter(({ item }) => isCoordinationTurnItem(item, lanesEnabled))
+      .map(({ item }) => item.id);
 
-  expect(coordinationTurnItems(rows, false)).toEqual([]);
-  expect(ids(coordinationTurnItems(rows, true))).toEqual([
-    "legacy",
-    "internal",
-    "cmd",
-    "think",
-    "note",
-    "sys",
-  ]);
+  expect(ids(false)).toEqual([]);
+  expect(ids(true)).toEqual(["legacy", "internal", "cmd", "think", "note", "sys", "ckpt"]);
   expect(isCoordinationTurnItem(rows[1]!.item, true)).toBe(false);
   expect(isCoordinationTurnItem(rows[2]!.item, true)).toBe(false);
   expect(isCoordinationTurnItem(rows[8]!.item, true)).toBe(false);
   expect(isCoordinationTurnItem(rows[4]!.item, false)).toBe(false);
 });
 
-it("previews non-message work concisely and keeps the body for expansion", () => {
-  const cmd = row({ id: "c", type: "command_execution", input: "pnpm test", output: "ok" }).item;
-  const tool = row({ id: "t", type: "dynamic_tool", toolName: "grep", input: { q: 1 } }).item;
-  const edit = row({ id: "e", type: "file_change", fileName: "a.ts" }).item;
-  const long = row({ id: "l", type: "reasoning", text: "x".repeat(400) }).item;
+it("labels agent traffic in plain language and folds fetched text into the row", () => {
+  const envelope = (port: string, extra: Record<string, unknown>) =>
+    ({ route: { port, ...extra }, producer: { kind: "agent" } }) as never;
+  expect(coordinationMessageLabel(envelope("internal.in", {}))).toBe("Message from agent");
+  expect(coordinationMessageLabel(envelope("internal.out", { audience: "agent" }))).toBe(
+    "Message to agent",
+  );
+  expect(coordinationMessageLabel(envelope("internal.out", { audience: "coordinator" }))).toBe(
+    "Agent note",
+  );
+  expect(coordinationMessageLabel(envelope("user.out", { audience: "human" }))).toBeNull();
+  expect(coordinationMessageLabel(undefined)).toBeNull();
 
-  expect(coordinationItemPreview(cmd)).toBe("$ pnpm test");
-  expect(coordinationItemText(cmd)).toBe("$ pnpm test\n\nok");
-  expect(coordinationItemPreview(tool)).toBe("Tool: grep");
-  expect(coordinationItemPreview(edit)).toBe("Edited a.ts");
-  expect(coordinationItemPreview(long)).toHaveLength(160);
-  expect(coordinationItemHeader(cmd)).toBe("unclassified · command execution");
-  expect(
-    coordinationItemHeader(
-      row({
-        id: "i",
-        type: "assistant_message",
-        communication: {
-          route: { port: "internal.out" },
-          producer: { kind: "agent" },
-          delivery: { state: "pending" },
-          replyTo: "m1",
-        },
-      }).item,
-    ),
-  ).toBe("internal.out · assistant message · agent · Pending delivery · reply to m1");
+  const wire = row({
+    id: "n",
+    type: "notification",
+    summary: "Coordination activity",
+    communication: envelope("internal.in", {}),
+  }).item;
+  const fetched = row({ id: "n", type: "user_message", text: "Orbit risks maintenance." }).item;
+  expect(coordinationNotificationNeedsDetail(wire)).toBe(true);
+  expect(coordinationNotificationWithDetail(wire, fetched)).toMatchObject({
+    type: "notification",
+    detail: "Orbit risks maintenance.",
+  });
+  expect(coordinationNotificationWithDetail(wire, undefined)).toBeNull();
+  const plain = row({ id: "p", type: "notification", summary: "Child done" }).item;
+  expect(coordinationNotificationNeedsDetail(plain)).toBe(false);
+  expect(coordinationNotificationWithDetail(plain, fetched)).toBeNull();
 });
 
 it("reports a completed run that published nothing to the user", () => {
@@ -139,19 +136,39 @@ it("reports a completed run that published nothing to the user", () => {
   ).toBe(false);
 });
 
-it("distinguishes intake from provider consumption", () => {
-  expect(communicationDeliveryLabel({ state: "accepted" })).toBe("Accepted");
-  expect(communicationDeliveryLabel({ state: "offered" })).toBe("Offered to provider");
-  expect(communicationDeliveryLabel({ state: "consumption_unknown" })).toBe(
-    "Provider consumption unknown",
-  );
-  expect(communicationDeliveryLabel(undefined)).toBeNull();
+it("badges only delivery states the user waits on or must act on", () => {
+  expect(pendingDeliveryLabel({ state: "consumed" })).toBeNull();
+  expect(pendingDeliveryLabel({ state: "provider_accepted" })).toBeNull();
+  expect(pendingDeliveryLabel({ state: "consumption_unknown" })).toBeNull();
+  expect(pendingDeliveryLabel({ state: "pending" })).toBe("Waiting to send");
+  expect(pendingDeliveryLabel({ state: "failed" })).toBe("Failed to send");
+  expect(pendingDeliveryLabel(undefined)).toBeNull();
 });
 
-it("hides settled delivery and labels reply correlation", () => {
-  expect(pendingDeliveryLabel({ state: "consumed" })).toBeNull();
-  expect(pendingDeliveryLabel({ state: "pending" })).toBe("Pending delivery");
-  expect(communicationCorrelationLabel({ replyTo: "m1" } as never)).toBe("reply to m1");
-  expect(communicationCorrelationLabel({ causationId: "c1" } as never)).toBe("caused by c1");
-  expect(communicationCorrelationLabel(undefined)).toBeNull();
+it("previews coordination rows and drops empty ones", () => {
+  const inbound = { route: { port: "internal.in" }, producer: { kind: "agent" } };
+  const note = (summary: string, detail?: string) =>
+    row({
+      type: "notification",
+      summary,
+      communication: inbound,
+      ...(detail === undefined ? {} : { detail }),
+    }).item;
+  expect(coordinationRowLabel(note("Orbit risks maintenance."))).toBe(
+    "Message from agent: Orbit risks maintenance.",
+  );
+  expect(coordinationRowLabel(note("Coordination activity"))).toBe("Message from agent");
+  expect(coordinationRowLabel(row({ type: "assistant_message", text: "Plan\nmore" }).item)).toBe(
+    "Agent note: Plan",
+  );
+  expect(
+    coordinationRowLabel(row({ type: "notification", summary: "Child done" }).item),
+  ).toBeNull();
+
+  expect(isEmptyCoordinationMessage(note("Coordination activity", ""))).toBe(true);
+  expect(isEmptyCoordinationMessage(note("Orbit risks maintenance."))).toBe(false);
+  expect(
+    isEmptyCoordinationMessage(row({ type: "notification", summary: "x", detail: "" }).item),
+  ).toBe(false);
+  expect(isEmptyCoordinationMessage(row({ type: "assistant_message", text: " " }).item)).toBe(true);
 });

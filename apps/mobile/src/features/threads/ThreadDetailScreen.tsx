@@ -223,10 +223,6 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
-  readonly selectedCoordinationItems?: ReadonlyArray<
-    import("@t3tools/contracts").OrchestrationV2ProjectedTurnItem
-  >;
-  readonly communicationLanesEnabled?: boolean;
   readonly finishedWithoutUserUpdate?: boolean;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
@@ -1297,8 +1293,6 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
-              coordinationItems={props.selectedCoordinationItems ?? []}
-              communicationLanesEnabled={props.communicationLanesEnabled === true}
               finishedWithoutUserUpdate={props.finishedWithoutUserUpdate === true}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}

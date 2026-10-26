@@ -283,7 +283,7 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
-  it("keeps unaddressed and internal messages out of enabled human chat", () => {
+  it("keeps unaddressed and internal messages in the work log of enabled threads", () => {
     const user = projected(
       {
         ...userMessage(),
@@ -308,21 +308,23 @@ describe("buildThreadFeed", () => {
     );
     const rows = [user, internal, unclassified];
 
+    const enabledFeed = buildThreadFeed(rows, {
+      communicationLanesEnabled: true,
+      anchoredMessages: [
+        {
+          id: MessageId.make("local-assistant"),
+          role: "assistant",
+          text: "Unaddressed local output",
+          streaming: false,
+          createdAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+        },
+      ],
+    });
     expect(
-      buildThreadFeed(rows, {
-        communicationLanesEnabled: true,
-        anchoredMessages: [
-          {
-            id: MessageId.make("local-assistant"),
-            role: "assistant",
-            text: "Unaddressed local output",
-            streaming: false,
-            createdAt: "2026-06-20T00:00:00.000Z",
-            updatedAt: "2026-06-20T00:00:00.000Z",
-          },
-        ],
-      }).map((entry) => entry.id),
+      enabledFeed.filter((entry) => entry.type === "message").map((entry) => entry.id),
     ).toEqual([MessageId.make("message-user")]);
+    expect(enabledFeed.some((entry) => entry.type !== "message")).toBe(true);
     expect(buildThreadFeed(rows).filter((entry) => entry.type === "message")).toHaveLength(3);
   });
 

@@ -150,6 +150,7 @@ import {
   type ThreadPanelPresentation,
 } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
+import { Switch } from "./ui/switch";
 import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -3481,18 +3482,20 @@ export default function ChatView(props: ChatViewProps) {
                             />
                           ) : null}
                           {canOptInCommunicationLanes ? (
-                            <label className="flex items-center gap-2 px-3 pb-2 text-xs text-muted-foreground">
-                              <input
-                                type="checkbox"
+                            <label className="flex cursor-pointer items-center justify-between gap-3 px-4 pt-2.5 text-xs text-muted-foreground">
+                              <span className="min-w-0 truncate">
+                                Keep agent-to-agent messages in the work log
+                              </span>
+                              <Switch
+                                size="sm"
                                 checked={communicationLanesOptIn}
-                                onChange={(event) =>
+                                onCheckedChange={(checked) =>
                                   setCommunicationLaneSelection({
                                     draftId,
-                                    enabled: event.currentTarget.checked,
+                                    enabled: Boolean(checked),
                                   })
                                 }
                               />
-                              Separate coordination activity (compatibility mode)
                             </label>
                           ) : null}
                           {!composerMounted ? null : (

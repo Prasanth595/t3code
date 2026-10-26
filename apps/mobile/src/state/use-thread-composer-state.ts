@@ -13,7 +13,7 @@ import {
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -53,10 +53,7 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
-import {
-  coordinationTurnItems,
-  runFinishedWithoutUserUpdate,
-} from "@t3tools/client-runtime/state/thread-communication";
+import { runFinishedWithoutUserUpdate } from "@t3tools/client-runtime/state/thread-communication";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -186,10 +183,6 @@ export function useThreadComposerState() {
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const communicationLanesEnabled =
     selectedThreadProjection?.projection.thread.communicationLanesEnabled === true;
-  const selectedCoordinationItems = useMemo(
-    () => coordinationTurnItems(selectedThreadVisibleTurnItems, communicationLanesEnabled),
-    [selectedThreadVisibleTurnItems, communicationLanesEnabled],
-  );
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
@@ -898,7 +891,6 @@ export function useThreadComposerState() {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
-    selectedCoordinationItems,
     communicationLanesEnabled,
     selectedThreadFinishedWithoutUserUpdate,
     selectedThreadActivityRun,

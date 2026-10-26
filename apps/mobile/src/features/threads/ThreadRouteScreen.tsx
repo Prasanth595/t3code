@@ -983,8 +983,6 @@ function ThreadRouteContent(
           feedbackSubmissions={composer.feedbackSubmissions}
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
-          selectedCoordinationItems={composer.selectedCoordinationItems}
-          communicationLanesEnabled={composer.communicationLanesEnabled}
           finishedWithoutUserUpdate={composer.selectedThreadFinishedWithoutUserUpdate}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}

@@ -1,6 +1,7 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import { coordinationMessageLabel } from "@t3tools/client-runtime/state/thread-communication";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
@@ -670,6 +671,14 @@ export function computeMessageDurationStart(
   return result;
 }
 
+/** System notices stand alone; agent-to-agent messages are ordinary work and group with it. */
+function workEntryIsStandaloneNotification(entry: WorkLogEntry): boolean {
+  return (
+    entry.itemType === "notification" &&
+    coordinationMessageLabel(entry.structuredPayload?.communication) === null
+  );
+}
+
 function workGroupId(timelineEntryId: string): string {
   return `work-group:${timelineEntryId}`;
 }
@@ -910,7 +919,7 @@ function timelineEntryIsSteer(entry: TimelineEntry): boolean {
 function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
   return (
     (entry.kind === "message" && entry.message.role === "user" && !timelineEntryIsSteer(entry)) ||
-    (entry.kind === "work" && entry.entry.itemType === "notification")
+    (entry.kind === "work" && workEntryIsStandaloneNotification(entry.entry))
   );
 }
 
@@ -1129,7 +1138,7 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
-      if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      if (entry.kind === "work" && workEntryIsStandaloneNotification(entry.entry)) continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
     }
@@ -1484,7 +1493,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.tone === "error" ||
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
-        entry.entry.itemType === "notification" ||
+        workEntryIsStandaloneNotification(entry.entry) ||
         entry.entry.questionAnswer !== undefined ||
         !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
@@ -1758,7 +1767,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.tone === "error" ||
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
-        timelineEntry.entry.itemType === "notification" ||
+        workEntryIsStandaloneNotification(timelineEntry.entry) ||
         timelineEntry.entry.questionAnswer !== undefined
       ) {
         nextRows.push({
@@ -1781,7 +1790,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.tone === "error" ||
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
-          nextEntry.entry.itemType === "notification" ||
+          workEntryIsStandaloneNotification(nextEntry.entry) ||
           nextEntry.entry.questionAnswer !== undefined ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||

@@ -89,6 +89,7 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
+import { coordinationNotificationWithDetail } from "@t3tools/client-runtime/state/thread-communication";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
@@ -974,16 +975,19 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     call && shownItem.type === "command_execution" && shownItem.exitCode
       ? shownItem.exitCode
       : null;
+  const coordinationItem = coordinationNotificationWithDetail(row.projectedItem.item, fetchedItem);
   const fullDetail =
     expanded && !reasoning && !call
-      ? fetchedItem && !isRead
-        ? formatItemFullDetail(row.projectedItem, fetchedItem)
-        : row.getFullDetail()
+      ? coordinationItem?.type === "notification"
+        ? (coordinationItem.detail ?? null)
+        : fetchedItem && !isRead
+          ? formatItemFullDetail(row.projectedItem, fetchedItem)
+          : row.getFullDetail()
       : null;
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const fetchedOutput =
-    !expanded || streamsOutput
+    !expanded || streamsOutput || coordinationItem
       ? null
       : shownItem.type === "file_search" || shownItem.type === "web_search"
         ? turnItemOutputText(shownItem)
