@@ -4354,6 +4354,7 @@ describe("regate: a re-gate pass waits for the required checks", () => {
         checksRead([["gate", "failed"]], PUSHED),
       ]);
       const req = rig.t3.launches[0]!;
+      assert.strictEqual(req.pullRequestUrl, URL12);
       assert.ok(
         req.message.includes(`A required check did not pass on commit ${PUSHED_SHORT}`),
         req.message,

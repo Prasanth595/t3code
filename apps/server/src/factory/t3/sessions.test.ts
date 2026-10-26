@@ -836,6 +836,82 @@ describe("FactorySessions.launch", () => {
       ),
     ),
   );
+
+  const launchedThread = {
+    launch: () =>
+      Effect.succeed({
+        threadId,
+        resumed: false,
+        projection: {
+          thread: { branch: null, worktreePath: null },
+        } as OrchestrationV2ThreadProjection,
+      }),
+  };
+  const PR_URL = "https://github.com/rawphp/softfac/pull/12";
+
+  it.effect("links the pull request a launch continues to the new thread", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      const launched = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* sessions.launch({ ...request, pullRequestUrl: PR_URL });
+      }).pipe(Effect.provide(layerSessions({}, launchedThread, recordingDispatch(commands))));
+      assert.deepStrictEqual(launched, { threadId, worktreePath: null, branch: null });
+      assert.deepStrictEqual(commands, [
+        {
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("softfac:issue-5:attempt-1:pull-request-link"),
+          threadId,
+          host: "github.com",
+          repository: "rawphp/softfac",
+          number: 12,
+          url: PR_URL,
+          source: "agent",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("links nothing for a launch without a pull request", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* sessions.launch(request);
+      }).pipe(Effect.provide(layerSessions({}, launchedThread, recordingDispatch(commands))));
+      assert.deepStrictEqual(commands, []);
+    }),
+  );
+
+  it.effect("returns the launched thread when T3 refuses the link", () =>
+    Effect.gen(function* () {
+      const refusal = new Orchestrator.OrchestratorCommandRejectedError({
+        commandId: CommandId.make("softfac:issue-5:attempt-1:pull-request-link"),
+        commandType: "thread.pull-request.link",
+      });
+      const launched = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* sessions.launch({ ...request, pullRequestUrl: PR_URL });
+      }).pipe(
+        Effect.provide(
+          layerSessions({}, launchedThread, { dispatch: () => Effect.fail(refusal) as never }),
+        ),
+      );
+      assert.deepStrictEqual(launched, { threadId, worktreePath: null, branch: null });
+    }),
+  );
+
+  it.effect("returns the launched thread without a link when the URL cannot be read", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      const launched = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* sessions.launch({ ...request, pullRequestUrl: "not a url" });
+      }).pipe(Effect.provide(layerSessions({}, launchedThread, recordingDispatch(commands))));
+      assert.deepStrictEqual(launched, { threadId, worktreePath: null, branch: null });
+      assert.deepStrictEqual(commands, []);
+    }),
+  );
 });
 
 describe("FactorySessions.status and thread", () => {
