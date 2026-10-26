@@ -40,6 +40,10 @@ export function SettingsLegalDocumentExternalHeaderButton({
   );
 }
 
+function externalHeaderButton(externalUrl: string) {
+  return () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />;
+}
+
 interface SettingsLegalDocumentRouteScreenProps {
   readonly documentName: string;
   readonly documentUrl: string;
@@ -56,7 +60,7 @@ export function SettingsLegalDocumentRouteScreen({
   const headerOptions = (
     <NativeStackScreenOptions
       options={{
-        headerRight: () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
+        headerRight: externalHeaderButton(externalUrl),
       }}
       optionsVersion={externalUrl}
     />

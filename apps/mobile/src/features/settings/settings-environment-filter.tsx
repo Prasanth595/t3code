@@ -80,9 +80,11 @@ export function SettingsEnvironmentFilterProvider(props: {
 }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  // Written only by selectProject, so it can keep a key that the close reset below cleared.
+  // Its one reader, a project removal that finishes after Settings closed, then clears an
+  // already empty selection, which is harmless.
   const currentProjectKey = useRef<string | null>(null);
   if (!props.open && (selectedIds !== null || selectedProjectKey !== null)) {
-    currentProjectKey.current = null;
     setSelectedIds(null);
     setSelectedProjectKey(null);
   }
