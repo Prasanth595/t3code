@@ -9,6 +9,8 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  # Pi's Gemini client; its install scripts are optional.
+  "@google/genai": false
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
@@ -22,6 +24,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-8d2f84a8.tgz": true
   sharp: true
   "@tsc-rs/typescript": true

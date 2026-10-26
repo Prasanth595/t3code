@@ -141,7 +141,7 @@
       "generatedNotices": [
         {
           "licenseId": "Apache-2.0",
-          "copyrights": ["Copyright 2009, 2010, 2013 Andr\u00e9 Berg"]
+          "copyrights": ["Copyright 2009, 2010, 2013 André Berg"]
         }
       ]
     },
@@ -744,6 +744,87 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-coding-agent",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Mario Zechner"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-agent-core",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Mario Zechner"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-ai",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Mario Zechner"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-telemetry",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Mario Zechner"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-tui",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Mario Zechner"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-codemode",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Earendil Works"]
+      }
+    },
+    {
+      "name": "@earendil-works/pi-mcp",
+      "version": "1.4.0",
+      "sourceUrl": "https://github.com/earendil-works/pi",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Earendil Works"]
+      }
+    },
+    {
+      "name": "standardwebhooks",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/standard-webhooks/standard-webhooks",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Standard Webhooks"]
+      }
+    },
+    {
+      "name": "data-uri-to-buffer",
+      "version": "4.0.1",
+      "sourceUrl": "https://github.com/TooTallNate/proxy-agents/tree/main/packages/data-uri-to-buffer",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Nathan Rajlich <nathan@tootallnate.net>"]
       }
     }
   ]
