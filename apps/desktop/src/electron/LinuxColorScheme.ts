@@ -15,8 +15,7 @@ export type LinuxColorScheme = "dark" | "light" | null;
 function decodeColorScheme(value: unknown): LinuxColorScheme {
   let scheme = value;
   while (scheme instanceof Variant) scheme = scheme.value;
-  if (typeof scheme !== "number") return null;
-  return scheme === 1 ? "dark" : "light";
+  return scheme === 1 ? "dark" : scheme === 0 || scheme === 2 ? "light" : null;
 }
 
 const settingsCall = (member: "ReadOne" | "Read") =>
