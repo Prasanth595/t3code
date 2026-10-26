@@ -70,7 +70,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 export function useComposerStash(input: {
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
-  readonly readPrompt: () => string;
+  readonly promptRef: ChatComposerProps["promptRef"];
   readonly readAttachmentDraft: () => Pick<ComposerThreadDraftState, "images" | "files">;
   readonly readTerminalContexts: () => ComposerThreadDraftState["terminalContexts"];
   readonly routeThreadRef: ChatComposerProps["routeThreadRef"];
@@ -100,7 +100,7 @@ export function useComposerStash(input: {
   const {
     environmentId,
     composerDraftTarget,
-    readPrompt,
+    promptRef,
     readAttachmentDraft,
     readTerminalContexts,
     routeThreadRef,
@@ -216,7 +216,7 @@ export function useComposerStash(input: {
           })
         : reference.source;
     });
-    const currentPrompt = readPrompt();
+    const currentPrompt = promptRef.current;
     const nextPrompt =
       restoredPrompt.length === 0
         ? currentPrompt
@@ -225,6 +225,7 @@ export function useComposerStash(input: {
           : restoredPrompt;
     let promptChanged = nextPrompt !== currentPrompt;
     if (promptChanged) {
+      promptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
       setComposerTrigger(null);
@@ -331,7 +332,8 @@ export function useComposerStash(input: {
       if (restoredFiles.length > 0) {
         addComposerDraftFiles(composerDraftTarget, restoredFiles, { appendReference: true });
         const restoredFilePrompt = getComposerDraft(composerDraftTarget)?.prompt;
-        if (restoredFilePrompt !== undefined && restoredFilePrompt !== nextPrompt) {
+        if (restoredFilePrompt !== undefined && restoredFilePrompt !== promptRef.current) {
+          promptRef.current = restoredFilePrompt;
           setComposerCursor(
             collapseExpandedComposerCursor(restoredFilePrompt, restoredFilePrompt.length),
           );
@@ -452,7 +454,7 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = readPrompt().trim();
+    const prompt = promptRef.current.trim();
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
@@ -557,6 +559,7 @@ export function useComposerStash(input: {
         });
       }
 
+      promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -9,11 +9,12 @@ export function DraftHeroProjectHeading({
   children: ReactNode;
   projectName: string;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const inlineRef = useRef<HTMLSpanElement>(null);
   const [fitsInline, setFitsInline] = useState(false);
 
-  // Child refs attach before this one, so the inline measure span is already set.
-  const observeFit = (container: HTMLDivElement | null) => {
+  useLayoutEffect(() => {
+    const container = containerRef.current;
     const inline = inlineRef.current;
     if (!container || !inline) return;
 
@@ -25,10 +26,10 @@ export function DraftHeroProjectHeading({
       );
     update();
     return observeResize([container, inline], update);
-  };
+  }, []);
 
   return (
-    <div ref={observeFit} className="group/draft-hero relative w-full" data-inline={fitsInline}>
+    <div ref={containerRef} className="group/draft-hero relative w-full" data-inline={fitsInline}>
       <span
         aria-hidden="true"
         className="pointer-events-none invisible absolute inset-x-0 top-0 h-0 overflow-hidden"

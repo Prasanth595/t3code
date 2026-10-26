@@ -2284,7 +2284,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = useComposerStash({
     environmentId,
     composerDraftTarget,
-    readPrompt: () => promptRef.current,
+    promptRef,
     readAttachmentDraft: () => ({
       images: composerImagesRef.current,
       files: composerFilesRef.current,

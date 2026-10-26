@@ -1,5 +1,5 @@
 import { InfoIcon } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
 import { cn } from "~/lib/utils";
@@ -240,10 +240,12 @@ function NoticeText({
   readonly className: string;
   readonly detailsLabel: string;
 }) {
+  const textRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
 
-  const observeOverflow = (text: HTMLSpanElement | null) => {
+  useLayoutEffect(() => {
+    const text = textRef.current;
     if (!text) return;
     const measure = () => {
       // Ignore the space taken by the details button itself so it cannot
@@ -265,11 +267,11 @@ function NoticeText({
       stopObserving();
       mutations.disconnect();
     };
-  };
+  }, []);
 
   return (
     <span className="contents">
-      <span ref={observeOverflow} className={className}>
+      <span ref={textRef} className={className}>
         {children}
       </span>
       {showDetails ? (
