@@ -230,9 +230,11 @@ export function ThreadMcpApp(props: {
   };
   const latest = useRef(live);
   const hostRef = useRef<McpAppHost | null>(null);
+  const followToolCallRef = useRef<((atom: typeof detailAtom) => void) | null>(null);
   useEffect(() => {
     const previous = latest.current;
     latest.current = live;
+    if (previous.detailAtom !== live.detailAtom) followToolCallRef.current?.(live.detailAtom);
     // Building the context is not free, so resend only when one of its inputs changed.
     if (
       previous.theme !== live.theme ||
@@ -453,20 +455,28 @@ export function ThreadMcpApp(props: {
         },
       });
       hostRef.current = host;
-      // The host keeps the first call it is given, and sends it once the app
-      // initializes, so a stored item that lands late still reaches it.
-      const unsubscribeToolCall = appAtomRegistry.subscribe(
-        latest.current.detailAtom,
-        (result) => {
-          const call = AsyncResult.isSuccess(result)
-            ? storedToolCall(result.value.item)
-            : undefined;
-          if (call !== undefined) host.setToolCall(call);
-        },
-        { immediate: true },
-      );
+      // The host sends the call once the app initializes, so a stored item
+      // that lands late still reaches it. A completed call can arrive under a
+      // new revision, which is a new atom, so the host follows the current one.
+      let unsubscribeToolCall = () => {};
+      const followToolCall = (atom: typeof latest.current.detailAtom) => {
+        unsubscribeToolCall();
+        unsubscribeToolCall = appAtomRegistry.subscribe(
+          atom,
+          (result) => {
+            const call = AsyncResult.isSuccess(result)
+              ? storedToolCall(result.value.item)
+              : undefined;
+            if (call !== undefined) host.setToolCall(call);
+          },
+          { immediate: true },
+        );
+      };
+      followToolCall(latest.current.detailAtom);
+      followToolCallRef.current = followToolCall;
       return () => {
         unsubscribeToolCall();
+        if (followToolCallRef.current === followToolCall) followToolCallRef.current = null;
         // An unmount cannot wait: the request goes out before the view does.
         void host.teardown();
         if (hostRef.current === host) hostRef.current = null;
