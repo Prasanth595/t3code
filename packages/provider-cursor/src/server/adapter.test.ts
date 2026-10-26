@@ -106,7 +106,7 @@ describe("CursorAdapterV2", () => {
       expectedStatus: "completed",
       expectedUsage: {
         usageScope: "main_agent",
-        usageStatus: "complete",
+        usageStatus: "partial",
         inputTokens: 100,
         cachedInputTokens: 60,
         cacheCreationTokens: 40,
