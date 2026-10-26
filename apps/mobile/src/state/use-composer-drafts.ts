@@ -464,6 +464,8 @@ export const composerCloudDraftsAtom = Atom.make<ComposerCloudDraftState>({
 let loadPromise: Promise<void> | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistRetryNeeded = false;
+// Explicit snapshot writes end the coalescing segment without cancelling its queued job.
+let queuedDebouncedPersist: symbol | null = null;
 const persistenceQueue = new SerializedAsyncQueue();
 
 export function resetComposerDraftsLoadState(): void {
@@ -753,6 +755,7 @@ export async function flushComposerDrafts(): Promise<void> {
       if (persistTimer !== null) clearTimeout(persistTimer);
       persistTimer = null;
       persistRetryNeeded = false;
+      queuedDebouncedPersist = null;
       try {
         await persistenceQueue.run(() =>
           writePersistedComposerState(
@@ -951,16 +954,23 @@ export function schedulePersistComposerState(): void {
   }
   persistTimer = setTimeout(() => {
     persistTimer = null;
+    if (queuedDebouncedPersist !== null) return;
+    const request = Symbol();
+    queuedDebouncedPersist = request;
     // Enqueue before awaiting hydration so flushComposerDrafts cannot drain ahead of this write.
     void persistenceQueue.run(async () => {
       try {
         await waitForComposerDraftsLoaded();
+        // Until this snapshot is taken, later debounce requests would write
+        // the same current state. Edits during the write need a new job.
+        if (queuedDebouncedPersist === request) queuedDebouncedPersist = null;
         await writePersistedComposerState(
           appAtomRegistry.get(composerDraftsAtom),
           appAtomRegistry.get(stickyComposerModelSelectionAtom),
         );
         persistRetryNeeded = false;
       } catch (error) {
+        if (queuedDebouncedPersist === request) queuedDebouncedPersist = null;
         // Failed debounces leave no timer; final flush must retry after reading persisted ownership.
         persistRetryNeeded = true;
         console.warn("[composer-drafts] failed to persist drafts", error);
@@ -1671,6 +1681,7 @@ export async function mergeComposerDraftContent(
   if (next !== current) {
     appAtomRegistry.set(composerDraftsAtom, next);
   }
+  queuedDebouncedPersist = null;
   await persistenceQueue.run(() =>
     writePersistedComposerState(next, appAtomRegistry.get(stickyComposerModelSelectionAtom)),
   );
@@ -1695,6 +1706,7 @@ export async function restoreComposerDraftSnapshot(
     snapshot,
   );
   appAtomRegistry.set(composerDraftsAtom, next);
+  queuedDebouncedPersist = null;
   await persistenceQueue.run(() =>
     writePersistedComposerState(next, appAtomRegistry.get(stickyComposerModelSelectionAtom)),
   );
@@ -1779,6 +1791,7 @@ export async function undoComposerDraftMerge(
     merged,
   );
   appAtomRegistry.set(composerDraftsAtom, next);
+  queuedDebouncedPersist = null;
   await persistenceQueue.run(() =>
     writePersistedComposerState(next, appAtomRegistry.get(stickyComposerModelSelectionAtom)),
   );
@@ -1919,6 +1932,7 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
     persistTimer = null;
   }
   appAtomRegistry.set(composerDraftsAtom, next);
+  queuedDebouncedPersist = null;
   await persistenceQueue.run(() =>
     writePersistedComposerState(next, appAtomRegistry.get(stickyComposerModelSelectionAtom)),
   );
