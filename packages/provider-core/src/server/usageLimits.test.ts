@@ -66,6 +66,39 @@ describe("applyUsageLimitsUpdate", () => {
     ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
   });
 
+  it("accepts a first whole-state report without a failure notice", () => {
+    expect(
+      applyUsageLimitsUpdate({
+        previous: undefined,
+        checkedAt,
+        update: { windows: [session, weekly] },
+        replace: true,
+      }),
+    ).toEqual(published);
+  });
+
+  it("clears a failed probe on replacement even when windows and time are unchanged", () => {
+    const previous = {
+      ...published,
+      unavailable: { reason: "probeFailed" as const, message: "Could not read limits." },
+    };
+    expect(
+      applyUsageLimitsUpdate({
+        previous,
+        checkedAt,
+        update: { windows: [session, weekly] },
+        replace: true,
+      }),
+    ).toEqual(published);
+    expect(
+      applyUsageLimitsUpdate({
+        previous,
+        checkedAt,
+        update: { windows: [{ ...session, usedPercent: 55 }] },
+      })?.unavailable,
+    ).toEqual(previous.unavailable);
+  });
+
   it("replaces the windows outright when the update is the account's whole state", () => {
     // Muse reports a window that has reset since with no reset time; a sparse
     // merge would keep the expired one.

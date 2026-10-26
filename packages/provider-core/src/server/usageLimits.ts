@@ -71,7 +71,9 @@ export function applyUsageLimitsUpdate(input: {
   // Limits picks the freshest report per account by `checkedAt`.
   let changed =
     replace &&
-    (update.windows.length !== published.size || input.checkedAt !== previous?.checkedAt);
+    (update.windows.length !== published.size ||
+      input.checkedAt !== previous?.checkedAt ||
+      previous?.unavailable !== undefined);
   for (const window of update.windows) {
     const existing = published.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -96,8 +98,11 @@ export function applyUsageLimitsUpdate(input: {
   if (!changed && previous !== undefined) {
     return previous;
   }
-  const unavailable =
-    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
+  const unavailable = replace
+    ? undefined
+    : previous === undefined
+      ? { reason: "probeFailed" as const }
+      : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
