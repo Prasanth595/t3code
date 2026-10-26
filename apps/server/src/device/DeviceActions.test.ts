@@ -89,22 +89,30 @@ describe("runDeviceAction", () => {
       }),
   );
 
-  it.effect("keeps a permission change that one compatibility permission applied", () =>
-    Effect.gen(function* () {
-      // Images before Android 13 only allow the older storage permission.
-      const { ready } = makeReady((call) => {
-        if (call.args.at(-1) !== "android.permission.READ_EXTERNAL_STORAGE") return { code: 1 };
-        return {};
-      });
-      const result = yield* runDeviceAction(ready, "android", {
-        type: "setPermission",
-        deviceId: "emulator-5554",
-        appId: "com.example.app",
-        permission: "photos",
-        decision: "grant",
-      });
-      expect(result).toBeUndefined();
-    }),
+  it.effect.each([
+    [
+      "photos",
+      ["android.permission.READ_MEDIA_IMAGES", "android.permission.READ_EXTERNAL_STORAGE"],
+      1,
+    ],
+    ["contacts", ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"], 0],
+  ] as const)(
+    "keeps a partially applied %s permission change",
+    ([permission, permissions, success]) =>
+      Effect.gen(function* () {
+        const { ready, calls } = makeReady((call) => ({
+          code: call.args.at(-1) === permissions[success] ? 0 : 1,
+        }));
+        const result = yield* runDeviceAction(ready, "android", {
+          type: "setPermission",
+          deviceId: "emulator-5554",
+          appId: "com.example.app",
+          permission,
+          decision: "grant",
+        });
+        expect(result).toBeUndefined();
+        expect(calls.map((call) => call.args.at(-1))).toEqual(permissions);
+      }),
   );
 });
 
