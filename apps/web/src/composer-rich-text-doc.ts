@@ -174,13 +174,9 @@ export function surroundSelectionWithMark(
   });
   const paragraph = state.schema.nodes.paragraph!.create(null, children);
   const markdown = serializeEditorDoc(state.doc.type.create(null, paragraph)).value;
-  const rebuilt = markdown.split("\n").flatMap((line, index) => {
-    const inline = parseInlineMarkdown(line).map((span) =>
-      state.schema.nodeFromJSON(textJsonForSpan(span.text, span.marks)),
-    );
-    return index ? [state.schema.nodes.hardBreak!.create(), ...inline] : inline;
-  });
-  return paragraph.content.eq(Fragment.from(rebuilt)) ? tr : null;
+  const rebuilt = buildTiptapContent(markdown, () => null, { blocks: false });
+  const restored = state.schema.nodeFromJSON({ type: "doc", content: rebuilt });
+  return paragraph.content.eq(restored.firstChild!.content) ? tr : null;
 }
 
 /**

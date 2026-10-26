@@ -1119,6 +1119,12 @@ describe("inline code entry", () => {
 });
 
 describe("surroundSelectionWithMark", () => {
+  it("keeps markers inside math literal across draft restoration", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("$x$"))]);
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 2, 3) });
+    expect(surroundSelectionWithMark(state, 2, 3, "*")).toBeNull();
+  });
+
   it.each([
     ["`", "hello", "say `hello` now"],
     ["*", "hello", "say *hello* now"],
