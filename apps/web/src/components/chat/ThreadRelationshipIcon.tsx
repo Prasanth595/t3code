@@ -1,7 +1,7 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { BotIcon, type LucideIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
+import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
 export function threadRelationshipStatusLabel(status: string | null): string {
@@ -46,20 +46,21 @@ export function threadRelationshipStatusLabel(status: string | null): string {
 export function ThreadRelationshipIcon({
   driver,
   provider,
-  providers,
+  providerEntries = [],
   status,
   fallbackIcon: FallbackIcon = BotIcon,
 }: {
   driver?: ProviderDriverKind | undefined;
   provider?: ServerProvider | undefined;
-  providers?: ReadonlyArray<ServerProvider> | undefined;
+  providerEntries?: ReadonlyArray<ProviderInstanceEntry>;
   status: string | null;
   fallbackIcon?: LucideIcon;
 }) {
   const iconClassName = "size-4 shrink-0 text-muted-foreground";
-  const entries = driver ? deriveProviderInstanceEntries(providers ?? []) : [];
-  const entry = entries.find((candidate) => candidate.instanceId === provider?.instanceId);
-  const showInstanceBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
+  const entry = driver
+    ? providerEntries.find((candidate) => candidate.instanceId === provider?.instanceId)
+    : undefined;
+  const showInstanceBadge = entry !== undefined && shouldShowInstanceBadge(entry, providerEntries);
   return (
     <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
       {driver ? (

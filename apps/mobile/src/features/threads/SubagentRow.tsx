@@ -100,12 +100,26 @@ function SubagentMetadata(props: {
   const provider = providers.find(
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
+  const badgeEntries = providers.map((candidate) => {
+    const rawConfig = config?.settings.providerInstances[candidate.instanceId]?.config;
+    const instanceConfig =
+      rawConfig !== null && typeof rawConfig === "object"
+        ? (rawConfig as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
+    return {
+      ...candidate,
+      driverKind: candidate.driver,
+      acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
+    };
+  });
+  const badgeEntry = badgeEntries.find(
+    (candidate) => candidate.instanceId === subagent.providerInstanceId,
+  );
   const showBadge =
     provider !== undefined &&
-    shouldShowInstanceBadge(
-      { ...provider, driverKind: provider.driver },
-      providers.map((candidate) => ({ ...candidate, driverKind: candidate.driver })),
-    );
+    badgeEntry !== undefined &&
+    shouldShowInstanceBadge(badgeEntry, badgeEntries);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
