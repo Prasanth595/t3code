@@ -179,7 +179,7 @@ function AutoSettleSettingsRows() {
         <SettingsSection title="Usage limits">
           <SettingsSwitchRow
             icon="clock"
-            label="Auto-resume limited threads"
+            label="Resume after usage limits"
             subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabled}
@@ -187,7 +187,7 @@ function AutoSettleSettingsRows() {
           />
           <SettingsSwitchRow
             icon="clock"
-            label="Snooze limited threads"
+            label="Snooze until limits reset"
             subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabled}
@@ -248,7 +248,7 @@ function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled === true;
+    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">
