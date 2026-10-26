@@ -399,6 +399,27 @@ describe("pull request list answers across a reload", () => {
     expect(restored?.entries.map((row) => row.number).toSorted()).toEqual([1, 2, 3]);
   });
 
+  it("keeps one page per environment when retained rows join a partial answer", () => {
+    const storage = makeStorage();
+    const own = ProjectId.make("project-own");
+    const shared = ProjectId.make("project-shared");
+    const rows = (projectId: ProjectId, first: number) =>
+      Array.from({ length: 99 }, (_, index) => ({ ...listEntry(first + index), projectId }));
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer(rows(shared, 1)),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: { ...input, projectIds: [own] } },
+      answer(rows(own, 101)),
+    );
+    const restored = restorePullRequestList(storage, [{ environmentId: local, input }]);
+    expect(restored?.entries).toHaveLength(99);
+    expect(restored?.entries.every((row) => row.projectId === own)).toBe(true);
+  });
+
   it("does not keep grown pages", () => {
     const storage = makeStorage();
     const grown = { ...input, limit: 198 };

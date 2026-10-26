@@ -303,14 +303,15 @@ export function rememberPullRequestListAnswer(
     const retained =
       assigned === undefined
         ? []
-        : (scope[target.environmentId]?.entries ?? [])
-            .filter((entry) => !assigned.has(entry.projectId))
-            .slice(0, LIST_ANSWER_MAX_ENTRIES);
+        : (scope[target.environmentId]?.entries ?? []).filter(
+            (entry) => !assigned.has(entry.projectId),
+          );
     const encoded = encodeListScope({
       ...scope,
       [target.environmentId]: {
         ...answer,
-        entries: [...answer.entries.slice(0, LIST_ANSWER_MAX_ENTRIES), ...retained],
+        // The fresh rows come first, so retained rows only fill what is left of the page.
+        entries: [...answer.entries, ...retained].slice(0, LIST_ANSWER_MAX_ENTRIES),
         errors: [],
         nextCursors: {},
       },
