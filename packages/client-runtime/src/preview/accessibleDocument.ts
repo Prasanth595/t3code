@@ -87,7 +87,6 @@ const BUTTON_ROLES: Record<string, string | null> = {
   menuitem: "menuitem",
   menuitemcheckbox: "menuitemcheckbox",
   menuitemradio: "menuitemradio",
-  treeitem: "treeitem",
   switch: "switch",
   option: null,
 };
@@ -151,12 +150,25 @@ export function planAccessibleNode(
       control: "activate",
     });
   }
+  if (node.role === "treeitem") {
+    // Not a button: an expanded item holds nested items that stay their own controls.
+    const attributes = named({ role: "treeitem", tabindex: "0" });
+    if (node.selected !== undefined) attributes["aria-selected"] = String(node.selected);
+    if (node.checked !== undefined) attributes["aria-checked"] = node.checked;
+    return element(
+      "div",
+      attributes,
+      children.length > 0
+        ? { control: "activate" }
+        : { text: node.name || "Tree item", control: "activate" },
+    );
+  }
   if (node.role in BUTTON_ROLES) {
     const role = BUTTON_ROLES[node.role];
     const attributes: Record<string, string> = { type: "button", ...(role ? { role } : {}) };
     if (node.pressed !== undefined) attributes["aria-pressed"] = node.pressed;
     if (node.checked !== undefined && role) attributes["aria-checked"] = node.checked;
-    if (node.selected !== undefined && (role === "tab" || role === "treeitem")) {
+    if (node.selected !== undefined && role === "tab") {
       attributes["aria-selected"] = String(node.selected);
     } else if (node.selected) {
       attributes["aria-current"] = "true";
@@ -233,6 +245,27 @@ export function planAccessibleNode(
   const fallback = children.length === 0 ? [node.name, node.value].filter(Boolean).join(": ") : "";
   if (children.length === 0 && !fallback) return null;
   return element("div", {}, fallback ? { text: fallback } : {});
+}
+
+/**
+ * Moving an element blurs it, so obsolete children go first and the child
+ * holding focus stays put while its siblings move around it.
+ */
+export function syncChildren(parent: Element, next: ReadonlyArray<Node>, focused: Node | null) {
+  const keep = new Set(next);
+  for (const child of Array.from(parent.childNodes)) {
+    if (!keep.has(child)) parent.removeChild(child);
+  }
+  next.forEach((child, index) => {
+    if (focused && child.parentNode === parent && child.contains(focused)) {
+      while (parent.childNodes[index] !== child) {
+        parent.insertBefore(parent.childNodes[index]!, child.nextSibling);
+      }
+    }
+    if (parent.childNodes[index] !== child) {
+      parent.insertBefore(child, parent.childNodes[index] ?? null);
+    }
+  });
 }
 
 export interface AccessibleDocumentView {
@@ -356,17 +389,19 @@ export function createAccessibleDocumentView(
           item.selected = option.selected;
           return item;
         }),
+        null,
       );
     }
     if (plan.text !== undefined) {
       if (element.textContent !== plan.text) element.textContent = plan.text;
-    } else if (plan.control === null) {
+    } else if (plan.control === null || plan.control === "activate") {
       syncChildren(
         element,
         plan.children.flatMap((child) => {
           const childNode = render(child, seen);
           return childNode ? [childNode] : [];
         }),
+        doc.activeElement,
       );
     }
     return entry.node;
@@ -381,15 +416,6 @@ export function createAccessibleDocumentView(
     const label = doc.createElement("label");
     label.append(doc.createElement("span"), element);
     return { node: label, signature, control: element };
-  };
-
-  const syncChildren = (parent: Element, next: ReadonlyArray<Node>) => {
-    // Moving a focused element would blur it, so only misplaced nodes move.
-    next.forEach((child, index) => {
-      if (parent.childNodes[index] !== child)
-        parent.insertBefore(child, parent.childNodes[index] ?? null);
-    });
-    while (parent.childNodes.length > next.length) parent.lastChild!.remove();
   };
 
   const nodeOf = (target: EventTarget | null) => {
@@ -465,7 +491,8 @@ export function createAccessibleDocumentView(
       target.value = target.dataset.serverValue ?? "";
     } else if (keyboard.key === "Enter" || keyboard.key === " ") {
       const hit = nodeOf(target);
-      if (hit?.element.getAttribute("role") === "link" && keyboard.key === "Enter") {
+      const role = hit?.element === target ? hit.element.getAttribute("role") : null;
+      if (hit && (role === "treeitem" || (role === "link" && keyboard.key === "Enter"))) {
         keyboard.preventDefault();
         act({ node: hit.node.id, action: "activate" });
       }
@@ -497,7 +524,7 @@ export function createAccessibleDocumentView(
       const seen = new Set<string>();
       nodes.clear();
       const root = render(document.root, seen);
-      syncChildren(body, root ? [root] : []);
+      syncChildren(body, root ? [root] : [], doc.activeElement);
       for (const id of rendered.keys()) if (!seen.has(id)) rendered.delete(id);
     },
     notice: say,

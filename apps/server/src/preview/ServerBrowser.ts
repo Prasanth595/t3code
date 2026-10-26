@@ -2317,6 +2317,9 @@ const make = Effect.gen(function* () {
 
           const chooser = next._tag === "control" ? fileChooserMessage(tab) : null;
           if (chooser && tab.control.controller === viewer.id) Queue.offerUnsafe(output, chooser);
+          // Semantics are only resent when they change, so the newest must survive.
+          const semantics = dropped.value.findLast((item) => item._tag === "accessibility");
+          if (semantics && next._tag !== "gone") Queue.offerUnsafe(output, semantics);
           for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
         }
       },

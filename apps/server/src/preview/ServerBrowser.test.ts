@@ -87,7 +87,8 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, listener: () => void) => events.on(name, listener)),
-    emit: (name: string) => events.emit(name),
+    off: vi.fn((name: string, listener: () => void) => events.off(name, listener)),
+    emit: (name: string, ...args: Array<unknown>) => events.emit(name, ...args),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
@@ -1478,6 +1479,30 @@ it.live("turning the view off or leaving releases the Accessibility domain and i
         }),
       );
       expect(reopened.send).not.toHaveBeenCalledWith("Accessibility.disable");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a viewer whose backlog is replaced still gets the page's semantics", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* operator.accessibility(true);
+      const session = contexts[0]!.sessions.find((each) =>
+        each.on.mock.calls.some(([name]) => name === "Page.screencastFrame"),
+      )!;
+      // A stalled viewer: frames fill its queue behind the accepted document.
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.input({ type: "takeControl" });
+      const backlog = yield* Queue.takeAll(operator.output);
+      expect(backlog.map((output) => output._tag)).toContain("control");
+      expect(backlog.filter((output) => output._tag === "accessibility")).toEqual([
+        expect.objectContaining({ document: expect.objectContaining({ version: 1 }) }),
+      ]);
+      yield* operator.input({ type: "releaseControl" });
     }),
   ).pipe(Effect.provide(layer)),
 );

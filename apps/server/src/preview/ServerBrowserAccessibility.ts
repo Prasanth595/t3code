@@ -101,6 +101,12 @@ const text = (value: unknown, max = TEXT_MAX_CHARS) => {
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed.slice(0, max);
 };
+/** What the user typed, kept exactly; only the length is bounded. */
+const fieldValue = (value: unknown) => {
+  if (typeof value === "number") return String(value);
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value.slice(0, PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS);
+};
 const truthy = (value: unknown) => value === true || value === "true";
 const tristate = (value: unknown) =>
   value === "mixed" ? "mixed" : value === undefined ? undefined : truthy(value) ? "true" : "false";
@@ -201,11 +207,13 @@ export function buildAccessibilityTree(
     const properties = new Map(
       raw.properties?.map((property) => [property.name, property.value.value]),
     );
-    const value = text(raw.value?.value, PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS);
+    const editable = properties.has("editable") || EDITABLE_ROLES.has(role);
+    const value = editable
+      ? fieldValue(raw.value?.value)
+      : text(raw.value?.value, PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS);
     const secret =
       raw.backendDOMNodeId !== undefined && frame.secretNodes.has(raw.backendDOMNodeId);
-    const hidden = secret || (value !== undefined && MASKED_VALUE.test(value));
-    const editable = properties.has("editable") || EDITABLE_ROLES.has(role);
+    const hidden = secret || (value !== undefined && MASKED_VALUE.test(value.trim()));
     const level = properties.get("level");
     const node: { -readonly [K in keyof PreviewAccessibilityNode]: PreviewAccessibilityNode[K] } = {
       id,
@@ -215,7 +223,7 @@ export function buildAccessibilityTree(
     const description = text(raw.description?.value);
     if (description !== undefined && role !== "text") node.description = description;
     if (hidden) node.protected = true;
-    else if (value !== undefined && value !== name) node.value = value;
+    else if (value !== undefined && (editable || value !== name)) node.value = value;
     const url = text(properties.get("url"), 2_048);
     if (url !== undefined && role === "link") node.url = url;
     if (typeof level === "number" && Number.isInteger(level) && level >= 0) node.level = level;
@@ -337,6 +345,8 @@ export class ServerBrowserAccessibility {
   private run = 0;
   private sessionSerial = 0;
   private version = 0;
+  /** Bumped by any frame navigation; a capture that spans one cannot be acted on. */
+  private frameChanges = 0;
   private latest: Capture | null = null;
   private chain: Promise<void> = Promise.resolve();
   private queued: Promise<void> | null = null;
@@ -443,13 +453,25 @@ export class ServerBrowserAccessibility {
     }
     this.main = session;
     this.sessions.set("0", session);
-    session.on("Accessibility.nodesUpdated", this.invalidate);
-    session.on("Accessibility.loadComplete", this.invalidate);
     this.page.on("framenavigated", this.onFrameNavigated);
     this.page.on("framedetached", this.onFrameDetached);
     this.page.on("domcontentloaded", this.invalidate);
     this.page.on("load", this.invalidate);
-    await session.send("Accessibility.enable").catch(constVoid);
+    await this.watch(session);
+  }
+
+  /** Each out-of-process frame reports its own semantic changes. */
+  private watch(session: CDPSession) {
+    session.on("Accessibility.nodesUpdated", this.invalidate);
+    session.on("Accessibility.loadComplete", this.invalidate);
+    return session.send("Accessibility.enable").then(constVoid, constVoid);
+  }
+
+  private async release(session: CDPSession) {
+    session.off("Accessibility.nodesUpdated", this.invalidate);
+    session.off("Accessibility.loadComplete", this.invalidate);
+    await session.send("Accessibility.disable").catch(constVoid);
+    await session.detach().catch(constVoid);
   }
 
   private async stop() {
@@ -465,28 +487,32 @@ export class ServerBrowserAccessibility {
     this.page.off("domcontentloaded", this.invalidate);
     this.page.off("load", this.invalidate);
     this.main = null;
-    const sessions = [...this.sessions.entries()];
+    const sessions = [...this.sessions.values()];
     this.sessions.clear();
     this.frameSessions.clear();
-    await Promise.all(
-      sessions.map(async ([key, session]) => {
-        if (key === "0") await session.send("Accessibility.disable").catch(constVoid);
-        await session.detach().catch(constVoid);
-      }),
-    );
+    await Promise.all(sessions.map((session) => this.release(session)));
   }
 
   private readonly onFrameNavigated = (frame: Frame) => {
-    // Actions name nodes of the document a viewer saw; a new one invalidates them all.
     if (frame === this.page.mainFrame()) this.latest = null;
     else this.dropFrameSession(frame);
-    this.invalidate();
+    this.forgetTargets();
   };
 
   private readonly onFrameDetached = (frame: Frame) => {
     this.dropFrameSession(frame);
-    this.invalidate();
+    this.forgetTargets();
   };
+
+  /**
+   * Same-process frames share their parent's node ids, so any frame change may
+   * leave an id naming a replaced element. Actions wait for the next capture.
+   */
+  private forgetTargets() {
+    this.frameChanges += 1;
+    if (this.latest) this.latest = { ...this.latest, targets: new Map() };
+    this.invalidate();
+  }
 
   private dropFrameSession(frame: Frame) {
     const entry = this.frameSessions.get(frame);
@@ -496,7 +522,7 @@ export class ServerBrowserAccessibility {
       .then((key) => {
         const session = key === null ? undefined : this.sessions.get(key);
         if (key !== null) this.sessions.delete(key);
-        return session?.detach();
+        return session && this.release(session);
       })
       .catch(constVoid);
   }
@@ -510,13 +536,14 @@ export class ServerBrowserAccessibility {
         .context()
         .newCDPSession(frame)
         .then(
-          (session) => {
+          async (session) => {
             if (run !== this.run) {
               void session.detach().catch(constVoid);
               return null;
             }
             const key = String(++this.sessionSerial);
             this.sessions.set(key, session);
+            await this.watch(session);
             return key;
           },
           () => null,
@@ -528,6 +555,7 @@ export class ServerBrowserAccessibility {
 
   private async captureOnce() {
     const run = this.run;
+    const frameChanges = this.frameChanges;
     const main = this.main;
     if (!main) return;
     this.lastCaptureAt = Date.now();
@@ -536,9 +564,13 @@ export class ServerBrowserAccessibility {
       return null;
     });
     if (!captured || run !== this.run || !captured.root) return;
+    const targets =
+      frameChanges === this.frameChanges
+        ? captured.targets
+        : new Map<string, AccessibilityTarget>();
     const json = JSON.stringify([captured.token, captured.truncated, captured.root]);
     if (this.latest?.json === json) {
-      this.latest = { ...this.latest, targets: captured.targets };
+      this.latest = { ...this.latest, targets };
       return;
     }
     this.latest = {
@@ -549,7 +581,7 @@ export class ServerBrowserAccessibility {
         root: captured.root,
       },
       json,
-      targets: captured.targets,
+      targets,
     };
     for (const subscriber of this.subscribers.values()) subscriber.pending = true;
     this.deliver();

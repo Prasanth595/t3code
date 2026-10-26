@@ -187,26 +187,10 @@ it("treats password and one-time-code fields as secret", () => {
 it("redelivers the newest document to a viewer whose queue was full", async () => {
   vi.useFakeTimers();
   try {
-    const events = new NodeEvents.EventEmitter();
-    const session = {
-      on: vi.fn(),
-      detach: vi.fn(async () => {}),
-      send: vi.fn(async (method: string) => {
-        if (method === "Page.getFrameTree")
-          return { frameTree: { frame: { id: "main", loaderId: "l" } } };
-        if (method === "Accessibility.getFullAXTree") {
-          return { nodes: [node("1", "RootWebArea", { label: "Page" })] };
-        }
-        return {};
-      }),
-    };
-    const page = {
-      context: () => ({ newCDPSession: async () => session }),
-      mainFrame: () => page,
-      frames: () => [page],
-      on: (name: string, listener: () => void) => events.on(name, listener),
-      off: (name: string, listener: () => void) => events.off(name, listener),
-    };
+    const session = fakeSession(() => [node("1", "RootWebArea", { label: "Page" })], {
+      id: "main",
+    });
+    const page = fakePage(session, new Map());
     const mirror = new ServerBrowserAccessibility(page as unknown as Page);
     const offer = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     await mirror.subscribe("viewer", offer);
@@ -216,17 +200,181 @@ it("redelivers the newest document to a viewer whose queue was full", async () =
     expect(offer.mock.calls[1]![0]).toMatchObject({ version: 1, root: { name: "Page" } });
 
     await mirror.unsubscribe("viewer");
-    expect(events.eventNames()).toEqual([]);
+    expect(page.events.eventNames()).toEqual([]);
+    expect(session.events.eventNames()).toEqual([]);
     expect(session.send).toHaveBeenCalledWith("Accessibility.disable");
     expect(session.detach).toHaveBeenCalled();
     expect(
       await mirror.act({
         type: "accessibilityAction",
-        document: "1:l",
+        document: "1:main-loader",
         node: "0.1",
         action: "activate",
       }),
     ).toBe("The page changed. Try again.");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends editable values exactly as typed, even when they match the field's name", () => {
+  const { root } = buildAccessibilityTree([
+    frame("0", [
+      node("1", "RootWebArea", { childIds: ["2", "3", "4"] }),
+      node("2", "textbox", {
+        label: "Code",
+        backendDOMNodeId: 2,
+        value: { value: "  indented\n" },
+      }),
+      node("3", "textbox", { label: "Word", backendDOMNodeId: 3, value: { value: "Word" } }),
+      node("4", "textbox", {
+        label: "Spaces",
+        backendDOMNodeId: 4,
+        value: { value: " ".repeat(20_000) },
+      }),
+    ]),
+  ]);
+  expect(root!.children!.map((child) => child.value)).toEqual([
+    "  indented\n",
+    "Word",
+    " ".repeat(10_000),
+  ]);
+});
+
+type Listener = (...args: Array<unknown>) => void;
+const fakeSession = (
+  nodes: () => ReadonlyArray<RawAccessibilityNode>,
+  frame: { readonly id: string; readonly parentId?: string },
+) => {
+  const events = new NodeEvents.EventEmitter();
+  return {
+    events,
+    on: vi.fn((name: string, listener: Listener) => events.on(name, listener)),
+    off: vi.fn((name: string, listener: Listener) => events.off(name, listener)),
+    detach: vi.fn(async () => {}),
+    send: vi.fn(async (method: string, _input?: unknown) => {
+      if (method === "Page.getFrameTree") {
+        return { frameTree: { frame: { ...frame, loaderId: `${frame.id}-loader` } } };
+      }
+      if (method === "Accessibility.getFullAXTree") return { nodes: nodes() };
+      if (method === "DOM.getFrameOwner") return { backendNodeId: 7 };
+      if (method === "DOM.resolveNode") return { object: { objectId: "object" } };
+      return {};
+    }),
+  };
+};
+const fakePage = (
+  main: ReturnType<typeof fakeSession>,
+  children: ReadonlyMap<object, ReturnType<typeof fakeSession> | null>,
+) => {
+  const events = new NodeEvents.EventEmitter();
+  const page = {
+    events,
+    context: () => ({
+      newCDPSession: async (target: object) => {
+        if (target === page) return main;
+        const session = children.get(target);
+        if (!session) throw new Error("This frame does not have a separate CDP session.");
+        return session;
+      },
+    }),
+    mainFrame: () => page,
+    frames: () => [page, ...children.keys()],
+    on: (name: string, listener: Listener) => events.on(name, listener),
+    off: (name: string, listener: Listener) => events.off(name, listener),
+  };
+  return page;
+};
+const captures = (session: ReturnType<typeof fakeSession>) =>
+  session.send.mock.calls.filter(([method]) => method === "Accessibility.getFullAXTree").length;
+
+it("follows semantic changes inside out-of-process frames and releases their sessions", async () => {
+  vi.useFakeTimers();
+  try {
+    const mainNodes = () => [
+      node("1", "RootWebArea", { childIds: ["2"] }),
+      node("2", "Iframe", { backendDOMNodeId: 7 }),
+    ];
+    const main = fakeSession(mainNodes, { id: "main" });
+    let label = "Before";
+    const childNodes = () => [node("1", "RootWebArea", { label })];
+    const child = fakeSession(childNodes, { id: "child", parentId: "main" });
+    const childFrame = {};
+    const page = fakePage(main, new Map([[childFrame, child]]));
+    const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+    const offer = vi.fn((_document: unknown) => true);
+    await mirror.subscribe("viewer", offer);
+    expect(child.send).toHaveBeenCalledWith("Accessibility.enable");
+    expect(offer.mock.lastCall![0]).toMatchObject({ root: { children: [{ name: "Before" }] } });
+
+    // An ARIA-only change inside the frame repaints nothing in the main page.
+    label = "After";
+    child.events.emit("Accessibility.nodesUpdated", { nodes: [] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(offer.mock.lastCall![0]).toMatchObject({ root: { children: [{ name: "After" }] } });
+
+    page.events.emit("framedetached", childFrame);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.events.eventNames()).toEqual([]);
+    expect(child.send).toHaveBeenCalledWith("Accessibility.disable");
+    expect(child.detach).toHaveBeenCalledTimes(1);
+    await mirror.unsubscribe("viewer");
+
+    // A navigated frame's session is released at once, and its successor with the view.
+    const before = fakeSession(childNodes, { id: "child", parentId: "main" });
+    const after = fakeSession(childNodes, { id: "child", parentId: "main" });
+    const sessions = new Map([[childFrame, before]]);
+    const navigated = fakePage(main, sessions);
+    const second = new ServerBrowserAccessibility(navigated as unknown as Page);
+    await second.subscribe("viewer", offer);
+    sessions.set(childFrame, after);
+    navigated.events.emit("framenavigated", childFrame);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(before.events.eventNames()).toEqual([]);
+    expect(before.send).toHaveBeenCalledWith("Accessibility.disable");
+    expect(before.detach).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(after.send).toHaveBeenCalledWith("Accessibility.enable");
+    await second.unsubscribe("viewer");
+    expect(after.events.eventNames()).toEqual([]);
+    expect(after.send).toHaveBeenCalledWith("Accessibility.disable");
+    expect(after.detach).toHaveBeenCalledTimes(1);
+    expect(main.events.eventNames()).toEqual([]);
+    expect(navigated.events.eventNames()).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refuses actions on a document whose frame navigated until it is read again", async () => {
+  vi.useFakeTimers();
+  try {
+    const nodes = () => [
+      node("1", "RootWebArea", { childIds: ["2"] }),
+      node("2", "button", { label: "Buy", backendDOMNodeId: 9 }),
+    ];
+    const main = fakeSession(nodes, { id: "main" });
+    const sameProcessFrame = {};
+    const page = fakePage(main, new Map([[sameProcessFrame, null]]));
+    const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+    const offer = vi.fn((_document: unknown) => true);
+    await mirror.subscribe("viewer", offer);
+    const action = {
+      type: "accessibilityAction" as const,
+      document: "1:main-loader",
+      node: "0.2",
+      action: "activate" as const,
+    };
+
+    page.events.emit("framenavigated", sameProcessFrame);
+    expect(await mirror.act(action)).toBe("The page changed. Try again.");
+    expect(main.send).not.toHaveBeenCalledWith("Runtime.callFunctionOn", expect.anything());
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(captures(main)).toBe(2);
+    expect(await mirror.act(action)).toBeNull();
+    expect(main.send).toHaveBeenCalledWith("Runtime.callFunctionOn", expect.anything());
+    await mirror.unsubscribe("viewer");
   } finally {
     vi.useRealTimers();
   }
