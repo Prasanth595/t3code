@@ -566,6 +566,7 @@ export const make = Effect.gen(function* () {
         );
         yield* Effect.tryPromise({
           // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
+          // A zero-argument try keeps Effect waiting for native IO before cancellation releases the lease.
           try: () =>
             NodeFSP.writeFile(realTargetPath, input.contents, {
               flag:

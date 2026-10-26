@@ -73,6 +73,39 @@ async function mount(props = defaultProps) {
 }
 
 describe("file-save React lifecycle", () => {
+  it("retries the final draft against its earlier acknowledged save, not the stale query", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    let finishFirst!: (result: ReturnType<typeof AsyncResult.success>) => void;
+    writeFile
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))));
+    screen.changeHandler()("first");
+    await vi.advanceTimersByTimeAsync(500);
+    screen.changeHandler()("final");
+    getUnsavedFile.mockReturnValue({ contents: "final" });
+    confirmFile.mockReturnValueOnce(false);
+    await screen.unmount();
+    finishFirst(AsyncResult.success({ relativePath: "file.txt" }));
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "final",
+        expectedContents: "first",
+      },
+    });
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
   it("retains the draft and stops when the server refuses a stale retry", async () => {
     setup();
     using _timers = fakeTimers();

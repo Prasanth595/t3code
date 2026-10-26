@@ -90,7 +90,7 @@ function createFileSaveSession({
           getUnsavedProjectFileQueryData(environmentId, cwd, relativePath)?.contents === contents,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
         persist: async (nextContents, retry) => {
-          if (!retry) {
+          if (!retry && expectedContents === undefined) {
             const base = getPersistedProjectFileQueryData(environmentId, cwd, relativePath);
             expectedContents =
               base?.supportsConditionalWrite && !base.truncated
