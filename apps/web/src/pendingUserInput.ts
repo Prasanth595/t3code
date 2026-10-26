@@ -14,7 +14,11 @@ export function projectPendingUserInputAnswer(
   return replaceComposerContextReferences(answer, (reference) => {
     const record = recordsById.get(reference.contextId);
     if (record?.kind === "thread") return formatThreadLink(record.threadId, reference.label);
-    if (record?.kind === "browser-tab" && record.url) return `[${reference.label}](${record.url})`;
+    if (record?.kind === "browser-tab") {
+      // Answers reach the agent as plain text, so the tab id has to travel inline.
+      const tab = record.url ? `[${reference.label}](${record.url})` : reference.label;
+      return `${tab} (T3 browser tab ${record.tabId}; pass this tabId to the preview_* tools)`;
+    }
     return reference.source;
   });
 }

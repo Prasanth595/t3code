@@ -1,4 +1,5 @@
 import type { BrowserTabContextRecord } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { GlobeIcon } from "lucide-react";
 
 import { useFaviconForThreadUrl } from "~/browserFaviconStore";
@@ -21,6 +22,7 @@ export function BrowserTabContextChip(props: {
   const url = liveUrl ?? props.record.url;
   const title = liveTitle || props.record.title;
   const favicon = useFaviconForThreadUrl(threadRef, url ?? "");
+  const navigate = useNavigate();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -29,7 +31,11 @@ export function BrowserTabContextChip(props: {
             kind="browser-tab"
             {...(session ? {} : { state: "unresolved" as const })}
             render={<button type="button" disabled={!session} />}
-            onClick={() => useRightPanelStore.getState().openBrowser(threadRef, tabId)}
+            onClick={() => {
+              // A chip pasted into another thread still points at the tab's own thread.
+              useRightPanelStore.getState().openBrowser(threadRef, tabId);
+              void navigate({ to: "/$environmentId/$threadId", params: threadRef });
+            }}
             aria-label={`Browser tab, ${title}`}
             data-markdown-copy={props.copyMarkdown}
           >

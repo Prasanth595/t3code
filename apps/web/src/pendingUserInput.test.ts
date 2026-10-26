@@ -1,3 +1,4 @@
+import { browserTabContextRecord } from "@t3tools/client-runtime/composerBrowserTabItems";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
@@ -28,6 +29,17 @@ describe("projectPendingUserInputAnswer", () => {
     const answer = `Compare ${formatInlineContextReference(linkedContextReference(record))}`;
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v1/reference-thread)",
+    );
+  });
+
+  it("keeps a browser tab chip's tab id so the agent reuses that tab", () => {
+    const tab = browserTabContextRecord(
+      { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("thread") },
+      { tabId: "tab-1", title: "Billing", url: "https://example.com/billing" },
+    );
+    const answer = `Use ${formatInlineContextReference(linkedContextReference(tab))}`;
+    expect(projectPendingUserInputAnswer(answer, [tab])).toBe(
+      "Use [Billing](https://example.com/billing) (T3 browser tab tab-1; pass this tabId to the preview_* tools)",
     );
   });
 
