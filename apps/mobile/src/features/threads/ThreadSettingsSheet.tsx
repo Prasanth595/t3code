@@ -86,7 +86,7 @@ import {
   useComposerDraft,
   useComposerDraftSettings,
 } from "../../state/use-composer-drafts";
-import { useSelectedThreadProjection } from "../../state/use-thread-detail";
+import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { updateThreadDraftModelSelection } from "../../state/use-thread-composer-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
@@ -1496,7 +1496,8 @@ export function ExistingThreadSettingsRouteScreen({
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
-  const projection = useSelectedThreadProjection();
+  // Streamed text would otherwise re-render the whole model picker on every delta.
+  const structure = useQuietThreadStructure(selectedThreadDetailRef);
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
   const draftSettings = useComposerDraftSettings(threadKey);
@@ -1510,7 +1511,7 @@ export function ExistingThreadSettingsRouteScreen({
   const modelSelection = draftSettings.modelSelection ?? selectedThread.modelSelection;
   const lockedProviderInstanceId = threadAllowsProviderSwitch({
     thread: selectedThread,
-    projection: projection?.projection,
+    projection: structure?.projection,
   })
     ? undefined
     : modelSelection.instanceId;
