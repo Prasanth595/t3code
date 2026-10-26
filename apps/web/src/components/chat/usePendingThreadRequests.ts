@@ -393,6 +393,8 @@ export function usePendingThreadRequests(input: {
     if (!activePendingUserInput) {
       return;
     }
+    const answeringPendingUserInput =
+      composerRef.current?.getSendContext().answeringPendingUserInput !== false;
     // The option replaces the custom answer. Anything typed there is the
     // user's text, so it goes back to the thread draft instead of vanishing.
     const displacedAnswer = activePendingAnswerDrafts[questionId]?.customAnswer;
@@ -440,8 +442,11 @@ export function usePendingThreadRequests(input: {
         },
       };
     });
-    promptRef.current = "";
-    composerRef.current?.resetCursorState({ cursor: 0 });
+    // Only an answering composer shows the custom answer the option cleared.
+    if (answeringPendingUserInput) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    }
   };
   const onSelectActivePendingUserInputOptionStable = useStableCallback(
     onSelectActivePendingUserInputOption,

@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
-import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
@@ -17,6 +17,8 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import type { ChatComposerHandle } from "./ChatComposer";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -79,10 +81,14 @@ function PendingRequestsProbe({
   environmentId,
   projection,
   loading = false,
+  promptRef: suppliedPromptRef,
+  composerRef: suppliedComposerRef,
 }: {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
+  promptRef?: RefObject<string>;
+  composerRef?: RefObject<ChatComposerHandle | null>;
 }) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
@@ -92,9 +98,10 @@ function PendingRequestsProbe({
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
-    setComposerDraftPrompt: () => {},
-    promptRef,
-    composerRef,
+    setComposerDraftPrompt: (target, value) =>
+      useComposerDraftStore.getState().setPrompt(target, value),
+    promptRef: suppliedPromptRef ?? promptRef,
+    composerRef: suppliedComposerRef ?? composerRef,
     setThreadError: () => {},
   });
   useLayoutEffect(() => {
@@ -187,4 +194,38 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+it("keeps the message cursor and recovers a custom answer when choosing an option from message mode", async () => {
+  const environmentId = EnvironmentId.make("message-mode-environment");
+  const projection = questionProjection(threadRef.threadId, ["message-mode"]);
+  const target = { environmentId, threadId: projection.thread.id };
+  const message = "Keep the README short.";
+  const promptRef = { current: message };
+  const resetCursorState = vi.fn();
+  const composerRef = {
+    current: {
+      getSendContext: () => ({ answeringPendingUserInput: false }),
+      resetCursorState,
+    } as unknown as ChatComposerHandle,
+  };
+  useComposerDraftStore.getState().setPrompt(target, message);
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={projection}
+      promptRef={promptRef}
+      composerRef={composerRef}
+    />,
+  );
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Use OAuth"));
+  promptRef.current = message;
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect
+    .soft(useComposerDraftStore.getState().getComposerDraft(target)?.prompt)
+    .toContain("Use OAuth");
+  expect.soft(promptRef.current).toBe(message);
+  expect.soft(resetCursorState).not.toHaveBeenCalled();
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  expect(requests.activePendingQuestionIndex).toBe(1);
 });

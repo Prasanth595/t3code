@@ -11,6 +11,7 @@ import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
@@ -22,6 +23,8 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -35,6 +38,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   respondingRequestIds,
   answers,
   questionIndex,
+  isAnswering,
+  onToggleAnswering,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -53,6 +58,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
+      isAnswering={isAnswering}
+      onToggleAnswering={onToggleAnswering}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
@@ -68,6 +75,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
+  isAnswering,
+  onToggleAnswering,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -79,6 +88,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -294,6 +305,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </button>
                 );
               })}
+            </div>
+            <div className="mt-2">
+              {/* Returning to the message does not require permission to answer. */}
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={!isAnswering && responseDisabled}
+                onClick={onToggleAnswering}
+              >
+                {isAnswering ? "Back to message" : "Answer question"}
+              </Button>
             </div>
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>
