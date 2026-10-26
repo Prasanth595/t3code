@@ -4,9 +4,11 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   type TransitionEvent,
 } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
@@ -14,25 +16,79 @@ import { THREAD_FIND_TEXT_ATTRIBUTE } from "./threadFindHighlights";
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
+/** Marks a reveal or collapse copy that is still resizing its row. */
+export const DISCLOSURE_MOTION_ATTRIBUTE = "data-disclosure-motion";
+const disclosureMotionProps = { [DISCLOSURE_MOTION_ATTRIBUTE]: "" };
+
+/**
+ * Starts a mount transition on the next frame instead of at mount. Rows a
+ * disclosure inserts commit in one heavy render; a transition that starts with
+ * it spends most of its time before the first paint and appears to pop in.
+ */
+function useStartOnNextFrame(ref: RefObject<HTMLElement | null>, enabled: boolean) {
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!enabled || !element) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        element.dataset.started = String(performance.now());
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ref, enabled]);
+}
+
 /**
  * Grows content in from zero height as it mounts. Pass `animate` only for a
  * mount the user just caused: virtualized rows remount while scrolling, and a
  * restored expansion must not replay the reveal. Clipping lasts only as long
  * as the transition so popovers and focus rings are not cut off afterwards.
+ *
+ * Height animates to the measured content height, kept current while content
+ * settles, then returns to auto. A `0fr -> 1fr` grid makes Chrome size the box
+ * ahead of its track, opening a blank gap, and animating to `auto` through
+ * `interpolate-size` does not work in Safari or Firefox.
  */
 export function TimelineReveal({ animate, children }: { animate: boolean; children: ReactNode }) {
-  const [clipping, setClipping] = useState(animate);
+  const [revealing, setRevealing] = useState(
+    () => animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const revealRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useStartOnNextFrame(revealRef, revealing);
+  useLayoutEffect(() => {
+    const reveal = revealRef.current;
+    const content = contentRef.current;
+    if (!revealing || !reveal || !content) return;
+    const fitContent = () =>
+      reveal.style.setProperty("--reveal-height", `${content.getBoundingClientRect().height}px`);
+    fitContent();
+    return observeResize(content, fitContent);
+  }, [revealing]);
   if (!animate) return children;
-  const stopClipping = (event: TransitionEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) setClipping(false);
+  // A content resize mid-reveal retargets the height transition, which cancels
+  // the old one. Finish once nothing is left running, or once a full transition
+  // has run: streamed content would otherwise keep retargeting it indefinitely.
+  const finish = (event: TransitionEvent<HTMLDivElement>) => {
+    const reveal = event.currentTarget;
+    if (event.target !== reveal) return;
+    const elapsed = event.timeStamp - Number(reveal.dataset.started);
+    const duration = parseFloat(getComputedStyle(reveal).transitionDuration) * 1000;
+    if (reveal.getAnimations().length === 0 || elapsed >= duration) setRevealing(false);
   };
   return (
     <div
-      className="grid grid-rows-[1fr] transition-[grid-template-rows,opacity] duration-200 ease-out starting:grid-rows-[0fr] starting:opacity-0 motion-reduce:transition-none"
-      onTransitionEnd={stopClipping}
-      onTransitionCancel={stopClipping}
+      ref={revealRef}
+      {...(revealing ? disclosureMotionProps : {})}
+      className={cn(
+        revealing &&
+          "h-0 overflow-hidden opacity-0 transition-[height,opacity] duration-200 ease-out data-started:h-(--reveal-height) data-started:opacity-100",
+      )}
+      onTransitionEnd={finish}
+      onTransitionCancel={finish}
     >
-      <div className={cn("min-h-0", clipping && "overflow-hidden motion-reduce:overflow-visible")}>
+      {/* Contains child margins so the measured height is the height to reveal. */}
+      <div ref={contentRef} className="flow-root">
         {children}
       </div>
     </div>
@@ -57,6 +113,10 @@ const LIVE_IDENTITY_ATTRIBUTES = [
   THREAD_FIND_TEXT_ATTRIBUTE,
 ];
 
+// Copies of these would load a fresh document or show a blank surface instead
+// of what was on screen, so the copy holds an empty box of the same size.
+const LIVE_SURFACE_SELECTOR = "iframe, canvas, video, object, embed";
+
 let nextCollapseGhostId = 0;
 
 /**
@@ -80,8 +140,21 @@ export function captureCollapseGhost(element: Element | null): CollapseGhost | n
   for (const copy of [node, ...copies]) {
     for (const attribute of LIVE_IDENTITY_ATTRIBUTES) copy.removeAttribute(attribute);
   }
+  originals.forEach((original, index) => {
+    const copy = copies[index];
+    if (!copy?.matches(LIVE_SURFACE_SELECTOR) || !node.contains(copy)) return;
+    const { width, height } = original.getBoundingClientRect();
+    const placeholder = document.createElement("div");
+    placeholder.style.cssText = `width:${width}px;height:${height}px`;
+    copy.replaceWith(placeholder);
+  });
+  // Collapsing mid-reveal starts from what is showing, not the clipped full height.
+  const reveal = element.closest(`[${DISCLOSURE_MOTION_ATTRIBUTE}]`);
+  const height = reveal
+    ? Math.min(element.offsetHeight, reveal.getBoundingClientRect().height)
+    : element.offsetHeight;
   nextCollapseGhostId += 1;
-  return { id: nextCollapseGhostId, node, height: element.offsetHeight, scrollOffsets };
+  return { id: nextCollapseGhostId, node, height, scrollOffsets };
 }
 
 /** Stacks copies of consecutive rows into one, showing at most `maxHeight` of them. */
@@ -114,17 +187,24 @@ function attachCollapseGhost(host: HTMLElement, ghost: CollapseGhost) {
 /** Shrinks and fades a captured copy away; the mirror of `TimelineReveal`. */
 export function CollapseGhostView({ ghost, onDone }: { ghost: CollapseGhost; onDone: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const shrinkRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (hostRef.current) attachCollapseGhost(hostRef.current, ghost);
   }, [ghost]);
+  useStartOnNextFrame(shrinkRef, true);
   const finish = (event: TransitionEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget && event.propertyName === "height") onDone();
   };
   return (
     <div
+      ref={shrinkRef}
       aria-hidden
       inert
-      className="pointer-events-none h-0 overflow-hidden opacity-0 transition-[height,opacity] duration-200 ease-out [overflow-anchor:none] starting:h-(--ghost-height) starting:opacity-100"
+      // Our LegendList patch applies shrinks under this marker immediately
+      // rather than a frame late, so rows below follow the copy every frame.
+      data-list-animated-shrink=""
+      {...disclosureMotionProps}
+      className="pointer-events-none h-(--ghost-height) overflow-hidden transition-[height,opacity] duration-200 ease-out [overflow-anchor:none] data-started:h-0 data-started:opacity-0"
       style={{ "--ghost-height": `${ghost.height}px` } as CSSProperties}
       onTransitionEnd={finish}
       onTransitionCancel={finish}

@@ -98,6 +98,7 @@ import {
   captureCollapseGhost,
   CollapseGhostView,
   stackCollapseGhosts,
+  DISCLOSURE_MOTION_ATTRIBUTE,
   TimelineReveal,
   TimelineRowTimestamp,
   ActivityShimmerOverlay,
@@ -434,18 +435,44 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  // Scroll handlers read the window synchronously; the state lags to the next render.
+  const disclosureToggleSettlingRef = useRef(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
+  const disclosureSettleNextFrameRef = useRef<number | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
+
   const disclosurePinsEndRef = useRef(false);
+  // Following the end stops where the toggled row reaches the top, so opening a
+  // tall disclosure shows its start rather than pushing its header out of view.
+  const disclosurePinLimitRef = useRef(Infinity);
+  // Where the pin last left the viewport. Anything else moving it, other than
+  // the end clamping as content shrinks, is the user, find or a citation
+  // scrolling, which live follow learns of too late to stop the next pin.
+  const disclosurePinnedScrollTopRef = useRef<number | null>(null);
   const disclosureCollapsedRef = useRef(false);
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
     const element = listRef.current?.getScrollableNode();
-    if (element) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    const pinned = disclosurePinnedScrollTopRef.current;
+    const atEnd = element.scrollTop >= element.scrollHeight - element.clientHeight - 1;
+    if (pinned !== null && Math.abs(element.scrollTop - pinned) > 1 && !atEnd) {
+      disclosurePinsEndRef.current = false;
+      return;
+    }
+    element.scrollTop = Math.min(element.scrollHeight, disclosurePinLimitRef.current);
+    disclosurePinnedScrollTopRef.current = element.scrollTop;
+  };
+  const resolveDisclosurePinLimit = (anchorKey: string) => {
+    const element = listRef.current?.getScrollableNode();
+    const row = element?.querySelector(`[data-timeline-row-id="${CSS.escape(anchorKey)}"]`);
+    if (!element || !row) return Infinity;
+    const offset = row.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    // A row already scrolled past keeps following the end, as there is no header to keep.
+    return offset < 0 ? Infinity : element.scrollTop + offset;
   };
 
   // Rows a disclosure inserts mount within its settle window; LegendList can
@@ -453,9 +480,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [revealingDisclosure, setRevealingDisclosure] = useState(false);
   // Collapsed rows unmount, so the disclosure's header row plays a copy of
   // them. Like the reveal flag, the copy is only offered during the window.
+  // An offer without a copy ends one still playing, so reopening mid-collapse
+  // does not show the content and its outgoing copy at once.
   const [collapseGhostOffer, setCollapseGhostOffer] = useState<{
     rowId: string;
-    ghost: CollapseGhost;
+    ghost: CollapseGhost | null;
   } | null>(null);
   // A fold hides rows that cannot be named before the rows rederive, so it
   // copies every visible row below and keeps the ones that disappeared.
@@ -464,30 +493,79 @@ const ConversationTimeline = memo(function ConversationTimeline({
     captures: ReadonlyArray<{ rowId: string; ghost: CollapseGhost }>;
     maxHeight: number;
   } | null>(null);
+  const cancelDisclosureSettle = () => {
+    if (disclosureSettleFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleFrameRef.current);
+    }
+    if (disclosureSettleNextFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleNextFrameRef.current);
+    }
+    disclosureSettleFrameRef.current = null;
+    disclosureSettleNextFrameRef.current = null;
+    disclosurePinsEndRef.current = false;
+    disclosureAnchorKeyRef.current = null;
+    disclosureToggleSettlingRef.current = false;
+    pendingFoldCaptureRef.current = null;
+    setDisclosureToggleSettling(false);
+    setRevealingDisclosure(false);
+    setCollapseGhostOffer(null);
+  };
+  // The list is reused across threads; a window left running would scroll and
+  // report the incoming thread with the outgoing thread's state.
+  // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Ends the window when the thread changes or the list unmounts.
+  useLayoutEffect(() => cancelDisclosureSettle, [listIdentityKey]);
+
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
     }
-    if (disclosureSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
+    if (disclosureSettleNextFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleNextFrameRef.current);
     }
+    const finish = () => {
+      const stoppedShortOfEnd =
+        disclosurePinsEndRef.current && disclosurePinLimitRef.current !== Infinity;
+      disclosurePinsEndRef.current = false;
+      disclosureAnchorKeyRef.current = null;
+      disclosureToggleSettlingRef.current = false;
+      setDisclosureToggleSettling(false);
+      disclosureSettleFrameRef.current = null;
+      disclosureSettleNextFrameRef.current = null;
+      onContentOverflowChange?.(measureContentOverflow());
+      const isAtEnd = resolveTimelineIsAtEnd(listRef.current?.getState());
+      if (isAtEnd === undefined) return;
+      // Live follow reads leaving the end as a blip unless the user moved away;
+      // here they did, by opening something taller than the space left.
+      if (stoppedShortOfEnd && !isAtEnd) navigateTimeline();
+      onIsAtEndChange(isAtEnd);
+      if (disclosureCollapsedRef.current && isAtEnd) {
+        onToolOutputCollapsedAtEnd?.();
+      }
+    };
+    // The window lasts until the disclosure's motion stops resizing the list.
+    // A pinned one follows the end meanwhile: LegendList's own end maintenance
+    // loses the end once a growing row gets more than its threshold ahead. Its
+    // last step lands as the motion ends, so a pinned window takes one more frame.
+    const followMotion = (trailing = false) => {
+      disclosureSettleNextFrameRef.current = requestAnimationFrame(() => {
+        pinDisclosureToEnd();
+        const node = listRef.current?.getScrollableNode();
+        if (node?.querySelector(`[${DISCLOSURE_MOTION_ATTRIBUTE}]`)) {
+          followMotion();
+        } else if (!trailing && disclosurePinsEndRef.current) {
+          followMotion(true);
+        } else {
+          finish();
+        }
+      });
+    };
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
       pinDisclosureToEnd();
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
+      disclosureSettleNextFrameRef.current = requestAnimationFrame(() => {
         pinDisclosureToEnd();
-        disclosurePinsEndRef.current = false;
-        disclosureAnchorKeyRef.current = null;
         setRevealingDisclosure(false);
         setCollapseGhostOffer(null);
-        setDisclosureToggleSettling(false);
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-        if (
-          disclosureCollapsedRef.current &&
-          resolveTimelineIsAtEnd(listRef.current?.getState()) === true
-        ) {
-          onToolOutputCollapsedAtEnd?.();
-        }
+        followMotion();
       });
     });
   };
@@ -496,6 +574,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     disclosureAnchorKeyRef.current = anchorKey;
     disclosureCollapsedRef.current = collapsed;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
+    disclosurePinLimitRef.current = disclosurePinsEndRef.current
+      ? resolveDisclosurePinLimit(anchorKey)
+      : Infinity;
+    disclosurePinnedScrollTopRef.current = null;
+    disclosureToggleSettlingRef.current = true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
@@ -508,7 +591,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const prepareFoldMotion = (rowId: string, collapsing: boolean) => {
     setRevealingDisclosure(!collapsing);
-    setCollapseGhostOffer(null);
+    setCollapseGhostOffer(collapsing ? null : { rowId, ghost: null });
     const scrollNode = listRef.current?.getScrollableNode();
     pendingFoldCaptureRef.current =
       collapsing && scrollNode ? captureVisibleRowsBelow(scrollNode, rowId) : null;
@@ -540,7 +623,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ) ?? null,
         )
       : null;
-    setCollapseGhostOffer(ghost ? { rowId: anchorKey, ghost } : null);
+    setCollapseGhostOffer({ rowId: anchorKey, ghost });
     suspendEndScrollMaintenanceForDisclosure(anchorKey, collapsing);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
@@ -873,12 +956,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   };
   const reportContentOverflow = () => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
+    if (
+      !onContentOverflowChange ||
+      contentOverflowFrameRef.current !== null ||
+      disclosureToggleSettlingRef.current
+    ) {
+      return;
+    }
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
       contentOverflowFrameRef.current = null;
       onContentOverflowChange(measureContentOverflow());
     });
   };
+
 
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
@@ -972,6 +1062,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // A follow release without a scroll after it would leave the position
   // remembered as following.
   const rememberReleasedPosition = () => {
+    disclosurePinsEndRef.current = false;
     const last = lastRememberedRef.current;
     if (last && listRef.current?.getState().data === last.data) {
       rememberTimelinePosition(last.threadKey, last.position, false);
@@ -981,7 +1072,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const handleScroll = () => {
     if (restoringThreadPosition || listRef.current?.getState?.().data !== rows) return;
     const isAtEnd = rememberPosition(liveFollowEnabled && !anchoredEndSpace);
-    if (isAtEnd !== undefined && !citationPositioning) {
+    if (isAtEnd !== undefined && !citationPositioning && !disclosureToggleSettlingRef.current) {
+
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
@@ -989,10 +1081,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
-      scheduleDisclosureSettle();
-    }
+    // The window's own frames end it; restarting it here would let a stream
+    // that resizes rows every frame hold it open, and its reports back, for good.
+    if (disclosurePinsEndRef.current) queueMicrotask(pinDisclosureToEnd);
     reportContentOverflow();
     scheduleMinimapRefresh();
   };
@@ -1267,7 +1358,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
           <AudioPreviewUnmountContext value={onAudioUnmount}>
           <TimelineRowMotion
             revealPending={revealingDisclosure}
-            collapseGhost={collapseGhostOffer?.rowId === item.id ? collapseGhostOffer.ghost : null}
+            collapseGhost={
+              collapseGhostOffer?.rowId === item.id ? collapseGhostOffer.ghost : undefined
+            }
           >
             <TimelineRowContent row={item} />
           </TimelineRowMotion>
@@ -1469,7 +1562,7 @@ function TimelineRowMotion({
   children,
 }: {
   revealPending: boolean;
-  collapseGhost: CollapseGhost | null;
+  collapseGhost: CollapseGhost | null | undefined;
   children: ReactNode;
 }) {
   const [reveal] = useState(revealPending);
@@ -1477,7 +1570,7 @@ function TimelineRowMotion({
   const [ghost, setGhost] = useState<CollapseGhost | null>(null);
   if (offeredGhost !== seenGhost) {
     setSeenGhost(offeredGhost);
-    if (offeredGhost) setGhost(offeredGhost);
+    if (offeredGhost !== undefined) setGhost(offeredGhost);
   }
   return (
     <>

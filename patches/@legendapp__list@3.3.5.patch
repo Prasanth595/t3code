@@ -1,5 +1,5 @@
 diff --git a/animated.d.ts b/animated.d.ts
-index 14beb98c0bfed9c60611b7d164670798011182ac..9fb0ca056d9dda4d4abeef2bb9bafcf70d0fa243 100644
+index 14beb98..9fb0ca0 100644
 --- a/animated.d.ts
 +++ b/animated.d.ts
 @@ -284,6 +284,11 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -15,7 +15,7 @@ index 14beb98c0bfed9c60611b7d164670798011182ac..9fb0ca056d9dda4d4abeef2bb9bafcf7
       * Keeps an item visually anchored to the start by adding trailing space when the content below it underflows.
       */
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8c92d39b3 100644
+index 367945c..0ac7bf8 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
 @@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
@@ -39,7 +39,7 @@ index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d51720a73fb83 100644
+index 6645bcb..321c4c3 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,22 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -135,7 +135,7 @@ index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d5172
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85cf4f361ee 100644
+index 87b38b9..111eb24 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -1,7 +1,7 @@
@@ -240,7 +240,7 @@ index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85c
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..ca6e596aa53327a097a388ffd545a4c6191f24e6 100644
+index ce1fe00..ca6e596 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -284,6 +284,11 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -269,7 +269,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..ca6e596aa53327a097a388ffd545a4c6
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0974864df 100644
+index b3c5a30..d7f59b6 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -909,7 +909,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2e395ece9 100644
+index 40e87cd..c2ca39b 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1549,10 +1549,82 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..8b88b09d1269acef77c6ce0f8aaa1049d4fa26e9 100644
+index 914d2da..d7a6c3d 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
-@@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5282,11 +5282,50 @@ function getGlobalResizeObserver() {
+           }
+         }
+       });
++      // A nested list resizes its outer container while handling these entries,
++      // but ResizeObserver reports that shallower element a frame later, so rows
++      // after it would trail a frame behind. Report containing elements once the
++      // updates have rendered; size dedupe drops the observer's late duplicate.
++      const targets = entries.map((entry) => entry.target);
++      queueMicrotask(() => reportContainingElements(targets));
+     });
+   }
+   return globalResizeObserver;
+ }
+ var callbackMap = /* @__PURE__ */ new WeakMap();
++function reportContainingElements(targets) {
++  const containing = /* @__PURE__ */ new Set();
++  for (const target of targets) {
++    for (let node = target.parentElement; node; node = node.parentElement) {
++      if (callbackMap.has(node)) {
++        containing.add(node);
++      }
++    }
++  }
++  if (containing.size === 0) {
++    return;
++  }
++  // Measure everything before any callback writes, so reads do not force layout in turn.
++  const entries = Array.from(containing, measureContainingElement);
++  batchItemSizeUpdates(() => {
++    for (const entry of entries) {
++      const callbacks = callbackMap.get(entry.target);
++      if (callbacks) {
++        for (const callback of callbacks) {
++          callback(entry);
++        }
++      }
++    }
++  });
++}
++// Matches ResizeObserver's border box, which ignores ancestor transforms such as a
++// popup's zoom-in: the rect is exact when untransformed, offset sizes otherwise.
++function measureContainingElement(element) {
++  const rect = element.getBoundingClientRect();
++  const untransformed = Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1;
++  const borderBoxSize = untransformed ? { blockSize: rect.height, inlineSize: rect.width } : { blockSize: element.offsetHeight, inlineSize: element.offsetWidth };
++  return { borderBoxSize: [borderBoxSize], contentRect: rect, target: element };
++}
+ function createResizeObserver(element, callback) {
+   var _a3;
+   if (typeof ResizeObserver === "undefined" || !element) {
+@@ -5392,6 +5431,9 @@ function scheduleWebShrinkMeasurement(state, confirmMeasurement) {
+     });
+   }
+ }
++function containsAnimatedShrink(element) {
++  return !!(element == null ? void 0 : element.querySelector) && element.querySelector("[data-list-animated-shrink]") !== null;
++}
+ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+   const listState = ctx.state;
+   const currentItemKey = state.itemKey;
+@@ -5410,7 +5452,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // An animated shrink resizes the container every frame. Confirming each step a
++  // frame late would leave rows after it a frame behind on alternate frames.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize && !containsAnimatedShrink(ref.current);
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -5651,6 +5695,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1571,7 +1643,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8b88b09d1269acef77c6ce0f8aaa1049
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5702,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5746,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1584,10 +1656,82 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8b88b09d1269acef77c6ce0f8aaa1049
      }
    }
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbddd67f1e7d 100644
+index 95465f2..3f2f0ea 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
-@@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5261,11 +5261,50 @@ function getGlobalResizeObserver() {
+           }
+         }
+       });
++      // A nested list resizes its outer container while handling these entries,
++      // but ResizeObserver reports that shallower element a frame later, so rows
++      // after it would trail a frame behind. Report containing elements once the
++      // updates have rendered; size dedupe drops the observer's late duplicate.
++      const targets = entries.map((entry) => entry.target);
++      queueMicrotask(() => reportContainingElements(targets));
+     });
+   }
+   return globalResizeObserver;
+ }
+ var callbackMap = /* @__PURE__ */ new WeakMap();
++function reportContainingElements(targets) {
++  const containing = /* @__PURE__ */ new Set();
++  for (const target of targets) {
++    for (let node = target.parentElement; node; node = node.parentElement) {
++      if (callbackMap.has(node)) {
++        containing.add(node);
++      }
++    }
++  }
++  if (containing.size === 0) {
++    return;
++  }
++  // Measure everything before any callback writes, so reads do not force layout in turn.
++  const entries = Array.from(containing, measureContainingElement);
++  batchItemSizeUpdates(() => {
++    for (const entry of entries) {
++      const callbacks = callbackMap.get(entry.target);
++      if (callbacks) {
++        for (const callback of callbacks) {
++          callback(entry);
++        }
++      }
++    }
++  });
++}
++// Matches ResizeObserver's border box, which ignores ancestor transforms such as a
++// popup's zoom-in: the rect is exact when untransformed, offset sizes otherwise.
++function measureContainingElement(element) {
++  const rect = element.getBoundingClientRect();
++  const untransformed = Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1;
++  const borderBoxSize = untransformed ? { blockSize: rect.height, inlineSize: rect.width } : { blockSize: element.offsetHeight, inlineSize: element.offsetWidth };
++  return { borderBoxSize: [borderBoxSize], contentRect: rect, target: element };
++}
+ function createResizeObserver(element, callback) {
+   var _a3;
+   if (typeof ResizeObserver === "undefined" || !element) {
+@@ -5371,6 +5410,9 @@ function scheduleWebShrinkMeasurement(state, confirmMeasurement) {
+     });
+   }
+ }
++function containsAnimatedShrink(element) {
++  return !!(element == null ? void 0 : element.querySelector) && element.querySelector("[data-list-animated-shrink]") !== null;
++}
+ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+   const listState = ctx.state;
+   const currentItemKey = state.itemKey;
+@@ -5389,7 +5431,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // An animated shrink resizes the container every frame. Confirming each step a
++  // frame late would leave rows after it a frame behind on alternate frames.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize && !containsAnimatedShrink(ref.current);
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -5630,6 +5674,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1606,7 +1750,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5681,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5725,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1619,7 +1763,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c0430059a 100644
+index 914d2da..6c19336 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1687,7 +1831,79 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
-@@ -5651,6 +5673,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5282,11 +5304,50 @@ function getGlobalResizeObserver() {
+           }
+         }
+       });
++      // A nested list resizes its outer container while handling these entries,
++      // but ResizeObserver reports that shallower element a frame later, so rows
++      // after it would trail a frame behind. Report containing elements once the
++      // updates have rendered; size dedupe drops the observer's late duplicate.
++      const targets = entries.map((entry) => entry.target);
++      queueMicrotask(() => reportContainingElements(targets));
+     });
+   }
+   return globalResizeObserver;
+ }
+ var callbackMap = /* @__PURE__ */ new WeakMap();
++function reportContainingElements(targets) {
++  const containing = /* @__PURE__ */ new Set();
++  for (const target of targets) {
++    for (let node = target.parentElement; node; node = node.parentElement) {
++      if (callbackMap.has(node)) {
++        containing.add(node);
++      }
++    }
++  }
++  if (containing.size === 0) {
++    return;
++  }
++  // Measure everything before any callback writes, so reads do not force layout in turn.
++  const entries = Array.from(containing, measureContainingElement);
++  batchItemSizeUpdates(() => {
++    for (const entry of entries) {
++      const callbacks = callbackMap.get(entry.target);
++      if (callbacks) {
++        for (const callback of callbacks) {
++          callback(entry);
++        }
++      }
++    }
++  });
++}
++// Matches ResizeObserver's border box, which ignores ancestor transforms such as a
++// popup's zoom-in: the rect is exact when untransformed, offset sizes otherwise.
++function measureContainingElement(element) {
++  const rect = element.getBoundingClientRect();
++  const untransformed = Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1;
++  const borderBoxSize = untransformed ? { blockSize: rect.height, inlineSize: rect.width } : { blockSize: element.offsetHeight, inlineSize: element.offsetWidth };
++  return { borderBoxSize: [borderBoxSize], contentRect: rect, target: element };
++}
+ function createResizeObserver(element, callback) {
+   var _a3;
+   if (typeof ResizeObserver === "undefined" || !element) {
+@@ -5392,6 +5453,9 @@ function scheduleWebShrinkMeasurement(state, confirmMeasurement) {
+     });
+   }
+ }
++function containsAnimatedShrink(element) {
++  return !!(element == null ? void 0 : element.querySelector) && element.querySelector("[data-list-animated-shrink]") !== null;
++}
+ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+   const listState = ctx.state;
+   const currentItemKey = state.itemKey;
+@@ -5410,7 +5474,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // An animated shrink resizes the container every frame. Confirming each step a
++  // frame late would leave rows after it a frame behind on alternate frames.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize && !containsAnimatedShrink(ref.current);
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -5651,6 +5717,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1706,7 +1922,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5724,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5768,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1718,7 +1934,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
        }
      }
    }
-@@ -6446,8 +6480,8 @@ function ScrollAdjust() {
+@@ -6446,8 +6524,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1729,7 +1945,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e2e456cfc 100644
+index 95465f2..c6f8ac9 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1797,7 +2013,79 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
-@@ -5630,6 +5652,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5261,11 +5283,50 @@ function getGlobalResizeObserver() {
+           }
+         }
+       });
++      // A nested list resizes its outer container while handling these entries,
++      // but ResizeObserver reports that shallower element a frame later, so rows
++      // after it would trail a frame behind. Report containing elements once the
++      // updates have rendered; size dedupe drops the observer's late duplicate.
++      const targets = entries.map((entry) => entry.target);
++      queueMicrotask(() => reportContainingElements(targets));
+     });
+   }
+   return globalResizeObserver;
+ }
+ var callbackMap = /* @__PURE__ */ new WeakMap();
++function reportContainingElements(targets) {
++  const containing = /* @__PURE__ */ new Set();
++  for (const target of targets) {
++    for (let node = target.parentElement; node; node = node.parentElement) {
++      if (callbackMap.has(node)) {
++        containing.add(node);
++      }
++    }
++  }
++  if (containing.size === 0) {
++    return;
++  }
++  // Measure everything before any callback writes, so reads do not force layout in turn.
++  const entries = Array.from(containing, measureContainingElement);
++  batchItemSizeUpdates(() => {
++    for (const entry of entries) {
++      const callbacks = callbackMap.get(entry.target);
++      if (callbacks) {
++        for (const callback of callbacks) {
++          callback(entry);
++        }
++      }
++    }
++  });
++}
++// Matches ResizeObserver's border box, which ignores ancestor transforms such as a
++// popup's zoom-in: the rect is exact when untransformed, offset sizes otherwise.
++function measureContainingElement(element) {
++  const rect = element.getBoundingClientRect();
++  const untransformed = Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1;
++  const borderBoxSize = untransformed ? { blockSize: rect.height, inlineSize: rect.width } : { blockSize: element.offsetHeight, inlineSize: element.offsetWidth };
++  return { borderBoxSize: [borderBoxSize], contentRect: rect, target: element };
++}
+ function createResizeObserver(element, callback) {
+   var _a3;
+   if (typeof ResizeObserver === "undefined" || !element) {
+@@ -5371,6 +5432,9 @@ function scheduleWebShrinkMeasurement(state, confirmMeasurement) {
+     });
+   }
+ }
++function containsAnimatedShrink(element) {
++  return !!(element == null ? void 0 : element.querySelector) && element.querySelector("[data-list-animated-shrink]") !== null;
++}
+ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+   const listState = ctx.state;
+   const currentItemKey = state.itemKey;
+@@ -5389,7 +5453,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // An animated shrink resizes the container every frame. Confirming each step a
++  // frame late would leave rows after it a frame behind on alternate frames.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize && !containsAnimatedShrink(ref.current);
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -5630,6 +5696,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1816,7 +2104,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5703,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5747,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1828,7 +2116,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
        }
      }
    }
-@@ -6425,8 +6459,8 @@ function ScrollAdjust() {
+@@ -6425,8 +6503,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1839,7 +2127,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index e5043320700b12f34f4c0babbc341f85ca8135c1..e8cbd461325a2e2e9ffd61de26a85ae4d108555c 100644
+index e504332..e8cbd46 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -285,6 +285,11 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -1868,7 +2156,7 @@ index e5043320700b12f34f4c0babbc341f85ca8135c1..e8cbd461325a2e2e9ffd61de26a85ae4
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7868d0cec 100644
+index f1265fa..fc03be2 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -115,8 +115,10 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -2031,7 +2319,7 @@ index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7
          renderScrollComponent: renderReanimatedScrollComponent,
          ...IsNewArchitecture ? { stickyPositionComponentInternal } : {}
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..6ab929250c8924e2d9919ee09a4f774238fbb90a 100644
+index 29a00d5..6ab9292 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -1,7 +1,7 @@

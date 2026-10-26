@@ -23,13 +23,16 @@ export function WorkLogBlock({
 }) {
   return (
     <div
-      className={
+      // Expanding a group moves this spacing from its header to its entries;
+      // easing it keeps rows below from snapping before the entries grow in.
+      className={cn(
+        "transition-[padding] duration-200 ease-out motion-reduce:transition-none",
         continues || layout === "group-header"
           ? "pb-0"
           : layout === "group-content"
             ? "pb-1"
-            : "pb-2"
-      }
+            : "pb-2",
+      )}
     >
       {layout === "group-content" ? (
         // The rail lines up under the group header's icon so expanded entries
@@ -60,12 +63,22 @@ type RowContent = {
   wrapLabel?: boolean;
 };
 
-function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
+function WorkLogLine({
+  icon,
+  label,
+  trailing,
+  wrapLabel,
+  header = false,
+}: RowContent & { header?: boolean }) {
   return (
     <div
       className={cn(
         "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none",
         wrapLabel ? "items-start" : "items-center",
+        // An open entry's header is its collapse target; set it apart from the
+        // details below and keep the hover cue on it alone.
+        header &&
+          "-mx-0.5 rounded-t-md border-b border-border px-0.5 transition-colors hover:bg-accent/40",
       )}
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
@@ -101,7 +114,7 @@ const expandedRowClassName =
 function useRowClassName(interactive: boolean, expanded: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-[background-color,box-shadow,margin] duration-200",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-[background-color,box-shadow,margin] duration-200 motion-reduce:transition-none",
     grouped ? "py-0" : "py-0.5",
     interactive && workLogInteractiveClassName,
     expanded && expandedRowClassName,
@@ -132,13 +145,17 @@ export function WorkLogRow({
   children,
   ...rowProps
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
-  const className = useRowClassName(
-    rowProps.onClick !== undefined,
-    rowProps["aria-expanded"] === true,
-  );
+  const expanded = rowProps["aria-expanded"] === true;
+  const className = useRowClassName(rowProps.onClick !== undefined, expanded);
   return (
     <div {...rowProps} className={className}>
-      <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
+      <WorkLogLine
+        icon={icon}
+        label={label}
+        trailing={trailing}
+        wrapLabel={wrapLabel}
+        header={expanded && children != null}
+      />
       {children}
     </div>
   );
@@ -159,7 +176,7 @@ export function WorkLogChevron({
     >
       <ChevronRightIcon
         className={cn(
-          "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+          "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200 motion-reduce:transition-none",
           expanded && "rotate-90",
         )}
       />

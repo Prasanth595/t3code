@@ -199,11 +199,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const toggleExpanded = () => {
     const next = !expanded;
     if (next) setRevealDetails(true);
-    setCollapseGhost(next ? null : captureCollapseGhost(detailsRef.current));
+    const ghost = next ? null : captureCollapseGhost(detailsRef.current);
+    setCollapseGhost(ghost);
     if (groupView) {
       groupView.onToggleEntry(!next);
       if (next) groupView.state.expandedEntries.add(workEntry.id);
       else groupView.state.expandedEntries.delete(workEntry.id);
+      if (ghost) groupView.collapsingEntries.add(workEntry.id);
+      else groupView.collapsingEntries.delete(workEntry.id);
     } else {
       props.onToggleEntry?.(!next);
     }
@@ -560,7 +563,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <CollapseGhostView
           key={collapseGhost.id}
           ghost={collapseGhost}
-          onDone={() => setCollapseGhost(null)}
+          onDone={() => {
+            setCollapseGhost(null);
+            groupView?.collapsingEntries.delete(workEntry.id);
+          }}
         />
       ) : null}
     </WorkLogRow>

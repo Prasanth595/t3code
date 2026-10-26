@@ -112,6 +112,8 @@ export interface WorkGroupViewState {
 
 export const WorkGroupViewCtx = createContext<{
   state: WorkGroupViewState;
+  /** Entries whose collapse copy is still shrinking; they still need their room. */
+  collapsingEntries: Set<string>;
   onToggleEntry: (collapsed: boolean) => void;
 } | null>(null);
 

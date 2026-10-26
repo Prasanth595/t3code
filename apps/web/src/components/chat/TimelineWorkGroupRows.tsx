@@ -156,6 +156,7 @@ function ExpandedWorkGroupEntries({
   const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
   const listRef = useRef<LegendListRef>(null);
   const [expandedContentHeight, setExpandedContentHeight] = useState(0);
+  const [collapsingEntries] = useState(() => new Set<string>());
   const [fades, setFades] = useState({ top: false, bottom: false, viewportHeight: 0 });
   const [appendState, setAppendState] = useState({ entries, follow: false });
   // Capture the pre-change edge once per incoming array, before new layout
@@ -171,6 +172,7 @@ function ExpandedWorkGroupEntries({
 
   const groupView = {
     state: viewState,
+    collapsingEntries,
     onToggleEntry: (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
   };
   const updateScrollFades = () => {
@@ -233,7 +235,7 @@ function ExpandedWorkGroupEntries({
   const updateExpandedContentHeight = () => {
     const state = listRef.current?.getState();
     let height = 0;
-    for (const entryId of viewState.expandedEntries) {
+    for (const entryId of new Set([...viewState.expandedEntries, ...collapsingEntries])) {
       if (state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
