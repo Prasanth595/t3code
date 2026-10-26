@@ -895,3 +895,45 @@ describe("synchronized model preferences", () => {
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
   });
 });
+
+describe("usage limit fallback chain", () => {
+  const codex = ProviderInstanceId.make("codex_fallback");
+  const claude = ProviderInstanceId.make("claude_fallback");
+
+  it("replaces the chain whole so a shortened list drops entries", () => {
+    const full = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usageLimitFallbackChain: [
+        { instanceId: codex, model: "gpt-5" },
+        { instanceId: claude, model: "opus-4" },
+      ],
+    });
+    expect(full.usageLimitFallbackChain).toEqual([
+      { instanceId: codex, model: "gpt-5" },
+      { instanceId: claude, model: "opus-4" },
+    ]);
+    const shortened = applyServerSettingsPatch(full, {
+      usageLimitFallbackChain: [{ instanceId: claude, model: "opus-4" }],
+    });
+    expect(shortened.usageLimitFallbackChain).toEqual([{ instanceId: claude, model: "opus-4" }]);
+  });
+
+  it("clears the chain and defaults to empty", () => {
+    expect(DEFAULT_SERVER_SETTINGS.usageLimitFallbackChain).toEqual([]);
+    const cleared = applyServerSettingsPatch(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        usageLimitFallbackChain: [{ instanceId: codex, model: "gpt-5" }],
+      }),
+      { usageLimitFallbackChain: [] },
+    );
+    expect(cleared.usageLimitFallbackChain).toEqual([]);
+  });
+
+  it("keeps a chain entry's options", () => {
+    const withOptions = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usageLimitFallbackChain: [
+        { instanceId: codex, model: "gpt-5", options: { reasoningEffort: "high" } },
+      ],
+    });
+    expect(withOptions.usageLimitFallbackChain[0]?.options).toEqual({ reasoningEffort: "high" });
+  });
+});
