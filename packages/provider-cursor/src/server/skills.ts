@@ -162,9 +162,9 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       // A cloud-only placeholder is listed like an oversized skill, without its
       // frontmatter: reading it can block a libuv thread for good.
       if (
-        !(yield* isCloudPlaceholder(skillInfo, platform, skillPath)) &&
         skillInfo.size <= MAX_SKILL_BYTES &&
-        skillInfo.size <= input.budget.remainingBytes
+        skillInfo.size <= input.budget.remainingBytes &&
+        !(yield* isCloudPlaceholder(skillInfo, platform, skillPath))
       ) {
         const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
         if (contents !== undefined) {
