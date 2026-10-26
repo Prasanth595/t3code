@@ -81,4 +81,56 @@ describe("ProviderLatestVersions", () => {
       expect(yield* Fiber.join(next)).toBe("2.0.0");
     }),
   );
+  it.effect("a waiting caller retries with its own lookup after the owner fails", () =>
+    Effect.gen(function* () {
+      const latestVersions = yield* ProviderLatestVersions.make();
+      const release = yield* Deferred.make<void>();
+      const owner = yield* Effect.forkChild(
+        latestVersions.cached(
+          "cli",
+          Deferred.await(release).pipe(Effect.andThen(Effect.fail("offline"))),
+        ),
+        { startImmediately: true },
+      );
+      let retries = 0;
+      const waiter = yield* Effect.forkChild(
+        latestVersions.cached(
+          "cli",
+          Effect.sync(() => {
+            retries += 1;
+            return "2.0.0";
+          }),
+        ),
+        { startImmediately: true },
+      );
+      expect(retries).toBe(0);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Effect.flip(Fiber.join(owner))).toBe("offline");
+      expect(yield* Fiber.join(waiter)).toBe("2.0.0");
+      expect(retries).toBe(1);
+    }),
+  );
+
+  it.effect("interrupting a waiter leaves the shared lookup running", () =>
+    Effect.gen(function* () {
+      const latestVersions = yield* ProviderLatestVersions.make();
+      const release = yield* Deferred.make<void>();
+      let lookups = 0;
+      const lookup = Effect.suspend(() => {
+        lookups += 1;
+        return Deferred.await(release).pipe(Effect.as("2.0.0"));
+      });
+      const owner = yield* Effect.forkChild(latestVersions.cached("cli", lookup), {
+        startImmediately: true,
+      });
+      const waiter = yield* Effect.forkChild(latestVersions.cached("cli", lookup), {
+        startImmediately: true,
+      });
+      yield* Fiber.interrupt(waiter);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(owner)).toBe("2.0.0");
+      expect(yield* latestVersions.cached("cli", lookup)).toBe("2.0.0");
+      expect(lookups).toBe(1);
+    }),
+  );
 });

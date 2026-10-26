@@ -14,7 +14,6 @@ const MISSING_TTL = Duration.minutes(1);
 interface Entry {
   readonly expiresAt: number;
   readonly version: string | null;
-  /** Set while this entry's lookup runs; completes with `None` if it fails. */
   readonly inFlight?: Deferred.Deferred<Option.Option<string | null>>;
 }
 
@@ -45,8 +44,7 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
     const inFlight = yield* Deferred.make<Option.Option<string | null>>();
     // Replacing or invalidating this entry retires any lookup still in flight.
     const pending: Entry = { version: null, expiresAt: 0, inFlight };
-    // No interrupt can land between claiming the entry and installing its
-    // release, so a claimed entry is always completed or removed.
+    // Claim and cleanup registration must be atomic with respect to interruption.
     return yield* Effect.acquireUseRelease(
       Ref.modify(entries, (current) => {
         const entry = current.get(key);
@@ -59,7 +57,6 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
           if (!existing) return yield* lookup;
           if (!existing.inFlight) return existing.version;
           const shared = yield* Deferred.await(existing.inFlight);
-          // A failed lookup has already removed its entry, so this call starts over.
           return Option.isSome(shared) ? shared.value : yield* cached(key, lookup, options);
         }),
       (existing, exit) => {
