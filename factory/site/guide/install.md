@@ -31,10 +31,10 @@ The install waits up to 90 seconds for the server to answer on port 3876 and to 
 
 ### Tools the server can see
 
-launchd starts the server with the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. At startup the server also reads your login shell's `PATH` and adds it, so agent sessions see the tools your shell does. Provision and gate commands get the plist's `PATH` first, then the login shell's entries, so a tool you name in `~/.config/t3fac/env` wins over a same-named one in `/usr/bin`. Put tools gates need there, such as `claude`, `cargo`, `php`, `composer` or a specific `python3`; the job sources the file before it starts the server:
+launchd starts the server with the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. At startup the server also reads your login shell's `PATH` and adds it, so agent sessions see the tools your shell does. Provision and gate commands get the plist's `PATH`, with `~/.config/t3fac/env` applied, first, and the login shell's entries after it, so a tool in the env file's `PATH` wins over the login shell's. Put tools gates need there, such as `claude`, `cargo`, `php` or `composer`; the job sources the file before it starts the server. Append a directory to add a tool. Prepend it to shadow one the plist's `PATH` already has, such as the `python3` in `/usr/bin`:
 
 ```sh
-PATH="$PATH:$HOME/.cargo/bin"
+PATH="/opt/homebrew/opt/python@3.13/libexec/bin:$PATH:$HOME/.cargo/bin"
 export PATH
 ```
 
