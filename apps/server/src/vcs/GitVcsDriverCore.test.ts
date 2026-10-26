@@ -2975,10 +2975,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["config", `branch.${source}.gh-merge-base`, "main"]);
         }
 
-        const renamed = yield* Effect.all(
-          sources.map((oldBranch) =>
-            driver.renameBranch({ cwd, oldBranch, newBranch: "feature/shared" }),
-          ),
+        const renamed = yield* Effect.forEach(
+          sources,
+          (oldBranch) => driver.renameBranch({ cwd, oldBranch, newBranch: "feature/shared" }),
           { concurrency: "unbounded" },
         );
 
