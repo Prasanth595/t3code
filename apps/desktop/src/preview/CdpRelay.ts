@@ -47,7 +47,7 @@ const serializedSize = (text: string) =>
 const fitsPayloadBudget = (message: unknown) => {
   let remaining = MAX_CDP_PAYLOAD_SIZE;
   const visit = (value: unknown): boolean => {
-    remaining -= typeof value === "string" ? serializedSize(value) : 24;
+    remaining -= typeof value === "string" ? serializedSize(value) : 26;
     if (remaining < 0) return false;
     if (typeof value !== "object" || value === null) return true;
     if (Array.isArray(value)) return value.every(visit);

@@ -237,26 +237,27 @@ describe("CDP relay payload budget", () => {
     ]);
   });
 
-  it.each([oversized, "\u0001".repeat(12 * 1024 * 1024)])(
-    "closes instead of dropping an oversized event (%#)",
-    async (args) => {
-      const written: Array<Record<string, unknown>> = [];
-      const close = vi.fn();
-      const relay = createCdpRelayConnection(
-        makeTarget(vi.fn()),
-        (raw) => written.push(JSON.parse(raw)),
-        close,
-      );
-      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
-      await settle();
-      written.length = 0;
+  it.each([
+    { args: oversized },
+    { args: "\u0001".repeat(12 * 1024 * 1024) },
+    { args: Array(2_700_000).fill(-0.0000010000000000000002) },
+  ])("closes instead of dropping an oversized event (%#)", async ({ args }) => {
+    const written: Array<Record<string, unknown>> = [];
+    const close = vi.fn();
+    const relay = createCdpRelayConnection(
+      makeTarget(vi.fn()),
+      (raw) => written.push(JSON.parse(raw)),
+      close,
+    );
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    written.length = 0;
 
-      relay.event("Runtime.consoleAPICalled", { args }, "");
-      relay.event("Page.loadEventFired", { timestamp: 1 }, "");
+    relay.event("Runtime.consoleAPICalled", { args }, "");
+    relay.event("Page.loadEventFired", { timestamp: 1 }, "");
 
-      relay.receive(JSON.stringify({ id: 2, method: "Target.setAutoAttach" }));
-      expect(close).toHaveBeenCalledOnce();
-      expect(written.map((message) => message["method"])).toEqual([]);
-    },
-  );
+    relay.receive(JSON.stringify({ id: 2, method: "Target.setAutoAttach" }));
+    expect(close).toHaveBeenCalledOnce();
+    expect(written.map((message) => message["method"])).toEqual([]);
+  });
 });
