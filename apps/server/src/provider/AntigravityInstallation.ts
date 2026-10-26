@@ -45,9 +45,9 @@ const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
 const LAUNCHER_SETUP =
-  /^[\s@]*(?:$|::|rem(?:\s|$)|(?:echo|set|setlocal|endlocal|exit)(?:\s[^&|]*)?$)/iu;
+  /^[\s@]*(?:$|::.*|rem(?:\s.*|$)|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?$)/iu;
 const LAUNCHER_COMMAND =
-  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|]*)?$/iu;
+  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -249,10 +249,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
-  // A launcher runs the ACP executable from elsewhere, so the matching helper
-  // sits beside that executable, not the script. Only a plain wrapper counts:
-  // setup lines, then one literal or `%~dp0` path; any other line could run a
-  // different release, so it keeps the same-directory rule.
+  // Infer helper pairing only from a plain launcher with one literal executable path.
   const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
     launcher: string,
   ) {
@@ -260,14 +257,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     const contents = yield* fs.readFileString(launcher);
     const targets = new Set<string>();
     for (const line of contents.split(/\r?\n/u)) {
+      if (line.includes("^")) return null;
+      if (/^[\s@]*exit(?:\s+\/b)?(?:\s+-?\d+)?\s*$/iu.test(line)) break;
       if (LAUNCHER_SETUP.test(line)) continue;
       const match = LAUNCHER_COMMAND.exec(line);
       if (!match) return null;
       const target = (match[1] ?? match[2] ?? "").replace(
         /%~dp0/giu,
-        `${path.dirname(launcher)}${path.sep}`,
+        () => `${path.dirname(launcher)}${path.sep}`,
       );
-      if (target.includes("%") || !path.isAbsolute(target)) return null;
+      if (/[%!]/u.test(target) || !path.isAbsolute(target)) return null;
       targets.add(path.resolve(target));
     }
     const [target] = targets;

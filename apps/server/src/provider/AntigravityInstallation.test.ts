@@ -640,9 +640,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs
-        .makeTempDirectoryScoped({ prefix: "t3-agy-launcher-test-" })
+        .makeTempDirectoryScoped({ prefix: "t3-agy-launcher-$$-test-" })
         .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-      const runtimeDirectory = path.join(baseDir, "runtime");
+      const runtimeDirectory = path.join(baseDir, "runtime (x64)");
       const launcherDirectory = path.join(baseDir, "launchers");
       const runtimeExecutable = path.join(runtimeDirectory, "agy_acp_server.exe");
       const runtimeHarness = path.join(runtimeDirectory, "localharness_external.exe");
@@ -656,7 +656,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         launch: string,
       ) {
         const launcher = path.join(launcherDirectory, name);
-        yield* fs.writeFileString(launcher, `@echo off\r\nset AGY_EXTRA=1\r\n${launch} %*\r\n`);
+        yield* fs.writeFileString(
+          launcher,
+          `@echo off\r\nrem Runtime launcher\r\n:: Keep environment setup\r\nset AGY_EXTRA=1\r\n${launch} %*\r\nexit /b\r\n`,
+        );
         return launcher;
       });
 
@@ -667,7 +670,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         source: "override",
         managedVersionDirectory: null,
       });
-      const relative = yield* writeLauncher("relative.BAT", `"%~dp0../runtime/agy_acp_server.exe"`);
+      const relative = yield* writeLauncher(
+        "relative.BAT",
+        `"%~dp0../runtime (x64)/agy_acp_server.exe"`,
+      );
       expect(yield* installation.resolve(relative)).toMatchObject({
         executablePath: relative,
         harnessPath: runtimeHarness,
@@ -701,6 +707,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           "conditional.cmd",
           `if defined AGY_TARGET "%AGY_TARGET%" %* & exit /b\r\n"${runtimeExecutable}"`,
         ],
+        ["early-exit.cmd", `exit /b\r\n"${runtimeExecutable}"`],
+        ["continued-set.cmd", `set IGNORED=1^\r\n"${runtimeExecutable}"`],
         ["chained.cmd", `"${runtimeExecutable}" --version && "%AGY_TARGET%"`],
       ] as const) {
         const uncertain = yield* writeLauncher(name, launch);
