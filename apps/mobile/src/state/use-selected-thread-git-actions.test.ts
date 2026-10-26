@@ -1,11 +1,9 @@
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import type { VcsListRefsResult } from "@t3tools/contracts";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
-import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/reactivity";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { AsyncResult } from "effect/reactivity";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
@@ -24,7 +22,8 @@ const state = vi.hoisted(() => ({
   results: [] as { type: string; description?: string }[],
   afterGitAction: undefined as (() => void) | undefined,
   statusRefreshes: 0,
-  refsQuery: vi.fn(),
+  readRefs: vi.fn(),
+  cachedRefs: [] as VcsListRefsResult["refs"],
 }));
 
 vi.mock("react", () => ({
@@ -51,12 +50,10 @@ vi.mock("./use-selected-thread-worktree", () => ({
   }),
 }));
 vi.mock("./queries", () => ({
-  useBranches: () => ({ data: { refs: [] }, refresh: () => {} }),
+  useBranches: () => ({ data: { refs: state.cachedRefs }, refresh: () => {} }),
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", async () => ({
-  appAtomRegistry: (await import("effect/reactivity")).AtomRegistry.make(),
-}));
+vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("./use-remote-environment-registry", () => ({
   environmentConnectedAtom: () => null,
   setPendingConnectionError: () => {},
@@ -85,8 +82,8 @@ vi.mock("./threads", () => ({
   },
 }));
 vi.mock("./vcs", () => ({
-  vcsRefsQuery: state.refsQuery,
   vcsEnvironment: {
+    readRefs: state.readRefs,
     refreshStatus: async () => {
       state.statusRefreshes += 1;
       return AsyncResult.success({ refName: state.branch });
@@ -128,7 +125,6 @@ vi.mock("./vcs", () => ({
 }));
 
 import { useSelectedThreadGitActions } from "./use-selected-thread-git-actions";
-import { appAtomRegistry } from "./atom-registry";
 
 describe("thread Git mutation permissions", () => {
   beforeEach(() => {
@@ -241,8 +237,6 @@ describe("thread Git mutation permissions", () => {
   );
 });
 
-afterAll(() => appAtomRegistry.dispose());
-
 describe("automatic feature branch refs", () => {
   const empty: VcsListRefsResult = {
     refs: [],
@@ -254,13 +248,18 @@ describe("automatic feature branch refs", () => {
 
   it.each([false, true])("awaits fresh refs before naming, cached: %s", async (cached) => {
     const request = Promise.withResolvers<VcsListRefsResult>();
-    let response = cached ? Promise.resolve(empty) : request.promise;
-    const query = Atom.make(Effect.tryPromise(() => response)).pipe(Atom.keepAlive);
-    state.refsQuery.mockReturnValue(query);
-    if (cached) {
-      await executeAtomQuery(appAtomRegistry, query);
-      response = request.promise;
-    }
+    state.cachedRefs = cached
+      ? [
+          {
+            name: "old-branch",
+            isRemote: false,
+            current: false,
+            isDefault: false,
+            worktreePath: null,
+          },
+        ]
+      : [];
+    state.readRefs.mockReturnValue(request.promise.then(AsyncResult.success));
     let settled = false;
     const refresh = useSelectedThreadGitActions()
       .refreshSelectedThreadBranches()
@@ -288,15 +287,17 @@ describe("automatic feature branch refs", () => {
     const refs = await refresh;
     expect(refs).toEqual([local]);
     expect(resolveAutoFeatureBranchName(refs!.map((ref) => ref.name))).toBe("feature/update-2");
-    expect(state.refsQuery).toHaveBeenCalledWith({
+    expect(state.readRefs).toHaveBeenCalledWith({
       environmentId: "environment",
-      input: { cwd: "/repo", limit: 100 },
+      input: { cwd: "/repo", limit: 100, refresh: true },
     });
   });
 
   it("reports lookup failure instead of returning empty refs", async () => {
     state.results = [];
-    state.refsQuery.mockReturnValue(Atom.make(Effect.fail(new Error("Cannot list refs"))));
+    state.readRefs.mockResolvedValue(
+      AsyncResult.failure(Cause.fail(new Error("Cannot list refs"))),
+    );
     expect(await useSelectedThreadGitActions().refreshSelectedThreadBranches()).toBeNull();
     expect(state.results).toEqual([
       { type: "error", title: "Git action failed", description: "Cannot list refs" },

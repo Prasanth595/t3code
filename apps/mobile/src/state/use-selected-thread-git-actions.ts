@@ -2,7 +2,7 @@ import { useAtomMount } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { executeAtomQuery, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   createVcsStatusRevalidationAtomFamily,
   type GitActionRequestInput,
@@ -24,7 +24,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
 import { threadEnvironment } from "../state/threads";
-import { vcsActionManager, vcsEnvironment, vcsRefsQuery } from "../state/vcs";
+import { vcsActionManager, vcsEnvironment } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
@@ -57,6 +57,7 @@ export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
@@ -219,14 +220,10 @@ export function useSelectedThreadGitActions() {
   const refreshSelectedThreadBranches =
     useCallback(async (): Promise<ReadonlyArray<VcsRef> | null> => {
       if (branchTarget.environmentId === null || branchTarget.cwd === null) return null;
-      const result = await executeAtomQuery(
-        appAtomRegistry,
-        vcsRefsQuery({
-          environmentId: branchTarget.environmentId,
-          input: { cwd: branchTarget.cwd, limit: 100 },
-        }),
-        { refresh: true, reportFailure: false },
-      );
+      const result = await readRefs({
+        environmentId: branchTarget.environmentId,
+        input: { cwd: branchTarget.cwd, limit: 100, refresh: true },
+      });
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
         const message = error instanceof Error ? error.message : "Failed to refresh branches.";
@@ -238,7 +235,7 @@ export function useSelectedThreadGitActions() {
       return dedupeRemoteBranchesWithLocalMatches(result.value.refs).filter(
         (branch) => !branch.isRemote,
       );
-    }, [branchTarget]);
+    }, [branchTarget, readRefs]);
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {
