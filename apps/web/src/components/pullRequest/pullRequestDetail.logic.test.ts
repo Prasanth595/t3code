@@ -985,6 +985,18 @@ describe("a second handoff into the same composer", () => {
     expect(next.reviewComments).toEqual([fresh, chip("file-comment:3")]);
   });
 
+  it("preserves a multiline request even when its lines already occur in the draft", () => {
+    const prompt = "keep this line\nchange the middle\nkeep this line";
+    const incoming = "keep this line\nnew middle\nkeep this line";
+    expect(appendHandoff({ prompt, reviewComments: [] }, { prompt: incoming }).prompt).toBe(
+      `${prompt}\n\n${incoming}`,
+    );
+    const reordered = "change the middle\nkeep this line";
+    expect(appendHandoff({ prompt, reviewComments: [] }, { prompt: reordered }).prompt).toBe(
+      `${prompt}\n\n${reordered}`,
+    );
+  });
+
   it("changes nothing when the same handoff lands twice", () => {
     const handoff = {
       prompt: "Fix the review finding attached to this message.\nThe pull request is #42.",
@@ -994,7 +1006,7 @@ describe("a second handoff into the same composer", () => {
     expect(appendHandoff(once, handoff)).toEqual(once);
   });
 
-  it("does not repeat the pull request preamble for a second finding", () => {
+  it("keeps each finding prompt intact, including its preamble", () => {
     const preamble = "The pull request is #42.\nIts branch is `feature`.";
     const next = appendHandoff(
       {
@@ -1004,7 +1016,7 @@ describe("a second handoff into the same composer", () => {
       { prompt: `Fix the review remark quoted below.\n${preamble}\n> reviewer: add a test` },
     );
     expect(next.prompt).toBe(
-      `Fix the review remark quoted below.\n${preamble}\n> reviewer: rename it\n\n> reviewer: add a test`,
+      `Fix the review remark quoted below.\n${preamble}\n> reviewer: rename it\n\nFix the review remark quoted below.\n${preamble}\n> reviewer: add a test`,
     );
   });
 

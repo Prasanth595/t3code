@@ -816,7 +816,6 @@ export interface FixFindingsHandoff {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
-/** Appends only lines the draft lacks, so repeats and shared preambles land once. */
 export function appendHandoff(
   existing: {
     readonly prompt: string;
@@ -827,23 +826,11 @@ export function appendHandoff(
     readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
   },
 ): { prompt: string; reviewComments: ReviewCommentContext[] } {
-  const present = new Set(
-    stripInlineContextReferences(existing.prompt)
-      .split("\n")
-      .map((line) => line.trim()),
-  );
-  const lines = incoming.prompt.split("\n");
-  const isRepeat = lines.every((line) => line.trim().length === 0 || present.has(line.trim()));
-  // Quotes and their headers belong to this handoff's pull request even when an earlier one shares them.
-  const added = isRepeat
-    ? ""
-    : lines
-        .filter((line) => {
-          const trimmed = line.trim();
-          return trimmed.length === 0 || /^>|:$/u.test(trimmed) || !present.has(trimmed);
-        })
-        .join("\n")
-        .trim();
+  const present = stripInlineContextReferences(existing.prompt)
+    .replace(/[ \t]+$/gmu, "")
+    .trim();
+  const added = incoming.prompt.trim();
+  const isRepeat = `\n\n${present}\n\n`.includes(`\n\n${added}\n\n`);
   const kept = existing.prompt.trimEnd();
   const incomingById = new Map(
     (incoming.reviewComments ?? []).map((comment) => [comment.id, comment]),
@@ -851,7 +838,11 @@ export function appendHandoff(
   const existingIds = new Set(existing.reviewComments.map((comment) => comment.id));
   return {
     prompt:
-      added.length === 0 ? existing.prompt : kept.length === 0 ? added : `${kept}\n\n${added}`,
+      added.length === 0 || isRepeat
+        ? existing.prompt
+        : kept.length === 0
+          ? added
+          : `${kept}\n\n${added}`,
     // Same-id chips take the newer copy, so a re-fixed thread carries its latest replies.
     reviewComments: [
       ...existing.reviewComments.map((comment) => incomingById.get(comment.id) ?? comment),
