@@ -78,7 +78,7 @@ function layerTestFor(state: {
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
-  beforeRemoteStatus?: Effect.Effect<void>;
+  beforeRemoteStatus?: Effect.Effect<void, GitManagerError>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -752,6 +752,50 @@ describe("VcsStatusBroadcaster", () => {
 
       yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.remoteStatusCalls, 3);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+  it.effect("a failed refresh releases interrupted waiters and runs the shared follow-up", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.andThen(
+          Effect.fail(
+            new GitManagerError({
+              operation: "VcsStatusBroadcaster.test",
+              cwd: "/repo",
+              detail: "remote status failed",
+            }),
+          ),
+        ),
+      );
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(started);
+      const interrupted = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const remaining = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Fiber.interrupt(interrupted);
+      state.beforeRemoteStatus = Effect.void;
+      yield* Deferred.succeed(release, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(first)));
+      assert.deepStrictEqual((yield* Fiber.join(remaining)).pr, remoteStatusWithPr.pr);
+      assert.equal(state.remoteInvalidationCalls, 2);
+      yield* broadcaster.refreshStatus("/repo");
+      assert.equal(state.remoteInvalidationCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 });

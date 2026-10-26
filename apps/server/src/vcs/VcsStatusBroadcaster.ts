@@ -773,13 +773,8 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // A caller that arrives while a refresh for its cwd runs cannot reuse that
-  // refresh: it may have read Git before the caller's change, such as a PR an
-  // agent just opened. Those callers share one follow-up refresh instead of
-  // each queueing another full status read and PR lookup behind the remote
-  // lock. Keyed by the raw cwd so each refresh keeps its caller's auto-pull
-  // policy input.
-  // No entry means idle; `null` means a refresh runs with no follow-up queued.
+  // Requests during a refresh need a later read; share one follow-up per raw cwd.
+  // Raw paths preserve auto-pull policy. Missing means idle; null means running without a follow-up.
   type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
   const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
 
@@ -805,7 +800,8 @@ export const make = Effect.gen(function* () {
 
   const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
+    if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
     const requested = yield* Deferred.make<VcsStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
