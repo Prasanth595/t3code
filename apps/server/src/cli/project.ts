@@ -214,8 +214,6 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
-// The probe only picks live or offline mode. A server that answered it is
-// live, so the requests after it get longer to reply.
 const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
 const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
 const withProjectCliSessionToken = <A, E, R>(
@@ -317,13 +315,13 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 });
 
 const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestrationSnapshot")(
-  function* (origin: string, bearerToken: string, _timeout: Duration.Duration) {
+  function* (origin: string, bearerToken: string, _timeout?: Duration.Duration) {
     const client = yield* makeLiveServerClient(origin);
     return yield* client.projects.snapshot({
       headers: { authorization: `Bearer ${bearerToken}` },
     });
   },
-  (effect, _origin, _bearerToken, timeout) =>
+  (effect, _origin, _bearerToken, timeout = PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT) =>
     effect.pipe(Effect.timeout(timeout), Effect.mapError(projectCommandErrorFromLiveServerRequest)),
 );
 
@@ -411,11 +409,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     if (Option.isSome(liveMode)) {
       return yield* withProjectCliSessionToken(environmentAuth, (token) =>
         Effect.gen(function* () {
-          const snapshot = yield* fetchLiveOrchestrationSnapshot(
-            liveMode.value.origin,
-            token,
-            PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT,
-          );
+          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
           const output = yield* run({
             snapshot,
             dispatch: (command) =>
