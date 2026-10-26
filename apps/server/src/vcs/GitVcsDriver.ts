@@ -802,7 +802,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     cwd: string,
   ) {
     const result = yield* execute({
-      operation: "GitVcsDriver.checkpoints.resolveCaptureRepository",
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
       cwd,
       args: [
         "rev-parse",
