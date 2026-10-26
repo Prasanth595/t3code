@@ -182,7 +182,7 @@ it("sends only the settled grid and still resizes before launch input", () => {
   }
 });
 
-it("cancels pending grids on detach or restart and checks current permission", () => {
+it("cancels pending grids on detach or generation change and checks current permission", () => {
   vi.useFakeTimers();
   try {
     const { session, attached, emit, mount, access, flush, of } = setup({

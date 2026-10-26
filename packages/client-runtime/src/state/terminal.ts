@@ -433,6 +433,7 @@ export function createTerminalSession(
       clearTimeout(pendingResize);
       if (generation === null) return;
       if (options.resizeSettleDelayMs) {
+        // @effect-diagnostics-next-line globalTimers:off - Grid reports run outside an Effect runtime.
         pendingResize = setTimeout(sendResize, options.resizeSettleDelayMs);
       } else {
         sendResize();
