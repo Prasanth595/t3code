@@ -25,14 +25,15 @@ function panelWidthTransitions(element: HTMLElement) {
 function measureTransitionWidths(element: HTMLElement, transitions: CSSTransition[]) {
   if (transitions.length === 0) return null;
   const times = transitions.map((animation) => animation.currentTime);
-  const widthAt = (edge: "start" | "end") => {
-    for (const animation of transitions) {
-      animation.currentTime =
-        edge === "start" ? 0 : Number(animation.effect?.getComputedTiming().endTime ?? 0);
-    }
-    return element.clientWidth;
-  };
-  const narrowestWidth = Math.min(widthAt("start"), widthAt("end"));
+  // Opposite panel transitions can reach their widest points at different times.
+  for (const animation of transitions) {
+    const end = Number(animation.effect?.getComputedTiming().endTime ?? 0);
+    animation.currentTime = 0;
+    const startWidth = element.clientWidth;
+    animation.currentTime = end;
+    if (startWidth < element.clientWidth) animation.currentTime = 0;
+  }
+  const narrowestWidth = element.clientWidth;
   transitions.forEach((animation, index) => {
     animation.currentTime = times[index] ?? null;
   });
@@ -107,13 +108,18 @@ export function ChatCanvas({
         transitions.some((animation, index) => animation !== transitionWidths?.transitions[index])
       ) {
         const settling = measureTransitionWidths(element, transitions);
+        if (settling && transitionWidths) {
+          settling.narrowestWidth = Math.min(
+            settling.narrowestWidth,
+            transitionWidths.narrowestWidth,
+          );
+        }
         transitionWidths = settling;
         // The last resize can arrive while the transitions still count as running.
         if (settling) {
           void Promise.allSettled(settling.transitions.map((animation) => animation.finished)).then(
             () => {
               if (disposed || transitionWidths !== settling) return;
-              transitionWidths = null;
               measure();
             },
           );
