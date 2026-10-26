@@ -1106,6 +1106,46 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("overlapping file pickers keep the newer offer answerable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const accept = Promise.withResolvers<string | null>();
+      const firstFiles = vi.fn(async (_files: unknown) => {});
+      const secondFiles = vi.fn(async (_files: unknown) => {});
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({ ...fileChooserElement(""), getAttribute: () => accept.promise }),
+        setFiles: firstFiles,
+      });
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => fileChooserElement(".csv"),
+        setFiles: secondFiles,
+      });
+      accept.resolve(".txt");
+      let first = yield* Queue.take(viewer.output);
+      while (first._tag !== "fileChooser") first = yield* Queue.take(viewer.output);
+      let second = yield* Queue.take(viewer.output);
+      while (second._tag !== "fileChooser") second = yield* Queue.take(viewer.output);
+      expect(second.accept).toBe(".csv");
+      expect(
+        yield* browser.answerFileChooser({
+          threadId: scope.thread.threadId,
+          tabId,
+          chooserId: second.id,
+          files: [{ name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a") }],
+        }),
+      ).toBe(true);
+      expect(firstFiles).not.toHaveBeenCalled();
+      expect(secondFiles).toHaveBeenCalledOnce();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a detached file picker stays open across same-document navigation", () =>
   Effect.scoped(
     Effect.gen(function* () {
