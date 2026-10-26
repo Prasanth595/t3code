@@ -1031,7 +1031,7 @@ interface ActiveAcpTurn {
   readonly instructionDelivery?: {
     readonly state: T3AcpInstructionState;
     readonly digest: string;
-    readonly compactionMarker: symbol | undefined;
+    compactionMarker: symbol | undefined;
   };
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
@@ -7622,6 +7622,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Ref.update(promptInstructionStates, (current) => {
                   if (promptParts?.instructionState === undefined) return current;
                   return new Map(current).set(requestedSessionId, promptParts.instructionState);
+                }),
+              ),
+              Effect.tap(() =>
+                Ref.update(compactionMarkers, (current) => {
+                  const delivery = context.instructionDelivery;
+                  if (
+                    delivery?.compactionMarker === undefined ||
+                    current.get(requestedSessionId) !== delivery.compactionMarker
+                  )
+                    return current;
+                  delivery.compactionMarker = undefined;
+                  const updated = new Map(current);
+                  updated.delete(requestedSessionId);
+                  return updated;
                 }),
               ),
               // Wire settlement precedes the completion callback's permit request so

@@ -1142,6 +1142,26 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live(
+    "acknowledges reinjected instructions on a cancelled prompt without a durable receipt",
+    () =>
+      Effect.gen(function* () {
+        const runTurn = yield* makeInstructionCompactionHarness({
+          T3_ACP_VIBE_RETRY_OUTCOME: "cancelled",
+        });
+        yield* runTurn("Start work.", "cancelled");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after compact.", "cancelled", "compact"),
+          "Continue after compact.",
+        );
+        assert.equal((yield* runTurn("Continue work.", "cancelled"))[0]?.text, "Continue work.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after reopen.", "cancelled", true),
+          "Continue after reopen.",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("records instructions before ACP work-state completion ends the run", () =>
     Effect.gen(function* () {
       const runTurn = yield* makeInstructionCompactionHarness(
