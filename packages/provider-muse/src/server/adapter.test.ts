@@ -1452,12 +1452,14 @@ describe("MuseAdapterV2", () => {
         const harness = method === "session/read" ? yield* makeHarness(fake) : undefined;
         fake.queueResponse(method, pendingPromise<Record<string, unknown>>().promise);
         const operation = harness
-          ? harness.runtime.readThreadSnapshot!({ providerThread: harness.providerThread })
+          ? harness.runtime.readThreadSnapshot!({ providerThread: harness.providerThread }).pipe(
+              Effect.asVoid,
+            )
           : makeHarness(
               fake,
               INSTANCE_ID,
               method === "session/resume" ? "saved-session" : undefined,
-            );
+            ).pipe(Effect.asVoid);
         const opening = yield* operation.pipe(Effect.exit, Effect.forkScoped);
         yield* fake.takeCall(method);
         yield* TestClock.adjust(method === "session/start" ? "30 seconds" : "10 minutes");
