@@ -164,11 +164,14 @@ type NewTaskFlowContextValue = {
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly setProject: (project: EnvironmentProject) => void;
-  /** Returns false if the existing draft is gone, allowing fallback to a fresh draft. */
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
-  /** The route names a draft that is gone, or whose project is gone. */
-  readonly routeTargetMissing: boolean;
+  /**
+   * The draft id of the route this flow serves when that draft, or its
+   * project, is gone. Only the topmost draft route is served, so a screen
+   * compares this with its own draft id.
+   */
+  readonly missingRouteDraftId: string | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
@@ -833,7 +836,8 @@ export function NewTaskFlowProvider(
     providerGroups,
     setProject,
     getSelectedProjectKey: () => readFlow().projectKey,
-    routeTargetMissing: routeDraftResolution.kind === "missing",
+    missingRouteDraftId:
+      routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,

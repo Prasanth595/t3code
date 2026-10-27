@@ -471,16 +471,15 @@ export const composerDraftsAtom = Atom.make<Record<string, ComposerDraft>>({}).p
   Atom.withLabel("mobile:composer-drafts"),
 );
 
-const composerDraftsHydratedAtom = Atom.make(false).pipe(
+/**
+ * Whether persisted drafts have merged in. Hydration starts with the app's
+ * attachment upload worker; a failed load stays false until the next
+ * `ensureComposerDraftsLoaded` caller retries it.
+ */
+export const composerDraftsLoadedAtom = Atom.make(false).pipe(
   Atom.keepAlive,
-  Atom.withLabel("mobile:composer-drafts-hydrated"),
+  Atom.withLabel("mobile:composer-drafts-loaded"),
 );
-
-/** Whether persisted drafts have merged in; reading it starts hydration. */
-export const composerDraftsLoadedAtom = Atom.make((get) => {
-  ensureComposerDraftsLoaded();
-  return get(composerDraftsHydratedAtom);
-}).pipe(Atom.withLabel("mobile:composer-drafts-loaded"));
 
 export const stickyComposerModelSelectionAtom = Atom.make<ModelSelection | null>(null).pipe(
   Atom.keepAlive,
@@ -518,7 +517,7 @@ const persistenceQueue = new SerializedAsyncQueue();
 
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
-  appAtomRegistry.set(composerDraftsHydratedAtom, false);
+  appAtomRegistry.set(composerDraftsLoadedAtom, false);
   persistRetryNeeded = false;
 }
 
@@ -1051,7 +1050,7 @@ export function ensureComposerDraftsLoaded(): void {
         ),
       });
     }
-    appAtomRegistry.set(composerDraftsHydratedAtom, true);
+    appAtomRegistry.set(composerDraftsLoadedAtom, true);
   });
   loadPromise = loading;
   void loading.catch((cause) => {
