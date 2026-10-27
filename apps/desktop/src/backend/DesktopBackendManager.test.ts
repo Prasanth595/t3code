@@ -583,6 +583,7 @@ describe("DesktopBackendManager", () => {
   it.effect("reports a crash loop with the server output on the third restart", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
         let exitCount = 0;
         const firstExit = yield* Deferred.make<void>();
         const reports = yield* Queue.unbounded<{
@@ -595,9 +596,12 @@ describe("DesktopBackendManager", () => {
             ChildProcessSpawner.make(() =>
               Effect.succeed(
                 makeProcess({
-                  // "é" split across chunks must not decode as U+FFFD.
+                  // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
+                  // lands inside the emoji's surrogate pair.
                   stderr: Stream.make(
-                    new TextEncoder().encode("Error: Cannot find module 'zod/v4' in /Users/Ren"),
+                    new TextEncoder().encode(
+                      `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+                    ),
                     new Uint8Array([0xc3]),
                     new Uint8Array([0xa9]),
                   ),
@@ -622,7 +626,8 @@ describe("DesktopBackendManager", () => {
         const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
         assert.equal(exitsWhenReported, 3);
         assert.equal(failure.reason, "The server could not start (code=1).");
-        assert.include(failure.output, "Cannot find module 'zod/v4' in /Users/René");
+        assert.isTrue(failure.output.endsWith(message));
+        assert.isTrue(failure.output.isWellFormed());
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

@@ -949,9 +949,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ),
           onOutput: (streamName, chunk) =>
             Ref.update(outputTail, (tail) =>
-              (tail + outputDecoders[streamName].decode(chunk, { stream: true })).slice(
-                -STARTUP_FAILURE_OUTPUT_CHARS,
-              ),
+              // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
+              (tail + outputDecoders[streamName].decode(chunk, { stream: true }))
+                .slice(-STARTUP_FAILURE_OUTPUT_CHARS)
+                .toWellFormed(),
             ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
