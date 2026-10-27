@@ -9,13 +9,17 @@ description: >-
 # T3 Code browser
 
 Use the current agent's `preview_*` tools. Installing this skill does not enable
-browser access: the environment must allow it and a browser client must be
-connected. If tools are deferred, discover them before calling them. If access
-is unavailable, report the missing capability instead of claiming a browser test.
+browser access: the environment must allow it. T3 can run a browser on the
+environment host; a connected client can display its tabs. If tools are
+deferred, discover them before calling them. Report actual access or host setup
+errors instead of claiming a browser test.
 
 ## Select the right tab
 
 1. Call `preview_status` for this thread's tabs, owners, profiles and dialogs.
+   `available=false` with `tabId=null` can mean this thread has no tab yet, not
+   that browser support is missing. Try `preview_open` for the requested browser
+   work; stop on an actual unavailable/access error from that operation.
 2. Reuse the requested tab if permitted. Otherwise use `preview_open`; retain its
    returned `tabId` on subsequent calls. Parallel agents each open a separate tab
    with `reuseExistingTab=false` and keep their own ID.
@@ -41,6 +45,8 @@ respect that handoff; do not take it back through a different automation tool.
   a current screenshot of the same tab and viewport.
 - Use `preview_wait_for` for a specific URL, text or element condition instead
   of fixed sleeps. Inspect the resulting page before reporting success.
+  After a pairing link, wait for an authenticated app element before navigating
+  again; a clean URL alone does not prove the credential exchange completed.
 - Resolve a pending dialog through `preview_dialog` only when its action is
   within the user's request. A successful click does not prove a submission.
 - On your own or an unclaimed tab, `preview_evaluate` can inspect page data when

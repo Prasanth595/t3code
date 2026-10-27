@@ -27,7 +27,7 @@ export const BUNDLED_SKILL_METADATA = [
     id: "t3code-browser",
     title: "Browser",
     description: "Browse, interact with pages, and verify requested flows in T3 Code's browser.",
-    requirements: "Requires browser agent access and a connected browser client in T3 Code.",
+    requirements: "Requires T3 Code browser tools and browser agent access on this environment.",
   },
   {
     id: "t3code-computer-use",
