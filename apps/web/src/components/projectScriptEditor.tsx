@@ -2,6 +2,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
   type ProjectScript,
   type ProjectScriptIcon,
   type ResolvedKeybindingsConfig,
@@ -11,6 +13,8 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { createModelSelection } from "@t3tools/shared/model";
+import { useAtomValue } from "@effect/atom-react";
 import {
   BugIcon,
   FlaskConicalIcon,
@@ -27,7 +31,18 @@ import {
 } from "~/lib/projectScriptKeybindings";
 import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
 import { commandForProjectScript, nextProjectScriptId } from "~/projectScripts";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  resolveDefaultProviderModelSelectionFromEntries,
+  sortProviderInstanceEntries,
+} from "~/providerInstances";
+import { getCustomModelOptionsByInstance } from "~/modelSelection";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "~/state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { readPromptUltrathink, TraitsPicker } from "./chat/TraitsPicker";
 import { useComposerMenuState } from "./chat/useComposerMenuState";
 import {
   AlertDialog,
@@ -51,6 +66,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 
@@ -80,6 +96,9 @@ export function ScriptIcon({
 
 export interface NewProjectScriptInput {
   name: string;
+  type?: "shell" | "prompt";
+  prompt?: string;
+  modelSelection?: ModelSelection | null;
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
@@ -119,7 +138,10 @@ export function editorRequestForScript(
     scriptId: script.id,
     initial: {
       name: script.name,
-      command: script.command,
+      type: script.type ?? "shell",
+      prompt: script.type === "prompt" ? script.prompt : "",
+      modelSelection: script.type === "prompt" ? (script.modelSelection ?? null) : null,
+      command: script.type === "prompt" ? "" : script.command,
       icon: script.icon,
       runOnWorktreeCreate: script.runOnWorktreeCreate,
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
@@ -134,6 +156,7 @@ export function editorRequestForScript(
 export function ProjectScriptEditorDialog({
   environmentId,
   editScope = AuthOrchestrationOperateScope,
+  projectId,
   request,
   scripts,
   onSubmit,
@@ -142,6 +165,7 @@ export function ProjectScriptEditorDialog({
 }: {
   environmentId: EnvironmentId;
   editScope?: typeof AuthOrchestrationOperateScope | typeof AuthSettingsWriteScope;
+  projectId: ProjectId | null;
   request: ProjectScriptEditorRequest | null;
   scripts: ReadonlyArray<ProjectScript>;
   onSubmit: (
@@ -193,6 +217,7 @@ export function ProjectScriptEditorDialog({
               key={shown.key}
               environmentId={environmentId}
               editScope={editScope}
+              projectId={projectId}
               request={shown.request}
               scripts={scripts}
               validationError={validationError}
@@ -242,6 +267,7 @@ export function ProjectScriptEditorDialog({
 function ProjectScriptEditorForm({
   environmentId,
   editScope,
+  projectId,
   request,
   scripts,
   validationError,
@@ -252,6 +278,7 @@ function ProjectScriptEditorForm({
 }: {
   environmentId: EnvironmentId;
   editScope: typeof AuthOrchestrationOperateScope | typeof AuthSettingsWriteScope;
+  projectId: ProjectId | null;
   request: ProjectScriptEditorRequest;
   scripts: ReadonlyArray<ProjectScript>;
   validationError: string | null;
@@ -267,6 +294,8 @@ function ProjectScriptEditorForm({
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const formId = React.useId();
   const [name, setName] = useState(request.initial.name);
+  const [actionType, setActionType] = useState<"shell" | "prompt">(request.initial.type ?? "shell");
+  const [prompt, setPrompt] = useState(request.initial.prompt ?? "");
   const [command, setCommand] = useState(request.initial.command);
   const [icon, setIcon] = useState<ProjectScriptIcon>(request.initial.icon);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditActions);
@@ -278,7 +307,35 @@ function ProjectScriptEditorForm({
   const [keybinding, setKeybinding] = useState(request.initial.keybinding ?? "");
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
+  const [modelSelection, setModelSelection] = useState<ModelSelection | null>(
+    request.initial.modelSelection ?? null,
+  );
   const [isSaving, setIsSaving] = useState(false);
+  const settings = useEnvironmentSettings(environmentId);
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, projectId),
+  );
+  const fallbackModelSelection =
+    resolveDefaultProviderModelSelectionFromEntries(
+      instanceEntries,
+      settings.defaultModelSelection,
+    ) ??
+    instanceEntries.reduce<ModelSelection | null>((selection, entry) => {
+      if (selection || !entry.enabled || !entry.models[0]) return selection;
+      return createModelSelection(entry.instanceId, entry.models[0].slug);
+    }, null);
+  const effectiveModelSelection = modelSelection ?? fallbackModelSelection;
+  const activeEntry =
+    instanceEntries.find((entry) => entry.instanceId === effectiveModelSelection?.instanceId) ??
+    null;
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    effectiveModelSelection?.instanceId,
+    effectiveModelSelection?.model,
+  );
   const pendingSubmissionRef = useRef<object | null>(null);
   // A save that settles after this form is replaced must not close or error
   // the request that replaced it.
@@ -332,8 +389,8 @@ function ProjectScriptEditorForm({
       setValidationError("Name is required.");
       return;
     }
-    if (trimmedCommand.length === 0) {
-      setValidationError("Command is required.");
+    if ((actionType === "prompt" ? prompt.trim() : trimmedCommand).length === 0) {
+      setValidationError(actionType === "prompt" ? "Prompt is required." : "Command is required.");
       return;
     }
 
@@ -352,6 +409,9 @@ function ProjectScriptEditorForm({
       });
       const trimmedPreviewUrl = previewUrl.trim();
       payload = {
+        type: actionType,
+        prompt: prompt.trim(),
+        ...(actionType === "prompt" && modelSelection ? { modelSelection } : {}),
         name: trimmedName,
         command: trimmedCommand,
         icon,
@@ -401,7 +461,8 @@ function ProjectScriptEditorForm({
       <DialogHeader>
         <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
         <DialogDescription>
-          Actions are project-scoped commands you can run from the top bar or keybindings.
+          Actions are project-scoped shell scripts or prompts you can run from the top bar or
+          keybindings.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -474,64 +535,159 @@ function ProjectScriptEditorForm({
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="script-command">Command</Label>
-              <Textarea
-                id="script-command"
-                placeholder="bun test"
-                value={command}
-                onChange={(event) => setCommand(event.target.value)}
-              />
+              <Label htmlFor="script-type">Action type</Label>
+              <Select
+                value={actionType}
+                onValueChange={(value) => {
+                  if (value) setActionType(value);
+                }}
+              >
+                <SelectTrigger id="script-type">
+                  <SelectValue>{actionType === "prompt" ? "Prompt" : "Shell script"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="shell">Shell script</SelectItem>
+                  <SelectItem value="prompt">Prompt</SelectItem>
+                </SelectPopup>
+              </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="script-preview-url">Preview URL (optional)</Label>
-              <Input
-                id="script-preview-url"
-                placeholder="http://localhost:5173"
-                value={previewUrl}
-                onChange={(event) => setPreviewUrl(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Open this URL in the in-app preview when this action runs.
-              </p>
-            </div>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-              <span>Run automatically on worktree creation</span>
-              <Switch
-                checked={runOnWorktreeCreate}
-                onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
-              />
-            </label>
-            <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
-                runOnWorktreeCreate ? "" : "opacity-60"
-              }`}
-            >
-              <span>Wait for it to finish before the agent starts</span>
-              <Switch
-                checked={waitForSetup}
-                disabled={!runOnWorktreeCreate}
-                onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-              <span>Run in the thread's worktree when the thread settles</span>
-              <Switch
-                checked={runOnSettle}
-                onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
-              />
-            </label>
-            <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
-                previewUrl.trim().length === 0 ? "opacity-60" : ""
-              }`}
-            >
-              <span>Open preview automatically when this action runs</span>
-              <Switch
-                checked={autoOpenPreview}
-                disabled={previewUrl.trim().length === 0}
-                onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
-              />
-            </label>
+            {actionType === "prompt" ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="script-prompt">Prompt</Label>
+                <Textarea
+                  id="script-prompt"
+                  placeholder="Describe the task for the agent…"
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  rows={8}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Runs in the current thread with its selected model, workspace, and permissions. If
+                  the agent is busy, the prompt is queued.
+                </p>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>
+                    <span className="block">Use the thread's current model</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Turn off to switch the thread to a specific model and reasoning level first.
+                    </span>
+                  </span>
+                  <Switch
+                    checked={modelSelection === null}
+                    disabled={modelSelection === null && fallbackModelSelection === null}
+                    onCheckedChange={(checked) =>
+                      setModelSelection(checked ? null : fallbackModelSelection)
+                    }
+                  />
+                </label>
+                {modelSelection !== null && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {effectiveModelSelection ? (
+                      <>
+                        <ProviderModelPicker
+                          environmentId={environmentId}
+                          activeInstanceId={effectiveModelSelection.instanceId}
+                          model={effectiveModelSelection.model}
+                          lockedProvider={null}
+                          instanceEntries={instanceEntries}
+                          modelOptionsByInstance={modelOptionsByInstance}
+                          onInstanceModelChange={(instanceId, model) =>
+                            setModelSelection(createModelSelection(instanceId, model))
+                          }
+                        />
+                        {activeEntry && (
+                          <TraitsPicker
+                            provider={activeEntry.driverKind}
+                            instanceId={effectiveModelSelection.instanceId}
+                            models={activeEntry.models}
+                            model={effectiveModelSelection.model}
+                            promptUltrathink={readPromptUltrathink(prompt)}
+                            onPromptEdit={(edit) => setPrompt((current) => edit(current))}
+                            modelOptions={effectiveModelSelection.options}
+                            planModeEnabled={settings.planModeEnabled}
+                            onModelOptionsChange={(options) =>
+                              setModelSelection(
+                                createModelSelection(
+                                  effectiveModelSelection.instanceId,
+                                  effectiveModelSelection.model,
+                                  options,
+                                ),
+                              )
+                            }
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        No agent models are available in this environment.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="script-command">Command</Label>
+                  <Textarea
+                    id="script-command"
+                    placeholder="bun test"
+                    value={command}
+                    onChange={(event) => setCommand(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="script-preview-url">Preview URL (optional)</Label>
+                  <Input
+                    id="script-preview-url"
+                    placeholder="http://localhost:5173"
+                    value={previewUrl}
+                    onChange={(event) => setPreviewUrl(event.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Open this URL in the in-app preview when this action runs.
+                  </p>
+                </div>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run automatically on worktree creation</span>
+                  <Switch
+                    checked={runOnWorktreeCreate}
+                    onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                  />
+                </label>
+                <label
+                  className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+                    runOnWorktreeCreate ? "" : "opacity-60"
+                  }`}
+                >
+                  <span>Wait for it to finish before the agent starts</span>
+                  <Switch
+                    checked={waitForSetup}
+                    disabled={!runOnWorktreeCreate}
+                    onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run in the thread's worktree when the thread settles</span>
+                  <Switch
+                    checked={runOnSettle}
+                    onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
+                  />
+                </label>
+                <label
+                  className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+                    previewUrl.trim().length === 0 ? "opacity-60" : ""
+                  }`}
+                >
+                  <span>Open preview automatically when this action runs</span>
+                  <Switch
+                    checked={autoOpenPreview}
+                    disabled={previewUrl.trim().length === 0}
+                    onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
+                  />
+                </label>
+              </>
+            )}
             {validationError && <p className="text-sm text-destructive">{validationError}</p>}
           </fieldset>
         </form>
