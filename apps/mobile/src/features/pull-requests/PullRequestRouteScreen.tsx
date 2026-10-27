@@ -66,7 +66,16 @@ import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/cont
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
-import { use, useCallback, useMemo, useLayoutEffect, useEffect, useRef, useState } from "react";
+import {
+  use,
+  useEffectEvent,
+  useCallback,
+  useMemo,
+  useLayoutEffect,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Linking,
   Platform,
@@ -362,19 +371,22 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
   const params = route.params;
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
+  const guidesEnabled = useReviewGuidesEnabled(params);
   const viewMemoryKey = pullRequestReviewKey(params);
-  const [section, setSection] = useState<"overview" | "diff" | "guide">(
+  const [chosenSection, setSection] = useState<"overview" | "diff" | "guide">(
     () => readPullRequestView(viewMemoryKey).section ?? "overview",
   );
+  const shown = (tab: typeof chosenSection) =>
+    !guidesEnabled && tab === "guide" ? "overview" : tab;
+  const section = shown(chosenSection);
   const [visitedSections, setVisitedSections] = useState<ReadonlySet<string>>(
     () => new Set([section]),
   );
   // Keep each tab's native list and measured rows alive when it is hidden.
-  const requestedSection = useRef(section);
+  const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const filesContent = usePullRequestFilesSection(params);
-  const guidesEnabled = useReviewGuidesEnabled(params);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>({
     ...DEFAULT_ACTIVITY_FILTER,
     bots: true,
@@ -423,19 +435,6 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
     setSection(next);
     rememberPullRequestView(viewMemoryKey, { section: next });
   };
-  const topInset = insets.top;
-  if (!guidesEnabled && section === "guide") {
-    setSection("overview");
-    setVisitedSections((current) =>
-      current.has("overview") ? current : new Set(current).add("overview"),
-    );
-  }
-  useLayoutEffect(() => {
-    if (!guidesEnabled && requestedSection.current === "guide") {
-      requestedSection.current = "overview";
-      currentScrollOffset.current = scrollOffsets.current.overview ?? -topInset;
-    }
-  }, [guidesEnabled, topInset, currentScrollOffset, requestedSection, scrollOffsets]);
   const tabContent = activityContent;
   const filesY = useRef(0);
   const descriptionY = useRef(0);
@@ -699,7 +698,10 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
           onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
         >
           {(["overview", "guide", "diff"] as const)
-            .filter((tab) => visitedSections.has(tab) && (tab !== "guide" || guidesEnabled))
+            .filter(
+              (tab) =>
+                (visitedSections.has(tab) || tab === section) && (tab !== "guide" || guidesEnabled),
+            )
             .map((tab) => (
               <View
                 key={tab}
@@ -719,7 +721,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                     >
                       <View className="px-4 py-3">
                         <SegmentedControl
-                          variant="tabs"
+                          variant="standalone"
                           options={[
                             { value: "overview", label: "Overview", icon: "doc.text" },
                             ...(guidesEnabled
@@ -908,7 +910,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                             >
                               <PullRequestIdentity pr={identity} params={params} />
                               <SegmentedControl
-                                variant="tabs"
+                                variant="standalone"
                                 options={[
                                   { value: "overview", label: "Overview", icon: "doc.text" },
                                   ...(guidesEnabled
@@ -1244,29 +1246,23 @@ export function PullRequestDiffContent({
   useLayoutEffect(() => {
     if (activeChapterId !== undefined) jumpStarted.current = false;
   }, [activeChapterId]);
-  const lastSelection = useRef({ path: params.path, id: params.fileSelectionId });
-  // Each sheet selection jumps in this reader, including reselecting its original file.
-  useEffect(() => {
-    if (
-      lastSelection.current.path === params.path &&
-      lastSelection.current.id === params.fileSelectionId
-    )
-      return;
-    lastSelection.current = { path: params.path, id: params.fileSelectionId };
+  const jumpScope = pullRequestFileJumpScope(params);
+  const jumpToFile = useEffectEvent((path: string) => {
     if (params.focus) navigation.setParams({ focus: undefined });
-    setJumpPath(params.path);
-    setChapterId(reviewFileGroup(params.path));
+    setJumpPath(path);
+    setChapterId(reviewFileGroup(path));
     setSelectedRowId(null);
     setRangeEndRowId(null);
     jumpStarted.current = false;
-    const file = data.files.find((entry) => entry.path === params.path);
+    const file = data.files.find((entry) => entry.path === path);
     if (!file || !nativeView.current) return;
     setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
     jumpStarted.current = true;
     void nativeView.current.scrollToFile(file.id, false).catch(() => {
       jumpStarted.current = false;
     });
-  }, [params.path, params.fileSelectionId, params.focus, data.files, navigation]);
+  });
+  useEffect(() => subscribePullRequestFileJump(jumpScope, (path) => jumpToFile(path)), [jumpScope]);
   const appliedFilter = useRef(filter.hideTestFiles);
   useEffect(() => {
     if (appliedFilter.current === filter.hideTestFiles) return;
@@ -1726,7 +1722,7 @@ export function PullRequestDiffContent({
             onPress={() => {
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
-              jumpedUnder.current = null;
+              jumpStarted.current = false;
               setSelectedRowId(null);
               setRangeEndRowId(null);
               setCollapsedIds(EMPTY_IDS);

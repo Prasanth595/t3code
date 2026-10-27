@@ -171,7 +171,6 @@ function reviewFileQueries({
   cwd,
   source,
   baseRef,
-  ignoreWhitespace,
   previewInput,
   scope,
   requested,
@@ -226,7 +225,11 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
 const parsedPatchAtom = Atom.family((key: string) => {
-  const [theme, ignoreWhitespace, target] = JSON.parse(key) as ["light" | "dark", boolean, ReviewPatchTarget];
+  const [theme, ignoreWhitespace, target] = JSON.parse(key) as [
+    "light" | "dark",
+    boolean,
+    ReviewPatchTarget,
+  ];
   return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
     AsyncResult.map(result, (source) => {
       let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
@@ -252,7 +255,8 @@ const reviewPatchesAtom = Atom.family((key: string) => {
     ReadonlyArray<readonly [number, ReviewPatchTarget]>,
   ];
   const parsed = entries.map(
-    ([index, target]) => [index, parsedPatchAtom(JSON.stringify([theme, ignoreWhitespace, target]))] as const,
+    ([index, target]) =>
+      [index, parsedPatchAtom(JSON.stringify([theme, ignoreWhitespace, target]))] as const,
   );
   return Atom.make((get) => new Map(parsed.map(([index, atom]) => [index, get(atom)])));
 });

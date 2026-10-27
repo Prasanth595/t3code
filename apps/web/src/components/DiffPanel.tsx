@@ -52,7 +52,7 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
-import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { WorkingChangesReview } from "./diffs/WorkingChangesReview";
 import { DiffDisplayControls } from "./diffs/DiffDisplayControls";
 import { DiffFileTree } from "./diffs/DiffFileTree";

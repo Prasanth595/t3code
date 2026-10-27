@@ -882,22 +882,6 @@ function PullRequestCodeTab({
     );
   };
 
-  // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
-  // an effect reading a ref could run before that node exists and would never arm the observer.
-  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (sentinel === null || !canLoadNextSlice) return;
-    const observer = new IntersectionObserver(
-      (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
-      },
-      // Start the next slice slightly before the sentinel is on screen.
-      { rootMargin: "240px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadNextSlice, loadNextSlice, sentinel]);
-
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
@@ -1974,7 +1958,7 @@ function PullRequestCodeTab({
                 // indicators on its actual controls.
                 className="@container h-full overflow-auto [scrollbar-gutter:stable]"
                 containerRef={setScroller}
-                viewerRef={setViewer}
+                viewerRef={codeViewReveal.attach}
                 items={items}
                 selectedLines={selectedLines}
                 onSelectedLinesChange={setSelectedLines}

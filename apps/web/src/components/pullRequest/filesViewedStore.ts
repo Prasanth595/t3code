@@ -20,7 +20,7 @@ import {
   toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
-} from "./pullRequestFilesViewed.logic";
+} from "@t3tools/client-runtime/review-file-viewed";
 
 export interface FilesViewedTarget {
   readonly environmentId: EnvironmentId;

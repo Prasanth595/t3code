@@ -94,7 +94,8 @@ export function PullRequestCommentsSheet({
             options={options}
             selected={selectedStatus}
             onSelect={setStatus}
-            variant="tabs"
+            variant="standalone"
+            role="tab"
             size="compact"
           />
         </View>

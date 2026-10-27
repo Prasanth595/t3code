@@ -687,11 +687,17 @@ export function PullRequestSummaryTab({
                             {/* Colour alone says nothing to a reader who cannot see it, and the
                               login beside this is already in the accessible name. */}
                             {entry.outcome ? (
-                              <span className="sr-only">
-                                {entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome)}
-                              </span>
+                              <>
+                                <PullRequestReviewOutcomeAvatarBadge
+                                  outcome={entry.outcome}
+                                  stale={entry.stale}
+                                />
+                                <span className="sr-only">
+                                  {entry.stale
+                                    ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
+                                    : pullRequestReviewOutcomeLabel(entry.outcome)}
+                                </span>
+                              </>
                             ) : null}
                           </TooltipTrigger>
                           <TooltipPopup side="bottom">

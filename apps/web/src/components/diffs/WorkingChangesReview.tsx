@@ -123,7 +123,7 @@ function useWorkingChanges(
     baseRef: null,
     ignoreWhitespace: false,
     theme: resolvedTheme,
-    revision: source?.diffHash,
+    previewInput: { cwd, ...(scope ? { workingTreeScope: scope } : {}) },
     preview: parsed,
     workingTreeScope: scope,
   });

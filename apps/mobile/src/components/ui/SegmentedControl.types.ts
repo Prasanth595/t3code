@@ -15,5 +15,4 @@ export interface SegmentedControlProps<Value extends number | string> {
   readonly variant?: "standalone" | "card";
   readonly role?: "tab" | "button";
   readonly className?: string;
-  readonly variant?: "default" | "tabs";
 }

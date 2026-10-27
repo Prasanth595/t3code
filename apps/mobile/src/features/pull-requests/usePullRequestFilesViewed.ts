@@ -8,10 +8,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
-import { viewedOverlay, type ViewedState } from "./pullRequestFilesViewed";
 
 export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
-  const registry = use(RegistryContext);
   const target = pullRequestTarget(params);
   const supported = Boolean(pr?.capabilities.viewedFiles);
   const permission = useAtomValue(

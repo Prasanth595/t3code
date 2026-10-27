@@ -18,12 +18,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import type { ReviewSectionItem } from "./reviewModel";
-import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
-import { type Ref, useImperativeHandle } from "react";
 import {
   Platform,
   Pressable,
