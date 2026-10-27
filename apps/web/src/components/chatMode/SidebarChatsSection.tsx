@@ -8,6 +8,7 @@ import {
   useMiraAccess,
   useMiraChatHistory,
 } from "~/cloud/miraChat";
+import { ensureLocalApi } from "~/localApi";
 import { RelativeTimeLabel } from "../sidebar/SidebarThreadRow";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
@@ -62,7 +63,13 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
                   size="icon-xs"
                   variant="ghost-muted"
                   aria-label={`Delete ${chat.title}`}
-                  onClick={() => miraChatHistory.remove(chat.id)}
+                  onClick={async () => {
+                    const confirmed = await ensureLocalApi().dialogs.confirm(
+                      `Delete "${chat.title}"?\nIt is removed from every device signed in to your account.`,
+                      { variant: "destructive" },
+                    );
+                    if (confirmed) miraChatHistory.remove(chat.id);
+                  }}
                 >
                   <Trash2Icon />
                 </Button>

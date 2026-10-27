@@ -13,7 +13,7 @@ import {
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import type { SaasChatConversation } from "@t3tools/contracts/saas";
 import { useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, PlusIcon, XIcon } from "lucide-react";
+import { FileTextIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
 import { createRef, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
@@ -65,7 +65,7 @@ const attachmentLinks = (
 
 const toTimelineMessages = (
   chat: SaasChatConversation | undefined,
-  streaming: { readonly chatId: string; readonly text: string } | null,
+  streaming: { readonly chatId: string; readonly messageId: string; readonly text: string } | null,
   relayUrl: string | null,
 ): ReadonlyArray<ChatMessage> => {
   const messages: Array<ChatMessage> = (chat?.messages ?? []).map((message) => ({
@@ -82,7 +82,8 @@ const toTimelineMessages = (
   if (chat !== undefined && streaming?.chatId === chat.id && streaming.text !== "") {
     const at = chat.updatedAt;
     messages.push({
-      id: MessageId.make(`streaming-${chat.id}`),
+      // The saved reply reuses this id, so its row and visuals stay mounted when it finishes.
+      id: MessageId.make(streaming.messageId),
       role: "assistant",
       text: streaming.text,
       runId: null,
@@ -159,7 +160,12 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
             Searching the web…
           </p>
         ) : null}
-        <ChatModeComposer busy={busy} onSend={send} />
+        <ChatModeComposer
+          busy={busy}
+          replying={chat !== undefined && history.streaming?.chatId === chat.id}
+          onSend={send}
+          onStop={() => miraChatHistory.stop()}
+        />
       </div>
       <AgenticUpgradeDialog open={upgradeOpen} onOpenChange={setUpgradeOpen} />
     </SidebarInset>
@@ -171,7 +177,11 @@ function ChatTimeline({
   streaming,
 }: {
   readonly chat: SaasChatConversation;
-  readonly streaming: { readonly chatId: string; readonly text: string } | null;
+  readonly streaming: {
+    readonly chatId: string;
+    readonly messageId: string;
+    readonly text: string;
+  } | null;
 }) {
   const threadKey = `mira-chat-${chat.id}`;
   const listRef = useRef<LegendListRef | null>(null);
@@ -301,10 +311,15 @@ const ACCEPTED_FILES = [
 // The thread composer's surface, attach and send buttons, without model controls.
 function ChatModeComposer({
   busy,
+  replying,
   onSend,
+  onStop,
 }: {
   readonly busy: boolean;
+  /** Mira is answering this chat, so the send button stops her instead. */
+  readonly replying: boolean;
   readonly onSend: (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => Promise<void>;
+  readonly onStop: () => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<ReadonlyArray<PendingFile>>([]);
@@ -427,26 +442,43 @@ function ChatModeComposer({
                 >
                   <PlusIcon aria-hidden className="size-4" />
                 </button>
-                <button
-                  type="submit"
-                  aria-label="Send message"
-                  disabled={!canSend}
-                  className="relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:shadow-message-action/24 enabled:inset-shadow-control-highlight hover:scale-105 hover:bg-message-action-hover active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none"
-                >
-                  {busy ? (
-                    <Spinner size="sm" aria-hidden="true" />
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                      <path
-                        d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </button>
+                {replying ? (
+                  <button
+                    type="button"
+                    aria-label="Stop answer"
+                    onClick={onStop}
+                    className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 sm:h-8 sm:w-8"
+                  >
+                    <SquareIcon aria-hidden className="size-3 fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    aria-label="Send message"
+                    disabled={!canSend}
+                    className="relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:shadow-message-action/24 enabled:inset-shadow-control-highlight hover:scale-105 hover:bg-message-action-hover active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none"
+                  >
+                    {busy ? (
+                      <Spinner size="sm" aria-hidden="true" />
+                    ) : (
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           </ComposerSurface.Main>

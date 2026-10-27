@@ -463,6 +463,15 @@ export const CHAT_VISUAL_GUIDE = [
   HTML_RENDER_THEME_GUIDE,
 ].join(" ");
 
+/** The reply without a visual still being written at its end, for a reply that stopped there. */
+export function withoutOpenVisual(text: string): string {
+  const last = splitChatVisuals(text).at(-1);
+  if (last?.kind !== "visual" || last.complete) return text;
+  const lines = text.split("\n");
+  const open = lines.findLastIndex((line) => FENCE_OPEN.exec(line)?.[2] === CHAT_VISUAL_LANGUAGE);
+  return open === -1 ? text : lines.slice(0, open).join("\n").trimEnd();
+}
+
 export type ChatVisualSegment =
   | { readonly kind: "markdown"; readonly text: string }
   | { readonly kind: "visual"; readonly html: string; readonly complete: boolean };

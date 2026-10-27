@@ -246,6 +246,42 @@ describe("ChatHistory", () => {
     expect(history.getSnapshot().streaming).toBeNull();
   });
 
+  it("saves the streamed reply under the id it streamed with", async () => {
+    let streamedId: string | undefined;
+    const history: ChatHistory = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async (request) => {
+        request.onText("Hel");
+        streamedId = history.getSnapshot().streaming?.messageId;
+        return { ok: true, text: "Hello" };
+      },
+    });
+    await history.send(null, "Hi");
+    expect(history.getSnapshot().chats[0]?.messages[1]?.id).toBe(streamedId);
+  });
+
+  it("stops a reply, keeping what arrived without a half-written visual", async () => {
+    const history: ChatHistory = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: (request) =>
+        new Promise((resolve) => {
+          request.onText("Here is a chart.\n\n````visual\n<div><p>Ha");
+          request.signal?.addEventListener("abort", () =>
+            resolve({ ok: false, code: "network", message: "Aborted" }),
+          );
+          history.stop();
+        }),
+    });
+    await history.send(null, "Hi");
+    const state = history.getSnapshot();
+    expect(state.chats[0]?.messages.map((message) => message.content)).toEqual([
+      "Hi",
+      "Here is a chart.",
+    ]);
+    expect(state.streaming).toBeNull();
+    expect(state.error).toBeNull();
+  });
+
   it("reports a reply cut off midway instead of keeping half of it", async () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
@@ -267,6 +303,24 @@ describe("ChatHistory", () => {
       fetch: async () => new Response(body),
     });
     expect(result).toMatchObject({ ok: false, code: "network" });
+  });
+
+  it("keeps syncing when one chat fails to save", async () => {
+    const { history } = makeHistory({});
+    const stuck = await history.send(null, "Stuck");
+    const fine = await history.send(null, "Fine");
+    const { remote, store } = memoryRemote("account", [
+      remoteChat("other", "2026-10-25T00:00:00.000Z"),
+    ]);
+    await history.setRemote({
+      ...remote,
+      save: async (chat) => {
+        if (chat.id === stuck) throw new Error("refused");
+        await remote.save(chat);
+      },
+    });
+    expect(store.has(fine)).toBe(true);
+    expect(history.getSnapshot().chats.map((chat) => chat.id)).toContain("other");
   });
 
   it("keeps chats older than the relay's listing window", async () => {

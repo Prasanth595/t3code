@@ -7,6 +7,7 @@ import {
   readHtmlRenderLinkRequest,
   chatVisualsAsText,
   splitChatVisuals,
+  withoutOpenVisual,
 } from "./htmlRender.ts";
 import { T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
@@ -113,6 +114,15 @@ describe("chatVisualsAsText", () => {
 
   it("leaves replies without visuals untouched", () => {
     expect(chatVisualsAsText("Plain ```ts\ncode\n```")).toBe("Plain ```ts\ncode\n```");
+  });
+});
+
+describe("withoutOpenVisual", () => {
+  it("drops a visual cut off at the end and keeps finished ones", () => {
+    const done = ["Intro", "````visual", "<p>A</p>", "````"].join("\n");
+    const cut = [done, "", "More", "", "````visual", "<div><p>Ha"].join("\n");
+    expect(withoutOpenVisual(cut)).toBe(`${done}\n\nMore`);
+    expect(withoutOpenVisual(done)).toBe(done);
   });
 });
 

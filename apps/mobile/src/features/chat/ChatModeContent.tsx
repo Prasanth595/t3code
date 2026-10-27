@@ -83,6 +83,7 @@ export function ChatModeContent(props: {
   const chat =
     props.chatId === null ? undefined : history.chats.find((item) => item.id === props.chatId);
   const busy = history.streaming !== null;
+  const replying = chat !== undefined && history.streaming?.chatId === chat.id;
   const error = history.error !== null && history.error.chatId === chat?.id ? history.error : null;
 
   const send = (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => {
@@ -124,7 +125,13 @@ export function ChatModeContent(props: {
           />
         </View>
       ) : null}
-      <ChatComposer busy={busy} bottomInset={insets.bottom} onSend={send} />
+      <ChatComposer
+        busy={busy}
+        replying={replying}
+        bottomInset={insets.bottom}
+        onSend={send}
+        onStop={() => miraChatHistory.stop()}
+      />
     </Animated.View>
   );
 }
@@ -133,7 +140,11 @@ const FOLLOW_THRESHOLD = 80;
 
 function ChatMessages(props: {
   readonly chat: SaasChatConversation;
-  readonly streaming: { readonly text: string; readonly searching?: boolean } | null;
+  readonly streaming: {
+    readonly messageId: string;
+    readonly text: string;
+    readonly searching?: boolean;
+  } | null;
 }) {
   const scrollRef = useRef<ScrollViewInstance>(null);
   // Follow new content only from the bottom, so a visual resizing above (a tab switch) keeps its place.
@@ -159,12 +170,24 @@ function ChatMessages(props: {
       // The keyboard shrinks the list; keep the latest message in view, as threads do.
       onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
     >
-      {props.chat.messages.map((message) => (
-        <ChatMessageRow key={message.id} message={message} />
-      ))}
-      {props.streaming === null ? null : props.streaming.text !== "" ? (
-        <AssistantRow text={props.streaming.text} streaming />
-      ) : null}
+      {/* One list, so the streamed reply keeps its row (and its visuals) once it is saved. */}
+      {[
+        ...props.chat.messages.map((message) => (
+          <ChatMessageRow key={message.id} message={message} streaming={false} />
+        )),
+        props.streaming === null || props.streaming.text === "" ? null : (
+          <ChatMessageRow
+            key={props.streaming.messageId}
+            message={{
+              id: props.streaming.messageId,
+              role: "assistant",
+              content: props.streaming.text,
+              createdAt: props.chat.updatedAt,
+            }}
+            streaming
+          />
+        ),
+      ]}
       {props.streaming !== null && (props.streaming.searching || props.streaming.text === "") ? (
         <AppText className="mb-5 px-1 text-sm text-foreground-muted">
           {props.streaming.searching ? "Searching the web…" : "Thinking…"}
@@ -175,11 +198,13 @@ function ChatMessages(props: {
 }
 
 // Same bubble, spacing and footer as a user message in the thread feed.
-function ChatMessageRow(props: { readonly message: SaasChatMessage }) {
+function ChatMessageRow(props: { readonly message: SaasChatMessage; readonly streaming: boolean }) {
   const { message } = props;
   const styles = useMarkdownStyles();
   const { color: iconColor } = useResolveClassNames("text-icon-subtle");
-  if (message.role !== "user") return <AssistantRow text={message.content} streaming={false} />;
+  if (message.role !== "user") {
+    return <AssistantRow text={message.content} streaming={props.streaming} />;
+  }
   return (
     <Animated.View className="mb-5 items-end" entering={FadeInUp.duration(220)}>
       <View className="min-w-0 max-w-[85%] rounded-[20px] bg-user-bubble">
@@ -376,8 +401,11 @@ const COMPACT_ATTACHMENT_LIMIT = 1;
  */
 function ChatComposer(props: {
   readonly busy: boolean;
+  /** Mira is answering this chat, so the send button stops her instead. */
+  readonly replying: boolean;
   readonly bottomInset: number;
   readonly onSend: (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => void;
+  readonly onStop: () => void;
 }) {
   const bodyText = useScaledTextRole("body");
   const { color: foregroundColor } = useResolveClassNames("text-foreground");
@@ -471,13 +499,22 @@ function ChatComposer(props: {
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                <ComposerActionButton
-                  accessibilityLabel={pending.uploading ? "Uploading files" : "Send message"}
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canSend}
-                  onPress={submit}
-                />
+                {props.replying ? (
+                  <ComposerActionButton
+                    accessibilityLabel="Stop answer"
+                    icon="stop.fill"
+                    variant="danger"
+                    onPress={props.onStop}
+                  />
+                ) : (
+                  <ComposerActionButton
+                    accessibilityLabel={pending.uploading ? "Uploading files" : "Send message"}
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canSend}
+                    onPress={submit}
+                  />
+                )}
               </View>
             </View>
             <Animated.View style={compactEditor.editorStyle}>
