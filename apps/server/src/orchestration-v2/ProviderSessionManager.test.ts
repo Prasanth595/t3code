@@ -328,11 +328,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
+    readonly hasStaleCredentials?: Effect.Effect<boolean>;
+    readonly beforeResume?: Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly compactThread?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -420,13 +423,22 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             : {
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
+          ...(options.hasStaleCredentials === undefined
+            ? {}
+            : { hasStaleCredentials: options.hasStaleCredentials }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
               ...current,
               resumeCount: current.resumeCount + 1,
-            })).pipe(Effect.as(threadInput.providerThread)),
+            })).pipe(
+              Effect.andThen(options.beforeResume ?? Effect.void),
+              Effect.as(threadInput.providerThread),
+            ),
           startTurn: () => options.startTurn ?? Effect.void,
+          ...(options.compactThread === undefined
+            ? {}
+            : { compactThread: () => options.compactThread! }),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -475,11 +487,14 @@ function layerTest(input: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
   };
+  readonly hasStaleCredentials?: Effect.Effect<boolean>;
+  readonly beforeResume?: Effect.Effect<void>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly compactThread?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -499,6 +514,10 @@ function layerTest(input: {
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
+      ...(input.hasStaleCredentials === undefined
+        ? {}
+        : { hasStaleCredentials: input.hasStaleCredentials }),
+      ...(input.beforeResume === undefined ? {} : { beforeResume: input.beforeResume }),
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
@@ -515,6 +534,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.compactThread === undefined ? {} : { compactThread: input.compactThread }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -3540,5 +3560,185 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each(["startTurn", "compactThread"] as const)(
+  "ProviderSessionManagerV2 replaces stale credentials only after shared work settles and resumes native history with %s",
+  (operation) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const stale = yield* Ref.make(false);
+      const background = yield* Ref.make(false);
+      const resumeEntered = yield* Deferred.make<void>();
+      const resumeContinue = yield* Deferred.make<void>();
+      const pauseResume = yield* Ref.make(false);
+      const pauseAttachWrite = {
+        armed: yield* Ref.make(false),
+        paused: yield* Deferred.make<void>(),
+      };
+      const pauseProbe = yield* Ref.make(false);
+      const probeEntered = yield* Deferred.make<void>();
+      const probeContinue = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const a = ThreadId.make("auth-recovery-a");
+        const b = ThreadId.make("auth-recovery-b");
+        const providerSessionId = ids.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: a, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: b, now }),
+          ],
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const first = yield* open(a);
+        const providerThread = makeProviderThread({
+          idAllocator: ids,
+          threadId: a,
+          providerSessionId,
+          now,
+          nativeThreadId: "persisted-native-history",
+        });
+        yield* sink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId: a }),
+              type: "provider-thread.updated",
+              threadId: a,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const runId = ids.derive.run({ threadId: a, ordinal: 1 });
+        const startInput = {
+          appThread: (yield* projections.getThreadProjection(a)).thread,
+          threadId: a,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: ids.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: ids.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* ids.allocate.message({ threadId: a, ordinal: 1 }),
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        } as const;
+        yield* first[operation]!(startInput);
+        yield* Ref.set(stale, true);
+        assert.strictEqual(yield* open(b), first);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        const subscription = yield* first.subscribeEvents!;
+        const terminal: ProviderAdapter.ProviderAdapterV2Event = {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: ids.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "finished",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        };
+        yield* Queue.offer(
+          (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!,
+          terminal,
+        );
+        assert.deepEqual(yield* subscription.events.pipe(Stream.runHead), Option.some(terminal));
+        yield* Ref.set(background, true);
+        assert.strictEqual(yield* open(b), first);
+        yield* Ref.set(background, false);
+        yield* Ref.set(pauseResume, true);
+        const pending = yield* first
+          .resumeThread({ threadId: a, providerThread, modelSelection, runtimePolicy })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(resumeEntered);
+        assert.strictEqual(yield* open(b), first);
+        yield* Deferred.succeed(resumeContinue, undefined);
+        yield* Fiber.join(pending);
+        yield* manager.detach({ providerSessionId, threadId: a });
+        yield* Ref.set(pauseAttachWrite.armed, true);
+        const pendingStart = yield* first[operation]!(startInput).pipe(Effect.forkChild);
+        yield* Deferred.await(pauseAttachWrite.paused);
+        assert.strictEqual(yield* open(b), first);
+        yield* Fiber.interrupt(pendingStart);
+        yield* Ref.set(pauseProbe, true);
+        const reopening = yield* open(b).pipe(Effect.forkChild);
+        yield* Deferred.await(probeEntered);
+        yield* first[operation]!({ ...startInput, runOrdinal: 2 });
+        yield* Deferred.succeed(probeContinue, undefined);
+        assert.strictEqual(yield* Fiber.join(reopening), first);
+        const finished = yield* first.subscribeEvents!;
+        const secondTerminal = { ...terminal, runOrdinal: 2 };
+        yield* Queue.offer(
+          (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!,
+          secondTerminal,
+        );
+        assert.deepEqual(yield* finished.events.pipe(Stream.runHead), Option.some(secondTerminal));
+        const replacement = yield* open(b);
+        assert.notStrictEqual(replacement, first);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        const saved = (yield* projections.getThreadProjection(a)).providerThreads.find(
+          (thread) => thread.id === providerThread.id,
+        )!;
+        assert.equal(saved.nativeThreadRef?.nativeId, "persisted-native-history");
+        yield* replacement.resumeThread({
+          threadId: a,
+          providerThread: saved,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        assert.equal((yield* first[operation]!(startInput).pipe(Effect.result))._tag, "Failure");
+        assert.strictEqual(yield* open(a), replacement);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            pauseAttachWrite,
+            compactThread: Effect.void,
+            idleTimeoutMs: 60_000,
+            beforeOpen: () => Ref.set(stale, false),
+            hasStaleCredentials: Ref.get(stale),
+            hasPendingBackgroundWork: Ref.getAndSet(pauseProbe, false).pipe(
+              Effect.flatMap((pause) =>
+                pause
+                  ? Deferred.succeed(probeEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(probeContinue)),
+                    )
+                  : Effect.void,
+              ),
+              Effect.andThen(Ref.get(background)),
+            ),
+            beforeResume: Ref.getAndSet(pauseResume, false).pipe(
+              Effect.flatMap((pause) =>
+                pause
+                  ? Deferred.succeed(resumeEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(resumeContinue)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          }),
+        ),
+      );
     }),
 );

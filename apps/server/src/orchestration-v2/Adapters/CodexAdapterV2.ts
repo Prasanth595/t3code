@@ -338,6 +338,26 @@ function toProtocolError(
   });
 }
 
+// Codex's guarded refresh refuses a different on-disk account; account/read cannot reload it.
+function isCodexAccountMismatch(message: string, code: string | null | undefined): boolean {
+  return (
+    code === "unauthorized" &&
+    message.includes(
+      "Your access token could not be refreshed because you have since logged out or signed in to another account.",
+    )
+  );
+}
+
+function codexAuthRecoveryMessage(
+  message: string | undefined,
+  code: string | null | undefined,
+  allowAuthRecovery: boolean,
+) {
+  return allowAuthRecovery && message !== undefined && isCodexAccountMismatch(message, code)
+    ? `${message} Let other Codex turns and background work finish, then send your message again. If it still fails, run codex login in this provider's home and restart T3 when Codex is idle.`
+    : message;
+}
+
 function normalizeCodexCause(error: unknown): unknown {
   return error;
 }
@@ -1606,6 +1626,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // A replacement must complete a turn before another auth restart; broken saved auth must not loop.
+  const authRecoveryAvailable = yield* Ref.make(true);
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1632,6 +1654,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const staleCredentials = yield* Ref.make(false);
+        const recordAuthFailure = Effect.fn("CodexAdapterV2.recordAuthFailure")(function* (
+          message: string,
+          code: string | null,
+        ) {
+          if (
+            resolvedRuntime === undefined &&
+            isCodexAccountMismatch(message, code) &&
+            (yield* Ref.getAndSet(authRecoveryAvailable, false))
+          ) {
+            yield* Ref.set(staleCredentials, true);
+          }
+        });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
@@ -4441,6 +4476,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("error", (payload) =>
           Effect.gen(function* () {
+            if (!payload.willRetry) {
+              yield* recordAuthFailure(
+                payload.error.message,
+                codexErrorInfoCode(payload.error.codexErrorInfo),
+              );
+            }
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -4452,7 +4493,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeCode: notificationCode,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    message: codexAuthRecoveryMessage(
+                      payload.error.additionalDetails?.trim() || payload.error.message,
+                      notificationCode,
+                      resolvedRuntime === undefined,
+                    ),
                     code: notificationCode,
                     class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
@@ -5554,7 +5599,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({
-                        message: input.failureMessage,
+                        message: codexAuthRecoveryMessage(
+                          input.failureMessage,
+                          failureCode,
+                          resolvedRuntime === undefined,
+                        ),
                         code: failureCode,
                         class: failureClass,
                       }),
@@ -6094,6 +6143,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            if (payload.turn.error != null) {
+              yield* recordAuthFailure(
+                payload.turn.error.message,
+                codexErrorInfoCode(payload.turn.error.codexErrorInfo),
+              );
+            }
+            if (payload.turn.status === "completed" && !(yield* Ref.get(staleCredentials))) {
+              yield* Ref.set(authRecoveryAvailable, true);
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -6534,6 +6592,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          ...(resolvedRuntime === undefined
+            ? { hasStaleCredentials: Ref.get(staleCredentials) }
+            : {}),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {

@@ -202,6 +202,7 @@ interface LiveSessionEntry {
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
+  readonly pendingOperations: number;
   readonly lastActivityAtMs: number;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
@@ -893,6 +894,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
@@ -906,8 +908,15 @@ export const layerWithOptions = (
                 return [existing === undefined ? "gone" : "changed", current] as const;
               }
               if (
+                input.onlyIfIdleRuntime !== undefined &&
+                existing.runtime !== input.onlyIfIdleRuntime
+              ) {
+                return ["kept", current] as const;
+              }
+              if (
                 input.onlyIfIdleGeneration !== undefined &&
                 (existing.busyTurns.size > 0 ||
+                  existing.pendingOperations > 0 ||
                   existing.idleGeneration !== input.onlyIfIdleGeneration)
               ) {
                 return ["kept", current] as const;
@@ -970,6 +979,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1143,6 +1153,36 @@ export const layerWithOptions = (
             ),
           );
         },
+      );
+
+      const releaseIfStaleCredentials = Effect.fn(
+        "ProviderSessionManager.releaseIfStaleCredentials",
+      )(
+        function* (entry: LiveSessionEntry) {
+          const runtime = entry.runtime;
+          if (
+            entry.busyTurns.size > 0 ||
+            entry.pendingOperations > 0 ||
+            runtime.hasStaleCredentials === undefined
+          )
+            return;
+          if (!(yield* runtime.hasStaleCredentials)) return;
+          if (
+            runtime.hasPendingBackgroundWork !== undefined &&
+            (yield* runtime.hasPendingBackgroundWork.pipe(
+              Effect.catchCause(() => Effect.succeed(true)),
+            ))
+          )
+            return;
+          yield* releaseEntry({
+            providerSessionId: runtime.providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Codex sign-in changed. Send the message again to use the current sign-in.",
+            onlyIfIdleGeneration: entry.idleGeneration,
+            onlyIfIdleRuntime: runtime,
+          });
+        },
+        (effect, entry) => effect.pipe(logReleaseFailure(entry.runtime.providerSessionId)),
       );
 
       const withActivityError = <A, E, R>(
@@ -1681,7 +1721,46 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
-        return {
+        const withTurnActivity =
+          (start: typeof runtime.startTurn, operation = "send"): typeof runtime.startTurn =>
+          (input) =>
+            observeActivity(
+              providerSessionId,
+              ensureThreadAttached({
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+              }),
+            ).pipe(
+              // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
+              Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId: input.threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
+                Effect.acquireUseRelease(
+                  observeActivity(
+                    providerSessionId,
+                    markBusy(
+                      providerSessionId,
+                      busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    ),
+                  ),
+                  () => start(input).pipe(turnMetrics(operation, input.modelSelection.model)),
+                  (_, exit) =>
+                    Exit.isFailure(exit)
+                      ? observeActivity(
+                          providerSessionId,
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        )
+                      : Effect.void,
+                ),
+              ),
+            );
+        const exposed: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           ...runtime,
           subscribeEvents,
           events: Stream.unwrap(
@@ -1785,44 +1864,12 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          startTurn: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
+          startTurn: withTurnActivity(runtime.startTurn),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : {
+                compactThread: withTurnActivity(runtime.compactThread, "compact"),
               }),
-            ).pipe(
-              // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
-              Effect.andThen(
-                Effect.acquireUseRelease(
-                  observeActivity(
-                    providerSessionId,
-                    markBusy(
-                      providerSessionId,
-                      busyTurnKey(input.providerThread.id, input.runOrdinal),
-                    ),
-                  ),
-                  () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
-                  (_, exit) =>
-                    Exit.isFailure(exit)
-                      ? observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
-                        )
-                      : Effect.void,
-                ),
-              ),
-            ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
@@ -1839,6 +1886,61 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("runtime-request-response")),
               ),
             ),
+        };
+        // Reserve before any async attachment/start work; an old handle must never send after replacement.
+        const withRuntimeUse = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          runtime.hasStaleCredentials === undefined
+            ? effect
+            : Effect.acquireUseRelease(
+                Ref.modify(sessions, (current) => {
+                  const key = sessionKey(providerSessionId);
+                  const entry = current.get(key);
+                  if (entry?.runtime !== runtime) return [false, current] as const;
+                  return [
+                    true,
+                    new Map(current).set(key, {
+                      ...entry,
+                      pendingOperations: entry.pendingOperations + 1,
+                      idleGeneration: entry.idleGeneration + 1,
+                    }),
+                  ] as const;
+                }).pipe(
+                  Effect.flatMap((reserved) =>
+                    reserved
+                      ? Effect.void
+                      : Effect.fail(
+                          new ProviderAdapter.ProviderAdapterProtocolError({
+                            driver: runtime.driver,
+                            detail:
+                              "Provider session changed before this request started. Send the message again.",
+                          }),
+                        ),
+                  ),
+                ),
+                () => effect,
+                () =>
+                  Ref.update(sessions, (current) => {
+                    const key = sessionKey(providerSessionId);
+                    const entry = current.get(key);
+                    return entry?.runtime !== runtime
+                      ? current
+                      : new Map(current).set(key, {
+                          ...entry,
+                          pendingOperations: entry.pendingOperations - 1,
+                        });
+                  }).pipe(Effect.andThen(scheduleIdleReleaseInternal(providerSessionId))),
+              );
+        return {
+          ...exposed,
+          ensureThread: (input) => withRuntimeUse(exposed.ensureThread(input)),
+          resumeThread: (input) => withRuntimeUse(exposed.resumeThread(input)),
+          forkThread: (input) => withRuntimeUse(exposed.forkThread(input)),
+          startTurn: (input) => withRuntimeUse(exposed.startTurn(input)),
+          ...(exposed.compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input) => withRuntimeUse(exposed.compactThread!(input)),
+              }),
         };
       };
 
@@ -2065,6 +2167,8 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
+              const live = (yield* Ref.get(sessions)).get(key);
+              if (live !== undefined) yield* releaseIfStaleCredentials(live);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -2181,6 +2285,7 @@ export const layerWithOptions = (
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),
+                pendingOperations: 0,
                 lastActivityAtMs: now,
                 idleFiber: null,
                 pinnedSinceMs: null,
