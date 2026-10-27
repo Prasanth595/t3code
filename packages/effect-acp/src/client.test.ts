@@ -1042,6 +1042,67 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect("deletes sessions on a v1 agent that advertises session/delete", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+
+      const initializeFiber = yield* acp.agent
+        .initialize({ protocolVersion: 2 })
+        .pipe(Effect.forkScoped);
+      const initializeRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeResponseV1, {
+          jsonrpc: "2.0",
+          id: initializeRequest.id,
+          result: {
+            protocolVersion: 1,
+            agentInfo: { name: "opencode", version: "2.1.4" },
+            agentCapabilities: { sessionCapabilities: { delete: {} } },
+          },
+        }),
+      );
+      const initialized = yield* Fiber.join(initializeFiber);
+      assert.equal(initialized.protocolVersion, 1);
+
+      const deleteFiber = yield* acp.agent
+        .deleteSession({ sessionId: "opencode-session-1" })
+        .pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(output).pipe(Effect.map((line) => ({ _tag: "request" as const, line }))),
+        Fiber.await(deleteFiber).pipe(Effect.map((exit) => ({ _tag: "settled" as const, exit }))),
+      );
+      assert.equal(
+        first._tag,
+        "request",
+        first._tag === "settled"
+          ? `deleteSession settled first: ${Cause.pretty(Exit.isFailure(first.exit) ? first.exit.cause : Cause.empty)}`
+          : "",
+      );
+      if (first._tag !== "request") return;
+      const deleteRequest = yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          jsonRpcRequest("session/delete", Schema.Struct({ sessionId: Schema.String })),
+        ),
+      )(first.line);
+      assert.equal(deleteRequest.params.sessionId, "opencode-session-1");
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: deleteRequest.id,
+          result: {},
+        }),
+      );
+      yield* Fiber.join(deleteFiber);
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
   it.effect("preserves exact ids for parallel requests with identical payloads", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
