@@ -11,11 +11,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback } from "react";
 
 import * as Runtime from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { cloudDebugLog } from "./cloudDebugLog";
 
 const managedRelayAtomRuntime = Atom.runtime(Runtime.layer);
@@ -37,7 +39,13 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
       key: (input: { readonly accountId: string; readonly environmentId: EnvironmentId }) =>
         input.accountId,
     },
-    execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
+    // Connection screens list account environments from discovery, a separate cache.
+    execute: (input, registry) =>
+      deregisterManagedRelayEnvironment(registry, input).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => void relayEnvironmentDiscovery.refresh.run(registry, undefined)),
+        ),
+      ),
   },
 );
 

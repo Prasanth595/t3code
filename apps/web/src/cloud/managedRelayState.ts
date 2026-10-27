@@ -22,6 +22,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { relayEnvironmentDiscovery } from "../state/relay";
 
 const managedRelayAtomRuntime = Atom.runtime(
   Layer.effect(
@@ -46,7 +47,13 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
       key: (input: { readonly accountId: string; readonly environmentId: EnvironmentId }) =>
         input.accountId,
     },
-    execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
+    // Connection screens list account environments from discovery, a separate cache.
+    execute: (input, registry) =>
+      deregisterManagedRelayEnvironment(registry, input).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => void relayEnvironmentDiscovery.refresh.run(registry, undefined)),
+        ),
+      ),
   },
 );
 
