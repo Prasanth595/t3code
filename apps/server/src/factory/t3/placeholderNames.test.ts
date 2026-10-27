@@ -7,7 +7,7 @@ import {
   branchNameMessage,
   isPlaceholderName,
   titleBranchName,
-  withLaunchTitleFallback,
+  withLaunchTitle,
 } from "@t3tools/shared/placeholderNames";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
@@ -47,26 +47,19 @@ const nameLaunchBranch = (
   const logger = Logger.make(({ logLevel, message }) => {
     logs.push({ level: logLevel, message: [message].flat() });
   });
-  const mode = options.mode ?? "static";
   const textGeneration = fromRunner("test", () =>
     typeof answer === "string"
       ? (Effect.succeed({ branch: answer }) as never)
       : Effect.fail(answer),
   );
-  return textGeneration
+  return withLaunchTitle(textGeneration, options.title ?? "")
     .generateBranchName({
       cwd: "/repo",
       message: "/factory Trilogy-Care/tc-supplier-portal-v2#401",
       modelSelection,
-      naming: { mode, prefix: "t3", instructions: "" },
+      naming: { mode: options.mode ?? "static", prefix: "t3", instructions: "" },
     })
     .pipe(
-      Effect.map((result) => ({ branch: result.branch, exactName: mode === "custom" })),
-      withLaunchTitleFallback(
-        options.title ?? "",
-        { branchNamingMode: mode, branchNamePrefix: "t3" },
-        modelSelection,
-      ),
       Effect.result,
       Effect.map((result) => ({
         result,
@@ -137,7 +130,6 @@ describe("generated launch branch names", () => {
       const { result, warnings } = yield* nameLaunchBranch("issue-401", { title: TITLE });
       assert.deepEqual(result._tag === "Success" ? result.success : result.failure, {
         branch: "t3/issue-401",
-        exactName: false,
       });
       assert.deepEqual(warnings, []);
     }),
@@ -161,7 +153,6 @@ describe("generated launch branch names", () => {
       const { result, warnings } = yield* nameLaunchBranch("placeholder", { title: TITLE });
       assert.deepEqual(result._tag === "Success" ? result.success : result.failure, {
         branch: "t3/repo-401-fix-invoices",
-        exactName: false,
       });
       assert.equal(warnings.length, 1);
       assert.deepEqual(warnings[0]![1], {
@@ -182,7 +173,6 @@ describe("generated launch branch names", () => {
       const { result, warnings } = yield* nameLaunchBranch(failure, { title: TITLE });
       assert.deepEqual(result._tag === "Success" ? result.success : result.failure, {
         branch: "t3/repo-401-fix-invoices",
-        exactName: false,
       });
       assert.equal(warnings.length, 1);
       assert.deepEqual(warnings[0]![1], {
@@ -226,7 +216,7 @@ describe("thread titles", () => {
 });
 
 describe("branch names from a launch title", () => {
-  const naming = { branchNamingMode: "static", branchNamePrefix: "t3" } as const;
+  const naming = { mode: "static", prefix: "t3" } as const;
 
   it("slugs the title under the configured prefix", () => {
     assert.equal(
@@ -237,10 +227,8 @@ describe("branch names from a launch title", () => {
       "t3/trilogy-care-tc-supplier-portal-v2-401-fix-suppl",
     );
     assert.equal(titleBranchName("Fix it --", naming), "t3/fix-it");
-    assert.equal(
-      titleBranchName("Fix it", { branchNamingMode: "semantic", branchNamePrefix: "t3" }),
-      "fix-it",
-    );
+    assert.equal(titleBranchName("Fix it", undefined), "fix-it");
+    assert.equal(titleBranchName("Fix it", { mode: "semantic", prefix: "t3" }), "fix-it");
   });
 
   it("trims a dash the 48-character cut leaves", () => {
@@ -254,9 +242,7 @@ describe("branch names from a launch title", () => {
   });
 
   it("gives none under custom naming", () => {
-    assert.isUndefined(
-      titleBranchName(TITLE, { branchNamingMode: "custom", branchNamePrefix: "t3" }),
-    );
+    assert.isUndefined(titleBranchName(TITLE, { mode: "custom", prefix: "t3" }));
   });
 
   it("puts the title before the message the model names the branch from", () => {

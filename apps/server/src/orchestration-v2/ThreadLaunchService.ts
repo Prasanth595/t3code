@@ -50,7 +50,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { branchNameMessage, withLaunchTitleFallback } from "@t3tools/shared/placeholderNames";
+import { withLaunchTitle } from "@t3tools/shared/placeholderNames";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -101,7 +101,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "title"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -341,7 +341,8 @@ const make = Effect.gen(function* () {
                   yield* providerRegistry.getProviders,
                   input.projectId,
                 );
-          return yield* textGeneration
+          const { title } = (yield* threads.getThreadShell(threadId)) ?? { title: "" };
+          return yield* withLaunchTitle(textGeneration, title)
             .generateBranchName({
               naming: {
                 mode: settings.branchNamingMode,
@@ -349,7 +350,7 @@ const make = Effect.gen(function* () {
                 instructions: settings.branchNameInstructions,
               },
               cwd,
-              message: branchNameMessage(input.title, message.text),
+              message: message.text,
               attachments: message.attachments,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
@@ -359,7 +360,6 @@ const make = Effect.gen(function* () {
                 branch: result.branch,
                 exactName: settings.branchNamingMode === "custom",
               })),
-              withLaunchTitleFallback(input.title, settings, modelSelection),
             );
         },
       );
@@ -1093,7 +1093,6 @@ const make = Effect.gen(function* () {
       {
         commandId: input.commandId,
         projectId: projection.thread.projectId,
-        title: projection.thread.title,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined

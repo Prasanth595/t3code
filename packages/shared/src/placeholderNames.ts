@@ -23,13 +23,18 @@ const DEFAULT_THREAD_TITLE = "New thread";
 const TITLE_SLUG_MAX_CHARS = 48;
 
 interface BranchNaming {
-  readonly branchNamingMode: BranchNamingMode;
-  readonly branchNamePrefix: string;
+  readonly mode: BranchNamingMode;
+  readonly prefix: string;
 }
 
-interface LaunchBranch {
+interface BranchNameRequest {
+  readonly message: string;
+  readonly naming?: BranchNaming | undefined;
+  readonly modelSelection: { readonly instanceId: string; readonly model: string };
+}
+
+interface GeneratedBranch {
   readonly branch: string;
-  readonly exactName: boolean;
 }
 
 /** The launch title to name a branch after: none when it is empty, the default title or a stand-in word. */
@@ -47,9 +52,12 @@ export function branchNameMessage(title: string, message: string): string {
 }
 
 /** A branch named after the launch title under the configured prefix, or none when the title gives nothing. */
-export function titleBranchName(title: string, naming: BranchNaming): string | undefined {
+export function titleBranchName(
+  title: string,
+  naming: BranchNaming | undefined,
+): string | undefined {
   // A custom convention is the user's to define, and a title slug would break it.
-  if (naming.branchNamingMode === "custom") return undefined;
+  if (naming?.mode === "custom") return undefined;
   const slug = (namingTitle(title) ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -57,58 +65,65 @@ export function titleBranchName(title: string, naming: BranchNaming): string | u
     .slice(0, TITLE_SLUG_MAX_CHARS)
     .replace(/-+$/, "");
   if (slug === "") return undefined;
-  return formatGeneratedBranchName(slug, {
-    mode: naming.branchNamingMode,
-    prefix: naming.branchNamePrefix,
-    instructions: "",
-  });
+  return formatGeneratedBranchName(slug, naming && { ...naming, instructions: "" });
 }
 
 /**
- * Rejects a generated branch name that is a stand-in word, and names the branch
- * after the launch title when generation fails or is rejected. Without a title
- * branch the failure stands, so the temporary branch is kept.
+ * Branch-name generation for a launch titled `title`: the model sees the title,
+ * a stand-in answer is rejected, and a failed or rejected answer names the
+ * branch after the title. Without a title branch the failure stands, so the
+ * temporary branch is kept.
  */
-export const withLaunchTitleFallback =
-  (
-    title: string,
-    naming: BranchNaming,
-    modelSelection: { readonly instanceId: string; readonly model: string },
-  ) =>
-  <E, R>(
-    self: Effect.Effect<LaunchBranch, E, R>,
-  ): Effect.Effect<LaunchBranch, E | TextGenerationError, R> => {
-    const fallback = titleBranchName(title, naming);
-    const titled: LaunchBranch | undefined =
-      fallback === undefined ? undefined : { branch: fallback, exactName: false };
-    const model = { model: modelSelection.model, instanceId: modelSelection.instanceId };
-    const onFailure = (cause: E): Effect.Effect<LaunchBranch, E> =>
-      titled === undefined
+export function withLaunchTitle<I extends BranchNameRequest, E>(
+  textGeneration: {
+    readonly generateBranchName: (input: I) => Effect.Effect<GeneratedBranch, E>;
+  },
+  title: string,
+) {
+  const generateBranchName = (
+    input: I,
+  ): Effect.Effect<GeneratedBranch, E | TextGenerationError> => {
+    const fallback = titleBranchName(title, input.naming);
+    const model = {
+      model: input.modelSelection.model,
+      instanceId: input.modelSelection.instanceId,
+    };
+    const onFailure = (cause: E): Effect.Effect<GeneratedBranch, E> =>
+      fallback === undefined
         ? Effect.fail(cause)
         : Effect.logWarning("Branch name generation failed; naming the branch after the title", {
             ...model,
-            branch: titled.branch,
+            branch: fallback,
             cause,
-          }).pipe(Effect.as(titled));
-    const onPlaceholder = (named: LaunchBranch): Effect.Effect<LaunchBranch, TextGenerationError> =>
+          }).pipe(Effect.as({ branch: fallback }));
+    const onPlaceholder = (
+      named: GeneratedBranch,
+    ): Effect.Effect<GeneratedBranch, TextGenerationError> =>
       Effect.logWarning("Generated branch name is a placeholder", {
         ...model,
         branch: named.branch,
         fallback: fallback ?? null,
       }).pipe(
         Effect.andThen(
-          titled === undefined
+          fallback === undefined
             ? Effect.fail(
                 new TextGenerationError({
                   operation: "generateBranchName",
                   detail: `The model returned the placeholder branch name '${named.branch}'.`,
                 }),
               )
-            : Effect.succeed(titled),
+            : Effect.succeed({ branch: fallback }),
         ),
       );
-    return self.pipe(
-      Effect.catch(onFailure),
-      Effect.filterOrElse((named: LaunchBranch) => !isPlaceholderName(named.branch), onPlaceholder),
-    );
+    return textGeneration
+      .generateBranchName({ ...input, message: branchNameMessage(title, input.message) })
+      .pipe(
+        Effect.catch(onFailure),
+        Effect.filterOrElse(
+          (named: GeneratedBranch) => !isPlaceholderName(named.branch),
+          onPlaceholder,
+        ),
+      );
   };
+  return { generateBranchName };
+}
