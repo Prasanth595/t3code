@@ -8,9 +8,15 @@ export type ShowcaseRenderSignal = Readonly<{
 
 const listeners = new Set<() => void>();
 let renderSignal: ShowcaseRenderSignal | null = null;
+// A redraw can repeat the same scene and theme; counting reports lets it restart the settle delay.
+let renderReports = 0;
 
 export function getShowcaseRenderSignal(): ShowcaseRenderSignal | null {
   return renderSignal;
+}
+
+export function getShowcaseRenderReports(): number {
+  return renderReports;
 }
 
 export function subscribeToShowcaseRenderSignal(listener: () => void): () => void {
@@ -20,12 +26,14 @@ export function subscribeToShowcaseRenderSignal(listener: () => void): () => voi
 
 export function reportShowcaseSceneRendered(signal: ShowcaseRenderSignal): void {
   renderSignal = signal;
+  renderReports += 1;
   for (const listener of listeners) listener();
 }
 
 export function clearShowcaseRenderSignal(): void {
   if (renderSignal === null) return;
   renderSignal = null;
+  renderReports += 1;
   for (const listener of listeners) listener();
 }
 
