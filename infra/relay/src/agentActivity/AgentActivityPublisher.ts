@@ -65,7 +65,6 @@ export const make = Effect.gen(function* () {
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
-    readonly repeatsAlert: boolean;
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
@@ -81,7 +80,6 @@ export const make = Effect.gen(function* () {
     const notificationOnlyAggregate =
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
-      !input.repeatsAlert &&
       input.state !== null
         ? makeAggregateState({
             activeStates: isTerminalPhase(input.state) ? [] : [input.state],
@@ -102,7 +100,6 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
-              repeatsAlert: input.repeatsAlert,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -213,12 +210,12 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      let previous: RelayAgentActivityState | null = null;
-      if (input.state) {
+      let state = input.state;
+      if (state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        previous = yield* rows.upsert({
+        state = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
-          state: input.state,
+          state,
         });
       } else {
         yield* rows.remove({
@@ -227,34 +224,22 @@ export const make = Effect.gen(function* () {
           threadId: input.threadId,
         });
       }
-      // Same-phase publishes such as renames or restart snapshots are not new alerts.
-      const repeatsAlert = previous !== null && previous.phase === input.state?.phase;
-      // The environment retries failed publishes; restore the row so the retry still alerts.
-      const restorePrevious =
-        input.state === null || repeatsAlert
-          ? Effect.void
-          : previous === null
-            ? rows.remove(input)
-            : rows.upsert({ environmentPublicKey: input.environmentPublicKey, state: previous });
 
-      const deliveryUsers = yield* links
-        .listDeliveryUsersForEnvironment({
-          environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
-        })
-        .pipe(Effect.onError(() => Effect.ignore(restorePrevious)));
+      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+        environmentId: input.environmentId,
+        environmentPublicKey: input.environmentPublicKey,
+      });
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
-            state: input.state,
-            repeatsAlert,
+            state,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },
-      ).pipe(Effect.onError(() => Effect.ignore(restorePrevious)));
+      );
       const deliveries = deliveriesByUser.flat();
       return {
         ok: true,

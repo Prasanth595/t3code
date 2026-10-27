@@ -71,7 +71,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.succeed(null),
+    upsert: ({ state }) => Effect.succeed(state),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -140,109 +140,81 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
-  it.effect("restores the replaced row when delivery fails so the retry still alerts", () => {
-    const upserts: string[] = [];
-    return Effect.gen(function* () {
-      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-      const exit = yield* Effect.exit(
-        publisher.publish({
-          environmentId: state.environmentId,
-          environmentPublicKey: "key",
-          threadId: state.threadId,
-          state: { ...state, phase: "completed" },
-        }),
-      );
-      expect(exit._tag).toBe("Failure");
-      expect(upserts).toEqual(["completed", "running"]);
-    }).pipe(
-      Effect.provide(
-        layerPublisher.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(
-                AgentActivityRows.AgentActivityRows,
-                makeAgentActivityRows({
-                  upsert: (input) =>
-                    Effect.sync(() => void upserts.push(input.state.phase)).pipe(Effect.as(state)),
-                }),
-              ),
-              Layer.succeed(
-                EnvironmentLinks.EnvironmentLinks,
-                makeEnvironmentLinks({
-                  listDeliveryUsersForEnvironment: () => Effect.die("offline"),
-                }),
-              ),
-              Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-              Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries()),
-            ),
-          ),
+  it.effect(
+    "fans out the persisted phase time to iOS and Android without rolling it back on failure",
+    () => {
+      const persisted = { ...state, phase: "waiting_for_input" as const };
+      const renamed = {
+        ...persisted,
+        threadTitle: "Renamed",
+        updatedAt: "1970-01-01T00:01:00.000Z",
+      };
+      const writes: RelayAgentActivityState[] = [];
+      const androidStates: Array<RelayAgentActivityState | null> = [];
+      const appleTimes: string[] = [];
+      let fail = false;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(
+          AgentActivityRows.AgentActivityRows,
+          makeAgentActivityRows({
+            upsert: (input) =>
+              Effect.sync(() => {
+                writes.push(input.state);
+                return { ...input.state, updatedAt: persisted.updatedAt };
+              }),
+          }),
         ),
-      ),
-    );
-  });
-
-  it.effect("does not notify again when a publish repeats the stored phase", () => {
-    const renamed = { ...state, phase: "completed" as const, threadTitle: "Renamed" };
-    const sends: string[] = [];
-    const publishOver = (previous: RelayAgentActivityState) =>
-      Effect.gen(function* () {
+        Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+        Layer.succeed(
+          LiveActivities.LiveActivities,
+          makeLiveActivities({
+            listTargets: () =>
+              Effect.succeed([
+                target("ios"),
+                { ...target("android"), platform: "android" as const },
+              ]),
+          }),
+        ),
+        Layer.succeed(FcmDeliveries.FcmDeliveries, {
+          enqueue: (input) =>
+            Effect.sync(() => {
+              androidStates.push(input.state);
+              return null;
+            }),
+          process: () => Effect.void,
+        }),
+        Layer.succeed(
+          ApnsDeliveries.ApnsDeliveries,
+          makeApnsDeliveries({
+            sendForTarget: (input) =>
+              fail
+                ? Effect.die("offline")
+                : Effect.sync(() => {
+                    appleTimes.push(input.aggregate!.activities[0]!.updatedAt);
+                    return null;
+                  }),
+          }),
+        ),
+      );
+      return Effect.gen(function* () {
         const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        yield* publisher.publish({
+        const publish = publisher.publish({
           environmentId: state.environmentId,
           environmentPublicKey: "key",
           threadId: state.threadId,
           state: renamed,
         });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({ upsert: () => Effect.succeed(previous) }),
-                ),
-                Layer.succeed(
-                  EnvironmentLinks.EnvironmentLinks,
-                  makeEnvironmentLinks({
-                    listDeliveryUsersForEnvironment: () =>
-                      Effect.succeed([
-                        { userId: "live", notificationsEnabled: true, liveActivitiesEnabled: true },
-                        {
-                          userId: "push",
-                          notificationsEnabled: true,
-                          liveActivitiesEnabled: false,
-                        },
-                      ]),
-                  }),
-                ),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => void sends.push(`target:${input.repeatsAlert}`)).pipe(
-                        Effect.as(null),
-                      ),
-                    sendPushNotificationForTarget: () =>
-                      Effect.sync(() => void sends.push("notification")).pipe(Effect.as(null)),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    return Effect.gen(function* () {
-      yield* publishOver({ ...renamed, threadTitle: "Thread", updatedAt: "1969-12-31T00:00:00Z" });
-      expect(sends.splice(0).sort()).toEqual(["target:true", "target:true"]);
-      yield* publishOver({ ...renamed, phase: "running" });
-      expect(sends.splice(0).sort()).toEqual(["notification", "target:false", "target:false"]);
-    });
-  });
+        yield* publish;
+        expect(appleTimes).toEqual([persisted.updatedAt]);
+        expect(androidStates).toMatchObject([
+          { threadTitle: "Renamed", updatedAt: persisted.updatedAt },
+        ]);
+        fail = true;
+        expect((yield* Effect.exit(publish))._tag).toBe("Failure");
+        expect(writes).toEqual([renamed, renamed]);
+      }).pipe(Effect.provide(AgentActivityPublisher.layer.pipe(Layer.provide(dependencies))));
+    },
+  );
 
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };

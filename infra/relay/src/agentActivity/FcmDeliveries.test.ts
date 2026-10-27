@@ -131,7 +131,7 @@ function harness() {
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
-      upsert: () => Effect.succeed(null),
+      upsert: ({ state }) => Effect.succeed(state),
       remove: () => Effect.void,
       pruneTerminal: () => Effect.void,
       listForUser: () =>
