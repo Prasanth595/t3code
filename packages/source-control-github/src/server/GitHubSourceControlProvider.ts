@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, type SourceControlProviderAuth } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,7 +19,7 @@ import {
   TrimmedNonEmptyString,
   type ChangeRequest,
   type SourceControlProviderDiscoveryItem,
-  type SourceControlRepositoryCloneUrls,
+  SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -28,6 +28,8 @@ import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import { makeGitHubViewerReader } from "./gitHubViewer.ts";
+import { environmentTokenVariable } from "./GitHubCredentials.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -61,10 +63,15 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import {
+  readSourceControlHostSettings,
+  SourceControlHostName,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
 import {
+  CreateInstallationRepository,
+  InstallationRepositoryOwner,
   PullRequestByNumber,
   PullRequestNode,
   PullRequestsByHead,
@@ -111,11 +118,15 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
   settings: GitHubClient.GitHubSettings = readSourceControlHostSettings(GitHubClient.settings, {}),
+  defaultHost = "github.com",
 ) {
   const output = combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
   const hosts = [...new Set(authStatus.accounts.map((entry) => entry.host))];
-  const fallback = findAuthenticatedGitHubAccount(authStatus.accounts);
+  const fallback =
+    findAuthenticatedGitHubAccount(
+      authStatus.accounts.filter((account) => account.host === defaultHost),
+    ) ?? findAuthenticatedGitHubAccount(authStatus.accounts);
   const orderedHosts = fallback
     ? [fallback.host, ...hosts.filter((host) => host !== fallback.host)]
     : hosts;
@@ -198,16 +209,11 @@ export const discovery = {
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
 
-const decodeViewer = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ login: Schema.String })),
-);
-
-function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null {
-  return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
-}
+const isGitHubHost = Schema.is(SourceControlHostName);
 
 // `gh auth status` may not know environment tokens; check the API.
 export const makeDiscovery = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
@@ -226,52 +232,107 @@ export const makeDiscovery = Effect.gen(function* () {
           Effect.orElseSucceed(() => undefined),
         ),
       );
+      const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
       const cli = yield* probeSourceControlProvider({
         cwd,
         process: {
           run: (input) => process.run({ ...input, concurrency: GH_PROCESS_CONCURRENCY }),
         },
-        spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
+        spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings, defaultHost) },
       });
-      const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
-      const variable = environmentTokenVariable(environment);
-      const tokenSource = savedToken ? "the token saved in Settings" : variable;
-      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
-      const viewer = yield* api
-        .rest({ host: "github.com", operation: "discovery", path: "user" })
-        .pipe(Effect.result);
-      const login = Result.isSuccess(viewer)
-        ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
-        : undefined;
-      const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
+      const hosts = [
+        ...new Set([
+          "github.com",
+          ...Object.keys(settings.tokens),
+          ...Object.keys(settings.hosts),
+          ...(environment.GH_HOST ? [environment.GH_HOST.trim().toLowerCase()] : []),
+        ]),
+      ].filter(
+        (host) =>
+          isGitHubHost(host) &&
+          settings.hosts[host]?.enabled !== false &&
+          ((settings.tokens[host] ?? "").trim() !== "" ||
+            environmentTokenVariable(host, environment) !== null),
+      );
+      const checked: SourceControlProviderAuth[] = [];
+      let accounts = [...(cli.auth.accounts ?? [])];
+      for (const host of hosts) {
+        const savedToken = (settings.tokens[host] ?? "").trim() !== "";
+        const variable = environmentTokenVariable(host, environment);
+        const tokenSource = savedToken ? "the token saved in Settings" : `the token in ${variable}`;
+        const viewer = yield* Effect.gen(function* () {
+          const credential = yield* api.credential(host);
+          return yield* readGitHubViewer({ host, operation: "discovery" }).pipe(
+            Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+              host,
+              token: credential.token,
+              credentialFingerprint: credential.fingerprint,
+            }),
+          );
+        }).pipe(Effect.result);
+        const login = Result.isSuccess(viewer) ? viewer.success.login : undefined;
+        accounts = accounts.map((account) =>
+          account.host === host ? { ...account, active: false } : account,
+        );
+        if (login !== undefined) {
+          accounts = accounts.filter(
+            (account) => account.host !== host || account.account !== login,
+          );
+          accounts.push({
+            host,
+            account: login,
+            active: true,
+            authenticated: true,
+            ...(!savedToken && variable !== null ? { environmentVariable: variable } : {}),
+          });
+          checked.push(
+            providerAuth({
+              status: "authenticated",
+              account: login,
+              host,
+              detail: savedToken
+                ? "Using the token saved in Settings; it overrides environment tokens and the gh login."
+                : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
+            }),
+          );
+        } else if (
+          Result.isFailure(viewer) &&
+          viewer.failure._tag !== "GitHubApiAuthenticationError"
+        ) {
+          checked.push(
+            providerAuth({
+              status: "unknown",
+              host,
+              detail: `Could not check ${tokenSource}: ${viewer.failure.message}`,
+            }),
+          );
+        } else {
+          checked.push(
+            providerAuth({
+              status: "unauthenticated",
+              host,
+              detail: `GitHub refused ${tokenSource}. Replace it, or remove it to use gh auth login.`,
+            }),
+          );
+        }
+      }
+      const checkedHosts = new Set(hosts);
+      const cliHost = Option.getOrNull(cli.auth.host);
+      const uncheckedCliAuth =
+        cli.auth.status === "authenticated" && cliHost !== null && !checkedHosts.has(cliHost)
+          ? cli.auth
+          : undefined;
+      const selected =
+        checked.find((auth) => Option.contains(auth.host, defaultHost)) ??
+        (cliHost === defaultHost ? uncheckedCliAuth : undefined) ??
+        checked.find((auth) => auth.status === "authenticated") ??
+        uncheckedCliAuth ??
+        checked[0] ??
+        cli.auth;
       return {
         ...cli,
-        status: "available" as const,
-        auth: {
-          ...(login !== undefined
-            ? providerAuth({
-                status: "authenticated",
-                account: login,
-                host: "github.com",
-                detail: savedToken
-                  ? "Using the token saved in Settings; it overrides GH_TOKEN and the gh login."
-                  : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
-              })
-            : Result.isFailure(viewer) && viewer.failure._tag !== "GitHubApiAuthenticationError"
-              ? providerAuth({
-                  status: "unknown",
-                  host: "github.com",
-                  detail: `Could not check ${savedToken ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
-                })
-              : providerAuth({
-                  status: "unauthenticated",
-                  host: "github.com",
-                  detail: savedToken
-                    ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control."
-                    : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
-                })),
-          ...accounts,
-        },
+        status: hosts.length > 0 ? "available" : cli.status,
+        auth: { ...selected, accounts },
       } satisfies SourceControlProviderDiscoveryItem;
     }),
     // Claim disabled hosts so errors identify the setting.
@@ -352,14 +413,18 @@ const RawRepositorySchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeRawRepository = decodeJsonResult(RawRepositorySchema);
+const decodeCreatedRepository = Schema.decodeEffect(SourceControlRepositoryCloneUrls);
+const decodeInstallationRepositories = decodeJsonResult(
+  Schema.Struct({
+    repositories: Schema.Array(Schema.Struct({ full_name: TrimmedNonEmptyString })),
+  }),
+);
 
 function repositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawRepositorySchema>,
 ): SourceControlRepositoryCloneUrls {
   return { nameWithOwner: raw.full_name, url: raw.html_url, sshUrl: raw.ssh_url };
 }
-
-const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmptyString }));
 
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
@@ -424,6 +489,7 @@ const contextHost = (context: SourceControlProvider.SourceControlProviderContext
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
 export const make = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
@@ -480,9 +546,12 @@ export const make = Effect.gen(function* () {
   );
 
   const client = yield* GraphQLClient.make(
-    GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
-      GitHubGraphQlClient.GitHubGraphQlAuth,
-    ),
+    GraphQLGroup.make(
+      LenientPullRequestsByHead,
+      PullRequestByNumber,
+      InstallationRepositoryOwner,
+      CreateInstallationRepository,
+    ).middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
   const graphqlRead = <A, E, R>(
@@ -501,6 +570,20 @@ export const make = Effect.gen(function* () {
 
   const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
+
+  const withCredential = Effect.fnUntraced(function* <A, E, R>(
+    host: string,
+    effect: Effect.Effect<A, E, R>,
+  ) {
+    const credential = yield* api.credential(host).pipe(Effect.mapError(fromGitHubApiError));
+    return yield* effect.pipe(
+      Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+        host,
+        token: credential.token,
+        credentialFingerprint: credential.fingerprint,
+      }),
+    );
+  });
 
   // Batch by host/credential; isolate missing repositories and interactive/background reserves.
   const headResolver = GraphQLResolver.aliased(client.PullRequestsByHead, {
@@ -627,17 +710,60 @@ export const make = Effect.gen(function* () {
   const readViewerLogin = Effect.fn("GitHubSourceControlProvider.readViewerLogin")(function* (
     host: string,
   ) {
-    const response = yield* rest({
+    const response = yield* readGitHubViewer({
       host,
       operation: "getViewer",
-      path: "user",
       allowReserve: true,
-    });
-    const decoded = decodeViewerLogin(response.body);
-    if (Result.isFailure(decoded)) {
-      return yield* failure("GitHub request failed.", decoded.failure);
-    }
-    return decoded.success.login;
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "GitHubViewerResponseError"
+          ? failure(error.message, error)
+          : fromGitHubApiError(error),
+      ),
+    );
+    return response.login;
+  });
+
+  const readInstallationOwner = Effect.fn("GitHubSourceControlProvider.readInstallationOwner")(
+    function* (host: string) {
+      const owners = new Map<string, string>();
+      for (let page = 1; ; page++) {
+        const response = yield* rest({
+          host,
+          operation: "getInstallationOwner",
+          path: `installation/repositories?per_page=100&page=${page}`,
+          allowReserve: true,
+        });
+        const decoded = decodeInstallationRepositories(response.body);
+        if (Result.isFailure(decoded))
+          return yield* failure(
+            "GitHub returned invalid installation repositories.",
+            decoded.failure,
+          );
+        for (const repository of decoded.success.repositories) {
+          const locator = parseGitHubRepositorySelector(repository.full_name, host);
+          if (locator === null)
+            return yield* failure("GitHub returned an invalid installation repository owner.");
+          owners.set(locator.owner.toLowerCase(), locator.owner);
+        }
+        if (owners.size > 1) return null;
+        if (decoded.success.repositories.length < 100) break;
+      }
+      return owners.values().next().value ?? null;
+    },
+  );
+
+  const readDefaultOwner = Effect.fn("GitHubSourceControlProvider.readDefaultOwner")(function* (
+    host: string,
+    viewer: string,
+  ) {
+    if (!viewer.endsWith("[bot]")) return viewer;
+    const owner = yield* readInstallationOwner(host);
+    if (owner === null)
+      return yield* failure(
+        "Specify owner/repo: the GitHub App installation owner could not be determined.",
+      );
+    return owner;
   });
 
   // Keep paths, argv and stderr in cause; expose only a fixed checkout error to clients.
@@ -953,21 +1079,33 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
-        yield* rest({
-          host: locator.host,
-          operation: "createPullRequest",
-          method: "POST",
-          allowReserve: true,
-          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-          // Explicitly allow maintainer edits to match gh; the API default is undocumented.
-          body: {
-            base: input.baseRefName,
-            head: input.headSelector,
-            title: input.title,
-            body,
-            maintainer_can_modify: true,
-          },
-        });
+        yield* withCredential(
+          locator.host,
+          Effect.gen(function* () {
+            const headOwner = input.headSelector.includes(":")
+              ? input.headSelector.split(":")[0]
+              : undefined;
+            const isFork =
+              headOwner !== undefined && headOwner.toLowerCase() !== locator.owner.toLowerCase();
+            const maintainerCanModify =
+              !isFork || !(yield* readViewerLogin(locator.host)).endsWith("[bot]");
+            yield* rest({
+              host: locator.host,
+              operation: "createPullRequest",
+              method: "POST",
+              allowReserve: true,
+              path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
+              // Installation tokens cannot grant maintainers access to another account's fork.
+              body: {
+                base: input.baseRefName,
+                head: input.headSelector,
+                title: input.title,
+                body,
+                maintainer_can_modify: maintainerCanModify,
+              },
+            });
+          }),
+        );
       },
       (effect, input) =>
         effect.pipe(
@@ -978,18 +1116,31 @@ export const make = Effect.gen(function* () {
     ),
     getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
       function* (input) {
-        const fallbackHost = (yield* resolveRepository(input).pipe(
-          Effect.map((locator) => locator.host),
-          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
-        )).toLowerCase();
-        const bareName = input.repository.trim().replace(/\.git$/i, "");
-        const locator =
-          parseGitHubRepositorySelector(input.repository, fallbackHost) ??
-          (/^[^/\s]+$/.test(bareName)
-            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
-            : null);
-        if (locator === null) return yield* failure("Repositories are named owner/name.");
-        return repositoryCloneUrls(yield* readRepository(locator));
+        const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
+        const selected = parseGitHubRepositorySelector(input.repository, "");
+        const host =
+          selected?.host ||
+          (yield* resolveRepository(input).pipe(
+            Effect.map((locator) => locator.host),
+            Effect.orElseSucceed(() => defaultHost),
+          ));
+        return yield* withCredential(
+          host,
+          Effect.gen(function* () {
+            const bareName = input.repository.trim().replace(/\.git$/i, "");
+            const locator =
+              (selected === null ? null : { ...selected, host }) ??
+              (/^[^/\s]+$/.test(bareName)
+                ? {
+                    host,
+                    owner: yield* readDefaultOwner(host, yield* readViewerLogin(host)),
+                    name: bareName,
+                  }
+                : null);
+            if (locator === null) return yield* failure("Repositories are named owner/name.");
+            return repositoryCloneUrls(yield* readRepository(locator));
+          }),
+        );
       },
       (effect, input) =>
         effect.pipe(
@@ -1000,32 +1151,81 @@ export const make = Effect.gen(function* () {
     ),
     createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
       function* (input) {
-        const locator = parseGitHubRepositorySelector(
-          input.repository,
-          (environment.GH_HOST ?? "github.com").toLowerCase(),
+        const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
+        const locator = parseGitHubRepositorySelector(input.repository, defaultHost);
+        const host = locator?.host ?? defaultHost;
+        return yield* withCredential(
+          host,
+          Effect.gen(function* () {
+            const viewer = yield* readViewerLogin(host);
+            const owner = locator?.owner ?? (yield* readDefaultOwner(host, viewer));
+            const name = locator?.name ?? input.repository.trim();
+            if (viewer.endsWith("[bot]")) {
+              const target = { host, operation: "createRepository", allowReserve: true };
+              const destination = yield* graphqlRead(
+                target,
+                "GitHub returned an invalid repository owner.",
+                client.InstallationRepositoryOwner({ login: owner }),
+              );
+              const account = destination.repositoryOwner;
+              if (
+                account === null ||
+                account.id.trim() === "" ||
+                account.login.toLowerCase() !== owner.toLowerCase()
+              )
+                return yield* failure(
+                  "Repository owner not found. Check owner/repo and try again.",
+                );
+              const incomplete = `GitHub did not return repository details; ${owner}/${name} may already have been created. Check the repository and token access before retrying.`;
+              // The mutation can commit even when its result is hidden by repository access.
+              const created = yield* client
+                .CreateInstallationRepository({
+                  ownerId: account.id,
+                  name,
+                  visibility: input.visibility === "private" ? "PRIVATE" : "PUBLIC",
+                })
+                .pipe(
+                  GitHubGraphQlClient.call(target),
+                  Effect.mapError((error) => {
+                    if (
+                      error._tag === "GitHubApiResponseError" &&
+                      (error.status === 200 || error.status >= 500)
+                    ) {
+                      return failure(`${incomplete} ${error.message}`, error);
+                    }
+                    return GraphQLClientError.isGraphQLClientError(error) ||
+                      error._tag === "GitHubApiRequestError" ||
+                      error._tag === "GitHubApiNotFoundError"
+                      ? failure(incomplete, error)
+                      : fromGitHubApiError(error);
+                  }),
+                );
+              const repository = created.createRepository?.repository;
+              if (repository == null) return yield* failure(incomplete);
+              return yield* decodeCreatedRepository(repository).pipe(
+                Effect.mapError((cause) => failure(incomplete, cause)),
+              );
+            }
+            const isViewer = owner.toLowerCase() === viewer.toLowerCase();
+            const response = yield* rest(
+              {
+                host,
+                operation: "createRepository",
+                method: "POST",
+                allowReserve: true,
+                path: isViewer ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
+                body: { name, private: input.visibility === "private" },
+              },
+              // GitHub answers 404 for an organization the account cannot create repositories in.
+              `No organization named ${owner} that this account can create repositories in.`,
+            );
+            const decoded = decodeRawRepository(response.body);
+            if (Result.isFailure(decoded)) {
+              return yield* failure("GitHub returned an invalid repository.", decoded.failure);
+            }
+            return repositoryCloneUrls(decoded.success);
+          }),
         );
-        const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
-        const owner = locator?.owner ?? viewer;
-        const name = locator?.name ?? input.repository.trim();
-        const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
-        const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
-        const response = yield* rest(
-          {
-            host,
-            operation: "createRepository",
-            method: "POST",
-            allowReserve: true,
-            path:
-              isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
-            body: { name, private: input.visibility === "private" },
-          },
-          `No organization named ${owner ?? "that"} that this account can create repositories in.`,
-        );
-        const decoded = decodeRawRepository(response.body);
-        if (Result.isFailure(decoded)) {
-          return yield* failure("GitHub returned an invalid repository.", decoded.failure);
-        }
-        return repositoryCloneUrls(decoded.success);
       },
       (effect, input) =>
         effect.pipe(

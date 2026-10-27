@@ -100,8 +100,12 @@ function isGitHubDotCom(host: string): boolean {
   return host === "github.com" || host.endsWith(".ghe.com");
 }
 
-/** Restrict GH_ENTERPRISE_TOKEN to GH_HOST to prevent remote URLs from leaking it. */
-export function environmentToken(
+/**
+ * The environment token variable for a host, in gh's precedence order. gh hands `GH_ENTERPRISE_TOKEN` to
+ * any non-github.com host; here it only goes to the host `GH_HOST` names, because a remote URL
+ * picks the host and a hostile one must not receive an enterprise token.
+ */
+export function environmentTokenVariable(
   host: string,
   env: Readonly<Record<string, string | undefined>>,
 ): string | null {
@@ -112,9 +116,17 @@ export function environmentToken(
       : [];
   for (const name of names) {
     const value = env[name]?.trim();
-    if (value) return value;
+    if (value) return name;
   }
   return null;
+}
+
+export function environmentToken(
+  host: string,
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  const variable = environmentTokenVariable(host, env);
+  return variable === null ? null : (env[variable]?.trim() ?? null);
 }
 
 /** @public */

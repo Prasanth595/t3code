@@ -18,8 +18,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   resolvePullRequestAuthorFilter,
-  PositiveInt,
-  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -45,6 +43,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubRest from "./GitHubRest.ts";
+import { makeGitHubViewerReader } from "./gitHubViewer.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -910,6 +909,7 @@ interface RestReadInput<A> {
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
@@ -927,12 +927,6 @@ export const make = Effect.gen(function* () {
     }
   >();
   const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
-  const RoutingIdentity = Schema.Struct({
-    id: PositiveInt,
-    login: TrimmedNonEmptyString,
-  });
-  const decodeRoutingIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(RoutingIdentity));
-  const decodeViewerIdentity = Schema.decodeUnknownEffect(RoutingIdentity);
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
@@ -953,36 +947,16 @@ export const make = Effect.gen(function* () {
               const cached = routingIdentities.get(key);
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
-              // Pin verification so an auth switch cannot poison its cache entry.
-              const identity = yield* api
-                .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
-                .pipe(
-                  Effect.flatMap((response) =>
-                    decodeRoutingIdentity(response.body).pipe(Effect.mapError(unavailable)),
-                  ),
-                  Effect.catchTags({
-                    // The enclosing operation owns the span for this inline handler.
-                    GitHubApiResponseError: Effect.fnUntraced(function* (error) {
-                      if (error.status !== 403) return yield* error;
-                      const { viewer } = yield* client.RoutingIdentityViewer({}).pipe(
-                        GitHubGraphQlClient.call({
-                          host,
-                          operation: "getRoutingIdentity",
-                          allowReserve: true,
-                        }),
-                        Effect.catchTags({
-                          GraphQLClientError: () => Effect.fail(unavailable()),
-                        }),
-                      );
-                      return yield* decodeViewerIdentity({
-                        id: viewer.databaseId,
-                        login: viewer.login,
-                      }).pipe(Effect.mapError(unavailable));
-                    }),
-                  }),
-                  Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
-                  Effect.provideService(SourceControlRateLimit.CredentialScope, key),
-                );
+              // Pin this read so an auth switch cannot poison its cache entry.
+              const identity = yield* readGitHubViewer({
+                host,
+                operation: "getRoutingIdentity",
+                allowReserve: true,
+              }).pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
+                Effect.provideService(SourceControlRateLimit.CredentialScope, key),
+                Effect.catchTags({ GitHubViewerResponseError: () => Effect.fail(unavailable()) }),
+              );
               const value = { accountId: String(identity.id), viewer: identity.login };
               if (routingIdentities.size >= 128)
                 routingIdentities.delete(routingIdentities.keys().next().value!);
@@ -2144,7 +2118,6 @@ export const make = Effect.gen(function* () {
         };
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
-        const botLogins = new Set<string>();
         let reviewers: ReadonlyArray<PullRequestActor> = [];
         let reactions: GitHubReviewThreadPage["reactions"] = [];
         const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
@@ -2158,7 +2131,6 @@ export const make = Effect.gen(function* () {
         do {
           const read: GitHubReviewThreadPage = yield* threadPage(cursor);
           entries.push(...read.threads);
-          for (const login of read.botLogins) botLogins.add(login);
           for (const [login, avatarUrl] of read.avatarsByLogin)
             avatarsByLogin.set(login, avatarUrl);
           if (page === 0) {
@@ -2222,7 +2194,6 @@ export const make = Effect.gen(function* () {
           editedAtById,
           reviewers,
           avatarsByLogin,
-          botLogins,
           commits,
           viewer,
         };

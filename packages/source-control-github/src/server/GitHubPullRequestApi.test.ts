@@ -693,6 +693,65 @@ it.effect(
     }),
 );
 
+it.effect("pins an App credential across the REST refusal and GraphQL identity fallback", () =>
+  Effect.gen(function* () {
+    let activeToken = "app-before";
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+      [];
+    const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+      get: (host) =>
+        Effect.sync(() => ({
+          host,
+          token: Redacted.make(activeToken),
+          source: GitHubCredentials.GitHubCredentialSource.make("env"),
+          fingerprint: `${host}:${activeToken}`,
+        })),
+      invalidate: () => Effect.void,
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ url: request.url, authorization: request.headers["authorization"] });
+          const rest = request.url.endsWith("/user");
+          if (rest) activeToken = "app-after";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson(
+                rest
+                  ? { message: "Resource not accessible by integration" }
+                  : { data: { viewer: { login: "example[bot]", databaseId: 123 } } },
+              ),
+              {
+                status: rest ? 403 : 200,
+                headers: { "content-type": "application/json" },
+              },
+            ),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(credentials, http)),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.merge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const identity = yield* cli.getRoutingIdentity({ cwd: "/repo", host: "github.com" });
+    expect(identity).toEqual({ accountId: "123", viewer: "example[bot]" });
+    expect(requests.map((request) => request.authorization)).toEqual([
+      "Bearer app-before",
+      "Bearer app-before",
+    ]);
+  }),
+);
+
 layer("GitHubPullRequestApi.layer", (it) => {
   it.effect.each(["mixed", "merges", "unavailable"] as const)(
     "reads stats only for displayed non-merge commits (%s)",
@@ -1753,6 +1812,63 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(batch.items.length, 0);
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("reads a repository GitHub will not search from its own list", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listedPullRequests(3, 1, () => ({ state: "CLOSED" })))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "closed",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      assert.strictEqual(batch.items.length, 3);
+      expect(searchOfCall(1)).toBeUndefined();
+      expect(varsAt(1)).toMatchObject({ owner: "acme", name: "web", states: ["CLOSED", "MERGED"] });
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("filters App-authored pull requests without matching a human with the same slug", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            listedPullRequests(2, 1, (number) => ({
+              author: {
+                __typename: number === 1 ? "Bot" : "User",
+                login: "example",
+                avatarUrl: "https://avatars/example",
+              },
+            })),
+          ),
+        ),
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const batch = yield* provider.listChangeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "example[bot]",
+        limit: 10,
+        filters: { author: "me" },
+      });
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
+      expect(batch.items[0]?.author?.login).toBe("example[bot]");
     }),
   );
 
@@ -2916,6 +3032,71 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("does not cache an App identity returned alongside GraphQL errors", () =>
+    Effect.gen(function* () {
+      const host = "app-identity-error.test";
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host,
+            operation: "getRoutingIdentity",
+            status: 403,
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { viewer: { login: "unverified[bot]", databaseId: 123 } },
+              errors: [{ message: "Resource not accessible by integration", type: "FORBIDDEN" }],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { cwd: "/w", host };
+      const error = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubApiResponseError");
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(encodeJson({ id: 456, login: "verified" }))),
+      );
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "456",
+        viewer: "verified",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
+  it.effect("rejects an App viewer without an account ID", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: "invalid-app-id.test",
+            operation: "getRoutingIdentity",
+            status: 403,
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { viewer: { login: "example[bot]", databaseId: null } },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* cli
+        .getRoutingIdentity({ cwd: "/w", host: "invalid-app-id.test" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubViewerLoginUnavailableError");
+    }),
+  );
+
   // regression: #18780 credentials that cannot read /user still load pull requests
   it.effect.each([
     new GitHubRequestPolicy.GitHubApiAuthenticationError({
@@ -3149,6 +3330,109 @@ layer("GitHubPullRequestApi.layer", (it) => {
           requestedReviewers: 50,
         });
       }),
+  );
+
+  it.effect("keeps human and Bot identities distinct throughout pull request activity", () =>
+    Effect.gen(function* () {
+      const human = {
+        __typename: "User",
+        login: "example",
+        name: "Example",
+        avatarUrl: "https://avatars/human",
+      };
+      const bot = { __typename: "Bot", login: "example", avatarUrl: "https://avatars/bot" };
+      const comments = threadComments(["human-comment", "bot-comment"], null);
+      route(
+        [
+          "query PullRequestActivity",
+          {
+            data: {
+              repository: {
+                pullRequest: {
+                  author: human,
+                  commits: { nodes: [] },
+                  comments: { pageInfo: lastPage, nodes: [] },
+                  reviews: { pageInfo: lastPage, nodes: [] },
+                },
+              },
+            },
+          },
+        ],
+        [
+          "query ReviewThreads",
+          {
+            data: {
+              viewer: { login: "example[bot]" },
+              repository: {
+                pullRequest: {
+                  author: human,
+                  viewerCanUpdate: true,
+                  viewerDidAuthor: false,
+                  reviewThreads: {
+                    totalCount: 1,
+                    pageInfo: lastPage,
+                    nodes: [
+                      {
+                        ...thread("thread-1"),
+                        comments: {
+                          ...comments,
+                          nodes: comments.nodes.map((comment, index) => ({
+                            ...comment,
+                            author: index === 0 ? human : bot,
+                          })),
+                        },
+                      },
+                    ],
+                  },
+                  reactionGroups: [
+                    {
+                      content: "HEART",
+                      viewerHasReacted: true,
+                      reactors: { totalCount: 2, nodes: [bot, human] },
+                    },
+                  ],
+                  comments: { nodes: [] },
+                  reviews: { nodes: [] },
+                  reviewRequests: { nodes: [{ requestedReviewer: human }] },
+                  latestReviews: { nodes: [] },
+                  reviewDismissals: { pageInfo: lastPage, nodes: [] },
+                  commits: { nodes: [] },
+                },
+              },
+            },
+          },
+        ],
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect.soft(activity.commentsTruncated).toBe(false);
+      expect.soft(activity.author?.login).toBe("example");
+      expect.soft(activity.author?.isBot === true).toBe(false);
+      expect.soft(activity.reviewers?.map((actor) => actor.login)).toEqual(["example"]);
+      expect
+        .soft(activity.reactions)
+        .toEqual([{ content: "heart", count: 2, actors: ["example"], viewerHasReacted: true }]);
+      expect
+        .soft(
+          activity.comments.map((comment) => ({
+            id: comment.id,
+            login: comment.author?.login,
+            isBot: comment.author?.isBot === true,
+          })),
+        )
+        .toEqual([
+          { id: "human-comment", login: "example", isBot: false },
+          { id: "bot-comment", login: "example[bot]", isBot: true },
+        ]);
+      expect
+        .soft(activity.reviewThreads[0]?.comments.map((comment) => comment.author?.login))
+        .toEqual(["example", "example[bot]"]);
+    }),
   );
 
   it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
@@ -3587,6 +3871,223 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
     }),
+  );
+
+  it.effect("lets an interactive permission read use the protected reserve", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    autoMergeAllowed: true,
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
+                    viewerPermission: "READ",
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
+                  },
+                },
+              }),
+              false,
+              false,
+              graphqlQuota(499),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    autoMergeAllowed: true,
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
+                    viewerPermission: "READ",
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.getViewerAccess({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      const access = yield* cli.getViewerAccess({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        allowReserve: true,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(access).toEqual({
+        autoMergeAllowed: true,
+        mergeCapabilities: { merge: true, squash: false, rebase: true },
+        canWrite: false,
+        canDeleteBranch: false,
+        canTriage: false,
+        canUpdate: true,
+        didAuthor: true,
+      });
+      yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
+    }),
+  );
+
+  it.effect("asks GitHub to review, naming the collection a request is added to", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        reviewers: [
+          { id: "octocat", kind: "user" },
+          { id: "reviewers", kind: "team" },
+        ],
+        requested: true,
+      });
+
+      expect(callAt(0)).toMatchObject({
+        kind: "rest",
+        method: "POST",
+        path: "repos/acme/web/pulls/7/requested_reviewers",
+        body: { reviewers: ["octocat"], team_reviewers: ["reviewers"] },
+      });
+    }),
+  );
+
+  it.effect("takes a request back by deleting from the same collection it was added to", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        reviewers: [{ id: "octocat", kind: "user" }],
+        requested: false,
+      });
+
+      expect(callAt(0)).toMatchObject({
+        kind: "rest",
+        method: "DELETE",
+        path: "repos/acme/web/pulls/7/requested_reviewers",
+        body: { reviewers: ["octocat"], team_reviewers: [] },
+      });
+    }),
+  );
+
+  it.effect(
+    "keeps requested Bots distinct from same-slug humans across listing, detail and reviewer changes",
+    () =>
+      Effect.gen(function* () {
+        const human = {
+          __typename: "User",
+          login: "example",
+          name: "Example",
+          avatarUrl: "https://avatars/human",
+        };
+        const bot = { __typename: "Bot", login: "example", avatarUrl: "https://avatars/bot" };
+        const reviewRequests = { nodes: [{ requestedReviewer: bot }] };
+        mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(2, 7, (number) => ({
+                reviewRequests: [number === 7 ? bot : human],
+              })),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ reviewRequests })))),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    assignableUsers: { pageInfo: { hasNextPage: false }, nodes: [human] },
+                    pullRequest: {
+                      author: { __typename: "User", login: "author" },
+                      reviewRequests,
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+        const provider = yield* GitHubPullRequestProvider.make;
+        const input = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+        const listed = yield* provider.listChangeRequests({
+          ...input,
+          state: "open",
+          involvement: "reviewing",
+          viewer: "example[bot]",
+          limit: 10,
+        });
+        expect.soft(listed.items.map((item) => item.number)).toEqual([7]);
+        const detail = yield* provider.getChangeRequest(input);
+        expect.soft(detail.reviewers.map((reviewer) => reviewer.login)).toEqual(["example[bot]"]);
+        const list = yield* provider.listReviewerCandidates(input);
+        expect.soft(list.candidates).toEqual([
+          {
+            kind: "user",
+            id: "example[bot]",
+            login: "example[bot]",
+            name: null,
+            avatarUrl: bot.avatarUrl,
+            isRequested: true,
+          },
+          {
+            kind: "user",
+            id: "example",
+            login: "example",
+            name: human.name,
+            avatarUrl: human.avatarUrl,
+            isRequested: false,
+          },
+        ]);
+        yield* provider.setReviewerRequest({
+          ...input,
+          reviewers: list.candidates,
+          requested: true,
+        });
+        expect.soft(mockedExecute.mock.calls.at(-1)?.[0]).toMatchObject({
+          kind: "rest",
+          method: "POST",
+          path: "repos/acme/web/pulls/7/requested_reviewers",
+          body: { reviewers: ["example[bot]", "example"], team_reviewers: [] },
+        });
+      }),
   );
 
   it.effect("reads who may review and who already has in one request", () =>
