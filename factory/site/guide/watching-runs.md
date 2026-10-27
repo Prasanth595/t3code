@@ -6,7 +6,8 @@ The pages work in a phone's browser too, paired over your tailnet as described i
 
 ## The Factory page
 
-<!-- factory-page-{light,dark}.png predate the belt: retake them (factory/site/README.md), then show them here. -->
+<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Building post open on its run and its issue title, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
+<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Building post open on its run and its issue title, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
 
 Use it to see what the factory is doing now. The belt at the top has five posts, one per station a run passes: Claimed, Building, Gate, PR open and Done. Each unfinished run is a tile under its post, showing its issue number and how long it has been there; click a tile to open the run. Click a post to open a table of its runs under the rail, with each run's title, step and pull request and a Stop button. Done counts the runs whose pull request was merged or closed today. The belt reads status every 5 seconds while the page is open.
 
@@ -27,7 +28,8 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 
 ## Needs attention
 
-<!-- needs-attention-{light,dark}.png predate the belt: retake them, then show them here. -->
+<img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with the reason it stopped" />
+<img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with the reason it stopped" />
 
 Under the belt, the Factory page lists what needs a person in three bins: Needs attention, Needs info and Stuck. Needs info and Stuck list each run's issue with the questions it asked or the reason it stopped. The sidebar's Factory item shows how many items need attention. An item is raised when:
 

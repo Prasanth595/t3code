@@ -1,7 +1,7 @@
 // The fictional factory the docs screenshots are taken of: one owner, `acme`, two repos, and a
-// run in each state. Everything is written in the factory's own formats, through its ledger
-// writer, so the server reads it as it reads a real machine's data. Nothing here names a real
-// repo, login or path.
+// run in each state and at each post of the belt. Everything is written in the factory's own
+// formats, through its ledger writer, so the server reads it as it reads a real machine's data.
+// Nothing here names a real repo, login or path.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -25,7 +25,14 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export type DemoRunKind = "building" | "pr-open" | "needs-info" | "stuck" | "merged";
+export type DemoRunKind =
+  | "claimed"
+  | "building"
+  | "gate"
+  | "pr-open"
+  | "needs-info"
+  | "stuck"
+  | "merged";
 
 export interface DemoRun {
   readonly repo: string;
@@ -43,12 +50,29 @@ export interface DemoRun {
 
 export const DEMO_RUNS: ReadonlyArray<DemoRun> = [
   {
+    repo: "acme/storefront",
+    issue: 60,
+    title: "Show stock levels on product cards",
+    kind: "claimed",
+    instructor: "jo-park",
+    startedAgoMs: 4 * MINUTE,
+  },
+  {
     repo: "acme/billing",
     issue: 24,
     title: "Retry failed webhook deliveries",
     kind: "building",
     instructor: "sam-lee",
     startedAgoMs: 38 * MINUTE,
+  },
+  {
+    repo: "acme/billing",
+    issue: 27,
+    title: "Export invoices as CSV",
+    kind: "gate",
+    instructor: "jo-park",
+    startedAgoMs: 70 * MINUTE,
+    pr: 29,
   },
   {
     repo: "acme/billing",
@@ -158,7 +182,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
     cause: CauseStep,
     reason: string,
   ) => write(afterMs, { event: "state_changed", data: change }, cause, reason);
-  const gateAttempt = (attempt: number, exits: ReadonlyArray<number>) => {
+  const gateAttempt = (attempt: number, exits: ReadonlyArray<number>, ran = GATE.length) => {
     write(
       2 * MINUTE,
       {
@@ -174,7 +198,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
       "gate-checkout-made",
       { attempt },
     );
-    GATE.forEach((command, index) => {
+    GATE.slice(0, ran).forEach((command, index) => {
       const exit = exits[index] ?? 0;
       write(
         index === 0 ? 40_000 : 95_000,
@@ -229,6 +253,11 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
   );
   state(5, { from: "ready", to: "triage" }, "start", "claimed");
   step(8, "launch-sending", "start", "launch-sending");
+  // A claimed run is still waiting for its session to start.
+  if (run.kind === "claimed") {
+    ledger.close();
+    return at;
+  }
   write(
     40,
     {
@@ -241,6 +270,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        title: run.title,
       },
     },
     "start",
@@ -251,6 +281,16 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
 
   switch (run.kind) {
     case "building":
+      break;
+    case "gate":
+      write(
+        47 * MINUTE,
+        { event: "pr_opened", data: { pr: run.pr!, url: prUrl! } },
+        "advance",
+        "pr-opened",
+      );
+      // Partway through its first gate: the lint has passed and the tests are running.
+      gateAttempt(1, [0], 1);
       break;
     case "needs-info":
       write(

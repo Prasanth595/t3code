@@ -18,15 +18,19 @@ const OUT_DIR = NodePath.join(SITE, "public/screenshots");
 const FAILURE_PNG = NodePath.join(SITE, "screenshot-failure.png");
 const STARTUP_TIMEOUT_MS = 180_000;
 const STOP_TIMEOUT_MS = 15_000;
-/** Space kept around a shot of part of a page, in CSS pixels. */
-const PART_MARGIN = 24;
+/** Space kept around a shot of part of a page, in CSS pixels; under the 16 px gap below the belt. */
+const PART_MARGIN = 12;
 /** Where the web client keeps its own settings (apps/web/src/clientPersistenceStorage.ts). */
 const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
+/** The browser window, in CSS pixels; a shot may ask for a taller one. */
+const VIEWPORT = { width: 1440, height: 900 } as const;
 
 interface Shot {
   readonly name: string;
   /** The page's path, given the id of the environment the throwaway server runs. */
   readonly path: (environmentId: string) => string;
+  /** A window taller than `VIEWPORT`, in CSS pixels, for a page that must be shown whole. */
+  readonly height?: number;
   /** Waits for what the shot is of; answers the part of the page to capture, or none for all of it. */
   readonly ready: (page: Page) => Promise<Locator | void>;
 }
@@ -35,8 +39,13 @@ const SHOTS: ReadonlyArray<Shot> = [
   {
     name: "factory-page",
     path: () => "/factory",
+    // Tall enough for the belt, the bins and the runs table under them.
+    height: 1280,
     ready: async (page) => {
       await page.getByText("acme/storefront#57").first().waitFor();
+      // The page opens the newest run's post, Claimed, whose run has no title until it launches.
+      await page.locator('[data-post="building"]').click();
+      await page.getByText("Retry failed webhook deliveries").first().waitFor();
     },
   },
   {
@@ -60,7 +69,8 @@ const SHOTS: ReadonlyArray<Shot> = [
     ready: async (page) => {
       const list = page.getByRole("region", { name: "Needs attention" });
       await list.getByText("acme/storefront#52").first().waitFor();
-      return list;
+      // The row the list shares with the Needs info and Stuck bins.
+      return list.locator("xpath=..");
     },
   },
   {
@@ -229,7 +239,7 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
   NodeFS.mkdirSync(OUT_DIR, { recursive: true });
   // One context for both themes: the pairing URL's token works once.
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
+    viewport: VIEWPORT,
     deviceScaleFactor: 2,
     reducedMotion: "reduce",
   });
@@ -249,6 +259,7 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
   for (const theme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     for (const shot of SHOTS) {
+      await page.setViewportSize({ ...VIEWPORT, height: shot.height ?? VIEWPORT.height });
       await page.goto(`${server.webOrigin}${shot.path(environmentId)}`);
       const part = await shot.ready(page).catch(async (error: unknown) => {
         await page.screenshot({ path: FAILURE_PNG }).catch(() => undefined);
