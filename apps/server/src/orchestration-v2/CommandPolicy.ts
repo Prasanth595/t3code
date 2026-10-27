@@ -150,8 +150,13 @@ export function goalCommandStopsActiveRun(
   }
 }
 
+type DeliveryIntentProjection = Pick<
+  OrchestrationV2ThreadProjection,
+  "runs" | "messages" | "providerTurns" | "providerThreads" | "providerSessions"
+>;
+
 export function resolveMessageDispatchIntent(
-  projection: OrchestrationV2ThreadProjection,
+  projection: DeliveryIntentProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
 ): MessageDispatchMode {
@@ -165,8 +170,22 @@ export function resolveMessageDispatchIntent(
     : mode;
 }
 
+export function runAwaitsProviderTurn(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns">,
+  run: Pick<OrchestrationV2Run, "status" | "activeAttemptId">,
+): boolean {
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    (run.status === "running" &&
+      !projection.providerTurns.some(
+        (turn) => turn.runAttemptId === run.activeAttemptId && turn.status !== "pending",
+      ))
+  );
+}
+
 function resolveDeliveryIntent(
-  projection: OrchestrationV2ThreadProjection,
+  projection: DeliveryIntentProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
 ): MessageDispatchMode {
@@ -180,17 +199,16 @@ function resolveDeliveryIntent(
       run.status === "waiting",
   );
   if (activeRun === undefined) return { type: "start_immediately" };
-  if (deliveryIntent === "steer") {
-    return { type: "steer_active", targetRunId: activeRun.id };
-  }
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
-  // A run can be active before its provider turn starts or after it finishes.
-  // Queue automatic input in those gaps so steering cannot reject the message.
+  if (runAwaitsProviderTurn(projection, activeRun)) return { type: "queue_after_active" };
+  if (deliveryIntent === "steer") {
+    return { type: "steer_active", targetRunId: activeRun.id };
+  }
+  // A run stays active after its provider turn finishes. Queue automatic input
+  // in that gap so steering cannot reject the message.
   if (
-    activeRun.status === "preparing" ||
-    activeRun.status === "starting" ||
     !projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     )

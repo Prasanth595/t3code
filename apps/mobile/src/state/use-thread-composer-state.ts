@@ -649,21 +649,18 @@ export function useThreadComposerState() {
     // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
     // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
-    const followUpAction = resolveComposerDispatchMode({
-      running: activeThreadBusy && canSteerActiveTurn,
-      alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
-      activeTurnDefault,
-    });
+    // The server holds a steer sent during setup until the turn starts.
     const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
       (status) => status === "preparing" || status === "starting",
     );
-    const followUpDispatchMode = setupRunning
-      ? "queue"
-      : followUpAction === "auto"
-        ? null
-        : followUpAction === "queue"
-          ? "queue"
-          : "auto";
+    const followUpAction = resolveComposerDispatchMode({
+      running: setupRunning || (activeThreadBusy && canSteerActiveTurn),
+      alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
+      activeTurnDefault,
+      canSteer: !isCompacting,
+    });
+    const followUpDispatchMode =
+      followUpAction === "auto" ? null : followUpAction === "queue" ? "queue" : "auto";
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);

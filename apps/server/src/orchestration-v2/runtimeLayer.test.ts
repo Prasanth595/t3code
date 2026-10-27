@@ -36,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -1074,6 +1075,181 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         ["provider-turn.start"],
       );
     }),
+  );
+
+  it.effect.each(["auto", "steer"] as const)(
+    "steers a %s message sent before the active provider turn starts once it does",
+    (deliveryIntent) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make(`runtime-startup-steer-${deliveryIntent}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-create`),
+          threadId,
+          projectId: ProjectId.make(`runtime-startup-steer-${deliveryIntent}-project`),
+          title: "Startup steer",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-first`),
+          threadId,
+          messageId: MessageId.make(`runtime-startup-steer-${deliveryIntent}-first`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-other-model`),
+          threadId,
+          messageId: MessageId.make(`runtime-startup-steer-${deliveryIntent}-other-model`),
+          text: "Use another model for this.",
+          attachments: [],
+          modelSelection: { ...modelSelection, model: "other-model" },
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-goal`),
+          threadId,
+          messageId: MessageId.make(`runtime-startup-steer-${deliveryIntent}-goal`),
+          text: "Check the goal.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent,
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-goal-edit`),
+          threadId,
+          runId: (yield* orchestrator.getThreadProjection(threadId)).runs[2]!.id,
+          text: "/goal",
+        });
+        const steerMessageId = MessageId.make(`runtime-startup-steer-${deliveryIntent}-steer`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-steer`),
+          threadId,
+          messageId: steerMessageId,
+          text: "Also do this.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent,
+        });
+        const starting = yield* orchestrator.getThreadProjection(threadId);
+        const run = starting.runs[0]!;
+        assert.deepEqual(
+          starting.runs.map((candidate) => candidate.status),
+          ["starting", "queued", "queued", "queued"],
+        );
+
+        const providerThread = starting.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        const providerSession = {
+          id: providerThread.providerSessionId!,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "running" as const,
+          cwd: process.cwd(),
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        };
+        const providerTurn = {
+          id: ProviderTurnId.make(`runtime-startup-steer-${deliveryIntent}-turn`),
+          providerThreadId: providerThread.id,
+          nodeId: run.rootNodeId!,
+          runAttemptId: run.activeAttemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        };
+        const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+          Effect.succeedSome({
+            providerSession,
+          } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.write({
+          commandId: CommandId.make(`runtime-startup-steer-${deliveryIntent}-running`),
+          events: [
+            {
+              id: EventId.make(`runtime-startup-steer-${deliveryIntent}-run-event`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make(`runtime-startup-steer-${deliveryIntent}-session-event`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: providerSession,
+            },
+            {
+              id: EventId.make(`runtime-startup-steer-${deliveryIntent}-turn-event`),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: providerTurn,
+            },
+          ],
+        });
+
+        const promoted = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "turn-item.updated" &&
+              stored.event.payload.type === "user_message" &&
+              stored.event.payload.messageId === steerMessageId,
+          ),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(promoted));
+        const steered = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          steered.runs.map((candidate) => candidate.status),
+          ["running", "queued", "queued", "cancelled"],
+        );
+        assert.equal(
+          steered.messages.find((message) => message.id === steerMessageId)?.runId,
+          run.id,
+        );
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(promoted.pipe(Option.getOrThrow).commandId!)).map(
+            (effect) => effect.request.type,
+          ),
+          ["provider-turn.steer"],
+        );
+      }),
   );
 
   it.effect("answers an async question after its provider exits and commits the answer once", () =>
