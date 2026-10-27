@@ -67,8 +67,10 @@ export function hydrateWorkspaceSelections() {
   if (!REMEMBERS) return Promise.resolve();
   hydration ??= loadPreferences()
     .then((preferences) => {
+      // Pages visited while loading aren't stored yet, so they stay due for the next save.
+      const unchanged = selections === saved;
       selections = { ...withoutRouteKeys(preferences.workspaceSelections), ...selections };
-      saved = selections;
+      if (unchanged) saved = selections;
       AppState.addEventListener("change", (status) => {
         if (status !== "active") saveWorkspaceSelections().catch(() => undefined);
       });
