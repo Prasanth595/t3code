@@ -758,6 +758,19 @@ describe("local folder path", () => {
     expect(screen.path).toBe("~/");
   });
 
+  it("keeps each host's typed path when switching between hosts", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/a");
+    await screen.render("another-environment");
+    await screen.type("~/b");
+
+    await screen.render("environment");
+    expect(screen.path).toBe("/work/a");
+    await screen.render("another-environment");
+    expect(screen.path).toBe("~/b");
+  });
+
   it("keeps a typed path when the default host drops out and comes back", async () => {
     await using screen = mountLocalFolder();
     await screen.render();

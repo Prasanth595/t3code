@@ -296,13 +296,23 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     getAddProjectInitialQuery(environmentBaseDirectory),
     pinnedDirectoryName,
   );
-  // Only the last typed or browsed path is kept, tagged with its host. Other hosts show their
-  // own default; a host that drops out briefly (null) keeps showing the path, and returning to
-  // the tagged host restores it unless the path was edited on another host meanwhile.
-  const [pathState, setPathState] = useState({ environmentId, path: seedPath });
+  // Each host keeps the path last typed or browsed for it, and shows its own default until then,
+  // so switching hosts and back loses nothing. With no host selected (one dropping out briefly),
+  // the field keeps the last path typed anywhere.
+  const [paths, setPaths] = useState<{
+    readonly byHost: ReadonlyMap<EnvironmentId, string>;
+    readonly last: string;
+  }>(() => ({ byHost: new Map(), last: seedPath }));
   const pathInput =
-    environmentId === null || pathState.environmentId === environmentId ? pathState.path : seedPath;
-  const commitPathInput = (path: string) => setPathState({ environmentId, path });
+    environmentId === null ? paths.last : (paths.byHost.get(environmentId) ?? seedPath);
+  const commitPathInput = (path: string) =>
+    setPaths((current) => {
+      const byHost = new Map(current.byHost);
+      if (environmentId !== null) {
+        byHost.set(environmentId, path);
+      }
+      return { byHost, last: path };
+    });
   const environmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
     reportFailure: false,
