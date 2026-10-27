@@ -504,6 +504,33 @@ describe("pools", () => {
     ]);
   });
 
+  it("joins a login without an email to the only hub account in its workspace", () => {
+    const native = provider({
+      auth: { status: "authenticated", workspaceId: "ws-plus" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 14 }] },
+    });
+    const hubAccount = {
+      id: "plus.json",
+      driver: ProviderDriverKind.make("codex"),
+      email: "me@example.com",
+      workspaceId: "ws-plus",
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 14 }] },
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual(["env-a:codex"]);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",

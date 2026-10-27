@@ -133,15 +133,21 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const members = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
+      const workspace = `${report.driver}:${report.workspaceId}`;
+      members.set(workspace, (members.get(workspace) ?? new Set()).add(key));
     }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) return null;
+    if (!key) {
+      const known = report.workspaceId && members.get(`${report.driver}:${report.workspaceId}`);
+      return known && known.size === 1 ? `${[...known][0]}:${report.workspaceId}` : null;
+    }
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
