@@ -124,6 +124,7 @@ describe("AddCodexAccountDialog", () => {
       for (const animation of document.getAnimations()) animation.finish();
     });
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(page.getByRole("dialog").query()).toBeNull();
+    // onClose runs before the owner's unmount commits, so wait for the dialog to leave the DOM.
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   });
 });
