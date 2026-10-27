@@ -1,13 +1,8 @@
 import {
   type CommandId,
   type EventId,
-  MAX_SCRIPT_ID_LENGTH,
-  type ModelSelection,
   type ProjectIconOverride,
   ProjectId,
-  type ProjectScript,
-  SCRIPT_RUN_COMMAND_PATTERN,
-  type ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
@@ -22,21 +17,24 @@ export interface ProjectCreateCommand {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
-  readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
+/**
+ * A project's model, thread mode, auto-pull and scripts are settings, not
+ * aggregate state; ProjectService writes them to its settings override.
+ */
 export interface ProjectMetaUpdateCommand {
   readonly type: "project.meta.update";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title?: string;
   readonly workspaceRoot?: string;
-  readonly defaultModelSelection?: ModelSelection | null;
-  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
-  readonly autoPull?: boolean;
+  // Only ever cleared here: until settings are folded, resolving falls back to
+  // the row's copy once the override is gone, so a reset must reach it too.
+  readonly defaultModelSelection?: null;
+  readonly defaultThreadEnvMode?: null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
-  readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
 export interface ProjectDeleteCommand {
@@ -102,7 +100,6 @@ export interface ProjectCommandState {
 }
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 /** Read state and commit the planned event under the project lock. */
 export function planProjectCommand(input: {
@@ -160,7 +157,7 @@ export function planProjectCommand(input: {
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
-          scripts: command.scripts ?? [],
+          scripts: [],
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
@@ -175,17 +172,6 @@ export function planProjectCommand(input: {
         Array.from(monogramSegmenter.segment(command.projectIcon.text)).length > 2
       ) {
         return invariant("Project monograms must contain at most two characters.");
-      }
-      if (command.scripts !== undefined) {
-        // Allow editing or removing persisted invalid script ids, while rejecting new invalid ids.
-        const existingIds = new Set(project.scripts.map((script) => script.id));
-        for (const script of command.scripts) {
-          if (!existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`)) {
-            return invariant(
-              `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${script.id.length} characters).`,
-            );
-          }
-        }
       }
       if (command.workspaceRoot !== undefined) {
         const conflict = requireWorkspaceAvailable(command.workspaceRoot);
@@ -204,10 +190,8 @@ export function planProjectCommand(input: {
           ...(command.defaultThreadEnvMode === undefined
             ? {}
             : { defaultThreadEnvMode: command.defaultThreadEnvMode }),
-          ...(command.autoPull === undefined ? {} : { autoPull: command.autoPull }),
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
-          ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
           updatedAt: occurredAt,
         },
       });

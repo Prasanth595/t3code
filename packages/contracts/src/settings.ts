@@ -1377,6 +1377,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "read-file",
   "read-provider-history",
   "read-project-settings",
+  "write-project-settings",
   "read-secret",
   "remove-secret",
   "remove-stale-secret",
