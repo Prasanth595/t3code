@@ -370,10 +370,13 @@ function rootRule(theme: HtmlRenderTheme): string {
 // Forward shortcuts after page handlers; text fields retain their keys.
 const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||""}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
 
-function bootstrapMarkup(markup: string): string {
+function bootstrapMarkup(markup: string, theme: HtmlRenderTheme | undefined): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
   const light = htmlRenderTheme(T3_CODE_LIGHT_THEME_COLORS, "light");
-  const defaultCss = `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`;
+  const defaultCss =
+    theme === undefined
+      ? `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`
+      : `${rootRule(theme)}${BASE_CSS}`;
   return [
     /<meta\s[^>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
     /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(markup)
@@ -411,9 +414,10 @@ const blankNonMarkup = (html: string) => {
   return parts.join("");
 };
 
-export function injectHtmlRenderBootstrap(html: string): string {
+/** Without a theme the page follows the system scheme until the host posts one. */
+export function injectHtmlRenderBootstrap(html: string, theme?: HtmlRenderTheme): string {
   const scan = blankNonMarkup(html);
-  const markup = bootstrapMarkup(scan);
+  const markup = bootstrapMarkup(scan, theme);
   const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
@@ -430,4 +434,75 @@ export function injectHtmlRenderBootstrap(html: string): string {
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;
+}
+
+/** Fence language for HTML visuals written inline in a chat reply. */
+export const CHAT_VISUAL_LANGUAGE = "visual";
+
+export const CHAT_VISUAL_GUIDE = [
+  "People understand pictures faster than text, so show your answer visually whenever there is something to see:",
+  "numbers, comparisons, trends, steps, timelines, plans, schedules, structures, pros and cons, recipes, summaries.",
+  "Skip it only for greetings, a single short fact, or a yes/no answer.",
+  `To show one, write a fenced code block with the language \`${CHAT_VISUAL_LANGUAGE}\` holding one complete, self-contained HTML document.`,
+  "The app draws it inline in the chat. Inline all CSS and JavaScript. Use no external libraries, fonts, or images; draw charts with inline SVG or CSS.",
+  "Make it interactive when that helps (tabs, hover details, toggles). Write its text in the user's language.",
+  "Keep a short text answer around it, but do not repeat what the visual already shows.",
+  HTML_RENDER_LAYOUT_GUIDE,
+  HTML_RENDER_THEME_GUIDE,
+].join(" ");
+
+export type ChatVisualSegment =
+  | { readonly kind: "markdown"; readonly text: string }
+  | { readonly kind: "visual"; readonly html: string; readonly complete: boolean };
+
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/;
+
+/** Splits a reply into markdown and ```visual blocks, leaving fences of other languages as markdown. */
+export function splitChatVisuals(text: string): ReadonlyArray<ChatVisualSegment> {
+  const segments: ChatVisualSegment[] = [];
+  const lines = text.split("\n");
+  let markdown: string[] = [];
+  let fence: { readonly marker: string; readonly visual: string[] | null } | null = null;
+  const flushMarkdown = () => {
+    if (markdown.some((line) => line.trim() !== "")) {
+      segments.push({ kind: "markdown", text: markdown.join("\n") });
+    }
+    markdown = [];
+  };
+  for (const line of lines) {
+    if (fence === null) {
+      const open = FENCE_OPEN.exec(line);
+      if (open?.[1] !== undefined) {
+        const visual = open[2]?.toLowerCase() === CHAT_VISUAL_LANGUAGE;
+        fence = { marker: open[1], visual: visual ? [] : null };
+        if (visual) flushMarkdown();
+        else markdown.push(line);
+        continue;
+      }
+      markdown.push(line);
+      continue;
+    }
+    const trimmed = line.trim();
+    const closes =
+      trimmed.length >= fence.marker.length &&
+      trimmed[0] === fence.marker[0] &&
+      [...trimmed].every((char) => char === fence?.marker[0]);
+    if (fence.visual === null) {
+      markdown.push(line);
+      if (closes) fence = null;
+      continue;
+    }
+    if (closes) {
+      segments.push({ kind: "visual", html: fence.visual.join("\n"), complete: true });
+      fence = null;
+      continue;
+    }
+    fence.visual.push(line);
+  }
+  if (fence?.visual) {
+    segments.push({ kind: "visual", html: fence.visual.join("\n"), complete: false });
+  } else {
+    flushMarkdown();
+  }
+  return segments;
 }

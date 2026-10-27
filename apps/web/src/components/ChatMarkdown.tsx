@@ -93,6 +93,7 @@ import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
+import { CHAT_VISUAL_LANGUAGE } from "@t3tools/shared/htmlRender";
 import remarkMath from "remark-math";
 import {
   artifactTemplateFromHastProperties,
@@ -187,6 +188,7 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
+import { ChatVisualBlock } from "./chat/ChatVisualBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
 import {
@@ -1519,6 +1521,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </Suspense>
       </RenderErrorBoundary>
     );
+    if (language === CHAT_VISUAL_LANGUAGE) {
+      return (
+        <ChatVisualBlock
+          html={codeBlock.code}
+          complete={!isStreaming || isClosedCodeFence(node, text, codeBlock.code)}
+        />
+      );
+    }
     if (language === "mermaid") {
       return (
         <MarkdownMermaidCodeBlock

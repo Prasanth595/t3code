@@ -4,6 +4,7 @@ import {
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
 import { EnvironmentId } from "@t3tools/contracts";
+import { splitChatVisuals } from "@t3tools/shared/htmlRender";
 import type {
   SaasChatAttachment,
   SaasChatConversation,
@@ -50,6 +51,7 @@ import {
 } from "../threads/ThreadComposer";
 import { useMarkdownStyles } from "../threads/ThreadFeed";
 import { pickChatDocuments, pickChatPhotos } from "./chatFiles";
+import { ChatVisual } from "./ChatVisual";
 import {
   miraChatHistory,
   openMiraUpgrade,
@@ -201,11 +203,18 @@ function AssistantRow(props: { readonly text: string; readonly streaming: boolea
       className={props.streaming ? "mb-1 px-1" : "mb-5 px-1"}
       entering={FadeIn.duration(220)}
     >
-      <SelectableMarkdownText
-        markdown={props.text}
-        textStyle={styles.assistant.nativeTextStyle}
-        onLinkPress={(href) => void Linking.openURL(href)}
-      />
+      {splitChatVisuals(props.text).map((segment, index) =>
+        segment.kind === "visual" ? (
+          <ChatVisual key={index} html={segment.html} complete={segment.complete} />
+        ) : (
+          <SelectableMarkdownText
+            key={index}
+            markdown={segment.text}
+            textStyle={styles.assistant.nativeTextStyle}
+            onLinkPress={(href) => void Linking.openURL(href)}
+          />
+        ),
+      )}
       {props.streaming ? null : (
         <View className="mt-1 flex-row items-center gap-1">
           <CopyTextButton
