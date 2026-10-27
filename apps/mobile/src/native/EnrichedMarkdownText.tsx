@@ -318,6 +318,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         <EnrichedMarkdownText
           markdown={markdown}
           markdownStyle={markdownStyle}
+          // Android trims the last block's bottom margin during measurement
+          // (removeTrailingMargin); ask for it back so a message ending in a
+          // paragraph doesn't glue to the meta row below the text view.
+          allowTrailingMargin={Platform.OS === "android"}
           onLinksChange={onLinksChange}
           renderers={renderers}
           resolveImageSource={resolveNativeImageSource}

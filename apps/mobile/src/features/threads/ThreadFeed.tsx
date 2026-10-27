@@ -1784,7 +1784,7 @@ function renderFeedEntry(
           />
         ) : null}
         {showAssistantMeta ? (
-          <View className="mt-2.5 flex-row items-center gap-1">
+          <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
               text={renderedText}
