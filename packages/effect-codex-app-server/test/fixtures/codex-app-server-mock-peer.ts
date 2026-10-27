@@ -68,6 +68,19 @@ const handleMethod = (message: Record<string, unknown>) => {
           turnId: "turn-1",
         },
       });
+      // `item/agentMessage/delta` expects a string delta; the number fails the
+      // payload schema, so the client must drop the notification with a warning.
+      if (process.env.CODEX_APP_SERVER_TEST_INVALID_NOTIFICATION) {
+        writeMessage({
+          method: "item/agentMessage/delta",
+          params: {
+            delta: 42,
+            itemId: "item-invalid",
+            threadId: "thread-1",
+            turnId: "turn-1",
+          },
+        });
+      }
       return;
     }
     case "account/read": {

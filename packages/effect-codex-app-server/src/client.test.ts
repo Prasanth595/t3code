@@ -1,6 +1,9 @@
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -8,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CodexClient from "./client.ts";
 
@@ -122,6 +126,57 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
           turnId: "turn-1",
         },
       ]);
+    }),
+  );
+  it.effect("warns once for an undecodable notification and keeps serving requests", () =>
+    Effect.gen(function* () {
+      const warnings = yield* Queue.unbounded<string>();
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") Queue.offerUnsafe(warnings, String([message].flat()[0]));
+      });
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_INVALID_NOTIFICATION: "1",
+      });
+      const scope = yield* Scope.make();
+      const layerClient = CodexClient.layerChildProcess(handle);
+      // The transport fiber that logs the warning forks while the client layer
+      // builds, so the logger must wrap the build itself (CurrentLoggers is a
+      // FiberRef: a merged-in layer branch does not reach the client's fibers).
+      const context = yield* Layer.buildWithScope(layerClient, scope).pipe(
+        Effect.provide(Logger.layer([logger])),
+      );
+      const validDelta = yield* Deferred.make<void>();
+
+      const account = yield* Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        yield* client.handleServerNotification("item/agentMessage/delta", () =>
+          Deferred.succeed(validDelta, undefined).pipe(Effect.asVoid),
+        );
+        yield* client.request("initialize", {
+          clientInfo: {
+            name: "effect-codex-app-server-test",
+            title: "Effect Codex App Server Test",
+            version: "0.0.0",
+          },
+          capabilities: {
+            experimentalApi: true,
+            optOutNotificationMethods: null,
+          },
+        });
+        yield* client.notify("initialized", undefined);
+        // The peer answers `initialized` with a valid delta followed by one the
+        // payload schema rejects; the warning for the rejected one follows the
+        // accepted one on the same processing fiber.
+        yield* Deferred.await(validDelta);
+        const warning = yield* TestClock.withLive(
+          Queue.take(warnings).pipe(Effect.timeout("5 seconds")),
+        );
+        assert.equal(warning, "Dropped a Codex App Server notification that failed to decode");
+        // The dropped notification must not have broken the client.
+        return yield* client.request("account/read", {});
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      assert.equal(account.requiresOpenaiAuth, false);
     }),
   );
   it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>
