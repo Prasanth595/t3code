@@ -401,7 +401,10 @@ function SnoozeMenuButton(props: {
             key={preset.id}
             onClick={(event) => {
               event.stopPropagation();
-              onSnooze(preset);
+              const selectedPreset = resolveSnoozePresets(new Date(), timestampFormat).find(
+                (candidate) => candidate.id === preset.id,
+              );
+              if (selectedPreset) onSnooze(selectedPreset);
             }}
           >
             {preset.label}

@@ -5,6 +5,7 @@ import {
   type ContextMenuItem,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { DEFAULT_SNOOZE_PRESETS, type SnoozePreferences } from "@t3tools/contracts/settings";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ThreadActionMenuId } from "../components/threadActionMenu.logic";
@@ -21,6 +22,8 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
+  snoozePreferences: null as SnoozePreferences,
+  snoozedUntil: null as string | null,
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -101,12 +104,6 @@ vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
   toastManager: { add: () => state.completed.resolve() },
 }));
-vi.mock("../components/Sidebar.snooze", () => ({
-  resolveSnoozePresets: () => [
-    { id: "hour", label: "In 1 hour", whenLabel: "3 PM", snoozedUntil: "2099-01-01T00:00:00Z" },
-  ],
-  snoozeWakeDescription: () => "later",
-}));
 vi.mock("./useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: () => recordEffect("copy") }),
 }));
@@ -114,6 +111,7 @@ vi.mock("./useHandleNewThread", () => ({
   useNewThreadHandler: () => async () => recordEffect("draft"),
 }));
 vi.mock("./useSettings", () => ({
+  getClientSettings: () => ({ snoozePreferences: state.snoozePreferences }),
   useClientSettings: (select: (settings: unknown) => unknown) =>
     select({
       confirmThreadDelete: true,
@@ -136,7 +134,8 @@ vi.mock("./useThreadActions", () => ({
         "deleteThread",
       ].map((action) => [
         action,
-        async () => {
+        async (_threadRef: unknown, snoozedUntil?: string) => {
+          if (action === "snoozeThread") state.snoozedUntil = snoozedUntil ?? null;
           recordEffect(action === "markThreadUnread" ? "mark-unread" : action);
           return AsyncResult.success(undefined);
         },
@@ -163,6 +162,8 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
+  state.snoozePreferences = null;
+  state.snoozedUntil = null;
   state.show.mockReset().mockResolvedValue(null);
 });
 
@@ -178,6 +179,41 @@ describe("thread menu permissions", () => {
       choice.resolve(action);
       await state.completed.promise;
       expect(state.effects).toEqual([]);
+    },
+  );
+});
+
+describe("snooze menu selection", () => {
+  it.each([
+    { label: "default", action: "snooze:hour", hours: 1, preferences: null },
+    {
+      label: "custom",
+      action: "snooze:preset-0",
+      hours: 168,
+      preferences: [{ mode: "relative", hours: 168 }, ...DEFAULT_SNOOZE_PRESETS.slice(1)],
+    },
+  ] as const)(
+    "starts a $label relative snooze when selected, after the menu has stayed open",
+    async ({ action, hours, preferences }) => {
+      const openedAt = new Date(2026, 4, 8, 10);
+      const selectedAt = new Date(2026, 4, 8, 10, 30);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(openedAt);
+        state.granted.add("secondary");
+        state.snoozePreferences = preferences;
+        const choice = deferred<ThreadActionMenuId | null>();
+        state.show.mockReturnValue(choice.promise);
+        createMenu().openMenu(position);
+        vi.setSystemTime(selectedAt);
+        choice.resolve(action);
+        await state.completed.promise;
+        expect(state.snoozedUntil).toBe(
+          new Date(selectedAt.getTime() + hours * 60 * 60 * 1_000).toISOString(),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     },
   );
 });

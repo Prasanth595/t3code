@@ -2148,7 +2148,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const preset =
           clicked.value === "snooze:custom"
             ? await requestCustomSnooze()
-            : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+            : resolveSnoozePresets(new Date(), timestampFormat).find(
+                (candidate) => `snooze:${candidate.id}` === clicked.value,
+              );
         if (preset) {
           const coSnoozingKeys = new Set(threadKeys);
           clearSelection();
@@ -2416,7 +2418,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           const preset =
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
-              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+              : resolveSnoozePresets(new Date(), timestampFormat).find(
+                  (candidate) => `snooze:${candidate.id}` === clicked.value,
+                );
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
