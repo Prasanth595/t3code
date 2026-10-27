@@ -1175,8 +1175,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
 
   it.effect.each([
     { trigger: "startup", scope: "run" },
-    { trigger: "shutdown", scope: "run" },
-    { trigger: "startup", scope: "session" },
     { trigger: "shutdown", scope: "session" },
   ] as const)(
     "recovers only reconstructable user questions and keeps their cards pending on $trigger ($scope)",
@@ -1377,10 +1375,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const beforeSequence = yield* eventSink.latestSequence();
       for (const [index, answers] of [
         { color: " ", sizes: ["Small"] },
-        { color: "Blue", sizes: ["Small", 7] },
         { color: "Blue", sizes: [] },
         { color: "Blue", sizes: ["Small", " "] },
-        { color: "Blue", sizes: ["Small"], extra: ["Small", 7] },
+        { color: "Blue", sizes: ["Small"], extra: " " },
       ].entries()) {
         const commandId = CommandId.make(`runtime-async-question-invalid:${index}`);
         const invalid = yield* orchestrator

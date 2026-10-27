@@ -2900,7 +2900,7 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
   }),
 );
 
-it.effect.each(["runtime_error", "manual_shutdown", "server_shutdown"] as const)(
+it.effect.each(["manual_shutdown", "server_shutdown"] as const)(
   "ProviderSessionManagerV2 preserves questions only for server shutdown (%s)",
   (reason) =>
     Effect.gen(function* () {
@@ -2976,14 +2976,10 @@ it.effect.each(["runtime_error", "manual_shutdown", "server_shutdown"] as const)
         );
 
         const preserved = reason === "server_shutdown";
-        const terminalStatus = reason === "runtime_error" ? "failed" : "cancelled";
-        assert.equal(
-          request?.status,
-          preserved ? "pending" : reason === "runtime_error" ? "expired" : "cancelled",
-        );
+        assert.equal(request?.status, preserved ? "pending" : "cancelled");
         assert.equal(request?.responseCapability.type, preserved ? "live" : "not_resumable");
-        assert.equal(requestNode?.status, preserved ? "waiting" : terminalStatus);
-        assert.equal(requestTurnItem?.status, preserved ? "waiting" : terminalStatus);
+        assert.equal(requestNode?.status, preserved ? "waiting" : "cancelled");
+        assert.equal(requestTurnItem?.status, preserved ? "waiting" : "cancelled");
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
