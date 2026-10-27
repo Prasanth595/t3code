@@ -128,8 +128,8 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import {
-  commandPaletteMountRef,
   dispatchCommandPalette,
+  useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
@@ -260,6 +260,7 @@ function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPalette
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  useCommandPaletteMount();
   const state = useCommandPaletteStore();
   const setOpen = (open: boolean) => dispatchCommandPalette({ _tag: "SetOpen", open });
   const openChildSearch = (mode: "files" | "content", context: CommandPaletteReturnContext) =>
@@ -279,7 +280,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen(open);
         }}
       >
-        <div ref={commandPaletteMountRef} className="contents" inert={state.open}>
+        <div className="contents" inert={state.open}>
           {children}
         </div>
         <CommandPaletteDialog

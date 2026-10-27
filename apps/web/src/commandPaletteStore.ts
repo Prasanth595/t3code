@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 
 import {
@@ -27,17 +28,22 @@ export function isCommandPaletteMounted(): boolean {
   return mountedPalettes > 0;
 }
 
-/** Ref callback for the palette's root; an unmounted palette cannot stay open. */
-export function commandPaletteMountRef(node: Element | null): (() => void) | undefined {
-  if (node === null) return undefined;
-  mountedPalettes += 1;
-  return () => {
-    mountedPalettes -= 1;
-    if (mountedPalettes === 0) {
-      useCommandPaletteStore.setState(
-        (state) => ({ ...INITIAL_STATE, session: state.session + 1 }),
-        true,
-      );
-    }
-  };
+/**
+ * Marks the palette as mounted while the calling component is. An unmounted
+ * palette cannot stay open, so the last unmount resets the store.
+ */
+export function useCommandPaletteMount(): void {
+  // oxlint-disable-next-line t3code/react-effect-budget -- The palette's mount gates its global shortcuts, and leaving the route while it is open calls no close handler, so only unmount can reset the store.
+  useEffect(() => {
+    mountedPalettes += 1;
+    return () => {
+      mountedPalettes -= 1;
+      if (mountedPalettes === 0) {
+        useCommandPaletteStore.setState(
+          (state) => ({ ...INITIAL_STATE, session: state.session + 1 }),
+          true,
+        );
+      }
+    };
+  }, []);
 }

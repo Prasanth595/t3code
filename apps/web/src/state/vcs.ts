@@ -5,20 +5,10 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { getDocumentActivity, subscribeDocumentActivity } from "../lib/documentActivity";
+import { subscribeDocumentReturn } from "../lib/documentActivity";
 
 export const vcsEnvironment = createVcsEnvironmentAtoms(connectionAtomRuntime);
 export const vcsActionManager = createVcsActionManager(connectionAtomRuntime);
-
-/** Fires when the window regains focus or the tab becomes visible again. */
-function subscribeDocumentReturn(wake: () => void): () => void {
-  let previous = getDocumentActivity();
-  return subscribeDocumentActivity(() => {
-    const next = getDocumentActivity();
-    if ((next.focused && !previous.focused) || (next.visible && !previous.visible)) wake();
-    previous = next;
-  });
-}
 
 /**
  * Refreshes a checkout's status when the user comes back to the window, where
