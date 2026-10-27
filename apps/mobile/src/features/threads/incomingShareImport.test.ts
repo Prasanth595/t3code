@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { IncomingShareDraft } from "../sharing/incoming-share-model";
-import type { ComposerDraft } from "../../state/use-composer-drafts";
+import { undoComposerDraftMergeState, type ComposerDraft } from "../../state/use-composer-drafts";
 import {
   makeIncomingShareImports,
   type ShareImportDeps,
@@ -13,7 +13,34 @@ import {
 } from "./incomingShareImport";
 
 const destination = { environmentId: "env-1", projectId: "project-1" };
-const edited: ComposerDraft = { text: "typed after the restore", attachments: [] };
+const edited: ComposerDraft = { text: "typed after the undo", attachments: [] };
+
+/** The draft store's own undo, applied to the test's draft map. */
+function undoInto(
+  drafts: Map<string, ComposerDraft>,
+  draftKey: string,
+  snapshot: ComposerDraft,
+  merged: ComposerDraft,
+): void {
+  const next = undoComposerDraftMergeState(Object.fromEntries(drafts), draftKey, snapshot, merged);
+  drafts.clear();
+  for (const [key, draft] of Object.entries(next)) drafts.set(key, draft);
+}
+
+function mergeInto(
+  drafts: Map<string, ComposerDraft>,
+  draftKey: string,
+  content: {
+    readonly text: string;
+    readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  },
+): void {
+  const existing = drafts.get(draftKey) ?? { text: "", attachments: [] };
+  drafts.set(draftKey, {
+    text: `${existing.text}\n${content.text}`,
+    attachments: [...existing.attachments, ...content.attachments],
+  });
+}
 
 function fileAttachment(id: string): DraftComposerAttachment {
   return {
@@ -66,17 +93,13 @@ function setup(overrides: Partial<ShareImportDeps> = {}) {
       calls.push("consume");
     }),
     readDraft: (draftKey) => drafts.get(draftKey) ?? { text: "", attachments: [] },
-    restoreDraft: vi.fn(async (draftKey, snapshot) => {
-      calls.push("restore");
-      drafts.set(draftKey, snapshot);
+    undoMerge: vi.fn(async (draftKey, snapshot, merged) => {
+      calls.push("undo");
+      undoInto(drafts, draftKey, snapshot, merged);
     }),
     mergeIntoDraft: vi.fn(async (draftKey, content) => {
       calls.push("merge");
-      const existing = drafts.get(draftKey) ?? { text: "", attachments: [] };
-      drafts.set(draftKey, {
-        text: `${existing.text}\n${content.text}`,
-        attachments: [...existing.attachments, ...content.attachments],
-      });
+      mergeInto(drafts, draftKey, content);
       return { skippedAttachmentCount: 0 };
     }),
     selectAttachments: (incoming) => ({
@@ -170,7 +193,7 @@ describe("incoming share imports", () => {
     await imports.cancel(target);
 
     expect(watched.phase()).toBe("cancelled");
-    expect(calls).toEqual(["reserve", "merge", "restore", "release"]);
+    expect(calls).toEqual(["reserve", "merge", "undo", "release"]);
     expect(drafts.get("draft-a")).toEqual({ text: "mine", attachments: [] });
     // Unconsumed: the inbox still owns the files.
     expect(deps.releaseUnusedAttachments).not.toHaveBeenCalled();
@@ -200,7 +223,7 @@ describe("incoming share imports", () => {
 
     await imports.cancel(target);
     expect(watched.phase()).toBe("cancelled");
-    expect(deps.restoreDraft).toHaveBeenCalledTimes(1);
+    expect(deps.undoMerge).toHaveBeenCalledTimes(1);
     expect(drafts.get("draft-a")).toEqual({ text: "mine", attachments: [] });
     expect(deps.leave).toHaveBeenCalledTimes(1);
   });
@@ -227,23 +250,27 @@ describe("incoming share imports", () => {
     watched.unmount();
   });
 
-  it.each([
-    ["edited", (drafts: Map<string, ComposerDraft>) => drafts.set("draft-a", edited)],
-    ["deleted", (drafts: Map<string, ComposerDraft>) => drafts.delete("draft-a")],
-  ] as const)(
-    "a retried cancel keeps a draft the user %s after the restore was shown",
-    async (_change, change) => {
-      let restoreAttempts = 0;
+  const userChanges = [
+    ["edited", (drafts: Map<string, ComposerDraft>) => drafts.set("draft-a", edited), edited],
+    ["deleted", (drafts: Map<string, ComposerDraft>) => drafts.delete("draft-a"), undefined],
+  ] as const;
+
+  it.each(userChanges)(
+    "a retried cancel keeps a draft the user %s after the undo was shown",
+    async (_change, change, expected) => {
+      let undoAttempts = 0;
       const { deps, drafts, watch, imports } = setup({
         consume: vi.fn(async () => {
           throw new Error("disk full");
         }),
-        // Like restoreComposerDraftSnapshot: publishes, then fails to persist.
-        restoreDraft: vi.fn(async (draftKey: string, snapshot: ComposerDraft) => {
-          restoreAttempts += 1;
-          drafts.set(draftKey, snapshot);
-          if (restoreAttempts === 1) throw new Error("write failed");
-        }),
+        // Like undoComposerDraftMerge: publishes, then fails to persist.
+        undoMerge: vi.fn(
+          async (draftKey: string, snapshot: ComposerDraft, merged: ComposerDraft) => {
+            undoAttempts += 1;
+            undoInto(drafts, draftKey, snapshot, merged);
+            if (undoAttempts === 1) throw new Error("write failed");
+          },
+        ),
       });
       const target = importTarget();
       const watched = watch(target);
@@ -252,14 +279,74 @@ describe("incoming share imports", () => {
       expect(deps.onCancelFailure).toHaveBeenCalledWith(target, new Error("write failed"));
 
       change(drafts);
-      const expected = drafts.get("draft-a");
       await imports.cancel(target);
 
       expect(watched.phase()).toBe("cancelled");
-      expect(drafts.get("draft-a")).toBe(expected);
+      expect(drafts.get("draft-a")).toEqual(expected);
       expect(deps.release).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("cancel undoes the import after an upload finished on its attachment", async () => {
+    const file = fileAttachment("file");
+    const { drafts, inbox, watch, imports } = setup({
+      consume: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+    });
+    inbox.set("share-1", share([file]));
+    const target = importTarget();
+    watch(target);
+    await imports.settled(target);
+
+    const merged = drafts.get("draft-a");
+    drafts.set("draft-a", {
+      text: merged?.text ?? "",
+      attachments: [{ ...file, uploadedAttachmentId: "uploaded-1" }],
+    });
+    await imports.cancel(target);
+
+    expect(drafts.get("draft-a")).toEqual({ text: "mine", attachments: [] });
+  });
+
+  it.each(userChanges)(
+    "cancel keeps a draft the user %s after a merge that published but failed to persist",
+    async (_change, change, expected) => {
+      const { drafts, watch, imports } = setup({
+        // Like mergeComposerDraftContent: publishes, then fails to persist.
+        mergeIntoDraft: vi.fn(async (draftKey, content) => {
+          mergeInto(drafts, draftKey, content);
+          throw new Error("write failed");
+        }),
+      });
+      const target = importTarget();
+      const watched = watch(target);
+      await imports.settled(target);
+      expect(watched.phase()).toBe("failed");
+
+      change(drafts);
+      await imports.cancel(target);
+
+      expect(watched.phase()).toBe("cancelled");
+      expect(drafts.get("draft-a")).toEqual(expected);
+    },
+  );
+
+  it("cancel after a merge that published but failed to persist removes the merged share", async () => {
+    const { drafts, watch, imports } = setup({
+      mergeIntoDraft: vi.fn(async (draftKey, content) => {
+        mergeInto(drafts, draftKey, content);
+        throw new Error("write failed");
+      }),
+    });
+    const target = importTarget();
+    watch(target);
+    await imports.settled(target);
+
+    await imports.cancel(target);
+
+    expect(drafts.get("draft-a")).toEqual({ text: "mine", attachments: [] });
+  });
 
   it("a failed import keeps its cancel after its route left, and reports a failed undo", async () => {
     const { calls, deps, imports, watch } = setup({
@@ -279,7 +366,7 @@ describe("incoming share imports", () => {
 
     await imports.cancel(target);
 
-    expect(calls).toEqual(["reserve", "merge", "restore"]);
+    expect(calls).toEqual(["reserve", "merge", "undo"]);
     expect(deps.onCancelFailure).toHaveBeenCalledWith(target, new Error("locked"));
     expect(deps.leave).not.toHaveBeenCalled();
   });

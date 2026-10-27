@@ -75,7 +75,15 @@ export interface ShareImportDeps {
   readonly release: (shareId: string, destination: IncomingShareDestination) => Promise<void>;
   readonly consume: (shareId: string) => Promise<void>;
   readonly readDraft: (draftKey: string) => ComposerDraft;
-  readonly restoreDraft: (draftKey: string, snapshot: ComposerDraft) => Promise<void>;
+  /**
+   * Restores `snapshot` if the draft still equals `merged`; otherwise removes only
+   * what the merge added, keeping later edits.
+   */
+  readonly undoMerge: (
+    draftKey: string,
+    snapshot: ComposerDraft,
+    merged: ComposerDraft,
+  ) => Promise<void>;
   readonly mergeIntoDraft: (
     draftKey: string,
     content: {
@@ -109,20 +117,12 @@ interface Entry {
   run: Promise<void>;
   /** The draft before the first attempt merged into it; cancel restores it. */
   backup: ComposerDraft | null;
-  /** The draft as the last merge left it; cancel only restores over this. */
+  /** The draft as the last merge published it; cancel undoes against it. */
   merged: ComposerDraft | null;
   reservedFor: IncomingShareDestination | null;
   consumed: boolean;
   needsRestore: boolean;
   readonly listeners: Set<() => void>;
-}
-
-/** Drafts are replaced, never mutated, so field identity means unchanged. */
-function sameDraft(a: ComposerDraft, b: ComposerDraft): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return Array.from(keys).every(
-    (key) => a[key as keyof ComposerDraft] === b[key as keyof ComposerDraft],
-  );
 }
 
 function keyOf(target: ShareImportTarget): string {
@@ -216,13 +216,18 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
         throw new Error("Server attachment support is still loading.");
       }
       entry.needsRestore = true;
-      entry.merged = null;
-      const { skippedAttachmentCount } = await deps.mergeIntoDraft(draftKey, {
-        text: share.text,
-        attachments: selected.attachments,
-        sourceShareId: shareId,
-      });
-      entry.merged = deps.readDraft(draftKey);
+      let skippedAttachmentCount: number;
+      try {
+        ({ skippedAttachmentCount } = await deps.mergeIntoDraft(draftKey, {
+          text: share.text,
+          attachments: selected.attachments,
+          sourceShareId: shareId,
+        }));
+      } finally {
+        // The merge publishes before it persists, so read it back even when
+        // persisting rejects.
+        entry.merged = deps.readDraft(draftKey);
+      }
       if (stopped()) return;
       advance(entry, "attached");
       await deps.consume(shareId);
@@ -316,19 +321,16 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
     // durable writes this import made.
     try {
       if (entry.needsRestore && entry.backup) {
-        const current = deps.readDraft(draftKey);
-        const merged = entry.merged ?? current;
-        // restoreDraft shows the backup before persisting it, so a retry after a
-        // failed restore may find the backup already shown: persist it again.
-        // Anything else is an edit or deletion made since; leave it.
-        if (sameDraft(current, merged) || sameDraft(current, entry.backup)) {
-          await deps.restoreDraft(draftKey, entry.backup);
-          // The restore drops the share's merged-in attachments from the draft.
-          // Sweep them only when the inbox entry was consumed: before that, the
-          // inbox still references these files and keeps them for a later import.
-          if (entry.consumed) deps.releaseUnusedAttachments(merged.attachments);
-        }
+        // The draft can change while a failed import waits for an answer, by the
+        // user or an upload finishing, and a retried undo runs after its own
+        // publish. Undoing against the merged draft keeps those changes.
+        const merged = entry.merged ?? entry.backup;
+        await deps.undoMerge(draftKey, entry.backup, merged);
         entry.needsRestore = false;
+        // Sweep the share's merged-in files only once the inbox entry was
+        // consumed: before that, the inbox still owns them for a later import.
+        // The sweep skips files a draft still holds.
+        if (entry.consumed) deps.releaseUnusedAttachments(merged.attachments);
       }
       if (entry.reservedFor) {
         await deps.release(shareId, entry.reservedFor);

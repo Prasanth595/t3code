@@ -35,8 +35,8 @@ import { serverEnvironment } from "../../state/server";
 import {
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
-  restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
+  undoComposerDraftMerge,
 } from "../../state/use-composer-drafts";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
@@ -302,7 +302,7 @@ export const incomingShareImports = makeIncomingShareImports({
   release: releaseShareReservation,
   consume: consumeShare,
   readDraft: getComposerDraftSnapshot,
-  restoreDraft: restoreComposerDraftSnapshot,
+  undoMerge: undoComposerDraftMerge,
   mergeIntoDraft: mergeComposerDraftContent,
   selectAttachments: (share, environmentId) =>
     selectIncomingShareAttachmentsForServer({
