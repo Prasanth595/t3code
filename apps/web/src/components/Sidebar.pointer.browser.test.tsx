@@ -88,7 +88,8 @@ describe("sidebar pointer lifecycle", () => {
 
   it("lets a press through when desktop reports its release on a zero-button move", () => {
     using _environment = setup();
-    const drag = gesture();
+    const onDrop = vi.fn();
+    const drag = gesture({ onDrop });
     const onClick = vi.fn();
     document.addEventListener("click", onClick);
     using _listener = { [Symbol.dispose]: () => document.removeEventListener("click", onClick) };
@@ -98,6 +99,9 @@ describe("sidebar pointer lifecycle", () => {
     document.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(onClick).toHaveBeenCalledOnce();
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(drag.onAbort).toHaveBeenCalledExactlyOnceWith("thread");
+    expect(drag.onEnd).toHaveBeenCalledOnce();
     expect(drag.onStart).not.toHaveBeenCalled();
     expect(drag.onCancel).not.toHaveBeenCalled();
     expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(false);
