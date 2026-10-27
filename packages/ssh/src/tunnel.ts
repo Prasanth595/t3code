@@ -747,7 +747,7 @@ if [ -z "$REMOTE_PORT" ]; then
     sleep 1
     UPDATE_WAITED=$((UPDATE_WAITED + 1))
   done
-  # Readiness clears the marker, so refresh once more before falling back.
+  # The desktop clears the marker after publishing runtime, so refresh once more before falling back.
   if [ "$UPDATE_SAW_MARKER" -eq 1 ] && [ -z "$REMOTE_PORT" ] && ! adopt_default_server; then
     REMOTE_PID=""
     REMOTE_PORT=""

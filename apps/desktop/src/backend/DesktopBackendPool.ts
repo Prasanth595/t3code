@@ -1,10 +1,15 @@
-import { DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE } from "@t3tools/contracts";
+import {
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -29,6 +34,10 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
+
+const decodeServerRuntime = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ pid: Schema.Number, port: Schema.Number })),
+);
 
 export type BackendInstanceId = DesktopBackendManager.BackendInstanceId;
 export const BackendInstanceId = DesktopBackendManager.BackendInstanceId;
@@ -117,6 +126,34 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
 
+    const updateMarkerPath = environment.path.join(
+      environment.baseDir,
+      "runtime",
+      DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+    );
+    const serverRuntimePath = environment.path.join(environment.stateDir, "server-runtime.json");
+    // The server publishes its runtime after HTTP readiness. Until then an SSH launcher
+    // finds nothing to adopt, so dropping the marker earlier lets it start a competing server.
+    const releaseUpdateMarker = Effect.fn("desktop.backendPool.releaseUpdateMarker")(function* (
+      httpBaseUrl: URL,
+      pid: number,
+    ) {
+      if (!(yield* fileSystem.exists(updateMarkerPath).pipe(Effect.orElseSucceed(() => false)))) {
+        return;
+      }
+      yield* fileSystem.readFileString(serverRuntimePath).pipe(
+        Effect.flatMap(decodeServerRuntime),
+        Effect.map((runtime) => runtime.pid === pid && runtime.port === Number(httpBaseUrl.port)),
+        Effect.orElseSucceed(() => false),
+        Effect.repeat({
+          until: (published) => published,
+          schedule: Schedule.spaced(Duration.millis(100)),
+        }),
+        Effect.timeoutOption(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS)),
+      );
+      yield* fileSystem.remove(updateMarkerPath, { force: true }).pipe(Effect.ignore);
+    });
+
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
@@ -163,27 +200,18 @@ export const layer = Layer.effect(
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
       // Absorb window errors so readiness can reset restartAttempt.
-      onReady: (httpBaseUrl) =>
-        fileSystem
-          .remove(
-            environment.path.join(
-              environment.baseDir,
-              "runtime",
-              DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
-            ),
-            { force: true },
-          )
-          .pipe(
-            Effect.ignore,
-            Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
-            // Only once the main window exists, so the recovery window never closes into nothing.
-            Effect.andThen(SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" })),
-            Effect.catch((error) =>
-              logBackendPoolWarning("failed to open main window after backend readiness", {
-                error: error.message,
-              }),
-            ),
+      onReady: (httpBaseUrl, pid) =>
+        releaseUpdateMarker(httpBaseUrl, pid).pipe(
+          Effect.forkIn(layerScope),
+          Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
+          // Only once the main window exists, so the recovery window never closes into nothing.
+          Effect.andThen(SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" })),
+          Effect.catch((error) =>
+            logBackendPoolWarning("failed to open main window after backend readiness", {
+              error: error.message,
+            }),
           ),
+        ),
       onStartupFailure: (failure) =>
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
