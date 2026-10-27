@@ -6,6 +6,7 @@ type FakeListener = (event: FakeDomEvent) => void;
 
 class FakeDomEvent {
   defaultPrevented = false;
+  propagationStopped = false;
 
   constructor(
     readonly type: string,
@@ -16,6 +17,10 @@ class FakeDomEvent {
 
   preventDefault() {
     this.defaultPrevented = true;
+  }
+
+  stopPropagation() {
+    this.propagationStopped = true;
   }
 }
 
@@ -68,6 +73,20 @@ class FakeElement {
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value);
   }
+
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  getAttributeNames() {
+    return [...this.attributes.keys()];
+  }
+
+  click() {
+    this.dispatchEvent(new FakeDomEvent("click"));
+  }
+
+  scrollIntoView() {}
 
   dispatchEvent(event: FakeDomEvent) {
     for (const listener of this.listeners.get(event.type) ?? []) {
@@ -177,6 +196,59 @@ class FakeDocument {
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
+
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+}
+
+function fakeDocument() {
+  return document as unknown as FakeDocument;
+}
+
+function mountInvoker() {
+  const invoker = fakeDocument().body.appendChild(fakeDocument().createElement("button"));
+  invoker.focus();
+  return invoker;
+}
+
+// Bubbles from the focused element to the document, then applies the native button activation.
+function pressKey(key: string) {
+  const target = fakeDocument().activeElement ?? fakeDocument().body;
+  const event = new FakeDomEvent("keydown", { key, target });
+  for (
+    let node: FakeElement | null = target;
+    node && !event.propagationStopped;
+    node = node.parent
+  ) {
+    node.dispatchEvent(event);
+  }
+  if (!event.propagationStopped) {
+    fakeDocument().dispatchEvent(event);
+  }
+  if (
+    !event.defaultPrevented &&
+    (key === "Enter" || key === " ") &&
+    target.tagName === "button" &&
+    !target.disabled
+  ) {
+    target.click();
+  }
+  return event;
+}
+
+function focusedLabel() {
+  return fakeDocument().activeElement?.textContent;
+}
+
+function elementsWithRole(role: string) {
+  return [
+    ...fakeDocument().querySelectorAll("div"),
+    ...fakeDocument().querySelectorAll("button"),
+  ].filter((element) => element.getAttribute("role") === role);
 }
 
 function findButton(label: string): FakeElement | undefined {
@@ -229,10 +301,157 @@ describe("showContextMenuFallback", () => {
     const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
     const renameButton = findButton("Rename");
 
-    renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    renameButton?.dispatchEvent(new FakeDomEvent("click", { bubbles: true }));
     enablePointerSelection?.(0);
-    renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    renameButton?.dispatchEvent(new FakeDomEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename");
+  });
+
+  it("focuses the first enabled item when opened", () => {
+    mountInvoker();
+    void showContextMenuFallback([
+      { id: "unavailable", label: "Unavailable", disabled: true },
+      { id: "rename", label: "Rename" },
+    ]);
+
+    expect(focusedLabel()).toBe("Rename");
+  });
+
+  it("exposes menu, menuitem, and menuitemradio roles", () => {
+    void showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "sort:name", label: "Name", checked: true },
+    ]);
+
+    expect(elementsWithRole("menu")).toHaveLength(1);
+    expect(elementsWithRole("menuitem").map((item) => item.textContent)).toEqual(["Rename"]);
+    expect(elementsWithRole("menuitemradio").map((item) => item.textContent)).toEqual(["Name"]);
+  });
+
+  it("moves through enabled items with arrows, wrapping, and Home/End", () => {
+    mountInvoker();
+    void showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "pin", label: "Pin", disabled: true },
+      { id: "archive", label: "Archive" },
+      { id: "delete", label: "Delete" },
+    ]);
+
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(true);
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("ArrowDown");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("ArrowUp");
+    expect(focusedLabel()).toBe("Delete");
+    pressKey("Home");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("End");
+    expect(focusedLabel()).toBe("Delete");
+  });
+
+  it("opens a submenu with ArrowRight and returns to its trigger with ArrowLeft", () => {
+    mountInvoker();
+    void showContextMenuFallback([
+      {
+        id: "copy",
+        label: "Copy",
+        children: [
+          { id: "copy:unavailable", label: "Unavailable", disabled: true },
+          { id: "copy:path", label: "Path" },
+        ],
+      },
+    ]);
+    const trigger = findButton("Copy");
+
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+
+    pressKey("ArrowLeft");
+    expect(fakeDocument().activeElement).toBe(trigger);
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(findButton("Path")).toBeUndefined();
+  });
+
+  it("activates the focused item with Space and Enter", async () => {
+    mountInvoker();
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      {
+        id: "copy",
+        label: "Copy",
+        children: [
+          { id: "copy:path", label: "Path" },
+          { id: "copy:branch", label: "Branch" },
+        ],
+      },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey(" ");
+    expect(focusedLabel()).toBe("Path");
+    pressKey("ArrowDown");
+    pressKey("Enter");
+
+    await expect(selectionPromise).resolves.toBe("copy:branch");
+  });
+
+  it("closes one level per Escape and restores focus to the invoker", async () => {
+    const invoker = mountInvoker();
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", children: [{ id: "copy:path", label: "Path" }] },
+    ]);
+    const trigger = findButton("Copy");
+
+    pressKey("ArrowRight");
+    pressKey("Escape");
+    expect(findButton("Path")).toBeUndefined();
+    expect(fakeDocument().activeElement).toBe(trigger);
+
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(findButton("Copy")).toBeUndefined();
+    expect(fakeDocument().activeElement).toBe(invoker);
+  });
+
+  it("closes on Tab and lets the browser continue from the invoker", async () => {
+    const invoker = mountInvoker();
+    const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+
+    expect(pressKey("Tab").defaultPrevented).toBe(false);
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(fakeDocument().activeElement).toBe(invoker);
+  });
+
+  it("keeps keyboard focus when hover events arrive without pointer movement", () => {
+    mountInvoker();
+    void showContextMenuFallback(
+      [
+        { id: "rename", label: "Rename" },
+        { id: "archive", label: "Archive" },
+      ],
+      { x: 10, y: 10 },
+    );
+    const rename = findButton("Rename");
+
+    pressKey("ArrowDown");
+    rename?.dispatchEvent(new FakeDomEvent("mousemove", { clientX: 10, clientY: 10 }));
+    expect(focusedLabel()).toBe("Archive");
+
+    rename?.dispatchEvent(new FakeDomEvent("mousemove", { clientX: 12, clientY: 10 }));
+    expect(focusedLabel()).toBe("Rename");
+  });
+
+  it("restores focus to the original invoker after an open menu is replaced", async () => {
+    const invoker = mountInvoker();
+    const firstPromise = showContextMenuFallback([{ id: "first", label: "First" }]);
+    const secondPromise = showContextMenuFallback([{ id: "second", label: "Second" }]);
+    await expect(firstPromise).resolves.toBeNull();
+
+    pressKey("Escape");
+    await expect(secondPromise).resolves.toBeNull();
+    expect(fakeDocument().activeElement).toBe(invoker);
   });
 });
