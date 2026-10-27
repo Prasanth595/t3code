@@ -857,8 +857,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // until the session reports it again, so it is time-limited, watched and read.
         prReported = false;
         // The stint the pull request paused begins again; a run that is not building waits for
-        // its next state change to decide, and a clock already running keeps its start.
-        if (workingSince === null && (state === "triage" || state === "building")) {
+        // its next state change to decide. A clock already running keeps the time it counted.
+        if (state === "triage" || state === "building") {
+          if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
           workingSince = entry.ms;
         }
         break;
