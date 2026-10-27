@@ -621,6 +621,7 @@ export default defineConfig({
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
+          "apps/mobile/src/features/threads/ThreadFloatingControls.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",

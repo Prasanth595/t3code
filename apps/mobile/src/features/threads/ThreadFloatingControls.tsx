@@ -1,5 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { useMemo } from "react";
+import type { JSX } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,6 +8,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadListDrawer } from "./thread-list-drawer";
 
 export const THREAD_FLOATING_CONTROL_TOP_GAP = 8;
@@ -14,6 +17,8 @@ export const THREAD_FLOATING_CONTROL_SIZE = 44;
 /** Distance from the top safe-area inset to the bottom of the floating row. */
 export const THREAD_FLOATING_CONTROL_ROW_OFFSET =
   THREAD_FLOATING_CONTROL_TOP_GAP + THREAD_FLOATING_CONTROL_SIZE;
+/** Extra tail past the pill row where the top scrim finishes fading out. */
+const THREAD_FLOATING_TOP_SCRIM_TAIL = 24;
 
 const CLOSE_THREAD_ACTION_ID = "close-thread";
 
@@ -23,6 +28,29 @@ const CONTROLS_EXITING = FadeOut.duration(160).reduceMotion(ReduceMotion.System)
 const PILL_CLASS_NAME =
   "items-center justify-center rounded-full border border-header-border bg-header/90";
 const PILL_STYLE = { width: THREAD_FLOATING_CONTROL_SIZE, height: THREAD_FLOATING_CONTROL_SIZE };
+
+/**
+ * ChatGPT-style top scrim for the floating-controls thread screens: an opaque
+ * header-colored band over the status bar fading to transparent below the pill
+ * row, so scrolled content dissolves instead of colliding with the status bar.
+ */
+export function ThreadFloatingTopScrim(): JSX.Element {
+  const insets = useSafeAreaInsets();
+  const theme = useUniwindTheme();
+  const height = insets.top + THREAD_FLOATING_CONTROL_ROW_OFFSET + THREAD_FLOATING_TOP_SCRIM_TAIL;
+  const topColor = themeColorWithAlpha(theme["--color-header"], 1);
+  // Solid through the status bar and up to the pill row's top gap, then linear to clear.
+  const backgroundImage = `linear-gradient(to bottom, ${topColor} 0px, ${topColor} ${
+    insets.top + THREAD_FLOATING_CONTROL_TOP_GAP
+  }px, rgba(0, 0, 0, 0) ${height}px)`;
+  return (
+    <View
+      pointerEvents="none"
+      className="absolute inset-x-0 top-0 z-10"
+      style={{ height, experimental_backgroundImage: backgroundImage }}
+    />
+  );
+}
 
 /**
  * The Android phone thread screen hides the Material header and floats its
