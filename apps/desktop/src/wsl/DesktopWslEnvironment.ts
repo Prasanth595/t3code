@@ -1187,9 +1187,14 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
           );
         },
       ),
-      cliCommand: (distro, action) =>
-        Effect.succeed(stub.cliCommand?.(distro, action) ?? Option.none()),
-      recordCliTarget: (distro, command) => stub.recordCliTarget?.(distro, command) ?? Effect.void,
+      cliCommand: Effect.fn("DesktopWslEnvironment.cliCommand")(function (distro, action) {
+        return Effect.succeed(stub.cliCommand?.(distro, action) ?? Option.none());
+      }),
+      recordCliTarget: Effect.fn("DesktopWslEnvironment.recordCliTarget")(
+        function (distro, command) {
+          return stub.recordCliTarget?.(distro, command) ?? Effect.void;
+        },
+      ),
     }),
   );
 };
@@ -1267,8 +1272,13 @@ export const layer = Layer.effect(
           return provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options));
         },
       ),
-      cliCommand: (distro, action) => provideSpawner(cliCommandImpl(distro, action)),
-      recordCliTarget: (distro, command) => provideSpawner(recordCliTargetImpl(distro, command)),
+      // The implementations already own the public operation spans.
+      cliCommand: Effect.fnUntraced(function (distro, action) {
+        return provideSpawner(cliCommandImpl(distro, action));
+      }),
+      recordCliTarget: Effect.fnUntraced(function (distro, command) {
+        return provideSpawner(recordCliTargetImpl(distro, command));
+      }),
     });
   }),
 );
