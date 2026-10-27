@@ -169,6 +169,10 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
+import {
+  threadHandoffSendBlockReason,
+  useThreadHandoffBannerItem,
+} from "./chat/ThreadHandoffBanner";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
@@ -1805,6 +1809,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || activeThreadId === null) {
       throw new Error("Messages from apps need a started thread.");
     }
+    const handoffBlockReason = threadHandoffSendBlockReason(activeThreadShell);
+    if (handoffBlockReason !== null) throw new Error(handoffBlockReason);
     const result = await startThreadTurn({
       environmentId,
       input: {
@@ -2528,8 +2534,10 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const threadHandoffBannerItem = useThreadHandoffBannerItem(activeThreadShell);
   const composerBannerItems = (() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
+    const handoffItems = threadHandoffBannerItem === null ? [] : [threadHandoffBannerItem];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
@@ -2539,6 +2547,8 @@ export default function ChatView(props: ChatViewProps) {
         ...usageLimitsItems,
         ...projectCloneItems,
         ...systemComposerBannerItems,
+        // After the system notices, so a reconnect or update notice wins a priority tie.
+        ...handoffItems,
       ];
     }
     return [
@@ -2547,6 +2557,7 @@ export default function ChatView(props: ChatViewProps) {
       ...usageLimitsItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
+      ...handoffItems,
       branchMismatchBannerItem({
         mismatchKey: activeBranchMismatchKey,
         mismatch: localCheckoutBranchMismatch,
@@ -3474,17 +3485,18 @@ export default function ChatView(props: ChatViewProps) {
                               sendDisabledReason={
                                 !canOperateThread
                                   ? "This connection cannot change threads."
-                                  : isEnvironmentChanging
-                                    ? "Preparing machine"
-                                    : isRevertingCheckpoint
-                                      ? "Rewinding conversation"
-                                      : feedbackUploading
-                                        ? "Sending feedback"
-                                        : threadDetailLoading
-                                          ? "Messages loading"
-                                          : worktreeSetupBlocksSend
-                                            ? "Preparing worktree"
-                                            : projectCloneSendBlockReason
+                                  : (threadHandoffSendBlockReason(activeThreadShell) ??
+                                    (isEnvironmentChanging
+                                      ? "Preparing machine"
+                                      : isRevertingCheckpoint
+                                        ? "Rewinding conversation"
+                                        : feedbackUploading
+                                          ? "Sending feedback"
+                                          : threadDetailLoading
+                                            ? "Messages loading"
+                                            : worktreeSetupBlocksSend
+                                              ? "Preparing worktree"
+                                              : projectCloneSendBlockReason))
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               bannerItems={composerBannerItems}

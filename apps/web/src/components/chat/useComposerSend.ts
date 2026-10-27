@@ -137,6 +137,7 @@ import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
+import { threadHandoffSendBlockReason } from "./ThreadHandoffBanner";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
@@ -432,6 +433,8 @@ export function useComposerSend(input: ComposerSendInput) {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
+      // The send button is closed for this too, but annotations reach onSend directly.
+      threadHandoffSendBlockReason(activeThread) !== null ||
       (isSendBusy && !sendQueuesBehindSetup) ||
       isConnecting ||
       isRevertingCheckpoint ||

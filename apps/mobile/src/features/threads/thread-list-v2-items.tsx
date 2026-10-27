@@ -16,9 +16,10 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
+import {
+  threadRuntimeIsActive,
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import {
@@ -28,6 +29,7 @@ import {
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useNavigation } from "@react-navigation/native";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -612,6 +614,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
+  readonly handoffSupported?: boolean;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
@@ -651,6 +654,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onSetThreadAutoSettle,
     onMoveThread,
   } = props;
+  const navigation = useNavigation();
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
@@ -832,6 +836,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
+  // The targets are read in the sheet it opens; a native menu is built ahead of time.
+  // The server refuses to move a thread while any of its turns is live or queued.
+  const canContinueOn =
+    props.handoffSupported === true &&
+    (thread.handoff === null || thread.handoff.state === "failed") &&
+    !threadRuntimeIsActive(thread.runtime);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       { id: "rename", title: "Rename", image: "square.and.pencil" },
@@ -839,8 +849,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
+      ...(canContinueOn
+        ? [{ id: "continue-on", title: "Continue on…", image: "arrow.up.right" }]
+        : []),
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
+    [canContinueOn, props.titleRegenerationSupported, thread.titleRegeneration],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -918,6 +931,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "continue-on") {
+        navigation.navigate("ThreadHandoff", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
       if (nativeEvent.event === "copy-thread-id") {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
@@ -942,6 +961,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      navigation,
       thread,
       handleArchive,
       handleDelete,

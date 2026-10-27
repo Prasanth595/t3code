@@ -14,13 +14,14 @@ import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-v
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { ThreadHandoffCard, threadHandoffClosesComposer } from "./ThreadHandoffCard";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -782,7 +783,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   } | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    activeUserInputRequestId !== null ||
+    props.creationState?.kind === "failed" ||
+    threadHandoffClosesComposer(props.selectedThread);
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
     null;
@@ -1436,6 +1439,16 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       />
                     </Animated.View>
                   ) : null}
+                  <View
+                    // With the composer closed, the card pads the home indicator itself.
+                    style={
+                      threadHandoffClosesComposer(props.selectedThread)
+                        ? { paddingBottom: composerBottomInset }
+                        : undefined
+                    }
+                  >
+                    <ThreadHandoffCard thread={props.selectedThread} />
+                  </View>
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
