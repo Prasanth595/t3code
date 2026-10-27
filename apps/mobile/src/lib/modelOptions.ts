@@ -20,6 +20,8 @@ import {
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
+  /** Shown beside the provider's icon, where the provider's own brand would repeat it. */
+  readonly shortLabel: string;
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
@@ -322,6 +324,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
+        shortLabel: model.shortName ?? model.name,
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -387,6 +390,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
+        shortLabel: model?.shortName ?? model?.name ?? fallbackModelSelection.model,
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,

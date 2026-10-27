@@ -20,6 +20,7 @@ function modelOption(
   return {
     key: `codex:${model}`,
     label: model,
+    shortLabel: model,
     subtitle: "",
     providerKey: "codex",
     providerLabel: "Codex",
