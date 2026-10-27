@@ -1802,6 +1802,8 @@ export const layerWsRpc = (
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          // Read last so the stamp is as close to sending as this config gets.
+          serverTime: DateTime.formatIso(yield* DateTime.now),
         };
       });
 

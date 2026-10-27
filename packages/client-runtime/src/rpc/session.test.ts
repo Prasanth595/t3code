@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -32,6 +33,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "./session.ts";
+import { toServerClock } from "../clock.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
 import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
 
@@ -441,6 +443,59 @@ describe("RpcSessionFactory", () => {
         });
       }),
     ),
+  );
+
+  it.effect("reads the host clock from the first config snapshot only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hourAheadConfig = { ...SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" };
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket, encodeServerConfig(hourAheadConfig));
+        yield* Fiber.join(ready);
+        expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+        // A later snapshot, such as late editor discovery, repeats the old stamp.
+        yield* TestClock.adjust("1 second");
+        const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
+        yield* session.subscribeServerConfig({}).pipe(
+          Stream.runForEach((event) => Queue.offer(observed, event)),
+          Effect.forkChild,
+        );
+        yield* Queue.take(observed);
+        yield* publishConfigEvents(socket, [
+          { version: 1, type: "snapshot", config: hourAheadConfig },
+        ]);
+        yield* Queue.take(observed);
+        expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+      }),
+    ),
+  );
+
+  it.effect("drops the old host clock when a reconnect's snapshot has none", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const connectWith = (config: unknown) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const socketIndex = sockets.length;
+            const session = yield* factory.connect(PREPARED);
+            const ready = yield* Effect.forkChild(session.ready);
+            const socket = yield* awaitSocket(sockets, socketIndex);
+            socket.open();
+            yield* completeInitialConfig(socket, config);
+            yield* Fiber.join(ready);
+          }),
+        );
+
+      yield* connectWith({ ...ENCODED_SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" });
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+      yield* connectWith(ENCODED_SERVER_CONFIG);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
+    }),
   );
 
   it.effect.each([
