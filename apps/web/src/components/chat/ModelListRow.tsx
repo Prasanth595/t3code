@@ -21,7 +21,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   providerDisplayName: string;
   providerAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
-  acpRegistryIconUrl?: string | undefined;
+  iconUrl?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
   showProvider: boolean;
@@ -75,7 +75,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
               driverKind={props.driverKind}
               displayName={props.providerDisplayName}
               acpRegistryAgentId={props.acpRegistryAgentId}
-              acpRegistryIconUrl={props.acpRegistryIconUrl}
+              iconUrl={props.iconUrl}
               className="size-3"
               iconClassName="size-3"
             />
