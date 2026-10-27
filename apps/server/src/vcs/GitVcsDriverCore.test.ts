@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -2941,10 +2942,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // Random suffixes come out as 00000001, 00000002, … so a collision can be staged.
+        let draws = 0;
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => {
+                draws += 1;
+                const bytes = new Uint8Array(size);
+                bytes[size - 1] = draws;
+                return bytes;
+              },
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          Effect.provide(layerServerConfig),
+        );
         const taken = [
           "t3/placeholder",
           ...Array.from({ length: 100 }, (_, index) => `t3/placeholder-${index + 1}`),
+          "t3/placeholder-00000001",
         ];
         yield* Effect.forEach(taken, (name) => git(cwd, ["branch", name]), { concurrency: 8 });
 
@@ -2954,10 +2972,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           newBranch: "t3/placeholder",
         });
 
-        assert.match(renamed.branch, /^t3\/placeholder-[0-9a-f]{8}$/);
-        assert.equal(taken.includes(renamed.branch), false);
+        assert.equal(renamed.branch, "t3/placeholder-00000002");
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), renamed.branch);
-      }),
+      }).pipe(Effect.scoped),
     );
 
     it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
