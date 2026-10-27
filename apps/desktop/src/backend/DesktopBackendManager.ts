@@ -631,7 +631,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
   const outputTail = yield* Ref.make("");
-  const outputDecoder = new TextDecoder();
+  // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
+  const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
+  let outputDecoders = makeOutputDecoders();
   const reportStartupFailure = (reason: string) =>
     Ref.get(outputTail).pipe(
       Effect.flatMap((output) => spec.onStartupFailure?.({ reason, output }) ?? Effect.void),
@@ -893,6 +895,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               pid: Option.some(pid),
             }));
             yield* Ref.set(outputTail, "");
+            outputDecoders = makeOutputDecoders();
             yield* backendOutputLog.beginSession({
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
@@ -946,7 +949,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ),
           onOutput: (streamName, chunk) =>
             Ref.update(outputTail, (tail) =>
-              (tail + outputDecoder.decode(chunk)).slice(-STARTUP_FAILURE_OUTPUT_CHARS),
+              (tail + outputDecoders[streamName].decode(chunk, { stream: true })).slice(
+                -STARTUP_FAILURE_OUTPUT_CHARS,
+              ),
             ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

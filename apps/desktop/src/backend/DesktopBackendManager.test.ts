@@ -595,8 +595,11 @@ describe("DesktopBackendManager", () => {
             ChildProcessSpawner.make(() =>
               Effect.succeed(
                 makeProcess({
+                  // "é" split across chunks must not decode as U+FFFD.
                   stderr: Stream.make(
-                    new TextEncoder().encode("Error: Cannot find module 'zod/v4'\n"),
+                    new TextEncoder().encode("Error: Cannot find module 'zod/v4' in /Users/Ren"),
+                    new Uint8Array([0xc3]),
+                    new Uint8Array([0xa9]),
                   ),
                   exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
                 }),
@@ -619,7 +622,7 @@ describe("DesktopBackendManager", () => {
         const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
         assert.equal(exitsWhenReported, 3);
         assert.equal(failure.reason, "The server could not start (code=1).");
-        assert.include(failure.output, "Cannot find module 'zod/v4'");
+        assert.include(failure.output, "Cannot find module 'zod/v4' in /Users/René");
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
