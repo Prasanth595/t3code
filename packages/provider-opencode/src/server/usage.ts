@@ -170,19 +170,19 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        predicates.push("rowid > ?", "rowid <= ?");
-        const [range] = yield* sql.unsafe<{
-          readonly first_row_id: number | null;
-          readonly last_row_id: number | null;
-        }>(
-          `SELECT (SELECT MIN(rowid) FROM ${table}) AS first_row_id, (SELECT MAX(rowid) FROM ${table}) AS last_row_id`,
-        );
-        const firstRowId = range?.first_row_id;
-        const lastRowId = range?.last_row_id;
-        if (typeof firstRowId !== "number" || typeof lastRowId !== "number") continue;
-        // StatementSync.all materializes results; page by rowid and exclude mid-scan appends.
+        // Select ids first so time indexes bound the scan to the window; a rowid sweep (or ORDER BY
+        // rowid) reads every row. One statement also excludes mid-scan appends.
+        const rowIds = (yield* sql.unsafe<{ readonly row_id: number }>(
+          `SELECT rowid AS row_id FROM ${table}
+           ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
+          timestamp === "NULL" ? [] : [sinceMs],
+        ))
+          .map((row) => row.row_id)
+          .sort((a, b) => a - b);
+        // StatementSync.all materializes results; fetch the large data column in pages.
         // Omit tracing because large histories require thousands of statements.
-        for (let after = firstRowId - 1; after < lastRowId; after += MESSAGE_PAGE_SIZE) {
+        for (let start = 0; start < rowIds.length; start += MESSAGE_PAGE_SIZE) {
+          const page = rowIds.slice(start, start + MESSAGE_PAGE_SIZE);
           const rows = yield* sql
             .unsafe<{
               readonly id: unknown;
@@ -191,12 +191,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               readonly created: unknown;
             }>(
               `SELECT id, session_id, data, ${timestamp} AS created
-               FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
-              [
-                ...(timestamp === "NULL" ? [] : [sinceMs]),
-                after,
-                Math.min(after + MESSAGE_PAGE_SIZE, lastRowId),
-              ],
+               FROM ${table} WHERE rowid IN (${page.map(() => "?").join(", ")}) ORDER BY rowid`,
+              page,
             )
             .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {

@@ -85,6 +85,60 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reads statements in proportion to the window, not the whole history", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "usage-reader-window-test-",
+      });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
+      );
+      yield* db.unsafe("CREATE INDEX message_time_created_idx ON message (time_created)");
+      const sinceMs = 1780000000000;
+      const data = JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 1 } });
+      yield* db.unsafe(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
+         INSERT INTO message (rowid, id, session_id, data, time_created)
+         SELECT i * 2, 'old-' || i, 'session-1', ?, ? FROM n`,
+        [data, sinceMs - 1],
+      );
+      // Rowids are not time-ordered: in-window rows sit below and between old ones.
+      for (const [rowId, id] of [
+        [5001, "b"],
+        [1, "a"],
+        [20000, "c"],
+      ] as const) {
+        yield* db.unsafe(
+          "INSERT INTO message (rowid, id, session_id, data, time_created) VALUES (?, ?, 'session-1', ?, ?)",
+          [rowId, id, data, sinceMs],
+        );
+      }
+      let statements = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            statements += 1;
+            return originalAll.apply(this, params);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:a", "opencode:b", "opencode:c"],
+      );
+      assert.isBelow(statements, 10);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("counts migrated OpenCode messages once and sees subsequent WAL writes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
