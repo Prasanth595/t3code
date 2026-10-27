@@ -229,6 +229,26 @@ Set it as a GitHub Actions secret, for OTA updates, and as an EAS environment va
 PR preview builds run the PR's code in that environment. In CI only the upload step gets it, not
 `eas update` and the dependencies it runs. If the deploy replaces the token, update both.
 
+The `t3-code-mobile-health` dashboard is the place to look every few days: crash and handled
+error counts, top crashes with the installs and app versions they hit, crashes by version, whether
+stacks are symbolicated, and whether reports reach the relay at all. A crash counts once: the
+native abort after a JS crash (`relay.crash.js_fatal`) is left out. Startup times are metrics, so
+they are not on it; query `t3-code-mobile-metrics-*` with MPL. Prod and PR previews get the
+dashboard, and deployments with `RELAY_ALERT_NOTIFIER_ID` get these monitors
+([`infra/relay/src/mobileTelemetry/monitoring.ts`](../../infra/relay/src/mobileTelemetry/monitoring.ts)):
+
+- **crash spike** (pages): crashes per 15 min well above the same time over the last 7 days. Until
+  a week of data exists it has no baseline. A spike right after a release usually means a bad OTA
+  update; roll it back in EAS.
+- **one crash hitting many installs** (pages): a single crash on 25 installs within an hour.
+- **reports stopped** (warning): no startup metrics forwarded for an hour, so crashes are not
+  arriving either.
+- **crash stacks not symbolicated** (warning): over half of release JS stacks stayed minified for
+  6 h. `relay.symbolication.status` names the cause.
+
+Thresholds are starting points, not measured baselines; revisit them after two weeks of
+production data.
+
 Without it, uploads are skipped with a warning and stacks stay minified. Each ingest request is one
 `relay.mobile_telemetry.ingest` span; `relay.mobile_telemetry.outcome` is `forwarded`,
 `rate_limited`, `body_too_large`, `upstream_unavailable`, or `upstream_timeout`.

@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
+import { MobileMonitoring } from "./mobileTelemetry/monitoring.ts";
 import { RelayMonitoring } from "./monitoring.ts";
 
 const relayRecentSpansQuery = (dataset: string) =>
@@ -100,6 +101,7 @@ export const RelayObservability = Effect.gen(function* () {
   });
 
   yield* RelayMonitoring(traces);
+  yield* MobileMonitoring(mobileLogs, traces);
 
   return {
     traces,
