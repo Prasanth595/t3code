@@ -1,17 +1,19 @@
+// @effect-diagnostics globalTimers:off - The wake debounce runs in an atom subscription, outside an Effect runtime.
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { type AtomCommand, type AtomCommandResult, runAtomCommand } from "./runtime.ts";
 
-interface VcsStatusRevalidationTarget {
+export interface VcsStatusRevalidationTarget {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
 }
 
 /**
- * One atom per environment and cwd, shared by every subscriber, that refreshes
- * VCS status while mounted: on mount and on each reconnect, once `connected`
- * is true.
+ * One atom per environment and cwd that refreshes VCS status while mounted, so
+ * controls showing the same checkout share one cadence. Refreshes on mount, on
+ * reconnect when `connected` is given, and on `subscribeWake` (debounced); the
+ * subscription and timer end with the last subscriber.
  */
 export function createVcsStatusRevalidationAtomFamily<R>(input: {
   readonly refreshStatus: AtomCommand<
@@ -19,7 +21,9 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
     R,
     unknown
   >;
-  readonly connected: (environmentId: EnvironmentId) => Atom.Atom<boolean>;
+  readonly connected?: (environmentId: EnvironmentId) => Atom.Atom<boolean>;
+  readonly subscribeWake?: (wake: () => void) => () => void;
+  readonly wakeDebounceMs?: number;
   readonly onRefreshed?: (result: AtomCommandResult<R, unknown>) => void;
 }) {
   const family = Atom.family((target: VcsStatusRevalidationTarget) => {
@@ -36,9 +40,29 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
       input.onRefreshed?.(result);
     };
 
+    const wakeAtom = Atom.make((get) => {
+      const subscribeWake = input.subscribeWake;
+      if (subscribeWake === undefined) return;
+      const registry = get.registry;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const unsubscribe = subscribeWake(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = undefined;
+          void refresh(registry);
+        }, input.wakeDebounceMs ?? 0);
+      });
+      get.addFinalizer(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
+      });
+    }).pipe(Atom.withLabel(`vcs-status-revalidation:wake:${key}`));
+
     return Atom.make((get) => {
+      get(wakeAtom);
+      const connected = input.connected;
       // Rebuilds only when the connection flag flips, so each reconnect refreshes once.
-      if (get(input.connected(environmentId))) {
+      if (connected !== undefined && get(connected(environmentId))) {
         void refresh(get.registry);
       }
     }).pipe(Atom.withLabel(`vcs-status-revalidation:${key}`));
