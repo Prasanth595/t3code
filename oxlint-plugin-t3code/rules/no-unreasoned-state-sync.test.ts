@@ -43,8 +43,14 @@ const alias = useEffect;
 `,
   );
 
-  lint("apps/web/src/Panel.test.tsx").valid(
-    "skips test files",
-    `export function Panel() { useEffect(() => {}); return null; }`,
-  );
+  for (const filename of [
+    "apps/web/src/Panel.test.tsx",
+    "apps/web/src/Panel.spec.tsx",
+    "apps/web/tests/Panel.tsx",
+  ]) {
+    lint(filename).valid(
+      `skips ${filename}`,
+      `export function Panel() { useEffect(() => {}); return null; }`,
+    );
+  }
 });

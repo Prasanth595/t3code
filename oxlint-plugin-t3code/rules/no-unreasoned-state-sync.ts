@@ -5,7 +5,7 @@ import { getPropertyName, unwrapExpression } from "../utils.ts";
 
 const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect", "useInsertionEffect"]);
 const EFFECT_HOOK_TEXT = /use(?:Layout|Insertion)?Effect/;
-const TEST_FILE = /\.test\.[cm]?[jt]sx?$|[\\/](?:test|__tests__)[\\/]/;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|[\\/](?:tests?|__tests__)[\\/]/;
 
 const isEffectHookCall = (node: ESTree.CallExpression): boolean => {
   const callee = unwrapExpression(node.callee);
