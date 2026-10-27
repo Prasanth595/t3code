@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { SETTINGS_NAV_GROUPS } from "~/components/settings/settingsSearch";
 import { isSidebarUtilityPage } from "~/components/sidebar/mainAppLocation";
 
 import { isFactoryPage } from "./pages";
@@ -21,5 +22,12 @@ describe("isSidebarUtilityPage", () => {
     expect(isSidebarUtilityPage("/factory")).toBe(true);
     expect(isSidebarUtilityPage("/factory/run-123")).toBe(true);
     expect(isSidebarUtilityPage("/")).toBe(false);
+  });
+});
+
+describe("SETTINGS_NAV_GROUPS", () => {
+  it("lists the Factory settings section under Agents", () => {
+    const agents = SETTINGS_NAV_GROUPS.find((group) => group.heading === "Agents");
+    expect(agents?.paths).toContain("/settings/factory");
   });
 });
