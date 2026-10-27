@@ -2399,9 +2399,7 @@ it("keeps workspace PDF scroll and zoom after reloads and clamps them when the d
     );
   };
   await using screen = await render(preview(urls.original, "one"));
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
-    timeout: 15_000,
-  });
+  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
   await screen.getByRole("button", { name: "Next page", exact: true }).click();

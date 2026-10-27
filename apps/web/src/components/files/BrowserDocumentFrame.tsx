@@ -74,10 +74,7 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-/**
- * documentKey includes the file's revision and remounts the viewer when it changes.
- * A stable documentId keeps this component mounted to track the page, scroll, and zoom across reloads.
- */
+// The document stays mounted while each revision gets a fresh PDF.js document.
 function PdfDocument(props: { src: string; title: string; documentKey: string }) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
@@ -91,10 +88,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
   );
 }
 
-/**
- * File URLs expire and are refreshed even when the PDF hasn't changed.
- * Keep the initial URL so those refreshes don't reload the viewer.
- */
+// Keep signed URL renewals from reloading the same revision.
 function PdfDocumentRevision(props: {
   src: string;
   title: string;
