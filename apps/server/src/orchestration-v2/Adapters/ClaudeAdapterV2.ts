@@ -110,6 +110,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -4561,6 +4562,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { readonly messages: ReadonlyArray<SDKMessage>; readonly detail: string | null }
           >(),
         );
+        // When the pending wake became expected; the probe also requires evidence that it still is.
+        const wakeExpectedSinceMsByNativeThread = new Map<string, number>();
         // Wake results lack task ids and can follow queued prompts; retain reports for one user turn.
         // Keep report stamps atomic with turn changes.
         const wakeReportsByNativeThread = yield* Ref.make<{
@@ -4913,6 +4916,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.map((all) => taskIdSetForNativeThread(all, nativeThreadId).has(taskId)),
           );
 
+        // A buffered opaque task_notification, or a wake-eligible task the roster dropped before its notification.
+        const hasWakeEvidenceOnNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const opaqueNotifiedTaskIds = taskIdSetForNativeThread(
+            yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
+            nativeThreadId,
+          );
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId);
+          if (
+            buffered?.messages.some(
+              (message) =>
+                message.type === "system" &&
+                message.subtype === "task_notification" &&
+                opaqueNotifiedTaskIds.has(message.task_id),
+            )
+          ) {
+            return true;
+          }
+          const roster = rosterForNativeThread(
+            yield* Ref.get(pendingBackgroundTasksByNativeThread),
+            nativeThreadId,
+          );
+          for (const taskId of taskIdSetForNativeThread(
+            yield* Ref.get(wakeEligibleBackgroundTasksByNativeThread),
+            nativeThreadId,
+          )) {
+            if (!roster.has(taskId)) return true;
+          }
+          return false;
+        });
+
+        const hasPendingWakeOnNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const expectedSinceMs = wakeExpectedSinceMsByNativeThread.get(nativeThreadId);
+          return (
+            expectedSinceMs !== undefined &&
+            (yield* Clock.currentTimeMillis) - expectedSinceMs <
+              Duration.toMillis(CLAUDE_WAKE_TURN_START_DEADLINE) &&
+            (yield* hasWakeEvidenceOnNativeThread(nativeThreadId))
+          );
+        });
+
+        // Roster-first then notification is one wake: keep the earlier start while it is pending.
+        const noteWakeExpected = Effect.fnUntraced(function* (nativeThreadId: string) {
+          if (yield* hasPendingWakeOnNativeThread(nativeThreadId)) return;
+          wakeExpectedSinceMsByNativeThread.set(nativeThreadId, yield* Clock.currentTimeMillis);
+        });
+
         const hasOpaqueBackgroundTaskReplayTombstoneOnNativeThread = (
           nativeThreadId: string,
           taskId: string,
@@ -5049,6 +5098,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId: string,
             tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
           ) {
+            const listed = new Set(tasks.map((task) => task.taskId));
+            const wakeEligible = taskIdSetForNativeThread(
+              yield* Ref.get(wakeEligibleBackgroundTasksByNativeThread),
+              nativeThreadId,
+            );
+            const droppedWakeEligible = [
+              ...rosterForNativeThread(
+                yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                nativeThreadId,
+              ).keys(),
+            ].some((taskId) => !listed.has(taskId) && wakeEligible.has(taskId));
+            // Judge before the drop adds evidence, or a new wake inherits an older wake's deadline.
+            const wakeWasPending =
+              droppedWakeEligible && (yield* hasPendingWakeOnNativeThread(nativeThreadId));
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
               if (tasks.length === 0) {
@@ -5068,7 +5131,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 tasks.map((task) => task.taskId),
               );
             }
-            const listed = new Set(tasks.map((task) => task.taskId));
             yield* Ref.update(awaitedBackgroundTasksByNativeThread, (current) => {
               const awaited = current.get(nativeThreadId);
               if (awaited === undefined) return current;
@@ -5079,6 +5141,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               else updated.set(nativeThreadId, kept);
               return updated;
             });
+            if (droppedWakeEligible && !wakeWasPending) {
+              wakeExpectedSinceMsByNativeThread.set(nativeThreadId, yield* Clock.currentTimeMillis);
+            }
           });
 
         const upsertPendingBackgroundTask =
@@ -7607,6 +7672,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               outcome: claudeTaskOutcome(message.status),
               childThreadId: registered?.childThreadId,
             });
+          }
+          if (isPendingTaskNotification) {
+            yield* noteWakeExpected(wakeInput.nativeThreadId);
           }
           yield* Ref.update(wakeBuffers, (current) => {
             const existing = current.get(wakeInput.nativeThreadId);
@@ -10582,6 +10650,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ).size > 0
             );
           }),
+          hasPendingWakeForThread: Effect.fn("ClaudeAdapterV2.hasPendingWakeForThread")(
+            function* (providerThread) {
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              if (nativeThreadId === undefined || nativeThreadId === null) {
+                return false;
+              }
+              return yield* hasPendingWakeOnNativeThread(nativeThreadId);
+            },
+          ),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;

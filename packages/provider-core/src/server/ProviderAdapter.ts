@@ -555,6 +555,10 @@ export interface ProviderAdapterV2SessionRuntime {
     providerThread: OrchestrationV2ProviderThread,
     options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
+  /** True while a wake turn for this thread is imminent but not attached yet; auto-settle waits for it. */
+  readonly hasPendingWakeForThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
   /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (

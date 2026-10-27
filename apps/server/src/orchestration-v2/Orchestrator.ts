@@ -11836,6 +11836,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
+        const { providerThreads } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["providerThreads"])
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        for (const providerThread of providerThreads) {
+          if (providerThread.providerSessionId == null) continue;
+          const session = yield* providerSessions
+            .get(providerThread.providerSessionId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isNone(session) || session.value.hasPendingWakeForThread === undefined) {
+            continue;
+          }
+          const wakePending = yield* session.value
+            .hasPendingWakeForThread(providerThread)
+            // A broken probe must not keep every later sweep from settling the thread.
+            .pipe(Effect.catchCause(() => Effect.succeed(false)));
+          if (wakePending) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: `Thread ${command.threadId} is waiting for a provider wake turn.`,
+            });
+          }
+        }
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",
