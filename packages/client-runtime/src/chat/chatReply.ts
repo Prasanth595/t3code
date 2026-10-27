@@ -60,6 +60,8 @@ export class ChatSseDecoder {
   text = "";
   /** Set while the relay searches; cleared when more text arrives. */
   searching = false;
+  /** The relay's closing `[DONE]` arrived, so the reply is whole. */
+  done = false;
 
   /** Returns whether the text grew. */
   push(chunk: string): boolean {
@@ -83,6 +85,7 @@ export class ChatSseDecoder {
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) return;
     const data = trimmed.slice("data:".length).trim();
+    if (data === "[DONE]") this.done = true;
     if (data === "" || data === "[DONE]") return;
     const chunk = decodeChunk(data);
     if (Option.isNone(chunk)) return;
@@ -143,6 +146,9 @@ export async function requestChatReply(request: ChatReplyRequest): Promise<ChatR
     }
     if (decoder.finish()) request.onText(decoder.text);
   } catch {
+    decoder.done = false;
+  }
+  if (!decoder.done) {
     // Half a reply would be saved as if it were whole; retrying asks for all of it again.
     return failure("network", "The answer was cut off. Try again.");
   }

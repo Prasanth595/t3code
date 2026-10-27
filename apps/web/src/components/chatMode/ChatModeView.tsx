@@ -11,6 +11,7 @@ import {
   type SaasChatAttachment,
 } from "@t3tools/contracts/saas";
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { withoutOpenVisual } from "@t3tools/shared/htmlRender";
 import type { SaasChatConversation } from "@t3tools/contracts/saas";
 import { useNavigate } from "@tanstack/react-router";
 import { FileTextIcon, ImageIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
@@ -75,7 +76,11 @@ const toTimelineMessages = (
   const messages: Array<ChatMessage> = (chat?.messages ?? []).map((message) => ({
     id: MessageId.make(message.id),
     role: message.role,
-    text: [attachmentLinks(message.attachments, relayUrl), message.content]
+    // A saved reply cut off inside a visual would otherwise show half a page.
+    text: [
+      attachmentLinks(message.attachments, relayUrl),
+      message.role === "assistant" ? withoutOpenVisual(message.content) : message.content,
+    ]
       .filter((part) => part !== "")
       .join("\n\n"),
     runId: null,
