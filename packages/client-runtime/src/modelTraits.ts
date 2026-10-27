@@ -103,6 +103,25 @@ export function getTraitSelectChange(
   };
 }
 
+const COMPACT_EFFORT_LABELS: Record<string, string> = {
+  none: "None",
+  minimal: "Min",
+  low: "L",
+  medium: "M",
+  high: "H",
+  "extra high": "XH",
+  xhigh: "XH",
+  max: "Max",
+};
+
+function compactEffortLabel(label: string): string {
+  const key = label
+    .toLowerCase()
+    .replace(/\s+effort$/, "")
+    .trim();
+  return COMPACT_EFFORT_LABELS[key] ?? label;
+}
+
 export function buildTraitsTriggerDisplay(input: {
   provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
@@ -110,7 +129,7 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
   modelSelection?: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null | undefined;
-}): { label: string } {
+}): { label: string; compactEffortLabel: string | null; speedLabel: string | null } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
@@ -167,8 +186,13 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
+  const compact = {
+    compactEffortLabel:
+      reasoningLabelIndex >= 0 ? compactEffortLabel(labels[reasoningLabelIndex]!) : null,
+    speedLabel,
+  };
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel };
+    return { label: fastModeFallbackLabel, ...compact };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -177,5 +201,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · ") };
+  return { label: labels.join(" · "), ...compact };
 }
