@@ -18,6 +18,7 @@ const testState = vi.hoisted(() => {
     readonly promotedTo: null;
     readonly threadId: string;
   } | null = null;
+  let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
   const router = {
     state: {
       location: { href: "/" },
@@ -30,7 +31,18 @@ const testState = vi.hoisted(() => {
   const draftStore = {
     getComposerDraft: vi.fn(() => ({})),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
+    getDraftSession: vi.fn(() =>
+      openDraftRoute === null
+        ? null
+        : {
+            logicalProjectKey: "remote-project",
+            promotedTo: null,
+            threadId: "thread-open",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+    ),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
@@ -57,6 +69,12 @@ const testState = vi.hoisted(() => {
     removeProject() {
       projectRemoved = true;
     },
+    get openDraftRoute() {
+      return openDraftRoute;
+    },
+    openEmptyDraft(draftId: string) {
+      openDraftRoute = { kind: "draft", draftId };
+    },
     get targetSettings() {
       return targetSettings;
     },
@@ -68,6 +86,7 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      openDraftRoute = null;
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
       targetSettings = {
@@ -210,7 +229,9 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({
+  resolveThreadRouteTarget: () => testState.openDraftRoute,
+}));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -284,6 +305,22 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
+  it("seeds the prompt into the empty draft that is already open", async () => {
+    testState.reset(null);
+    testState.openEmptyDraft("draft-open");
+
+    const opened = await useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    expect(opened?.draftId).toBe("draft-open");
+    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+      "draft-open",
+      "Read the playbook. ",
+    );
+  });
+
   it("opens the draft without waiting on a project file from an offline machine", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });
     testState.disconnect("environment-ssh");

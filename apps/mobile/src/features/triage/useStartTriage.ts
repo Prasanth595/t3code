@@ -36,7 +36,13 @@ export function useStartTriage() {
       "Could not start triage",
       `${message} Run ${CLI_COMMAND} in a terminal on that machine instead.`,
       [
-        { text: "Copy command", onPress: () => void Clipboard.setStringAsync(CLI_COMMAND) },
+        {
+          text: "Copy command",
+          onPress: () =>
+            void Clipboard.setStringAsync(CLI_COMMAND).catch(() =>
+              Dialog.alert("Could not copy", `Type ${CLI_COMMAND} instead.`),
+            ),
+        },
         { text: "OK", style: "cancel" },
       ],
     );

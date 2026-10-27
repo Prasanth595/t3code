@@ -146,26 +146,17 @@ it.effect("still starts triage when the source lookup fails", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("does not trust a folder that is not a checkout of the commit", () =>
+it.effect("does not trust a folder without its own .git, even inside a repo at that commit", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     yield* fs.makeDirectory(`${config.baseDir}/source/${RELEASE_COMMIT}`, { recursive: true });
-    const { triage } = yield* makeTriage((command) =>
-      command === "ls-remote"
-        ? Effect.succeed(`${RELEASE_COMMIT}\trefs/tags/v${packageJson.version}\n`)
-        : Effect.fail(
-            new GitCommandError({
-              operation: "TriageService.checkSource",
-              command: "git rev-parse",
-              cwd: "/",
-              detail: "not a git repository",
-            }),
-          ),
-    );
+    // The stub answers rev-parse with the commit, as a parent repository could.
+    const { triage, commands } = yield* makeTriage();
 
     yield* triage.prepare({ client: {} });
 
+    assert.notInclude(commands, "rev-parse");
     assert.include(yield* readContext, "is not a complete checkout");
   }).pipe(Effect.provide(TestLayer)),
 );
