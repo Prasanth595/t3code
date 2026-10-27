@@ -239,7 +239,7 @@ function useFactoryResources<T>(
  * function runs. `tick` skips a read made less than a period ago, so this and the 30 second
  * readers of the same keys cost one read per period together.
  */
-const pollWhileVisible = (keys: ReadonlyArray<string>, periodMs: number): (() => void) => {
+const startPolling = (keys: ReadonlyArray<string>, periodMs: number): (() => void) => {
   const readAll = () => keys.forEach((key) => tick(key, periodMs));
   const visible = () => document.visibilityState === "visible";
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -256,6 +256,33 @@ const pollWhileVisible = (keys: ReadonlyArray<string>, periodMs: number): (() =>
   return () => {
     clearInterval(timer);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+};
+
+const pollers = new Map<string, { users: number; readonly stop: () => void }>();
+
+/**
+ * One timer per period and set of keys while anyone polls it. A subscribe closure that changes on
+ * a render makes React drop and add its subscription in one flush; the last drop waits a microtask,
+ * as the stores' does, so that flush keeps the timer instead of restarting its period.
+ */
+const pollWhileVisible = (keys: ReadonlyArray<string>, periodMs: number): (() => void) => {
+  const id = `${periodMs} ${keys.join("|")}`;
+  let poller = pollers.get(id);
+  if (poller === undefined) {
+    poller = { users: 0, stop: startPolling(keys, periodMs) };
+    pollers.set(id, poller);
+  }
+  const added = poller;
+  added.users++;
+  return () => {
+    added.users--;
+    queueMicrotask(() => {
+      if (added.users === 0 && pollers.get(id) === added) {
+        pollers.delete(id);
+        added.stop();
+      }
+    });
   };
 };
 
