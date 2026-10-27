@@ -1057,6 +1057,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const sharedState: TimelineRowSharedState = {
     citationRequest: readyCitationRequest,
+    linkedMessage,
     listRef,
     timestampFormat,
     routeThreadKey,
