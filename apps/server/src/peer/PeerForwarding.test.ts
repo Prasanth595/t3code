@@ -104,7 +104,7 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
           `${command.type} ${"threadId" in command ? command.threadId : ""}`,
         ],
       })).pipe(
-        // The stop interrupts the thread's running run.
+        // The stop asks the provider to interrupt the thread's running turn.
         Effect.as({
           sequence: 0,
           storedEvents: [
@@ -114,7 +114,10 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
               event: {
                 type: "turn-item.updated",
                 runId: boxRun,
-                payload: { type: "run_interrupt_request", providerTurnId: "turn:box" },
+                payload: {
+                  type: "run_interrupt_request",
+                  providerTurnId: "provider-turn:box-auto",
+                },
               },
             },
           ],

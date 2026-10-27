@@ -2934,8 +2934,10 @@ const make = Effect.gen(function* () {
         yield* threadManagement
           .stopDelegatedTasks({ threadId: input.threadId, commandId, reason: input.reason })
           .pipe(Effect.catch(stopFailed));
-        // Queue holds and completion disposal also update runs. Only the
-        // original interrupt request identifies the run Stop reached.
+        // The run this stop interrupted, from its own events, so a retry
+        // reports the same run even if another has started since. Stop also
+        // holds queued runs, disposes completions and marks runs it could not
+        // interrupt; only the interrupt request identifies the run it reached.
         const request = stopped.storedEvents.find(
           (stored) =>
             stored.event.type === "turn-item.updated" &&
