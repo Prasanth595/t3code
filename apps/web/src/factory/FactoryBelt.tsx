@@ -6,8 +6,8 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
-import type { FactoryRunRow, FactoryStatus } from "./api";
-import { deriveBelt, nextPassText } from "./belt";
+import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
+import { deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
 import "./belt.css";
 import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
@@ -44,6 +44,7 @@ function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
   );
 }
 
+/** A counter; `-` is one that is not known yet. */
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex flex-col justify-center gap-1.5 border-l px-5 py-2.5">
@@ -55,8 +56,9 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 
 /**
  * The claims switch of the selected environment and its state, the pass line, the environment's
- * slots, and the counters over every environment. The switch is on while claims run, and an
- * environment with no status to act on cannot be switched.
+ * slots, and the counters over every environment (`-` while a recent runs list they come from has
+ * not answered). The switch is on while claims run; an environment with no status says nothing
+ * about its claims and cannot be switched.
  */
 function ControlBar({
   selected,
@@ -66,7 +68,11 @@ function ControlBar({
 }: {
   selected: FactoryEnvironment;
   busy: boolean;
-  counters: { readonly runsToday: number; readonly mergedToday: number; readonly stuck: number };
+  counters: {
+    readonly runsToday: number | string;
+    readonly mergedToday: number | string;
+    readonly stuck: number | string;
+  };
   onTogglePause: (environment: FactoryEnvironment) => void;
 }) {
   const report = selected.status.data;
@@ -79,14 +85,20 @@ function ControlBar({
       <div className="flex items-center gap-3 px-5 py-2.5">
         <Switch
           aria-label={`Claims on ${selected.label}`}
-          checked={!paused}
+          checked={report !== null && !paused}
           disabled={report === null || busy}
           onCheckedChange={() => onTogglePause(selected)}
         />
         <div className="flex flex-col gap-1">
           <span className={LABEL}>Claims</span>
           <b className="text-sm font-semibold">
-            {paused ? "Paused" : report?.state === "idle" ? "Idle" : "Running"}
+            {report === null
+              ? "-"
+              : paused
+                ? "Paused"
+                : report.state === "idle"
+                  ? "Idle"
+                  : "Running"}
           </b>
         </div>
       </div>
@@ -224,6 +236,11 @@ export function FactoryBelt({
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
+  // The open post: undefined until the rail first has something to look at, then the user's.
+  const [open, setOpen] = useState<Station | null | undefined>(undefined);
+  // The runs with a stop in flight, and the answer of the latest stop: they outlive the readout.
+  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
+  const [stopNote, setStopNote] = useState<string | null>(null);
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
@@ -237,12 +254,41 @@ export function FactoryBelt({
     nowMs,
   );
   // The rail opens on the newest run once there is something to look at: some status has answered
-  // and every list of recent runs it waits for has too. It mounts then, and keeps its pick after.
+  // and every list of recent runs it waits for has too. The pick is made then, once, and the rail
+  // stays after it, whatever an environment does later.
   const answered = environments.filter(({ status }) => status.data !== null);
   const ready =
     answered.length > 0 &&
     answered.every(({ environmentId }) => recent.get(environmentId)?.status !== "loading");
+  if (open === undefined && ready) setOpen(belt.newest);
+  // What the recent runs lists say (the counters, Done and the bins) is known once every answered
+  // environment's list has data; before that a zero would only be an absence.
+  const known =
+    answered.length > 0 &&
+    answered.every(({ environmentId }) => recent.get(environmentId)?.data != null);
   if (selected === undefined) return null;
+
+  const stop = async ({ key, environmentId, id }: BeltRun) => {
+    const mark = (member: boolean) =>
+      setStopping((current) => {
+        const next = new Set(current);
+        if (member) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    mark(true);
+    let answer: string;
+    try {
+      answer = (await factoryApi.stopRun(environmentId, id)).message;
+    } catch (error) {
+      answer = messageOf(error);
+    }
+    setStopNote(answer);
+    mark(false);
+    environments
+      .find((environment) => environment.environmentId === environmentId)
+      ?.status.refresh();
+  };
   const since = selected.status.data?.paused_by_hand?.since;
   const pausedSince = since === undefined ? null : Date.parse(since);
 
@@ -259,28 +305,34 @@ export function FactoryBelt({
         />
         <ControlBar
           busy={busy.has(selected.environmentId)}
-          counters={belt.counters}
+          counters={known ? belt.counters : { runsToday: "-", mergedToday: "-", stuck: "-" }}
           onTogglePause={onTogglePause}
           selected={selected}
         />
-        {ready ? (
+        {open !== undefined ? (
           <BeltRail
             belt={belt}
+            known={known}
             nowMs={nowMs}
+            onOpenChange={setOpen}
+            onStop={(run) => void stop(run)}
+            open={open}
             pausedSince={pausedSince !== null && !Number.isNaN(pausedSince) ? pausedSince : null}
-            refreshStatus={(environmentId) =>
-              environments
-                .find((environment) => environment.environmentId === environmentId)
-                ?.status.refresh()
-            }
             selectedId={selected.environmentId}
+            stopping={stopping}
           />
         ) : (
           <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
         )}
+        {stopNote ? (
+          <p className="break-words text-sm text-muted-foreground" role="status">
+            {stopNote}
+          </p>
+        ) : null}
       </section>
       <BeltLowerRow
         attention={attention}
+        known={known}
         needsInfo={belt.info}
         nowMs={nowMs}
         onDismiss={onDismiss}

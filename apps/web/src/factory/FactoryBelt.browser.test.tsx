@@ -432,7 +432,8 @@ describe("the readout", () => {
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     await page.click(station(page, "pr"));
     const [first] = rowsOf(page);
-    const cells = Array.from(first!.querySelectorAll("td")).map((cell) => cell.textContent);
+    // What shows: the narrow belt's stacked line under the title is hidden here.
+    const cells = Array.from(first!.querySelectorAll("td")).map((cell) => cell.innerText.trim());
     expect(cells.slice(0, 5)).toEqual(["#4", "Title of 4", "Desktop", "pr-open", "1h"]);
     expect(Array.from(first!.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toContain(
       "https://github.com/acme/widgets/pull/40",
@@ -452,7 +453,9 @@ describe("the readout", () => {
       ),
     );
     await openStation(page, "building");
-    const cells = Array.from(rowsOf(page)[0]!.querySelectorAll("td")).map((c) => c.textContent);
+    const cells = Array.from(rowsOf(page)[0]!.querySelectorAll("td")).map((c) =>
+      c.innerText.trim(),
+    );
     expect(cells.slice(0, 2)).toEqual(["#8", "#8"]);
   });
 
@@ -712,13 +715,16 @@ describe("Attention, Needs info and Stuck", () => {
   it("leaves a bin once a newer attempt of its issue exists", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
-    belt.recent = recentOf([
-      DESKTOP,
+    belt.recent = recentOf(
       [
-        { ...stuckRun(30, "old", null), id: runId(30, 1) },
-        { ...recentRow(30), id: runId(30, 2) },
+        DESKTOP,
+        [
+          { ...stuckRun(30, "old", null), id: runId(30, 1) },
+          { ...recentRow(30), id: runId(30, 2) },
+        ],
       ],
-    ]);
+      [STUDIO, []],
+    );
     await using page = await render(createElement(FactoryBelt, belt));
     const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
     expect(stuck.textContent).toContain("Nothing is stuck");
@@ -1010,7 +1016,7 @@ describe("the belt's layout", () => {
     expect(link).toBeDefined();
     const visibleText = (text: string) =>
       Array.from(row.querySelectorAll("*")).some(
-        (node) => shown(node) && node.children.length === 0 && node.textContent === text,
+        (node) => shown(node) && node.textContent === text,
       );
     expect(visibleText("Desktop")).toBe(true);
     expect(visibleText("pr-open")).toBe(true);

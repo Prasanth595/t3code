@@ -1,6 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -13,30 +12,23 @@ import {
 } from "~/components/ui/table";
 import { cn } from "~/lib/utils";
 
-import { factoryApi } from "./api";
 import { STATION_META, type BeltRun, type Station } from "./belt";
 import { BeltDot } from "./BeltDot";
-import { formatAge, messageOf, prRef } from "./format";
+import { formatAge, prRef } from "./format";
 import { Ref } from "./Ref";
 
 /** The id of the one open readout, which the picked post names in `aria-controls`. */
 export const READOUT_ID = "factory-readout";
 
-/** A column the narrow belt leaves out; the run page has the rest. */
+/** A column the narrow belt folds into the title's cell instead. */
 const WIDE_ONLY = "hidden @3xl:table-cell";
-
-const withKey = (set: ReadonlySet<string>, key: string, member: boolean) => {
-  const next = new Set(set);
-  if (member) next.add(key);
-  else next.delete(key);
-  return next;
-};
 
 /**
  * The open post's runs as a table under the rail, with a notch pointing at the post: a grid of the
  * posts' own column template, so the notch sits in the post's column without measuring. A row is a
  * link to its run's page, stretched over the whole row; its Stop and pull request link sit above it.
- * Stop is enabled as the run page enables its own, and shows the answer of `stopRun` below the table.
+ * Stop is enabled as the run page enables its own and calls `onStop`; the belt holds its answer, so
+ * it outlives this panel. Narrow, the environment, step and pull request stack under the title.
  */
 export function BeltReadout({
   station,
@@ -44,7 +36,8 @@ export function BeltReadout({
   selectedId,
   nowMs,
   column,
-  refreshStatus,
+  stopping,
+  onStop,
 }: {
   station: Station;
   runs: ReadonlyArray<BeltRun>;
@@ -52,25 +45,11 @@ export function BeltReadout({
   nowMs: number;
   /** The wide belt's column class of the picked post, which the notch takes. */
   column: string;
-  refreshStatus: (environmentId: EnvironmentId) => void;
+  /** The runs with a stop in flight, by key: one row's Stop never disables another's. */
+  stopping: ReadonlySet<string>;
+  onStop: (run: BeltRun) => void;
 }) {
   const { name, tag } = STATION_META[station];
-  // The runs with a stop in flight: one row's Stop never disables another's.
-  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
-  const [note, setNote] = useState<string | null>(null);
-
-  const stop = async ({ key, environmentId, id }: BeltRun) => {
-    setStopping((current) => withKey(current, key, true));
-    let answer: string;
-    try {
-      answer = (await factoryApi.stopRun(environmentId, id)).message;
-    } catch (error) {
-      answer = messageOf(error);
-    }
-    setNote(answer);
-    setStopping((current) => withKey(current, key, false));
-    refreshStatus(environmentId);
-  };
 
   return (
     <section
@@ -133,6 +112,18 @@ export function BeltReadout({
                   </TableCell>
                   <TableCell className="w-full max-w-0">
                     <span className="block truncate">{run.title ?? run.issue}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground @3xl:hidden">
+                      <span className="inline-flex items-center gap-1.5">
+                        <BeltDot selected={run.environmentId === selectedId} />
+                        {run.label}
+                      </span>
+                      <span className="font-mono">{run.step ?? "-"}</span>
+                      {pr ? (
+                        <span className="relative z-10">
+                          <Ref {...pr} />
+                        </span>
+                      ) : null}
+                    </span>
                   </TableCell>
                   <TableCell className={WIDE_ONLY}>
                     <span className="inline-flex items-center gap-1.5">
@@ -162,7 +153,7 @@ export function BeltReadout({
                       <Button
                         aria-label={`Stop ${run.issue}`}
                         disabled={!run.stoppable || stopping.has(run.key)}
-                        onClick={() => void stop(run)}
+                        onClick={() => onStop(run)}
                         size="sm"
                         variant="destructive-outline"
                       >
@@ -176,11 +167,6 @@ export function BeltReadout({
           </TableBody>
         </Table>
       )}
-      {note ? (
-        <p className="break-words border-t px-4 py-2 text-sm text-muted-foreground" role="status">
-          {note}
-        </p>
-      ) : null}
     </section>
   );
 }

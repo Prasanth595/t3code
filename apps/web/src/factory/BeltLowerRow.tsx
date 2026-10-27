@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Skeleton } from "~/components/ui/skeleton";
 
 import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
@@ -48,7 +49,7 @@ function ItemLink({
 }
 
 /**
- * The open attention items in the order given; nothing when there are none. With
+ * The open attention items in the order given, or a line saying none needs a person. With
  * `showEnvironment` each says which environment raised it. `onDismiss` gets the items to dismiss:
  * one, or every item shown for Dismiss all.
  */
@@ -63,15 +64,21 @@ function AttentionSection({
   nowMs: number;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
-  if (items.length === 0) return null;
   return (
     <section aria-label="Needs attention" className="flex min-w-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-medium">Needs attention</h2>
-        <Button onClick={() => onDismiss(items)} size="sm" variant="ghost">
-          Dismiss all
-        </Button>
+        {items.length === 0 ? null : (
+          <Button onClick={() => onDismiss(items)} size="sm" variant="ghost">
+            Dismiss all
+          </Button>
+        )}
       </div>
+      {items.length === 0 ? (
+        <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
+          Nothing needs a person.
+        </p>
+      ) : null}
       <ul className="flex flex-col gap-2">
         {items.map((entry) => {
           const { environmentId, label, item } = entry;
@@ -121,19 +128,22 @@ function AttentionSection({
 /**
  * A bin of the runs whose newest attempt waits for a person: each issue as a link to its run, its
  * title (the number alone without one), its environment and the stored reason as plain text,
- * clamped to two lines.
+ * clamped to two lines. Until the lists it is made from have answered it shows a skeleton, not an
+ * empty bin.
  */
 function Bin({
   name,
   station,
   runs,
   empty,
+  known,
   selectedId,
 }: {
   name: string;
   station: "stuck" | "info";
   runs: ReadonlyArray<BeltRun>;
   empty: string;
+  known: boolean;
   selectedId: EnvironmentId;
 }) {
   return (
@@ -145,9 +155,13 @@ function Bin({
       <div className="flex items-center gap-2">
         <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />
         <h2 className="text-sm font-medium">{name}</h2>
-        <span className="ml-auto font-mono text-lg font-semibold leading-none">{runs.length}</span>
+        <span className="ml-auto font-mono text-lg font-semibold leading-none">
+          {known ? runs.length : "-"}
+        </span>
       </div>
-      {runs.length === 0 ? (
+      {!known ? (
+        <Skeleton aria-label={`Loading ${name}`} className="h-5 w-full" role="status" />
+      ) : runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
@@ -184,10 +198,11 @@ function Bin({
 
 /**
  * Under the belt: Attention, Needs info and Stuck, side by side while there is room for each and
- * stacked when there is not. Attention takes no place while nothing needs attention.
+ * stacked when there is not. Every bin keeps its place, empty or not.
  */
 export function BeltLowerRow({
   attention,
+  known,
   needsInfo,
   stuck,
   selectedId,
@@ -196,6 +211,8 @@ export function BeltLowerRow({
   onDismiss,
 }: {
   attention: ReadonlyArray<EnvironmentAttention>;
+  /** Whether the recent runs lists the bins are made from have all answered. */
+  known: boolean;
   needsInfo: ReadonlyArray<BeltRun>;
   stuck: ReadonlyArray<BeltRun>;
   selectedId: EnvironmentId;
@@ -213,6 +230,7 @@ export function BeltLowerRow({
       />
       <Bin
         empty="Nothing needs info."
+        known={known}
         name="Needs info"
         runs={needsInfo}
         selectedId={selectedId}
@@ -220,6 +238,7 @@ export function BeltLowerRow({
       />
       <Bin
         empty="Nothing is stuck."
+        known={known}
         name="Stuck"
         runs={stuck}
         selectedId={selectedId}

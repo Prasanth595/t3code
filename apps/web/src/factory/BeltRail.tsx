@@ -89,7 +89,7 @@ function Post({
   onPick,
 }: {
   station: Station;
-  count: number;
+  count: number | string;
   /** The line under the label. */
   note: string;
   /** Claims are paused by hand: the note is the pause, and takes the label's place. */
@@ -261,8 +261,11 @@ function Lane({
   );
 }
 
-/** The Done post's lane: today's finished runs counted, how they ended, and the latest three. */
-function DoneBin({ belt }: { belt: Belt }) {
+/**
+ * The Done post's lane: today's finished runs counted, how they ended, and the latest three; `-`
+ * while the recent runs lists it comes from have not all answered.
+ */
+function DoneBin({ belt, known }: { belt: Belt; known: boolean }) {
   const { merged, closed, latest } = belt.done;
   return (
     <div
@@ -273,15 +276,19 @@ function DoneBin({ belt }: { belt: Belt }) {
       data-lane="done"
       data-station="done"
     >
-      <span className="font-mono text-2xl font-semibold leading-none">{merged + closed}</span>
-      <span className="min-w-0 text-2xs leading-snug text-muted-foreground">
-        <b className="block font-semibold text-foreground">
-          {merged} merged · {closed} closed
-        </b>
-        <span className="block truncate font-mono">
-          {latest.length > 0 ? latest.join(" · ") : "none yet today"}
-        </span>
+      <span className="font-mono text-2xl font-semibold leading-none">
+        {known ? merged + closed : "-"}
       </span>
+      {known ? (
+        <span className="min-w-0 text-2xs leading-snug text-muted-foreground">
+          <b className="block font-semibold text-foreground">
+            {merged} merged · {closed} closed
+          </b>
+          <span className="block truncate font-mono">
+            {latest.length > 0 ? latest.join(" · ") : "none yet today"}
+          </span>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -289,23 +296,32 @@ function DoneBin({ belt }: { belt: Belt }) {
 /**
  * Five posts, a lane of tiles under each, and the readout of the picked post. Wide, they are a grid
  * of five columns; narrow, the same elements in one column, each post followed by its lane and its
- * readout. Opens on `belt.newest` and changes only when a post is picked.
+ * readout. The open post is the caller's, so the rail can come and go without losing it.
  */
 export function BeltRail({
   belt,
+  known,
   selectedId,
   pausedSince,
   nowMs,
-  refreshStatus,
+  open,
+  onOpenChange,
+  stopping,
+  onStop,
 }: {
   belt: Belt;
+  /** Whether the recent runs lists the Done post counts from have all answered. */
+  known: boolean;
   selectedId: EnvironmentId;
   /** When claims were paused by hand in the selected environment, or null. */
   pausedSince: number | null;
   nowMs: number;
-  refreshStatus: (environmentId: EnvironmentId) => void;
+  open: Station | null;
+  onOpenChange: (station: Station | null) => void;
+  /** The runs with a stop in flight, by key. */
+  stopping: ReadonlySet<string>;
+  onStop: (run: BeltRun) => void;
 }) {
-  const [open, setOpen] = useState<Station | null>(belt.newest);
   const paused = pausedSince !== null;
   const noteOf = (station: Station) => {
     if (station === "claimed" && pausedSince !== null) {
@@ -319,21 +335,21 @@ export function BeltRail({
       {STATIONS.map((station) => (
         <Fragment key={station}>
           <Post
-            count={belt.runs[station].length}
+            count={station === "done" && !known ? "-" : belt.runs[station].length}
             dim={paused}
             note={noteOf(station)}
-            onPick={() => setOpen(open === station ? null : station)}
+            onPick={() => onOpenChange(open === station ? null : station)}
             open={open === station}
             paused={station === "claimed" && paused}
             station={station}
           />
           {station === "done" ? (
-            <DoneBin belt={belt} />
+            <DoneBin belt={belt} known={known} />
           ) : (
             <Lane
               dim={paused}
               nowMs={nowMs}
-              onOpen={() => setOpen(station)}
+              onOpen={() => onOpenChange(station)}
               runs={belt.runs[station]}
               selectedId={selectedId}
               station={station}
@@ -343,10 +359,11 @@ export function BeltRail({
             <BeltReadout
               column={PLACEMENT[station].column}
               nowMs={nowMs}
-              refreshStatus={refreshStatus}
+              onStop={onStop}
               runs={belt.runs[station]}
               selectedId={selectedId}
               station={station}
+              stopping={stopping}
             />
           ) : null}
         </Fragment>
