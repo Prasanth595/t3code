@@ -521,6 +521,8 @@ describe("listRuns", () => {
         id: rid(8),
         startedTs: "2026-10-04T10:13:16.123Z",
         lastEvent: "finished",
+        title: null,
+        reason: null,
         state: null,
         step: null,
         prUrl: null,
@@ -533,6 +535,8 @@ describe("listRuns", () => {
         id: rid(2, "rawphp/other", 1),
         startedTs: "2026-10-04T10:14:16.123Z",
         lastEvent: "claimed",
+        title: null,
+        reason: null,
         state: null,
         step: "approved 2026-10-04T10:00:00Z",
         prUrl: null,
@@ -626,6 +630,8 @@ describe("listRuns", () => {
       id: rid(2, "rawphp/broken"),
       startedTs: null,
       lastEvent: null,
+      title: null,
+      reason: null,
       state: null,
       step: null,
       prUrl: null,
@@ -730,6 +736,99 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(summaries.every((run) => run.step === null)).toBe(true);
   });
 
+  const sessionLaunched = (title?: string) => ({
+    event: "session_launched",
+    data: {
+      thread_id: "thr_1",
+      worktree: null,
+      branch: null,
+      model_instance: null,
+      model: null,
+      model_options: null,
+      resumed_from: null,
+      base: "main",
+      ...(title === undefined ? {} : { title }),
+    },
+  });
+  const stuckLine = (reason: string) => ({ event: "stuck", data: { reason } });
+  const asked = (questions: string) => ({ event: "questions_posted", data: { questions } });
+  const titleAndReason = (dataDir: string) =>
+    listRuns(dataDir).map((run) => [run.id.issue, run.title, run.reason]);
+
+  it("reads the title of the newest launch that has one, and the reason the last state asks for, as the whole read does", () => {
+    const dataDir = tempDir();
+    const files = [
+      // The newest titled launch wins; the stuck line before the state change gives the reason.
+      finishedRun(
+        dataDir,
+        rid(1),
+        [
+          sessionLaunched("Old title"),
+          sessionLaunched("New title"),
+          stuckLine("older"),
+          stuckLine("gate failed"),
+          moved("building", "stuck"),
+        ],
+        "stuck",
+        null,
+      ),
+      // Needs info: the newest questions, whichever side of the state change they sit on.
+      finishedRun(
+        dataDir,
+        rid(2),
+        [asked("first?"), moved("triage", "needs-info"), asked("which db?")],
+        "needs-info",
+        null,
+      ),
+      // A launch without a title does not hide an earlier one; the title is far from the end.
+      finishedRun(
+        dataDir,
+        rid(3),
+        [
+          sessionLaunched("Far title"),
+          ...padding(80),
+          sessionLaunched(),
+          moved("ready", "building"),
+        ],
+        "pr-open",
+        null,
+      ),
+      // No title anywhere: null. A stuck line that the run has since left says nothing.
+      finishedRun(
+        dataDir,
+        rid(4),
+        [sessionLaunched(), stuckLine("old"), moved("stuck", "building")],
+        "pr-open",
+        null,
+      ),
+      // Stuck with no stuck line: no reason, and the scan reaches the start.
+      finishedRun(dataDir, rid(5), [...padding(80), moved("building", "stuck")], "stuck", null),
+    ];
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)).toEqual(whole);
+    for (const file of files) expect(fullReads()).not.toContain(file);
+    expect(titleAndReason(dataDir)).toEqual([
+      ["1", "New title", "gate failed"],
+      ["2", null, "which db?"],
+      ["3", "Far title", null],
+      ["4", null, null],
+      ["5", null, null],
+    ]);
+  });
+
+  it("reads the title and reason of a run that is not finished", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(1), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    ledger.append(sessionLaunched("Open run") as never, cause);
+    ledger.append(stuckLine("gate failed") as never, cause);
+    ledger.append(moved("building", "stuck") as never, cause);
+    expect(titleAndReason(dataDir)).toEqual([["1", "Open run", "gate failed"]]);
+    expect(readRuns(dataDir)[0]?.summary).toEqual(listRuns(dataDir)[0]);
+  });
+
   it("skips damaged lines at both ends as the whole read does", () => {
     const dataDir = tempDir();
     const path = finishedRun(
@@ -758,7 +857,8 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     const path = finishedRun(
       dataDir,
       rid(1),
-      [...padding(2000), opened(2), moved("building", "pr-open")],
+      // The newest title is near the end too: a file with none is scanned to its start.
+      [...padding(2000), sessionLaunched("Near title"), opened(2), moved("building", "pr-open")],
       "pr-open",
       PR_URL,
     );

@@ -4108,6 +4108,7 @@ const relaunchedLine: Line = {
     model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
     base: "main",
+    title: "Build step",
   },
 };
 
@@ -5657,6 +5658,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
             model_options: options,
             resumed_from: { run: RUN, branch: "t3code/abc" },
             base: "main",
+            title: "Build step",
           },
         }),
       );

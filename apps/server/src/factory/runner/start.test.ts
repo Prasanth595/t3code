@@ -365,6 +365,7 @@ const startedLines = (): Array<{ line: RunEvent; cause: Cause }> => [
         model_options: null,
         resumed_from: null,
         base: "main",
+        title: "Build step",
       },
     },
     cause: cause("session-launched"),
@@ -490,6 +491,7 @@ describe("start: a fresh ready issue", () => {
         model_options: null,
         resumed_from: null,
         base: "main",
+        title: "Build step",
       });
     }),
   );
@@ -512,6 +514,7 @@ describe("start: a fresh ready issue", () => {
         model_options: options,
         resumed_from: null,
         base: "main",
+        title: "Build step",
       });
     }),
   );
@@ -533,6 +536,7 @@ describe("start: a fresh ready issue", () => {
         model_options: null,
         resumed_from: null,
         base: "main",
+        title: "Build step",
       });
     }),
   );
@@ -1803,6 +1807,7 @@ const startedLinesOn = (branch: string | null) =>
               model: "claude-opus-5-5",
               model_options: null,
               resumed_from: null,
+              title: "Build step",
             },
           } satisfies RunEvent,
         }
