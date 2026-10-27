@@ -108,7 +108,9 @@ export function takeNewTaskPromptLink(
 export function resolvePendingNewTaskPromptLink(state: NavigationState | undefined): void {
   if (pendingLink === null) return;
   const step = stepPendingPromptLink(pendingLink, {
-    screenOnStack: findStackRoute(state, NEW_TASK_ROUTE) !== undefined,
+    // A screen pushed above New task (such as Add project) drops the link, so it never lands
+    // over the wrong screen.
+    screenOnStack: findStackRoute(state, NEW_TASK_ROUTE)?.focused === true,
     ready: appAtomRegistry.get(shellsSettledAtom),
   });
   if (step.pending === null) dropPendingLink();

@@ -157,7 +157,17 @@ describe("findStackRoute", () => {
     expect(findStackRoute(root, "NewTaskProject")).toEqual({
       navigatorKey: "settings-stack",
       routeKey: "new-task",
+      focused: true,
     });
+  });
+
+  it("reports whether the screen is its navigator's focused route", () => {
+    const covered = stack("root", [
+      { key: "new-task", name: "NewTaskProject" },
+      { key: "add-project", name: "AddProject" },
+    ]);
+    expect(findStackRoute(covered, "NewTaskProject")?.focused).toBe(false);
+    expect(findStackRoute(covered, "AddProject")?.focused).toBe(true);
   });
 
   it("prefers the top-most screen and reports a missing one", () => {
