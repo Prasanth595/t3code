@@ -372,7 +372,9 @@ export const make = Effect.gen(function* () {
           stream_options: { include_usage: true },
           ...reasoningFields(input.effort),
           messages: input.messages,
-          ...(input.search ? { tools: [WEB_SEARCH_TOOL] } : {}),
+          // Without the declaration after earlier tool results, DeepSeek writes its next call as text.
+          tools: [WEB_SEARCH_TOOL],
+          tool_choice: input.search ? "auto" : "none",
         }),
       ),
     );
@@ -432,7 +434,7 @@ export const make = Effect.gen(function* () {
           usage.inputTokens += reader.inputTokens;
           usage.outputTokens += reader.outputTokens;
           const calls = reader.toolCalls;
-          if (calls.length === 0) return Stream.empty;
+          if (calls.length === 0 || round >= MAX_SEARCH_ROUNDS) return Stream.empty;
           const results = yield* Effect.forEach(
             calls,
             (call) => {
@@ -480,7 +482,7 @@ export const make = Effect.gen(function* () {
         text,
         Stream.unwrap(
           Effect.sync(() =>
-            reader.toolCalls.length === 0
+            reader.toolCalls.length === 0 || round >= MAX_SEARCH_ROUNDS
               ? next
               : Stream.concat(Stream.make(searchingEvent()), next),
           ),
