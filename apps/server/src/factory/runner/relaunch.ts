@@ -123,6 +123,7 @@ export const relaunchSession = Effect.fn("RunnerRelaunch.relaunchSession")(funct
           model_options: project.model.options ?? null,
           resumed_from: { run: runIdToString(run), branch: relaunch.branch },
           base: ctx.project.base,
+          title: detail.title,
         },
       },
       makeCause(at.step, "resumed-from-branch"),

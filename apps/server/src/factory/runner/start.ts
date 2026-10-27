@@ -746,6 +746,7 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
           resumed_from:
             resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           base,
+          title: detail.title,
         },
       },
       makeCause("start", resumed === null ? "session-launched" : "resumed-from-branch"),

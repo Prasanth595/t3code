@@ -65,6 +65,10 @@ export interface StatusReport {
   readonly runs: ReadonlyArray<{
     readonly id: string;
     readonly state: string | null;
+    /** The event of the run's last readable ledger line; null for none, or an unreadable file. */
+    readonly last_event: string | null;
+    /** The issue title its newest launch recorded; null for a run launched before titles were. */
+    readonly title: string | null;
     /** The GitHub user the run was claimed as, from its `claimed` line. */
     readonly user: string | null;
     readonly for_ms: number | null;
@@ -209,6 +213,8 @@ const runRow = (read: RunRead, nowMs: number): StatusReport["runs"][number] => {
   return {
     id: runIdToString(summary.id),
     state: summary.state,
+    last_event: summary.lastEvent,
+    title: summary.title,
     user: seen?.githubUser ?? null,
     for_ms: lastChange === undefined ? null : Math.max(0, nowMs - lastChange.ms),
     pr_url: summary.prUrl,
