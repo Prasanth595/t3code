@@ -59,7 +59,8 @@ const splitAttachments = (value: string) => {
 type Option = OrchestrationV2UserInputQuestion["options"][number];
 
 const findChoice = (options: ReadonlyArray<Option>, value: string) =>
-  options.find((option) => (option.value ?? option.label) === value || option.label === value);
+  options.find((option) => (option.value ?? option.label) === value) ??
+  options.find((option) => option.label === value);
 
 const optionValue = (option: Option) => option.value ?? option.label;
 

@@ -61,6 +61,28 @@ describe("OpenCode ACP question form", () => {
     });
   });
 
+  it("prefers an option value over an earlier option label", () => {
+    const form = extractOpenCodeElicitationForm(
+      request({
+        q0: {
+          type: "string",
+          title: "Which one?",
+          description: "Pick one",
+          oneOf: [
+            { const: "a", title: "b" },
+            { const: "b", title: "B" },
+          ],
+        },
+        q0_custom: colorCompanion,
+      }),
+    );
+
+    expect(form?.respond({ q0: "b" })).toEqual({
+      action: "accept",
+      content: { q0: "b" },
+    });
+  });
+
   it("sends a free-form answer to the companion field", () => {
     const form = extractOpenCodeElicitationForm(
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
