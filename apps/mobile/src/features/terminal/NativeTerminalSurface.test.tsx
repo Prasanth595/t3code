@@ -9,6 +9,8 @@ import type { NativeSyntheticEvent } from "react-native";
 import { expect, it, vi } from "vite-plus/test";
 
 import type { NativeTerminalSurfaceProps } from "./nativeTerminalModule";
+import { TERMINAL_WRITE_MAX_LENGTH } from "./terminalInput";
+import { createTerminalPasteSession } from "./terminalPaste";
 
 const mocks = vi.hoisted(() => ({
   revision: null as number | null,
@@ -16,9 +18,17 @@ const mocks = vi.hoisted(() => ({
   mounts: vi.fn(),
   unmounts: vi.fn(),
   write: vi.fn(async (_data: string, _reset: boolean) => {}),
+  paste: (_text: string) => {},
 }));
 
-function RawView({ ref: nativeRef, initialBuffer, onResize }: NativeTerminalSurfaceProps) {
+function RawView({ ref: nativeRef, initialBuffer, onResize, onPaste }: NativeTerminalSurfaceProps) {
+  useLayoutEffect(() => {
+    mocks.paste = (text) =>
+      onPaste?.({ nativeEvent: { text } } as NativeSyntheticEvent<{ text: string }>);
+    return () => {
+      mocks.paste = () => {};
+    };
+  }, [onPaste]);
   useImperativeHandle(nativeRef, () => ({ writeOutput: mocks.write }));
   useLayoutEffect(() => {
     mocks.mounts();
@@ -81,6 +91,11 @@ function setup(revision: number | null) {
     async render(
       state: typeof EMPTY_TERMINAL_BUFFER_STATE,
       terminalKey = "environment:thread:term-1",
+      input: {
+        isRunning?: boolean;
+        readOnly?: boolean;
+        onPaste?: (text: string) => void;
+      } = {},
     ) {
       await act(async () => {
         root.render(
@@ -97,6 +112,7 @@ function setup(revision: number | null) {
             isRunning
             onInput={() => {}}
             onResize={() => {}}
+            {...input}
           />,
         );
       });
@@ -151,3 +167,39 @@ it.each([null, 1])(
     }
   },
 );
+
+it.each([
+  { isRunning: true, readOnly: false },
+  { isRunning: true, readOnly: true },
+  { isRunning: false, readOnly: false },
+])("native paste preserves text and write limits for %j", async ({ isRunning, readOnly }) => {
+  await using harness = setup(1);
+  const session = createTerminalPasteSession();
+  session.reset(true);
+  const writes: string[] = [];
+  let paste: Promise<void> | undefined;
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, {
+    isRunning,
+    readOnly,
+    onPaste: (text) => {
+      paste = session.paste({
+        readText: async () => text,
+        write: async (data) => {
+          writes.push(data);
+          return true;
+        },
+        onReadError: (cause) => {
+          throw cause;
+        },
+      });
+    },
+  });
+  mocks.paste(`one\ntwo\u0000${"x".repeat(TERMINAL_WRITE_MAX_LENGTH)}`);
+  await paste;
+  expect(writes.join("")).toBe(
+    isRunning && !readOnly ? `one\rtwo ${"x".repeat(TERMINAL_WRITE_MAX_LENGTH)}` : "",
+  );
+  expect(writes.map((chunk) => chunk.length)).toEqual(
+    isRunning && !readOnly ? [TERMINAL_WRITE_MAX_LENGTH, 8] : [],
+  );
+});

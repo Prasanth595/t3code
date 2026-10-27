@@ -143,8 +143,7 @@ private final class TerminalInputField: UITextField {
     super.deleteBackward()
   }
 
-  /// ⌘V, the iPad shortcut bar, and the edit menu land here. Inserting the text instead
-  /// would send it as typed input, skipping paste encoding and write chunking.
+  // System pastes must bypass typed input to preserve paste encoding and chunking.
   override func paste(_ sender: Any?) {
     onPaste?()
   }
@@ -778,8 +777,6 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     onInput(["data": data])
   }
 
-  /// Reads the clipboard inside the user's paste action, so iOS does not ask for paste
-  /// permission. JS sends the text through the same paste path as the toolbar button.
   private func emitPaste() {
     guard !readOnly, let text = UIPasteboard.general.string, !text.isEmpty else { return }
     onPaste(["text": text])
