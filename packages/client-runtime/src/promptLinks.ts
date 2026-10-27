@@ -20,7 +20,7 @@ import {
 
 // A link's `owner/name` is GitHub's. GitCafe syncs a repository two-way with GitHub under the
 // same path, so a checkout cloned from git.cafe counts as the linked repository.
-const PROMPT_LINK_REPOSITORY_HOSTS = ["github.com", "git.cafe"];
+const PROMPT_LINK_REPOSITORY_HOSTS = ["github.com", "git.cafe", "staging.git.cafe"];
 
 /**
  * The repository's projects in the order given. Callers pass projects most recently active
