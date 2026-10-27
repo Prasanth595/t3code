@@ -1273,11 +1273,11 @@ export const layer = Layer.effect(
         },
       ),
       // The implementations already own the public operation spans.
-      cliCommand: Effect.fnUntraced(function (distro, action) {
-        return provideSpawner(cliCommandImpl(distro, action));
+      cliCommand: Effect.fnUntraced(function* (distro, action) {
+        return yield* provideSpawner(cliCommandImpl(distro, action));
       }),
-      recordCliTarget: Effect.fnUntraced(function (distro, command) {
-        return provideSpawner(recordCliTargetImpl(distro, command));
+      recordCliTarget: Effect.fnUntraced(function* (distro, command) {
+        return yield* provideSpawner(recordCliTargetImpl(distro, command));
       }),
     });
   }),
