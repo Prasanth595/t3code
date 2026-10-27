@@ -1,4 +1,5 @@
 import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -77,6 +78,7 @@ export function PreviewMoreMenu({
   profileName,
   move,
 }: Props) {
+  const navigate = useNavigate();
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
   return (
@@ -171,6 +173,8 @@ export function PreviewMoreMenu({
           <MenuItem onClick={actions.clearCookies}>Clear cookies</MenuItem>
           <MenuItem onClick={actions.clearCache}>Clear cache</MenuItem>
         </MenuGroup>
+        <MenuSeparator />
+        <MenuItem onClick={() => void navigate({ to: "/settings/browser" })}>Settings</MenuItem>
       </MenuPopup>
     </Menu>
   );
