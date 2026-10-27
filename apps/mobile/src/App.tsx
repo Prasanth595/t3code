@@ -21,9 +21,13 @@ import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet
 import * as Dialog from "./components/ui/Dialog";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
-import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
+import {
+  presentPendingIncomingShare,
+  startIncomingShareInbox,
+} from "./features/sharing/IncomingShareProvider";
 import {
   AppearancePreferencesProvider,
+  installAppearanceRuntime,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
@@ -91,6 +95,7 @@ const Navigation = createStaticNavigation(RootStack);
 function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
   if (state) pruneNewTaskBranchCheckouts(state);
+  presentPendingIncomingShare();
 }
 
 function handleNavigationReady(): void {
@@ -107,10 +112,12 @@ const appServiceDisposers = [
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
   }),
+  installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
   installPermissionUpdateNotice(),
   installThreadOutboxDelivery(),
   installComposerAttachmentUploads(),
+  startIncomingShareInbox(),
 ];
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
   for (const dispose of appServiceDisposers) dispose();
@@ -153,15 +160,13 @@ function AppContent() {
             {/* native-stack needs the theme's dark flag to select dark native headers. */}
             <GlobalVoiceInputControl>
               <NativeLayoutMetricsProvider>
-                <IncomingShareProvider>
-                  <Navigation
-                    ref={attachRootNavigation}
-                    linking={appLinking}
-                    onReady={handleNavigationReady}
-                    theme={navigationTheme}
-                    onStateChange={handleNavigationStateChange}
-                  />
-                </IncomingShareProvider>
+                <Navigation
+                  ref={attachRootNavigation}
+                  linking={appLinking}
+                  onReady={handleNavigationReady}
+                  theme={navigationTheme}
+                  onStateChange={handleNavigationStateChange}
+                />
                 <Dialog.Host />
                 <ThreadArrangementHost />
                 <ProjectChipIconRasterizer />
