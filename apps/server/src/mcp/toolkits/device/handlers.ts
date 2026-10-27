@@ -82,14 +82,17 @@ export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
   if (exact) return exact.id;
   const labelMatches = hosts.filter((host) => host.label.toLowerCase() === hostId.toLowerCase());
   if (labelMatches.length === 1) return labelMatches[0]!.id;
-  const listed = (labelMatches.length > 1 ? labelMatches : hosts)
-    .map((host) => `${host.label} (${host.id})`)
-    .join(", ");
+  const candidates = labelMatches.length > 1 ? labelMatches : hosts;
+  const listed = [
+    ...candidates.slice(0, 10).map((host) => `${host.label.slice(0, 64)} (${host.id})`),
+    ...(candidates.length > 10 ? [`${candidates.length - 10} more`] : []),
+  ].join(", ");
+  const selector = hostId.slice(0, 128);
   return yield* new DeviceToolUnavailableError({
     reason:
       labelMatches.length > 1
-        ? `Several device hosts are named ${hostId}; pass one id: ${listed}.`
-        : `No device host ${hostId}. Known hosts: ${listed || "none"}.`,
+        ? `Several device hosts are named ${selector}; pass one id: ${listed}.`
+        : `No device host ${selector}. Known hosts: ${listed || "none"}.`,
   });
 });
 
