@@ -3,7 +3,10 @@ import type {
   SaasChatMessage,
   SaasChatSummary,
 } from "@t3tools/contracts/saas";
-import { SaasChatMessage as SaasChatMessageSchema } from "@t3tools/contracts/saas";
+import {
+  SAAS_MAX_LISTED_CHATS,
+  SaasChatMessage as SaasChatMessageSchema,
+} from "@t3tools/contracts/saas";
 import { and, desc, eq, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,7 +21,6 @@ import { SaasPersistenceError } from "./SaasAccounts.ts";
 
 /** One shared address can hold several people without accounts; it gets this many devices' worth. */
 export const ANONYMOUS_IP_LIMIT_MULTIPLIER = 5;
-const MAX_LISTED_CHATS = 200;
 
 export type ChatSubject = `user:${string}` | `device:${string}` | `ip:${string}`;
 
@@ -136,7 +138,7 @@ export const make = Effect.gen(function* () {
         .from(saasChatConversations)
         .where(eq(saasChatConversations.userId, userId))
         .orderBy(desc(saasChatConversations.updatedAt))
-        .limit(MAX_LISTED_CHATS)
+        .limit(SAAS_MAX_LISTED_CHATS)
         .pipe(persist("list-chats"));
     },
   );

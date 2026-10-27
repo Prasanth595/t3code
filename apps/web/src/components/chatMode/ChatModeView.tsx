@@ -2,6 +2,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import {
   chatAttachmentProblem,
   chatAttachmentUrl,
+  isRetryable,
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
 import {
@@ -121,6 +122,7 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
   };
 
   const busy = history.streaming !== null;
+  const searching = history.streaming?.searching === true && history.streaming.chatId === chat?.id;
   const error = history.error !== null && history.error.chatId === chat?.id ? history.error : null;
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -150,7 +152,12 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
             error={error}
             onSignIn={access.openSignIn}
             onUpgrade={() => setUpgradeOpen(true)}
+            onRetry={() => void miraChatHistory.retry(error.chatId)}
           />
+        ) : searching ? (
+          <p className="mx-auto mb-2 w-full max-w-(--chat-content-max-width) px-1 text-muted-foreground text-xs">
+            Searching the web…
+          </p>
         ) : null}
         <ChatModeComposer busy={busy} onSend={send} />
       </div>
@@ -239,10 +246,12 @@ function ChatReplyErrorNotice({
   error,
   onSignIn,
   onUpgrade,
+  onRetry,
 }: {
   readonly error: ChatReplyError;
   readonly onSignIn: (() => void) | null;
   readonly onUpgrade: () => void;
+  readonly onRetry: () => void;
 }) {
   const action =
     error.code === "sign_up_required" || error.code === "session_expired"
@@ -254,7 +263,9 @@ function ChatReplyErrorNotice({
           }
       : error.code === "daily_limit"
         ? { label: "Upgrade to Pro", run: onUpgrade }
-        : null;
+        : isRetryable(error)
+          ? { label: "Try again", run: onRetry }
+          : null;
   return (
     <div
       role="alert"

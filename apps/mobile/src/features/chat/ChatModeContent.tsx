@@ -1,10 +1,11 @@
 import {
   chatAttachmentProblem,
   chatAttachmentUrl,
+  isRetryable,
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
 import { EnvironmentId } from "@t3tools/contracts";
-import { splitChatVisuals } from "@t3tools/shared/htmlRender";
+import { chatVisualsAsText, splitChatVisuals } from "@t3tools/shared/htmlRender";
 import type {
   SaasChatAttachment,
   SaasChatConversation,
@@ -119,6 +120,7 @@ export function ChatModeContent(props: {
             error={error}
             onSignIn={() => navigation.navigate("SettingsAuth")}
             onUpgrade={() => void openMiraUpgrade().catch(() => undefined)}
+            onRetry={() => void miraChatHistory.retry(error.chatId)}
           />
         </View>
       ) : null}
@@ -234,7 +236,7 @@ function AssistantRow(props: { readonly text: string; readonly streaming: boolea
         <View className="mt-1 flex-row items-center gap-1">
           <CopyTextButton
             accessibilityLabel="Copy message"
-            text={props.text}
+            text={chatVisualsAsText(props.text)}
             tintColor={iconColor}
             buttonSize={28}
             iconSize={13}
@@ -249,6 +251,7 @@ function ChatErrorNotice(props: {
   readonly error: ChatReplyError;
   readonly onSignIn: () => void;
   readonly onUpgrade: () => void;
+  readonly onRetry: () => void;
 }) {
   const action =
     props.error.code === "sign_up_required" || props.error.code === "session_expired"
@@ -258,7 +261,9 @@ function ChatErrorNotice(props: {
         }
       : props.error.code === "daily_limit"
         ? { label: "Upgrade to Pro", run: props.onUpgrade }
-        : null;
+        : isRetryable(props.error)
+          ? { label: "Try again", run: props.onRetry }
+          : null;
   return (
     <View
       accessibilityRole="alert"

@@ -9,6 +9,7 @@ import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ChatAttachments from "./ChatAttachments.ts";
 import * as LlmProxy from "./LlmProxy.ts";
@@ -453,6 +454,90 @@ describe("chat mode search and attachments", () => {
       const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
       expect(String(messages.at(-1)?.content)).toContain('<document name="prices.csv">');
       expect(String(messages.at(-1)?.content)).toContain("apple,3");
+    }),
+  );
+
+  it.effect("sends only the latest documents' text and older ones as a note", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ upstream: () => stream() });
+      const upload = (name: string) =>
+        harness
+          .upload(
+            { ...device, "content-type": "text/plain", "x-mira-file-name": name },
+            `text of ${name}`,
+          )
+          .pipe(
+            Effect.flatMap(readText),
+            Effect.map((body) => JSON.parse(body)),
+          );
+      const files = [yield* upload("a.txt"), yield* upload("b.txt"), yield* upload("c.txt")];
+      yield* readText(
+        yield* harness.chatMode(device, {
+          messages: files
+            .flatMap((file, index) => [
+              { role: "user", content: `Read ${index}`, attachments: [file] },
+              { role: "assistant", content: "Done." },
+            ])
+            .concat([{ role: "user", content: "Compare them." }]),
+        }),
+      );
+      const sent = JSON.stringify(sentJson(harness.sent[0])?.messages);
+      expect(sent).not.toContain("text of a.txt");
+      expect(sent).toContain("[Earlier document: a.txt");
+      expect(sent).toContain("text of b.txt");
+      expect(sent).toContain("text of c.txt");
+    }),
+  );
+
+  it.effect("sends earlier visuals to the model as their words", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ upstream: () => stream() });
+      yield* readText(
+        yield* harness.chatMode(device, {
+          messages: [
+            { role: "user", content: "Sales?" },
+            {
+              role: "assistant",
+              content: "Here:\n\n````visual\n<style>h2{color:red}</style><h2>Sales up</h2>\n````",
+            },
+            { role: "user", content: "Why?" },
+          ],
+        }),
+      );
+      const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
+      expect(messages.at(-2)?.content).toBe("Here:\n\n[Visual: Sales up]");
+    }),
+  );
+
+  it.effect("drops the oldest messages once the history is over its budget", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ upstream: () => stream() });
+      const long = "x".repeat(100_000);
+      yield* readText(
+        yield* harness.chatMode(device, {
+          messages: [
+            { role: "user", content: `first ${long}` },
+            { role: "assistant", content: long },
+            { role: "user", content: long },
+            { role: "assistant", content: long },
+            { role: "user", content: "latest" },
+          ],
+        }),
+      );
+      const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
+      expect(messages.some((message) => String(message.content).startsWith("first"))).toBe(false);
+      expect(messages.at(-1)?.content).toBe("latest");
+      expect(messages[0]).toMatchObject({ role: "system" });
+    }),
+  );
+
+  it.effect("tells the model today's date", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-10-27T12:00:00.000Z"));
+      const harness = makeHarness({ upstream: () => stream() });
+      yield* readText(yield* harness.chatMode(device));
+      const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
+      expect(String(messages[0]?.content)).toContain("Today is 2026-10-27.");
     }),
   );
 

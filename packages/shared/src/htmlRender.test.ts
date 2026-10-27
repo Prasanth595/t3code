@@ -5,6 +5,7 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  chatVisualsAsText,
   splitChatVisuals,
 } from "./htmlRender.ts";
 import { T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
@@ -95,6 +96,23 @@ describe("splitChatVisuals", () => {
   it("keeps visual fences quoted inside another code block as markdown", () => {
     const text = ["````md", "```visual", "<div/>", "```", "````"].join("\n");
     expect(splitChatVisuals(text)).toEqual([{ kind: "markdown", text }]);
+  });
+});
+
+describe("chatVisualsAsText", () => {
+  it("keeps a visual's words and drops its markup, styles and scripts", () => {
+    const text = [
+      "Intro",
+      "````visual",
+      "<style>p{color:red}</style><h2>Sales</h2><p>Oct &amp; Nov</p><script>draw()</script>",
+      "````",
+      "Outro",
+    ].join("\n");
+    expect(chatVisualsAsText(text)).toBe("Intro\n\n[Visual: Sales Oct & Nov]\n\nOutro");
+  });
+
+  it("leaves replies without visuals untouched", () => {
+    expect(chatVisualsAsText("Plain ```ts\ncode\n```")).toBe("Plain ```ts\ncode\n```");
   });
 });
 

@@ -8,6 +8,7 @@ import {
 import { RelayApi } from "@t3tools/contracts/relay";
 import { CHAT_VISUAL_GUIDE } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,9 +45,32 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_CHAT_MESSAGES = 200;
 /** Model turns in one reply, counting the follow-ups after searches and visuals. */
 const MAX_MODEL_TURNS = 6;
-const CHAT_SYSTEM_PROMPT = `You are Mira, a friendly and helpful assistant. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.
+// Leaves room in the model's context for search results and the reply.
+const MAX_HISTORY_CHARS = 240_000;
+const chatSystemPrompt = (today: string) =>
+  `You are Mira, a friendly and helpful assistant. Today is ${today}. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.
 
 ${CHAT_VISUAL_GUIDE}`;
+
+const messageChars = (message: ChatAttachments.ModelMessage) =>
+  typeof message.content === "string"
+    ? message.content.length
+    : message.content.reduce(
+        (total, part) => total + (part.type === "text" ? part.text.length : 0),
+        0,
+      );
+
+/** The latest messages that fit the history budget; the newest one always goes. */
+const fitHistory = (messages: ReadonlyArray<ChatAttachments.ModelMessage>) => {
+  let total = 0;
+  let start = messages.length;
+  for (const message of messages.toReversed()) {
+    total += messageChars(message);
+    if (total > MAX_HISTORY_CHARS && start < messages.length) break;
+    start -= 1;
+  }
+  return messages.slice(start);
+};
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 export interface TokenUsage {
@@ -341,14 +365,15 @@ export const make = Effect.gen(function* () {
         return chatError(503, "model_unavailable", "The model is not configured yet.");
       }
       const subject = chatter.subjects[0] ?? "device:unknown";
-      const messages = yield* attachments.toModelMessages(
-        parsed.value.messages.slice(-MAX_CHAT_MESSAGES),
+      const messages = fitHistory(
+        yield* attachments.toModelMessages(parsed.value.messages.slice(-MAX_CHAT_MESSAGES)),
       );
+      const today = DateTime.formatIso(yield* DateTime.now).slice(0, "YYYY-MM-DD".length);
       return yield* chatReply({
         apiKey: access.apiKey,
         model: access.model,
         effort: access.chatReasoningEffort,
-        messages: [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...messages],
+        messages: [{ role: "system", content: chatSystemPrompt(today) }, ...messages],
         onUsage: (usage) => recordChat(subject, usage),
       });
     },
