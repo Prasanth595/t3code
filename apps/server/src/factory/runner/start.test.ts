@@ -50,6 +50,7 @@ import {
   statusBody,
   stuckComment,
 } from "./messages.ts";
+import { readProgress } from "./progress.ts";
 import {
   GateRunningError,
   resume,
@@ -557,6 +558,28 @@ describe("start: a fresh ready issue", () => {
         const launched = entriesOf(dataDir).find((e) => e.event === "session_launched")!;
         assert.strictEqual((launched.data as { model: string }).model, expected);
       }
+    }),
+  );
+
+  it.effect("a launch decided again writes its model over one a crash left unsent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, [
+        ...startedLines().slice(0, 3),
+        {
+          line: { event: "step_changed", data: { step: "launch-model claude-opus-5-5" } },
+          cause: cause("launch-sending"),
+        },
+      ]);
+      const { tracker } = fakeTracker({ issues: [detail("triage", [USER])] });
+      const fable = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
+      const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model: fable } });
+      yield* startIn(dataDir, tracker, t3.sessions, { launchModel: (m) => m });
+      assert.deepStrictEqual(t3.launchRequests[0]!.model, fable);
+      assert.strictEqual(
+        readProgress(readRun(dataDir, run7).entries).launchModel,
+        "claude-fable-5-1",
+      );
     }),
   );
 

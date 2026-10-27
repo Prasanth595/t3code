@@ -688,7 +688,8 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
       : yield* recordedResume(ctx, run, seen.launchResumedFrom, seen.launchResumedPr)
     : yield* resumeFrom(ctx, run, issue, base);
   if (!seen.launchSent) {
-    if (model.model !== project.model.model) {
+    // Also over a step a crash left before `launch-sending`, which a resend would read instead.
+    if (model.model !== project.model.model || seen.launchModel !== null) {
       yield* ledger(() =>
         out.append(
           { event: "step_changed", data: { step: `${LAUNCH_MODEL}${model.model}` } },
