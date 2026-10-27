@@ -1027,9 +1027,11 @@ describe("the rail keeps its pick", () => {
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     await page.click(station(page, "building"));
     await page.click(
-      Array.from(rowsOf(page)[0]!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Stop",
-      )!,
+      Array.from(
+        rowsOf(page)
+          .find((r) => r.textContent?.includes("Title of 2"))!
+          .querySelectorAll("button"),
+      ).find((b) => b.textContent === "Stop")!,
     );
     await page.click(station(page, "building"));
     expect(readout(page)).toBeUndefined();

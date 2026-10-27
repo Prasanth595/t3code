@@ -238,7 +238,8 @@ export function FactoryBelt({
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
   const [open, setOpen] = useState<Station | null | undefined>(undefined);
-  // The runs with a stop in flight, and the answer of the latest stop: they outlive the readout.
+  // The runs with a stop in flight, and the answer of the latest stop, which names its run: they
+  // outlive the readout.
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const [stopNote, setStopNote] = useState<string | null>(null);
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
@@ -253,22 +254,18 @@ export function FactoryBelt({
     })),
     nowMs,
   );
-  // The rail opens on the newest run once there is something to look at: some status has answered
-  // and every list of recent runs it waits for has too. The pick is made then, once, and the rail
-  // stays after it, whatever an environment does later.
+  // What the recent runs lists say (the counters, Done, the bins, and the rail's first pick) is known
+  // once some status has answered and no answered environment's list is still loading. A list that
+  // failed before its first answer adds nothing; the page names it. The rail's pick is made then,
+  // once, and the rail stays after it, whatever an environment does later.
   const answered = environments.filter(({ status }) => status.data !== null);
-  const ready =
-    answered.length > 0 &&
-    answered.every(({ environmentId }) => recent.get(environmentId)?.status !== "loading");
-  if (open === undefined && ready) setOpen(belt.newest);
-  // What the recent runs lists say (the counters, Done and the bins) is known once every answered
-  // environment's list has data; before that a zero would only be an absence.
   const known =
     answered.length > 0 &&
-    answered.every(({ environmentId }) => recent.get(environmentId)?.data != null);
+    answered.every(({ environmentId }) => recent.get(environmentId)?.status !== "loading");
+  if (open === undefined && known) setOpen(belt.newest);
   if (selected === undefined) return null;
 
-  const stop = async ({ key, environmentId, id }: BeltRun) => {
+  const stop = async ({ key, environmentId, id, issue }: BeltRun) => {
     const mark = (member: boolean) =>
       setStopping((current) => {
         const next = new Set(current);
@@ -283,7 +280,7 @@ export function FactoryBelt({
     } catch (error) {
       answer = messageOf(error);
     }
-    setStopNote(answer);
+    setStopNote(`${issue}: ${answer}`);
     mark(false);
     environments
       .find((environment) => environment.environmentId === environmentId)
