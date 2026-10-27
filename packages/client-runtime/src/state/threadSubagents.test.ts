@@ -230,6 +230,39 @@ describe("deriveThreadTurnSubagents", () => {
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
   });
 
+  it("keeps the latest turn's agents when an earlier turn's background agent finishes later", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "late", status: "completed", updatedAt: at("2026-06-20T00:00:09.000Z") }),
+        subagent({
+          id: "latest",
+          runId: RunId.make("run-2"),
+          status: "completed",
+          updatedAt: at("2026-06-20T00:00:05.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["latest"]);
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
+  it("does not call held agents done", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({ id: "a", status: "completed" }),
+        subagent({ id: "b", status: "idle" }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "2 agents",
+      accessibilityLabel: "2 agents",
+    });
+  });
+
   it("counts idle as neither working nor done", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [activeRun],

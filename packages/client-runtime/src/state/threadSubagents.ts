@@ -29,7 +29,8 @@ function orderKey(subagent: Subagent): number {
 }
 
 /**
- * The pill and sheet include the active run's agents, or the most recently updated agent's run when idle.
+ * The pill and sheet include the active run's agents. When idle they use the latest started run's
+ * agents, or else the most recently updated agent's run.
  * Include agents still working from other runs so background work stays counted and reachable.
  * Exclude rolled-back runs, matching the Waiting strip.
  */
@@ -52,7 +53,6 @@ export function deriveThreadTurnSubagents(
         : latest,
     first,
   );
-  const runId = activeRun?.id ?? latestUpdated.runId;
   // Ordinal, not array position: a reordered queue can leave the projection's runs out of order.
   // Queued and never-started runs have not replaced anything yet.
   const latestStartedRun = projection.runs.reduce<Projection["runs"][number] | null>(
@@ -64,6 +64,11 @@ export function deriveThreadTurnSubagents(
         : latest,
     null,
   );
+  const latestStartedRunHasAgents =
+    latestStartedRun !== null &&
+    eligible.some((subagent) => subagent.runId === latestStartedRun.id);
+  const runId =
+    activeRun?.id ?? (latestStartedRunHasAgents ? latestStartedRun.id : latestUpdated.runId);
   const subagents = copySorted(
     eligible.filter(
       (subagent) => subagent.runId === runId || isActiveSubagentStatus(subagent.status),
@@ -101,8 +106,8 @@ export function resolveSubagentPillSegment(
       accessibilityLabel: `${turn.liveCount} of ${total} agents working`,
     };
   }
-  return {
-    label: `${total} done`,
-    accessibilityLabel: `${total} ${total === 1 ? "agent" : "agents"} done`,
-  };
+  const agents = `${total} ${total === 1 ? "agent" : "agents"}`;
+  // Held (idle) agents have work outstanding, so only an all-terminal roster is "done".
+  if (turn.settledCount < total) return { label: agents, accessibilityLabel: agents };
+  return { label: `${total} done`, accessibilityLabel: `${agents} done` };
 }
