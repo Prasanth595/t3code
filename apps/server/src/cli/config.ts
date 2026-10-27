@@ -365,6 +365,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
   const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
+  const desktopLaunchId = bootstrap?.desktopLaunchId;
   const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
   const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
   const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
@@ -495,6 +496,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     startupPresentation,
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
+    ...(desktopLaunchId === undefined ? {} : { desktopLaunchId }),
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,
