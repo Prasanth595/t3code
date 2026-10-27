@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 /** Stable and readable in settings.json, so re-adding a provider under the same name restores its variables. */
-export function secretProviderIdFromName(name: string): SecretProviderId | null {
+function secretProviderIdFromName(name: string): SecretProviderId | null {
   const slug = name
     .trim()
     .toLowerCase()

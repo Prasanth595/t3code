@@ -115,6 +115,23 @@ describe("ServerSettings usage price overrides", () => {
   });
 });
 
+describe("ServerSettings secret providers", () => {
+  const onePassword = (account: string) => ({ kind: "1password", label: "Personal", account });
+
+  it("accepts op --account values and null removals but no account op could misread", () => {
+    expect(
+      decodeServerSettingsPatch({
+        secretProviders: { personal: onePassword("my.1password.com"), work: null },
+      }).secretProviders,
+    ).toEqual({ personal: onePassword("my.1password.com"), work: null });
+    for (const account of ["", "my account", "--help"]) {
+      expect(() =>
+        decodeServerSettingsPatch({ secretProviders: { personal: onePassword(account) } }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("custom model settings", () => {
   const capabilities = {
     optionDescriptors: [
