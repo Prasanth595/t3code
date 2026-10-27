@@ -1,11 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  isLinuxArm64SeaTarget,
-  assertLinuxArm64PageCompatibility,
-  resolveCliExecutableTarget,
-} from "./cli-sea.ts";
+import { assertLinuxArm64PageCompatibility } from "./cli-sea.ts";
 
 function elf(loads: Array<{ offset: bigint; address: bigint; size: bigint }>) {
   const bytes = new Uint8Array(64 + loads.length * 56);
@@ -67,36 +61,3 @@ describe("Linux ARM64 SEA page compatibility", () => {
     ).toThrow();
   });
 });
-
-it.effect("uses the inherited executable target unless the CLI overrides it", () =>
-  Effect.gen(function* () {
-    expect(yield* resolveCliExecutableTarget()).toBe("linux-arm64");
-    expect(yield* resolveCliExecutableTarget(" win-x64 ")).toBe("win-x64");
-    expect(yield* resolveCliExecutableTarget("")).toBeUndefined();
-  }).pipe(
-    Effect.provideService(HostProcess.Environment, { T3CODE_PACK_EXE_TARGET: " linux-arm64 " }),
-  ),
-);
-
-it.effect("selects native ARM64 and explicit cross-target builds", () =>
-  Effect.gen(function* () {
-    expect(
-      yield* isLinuxArm64SeaTarget().pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Architecture, "arm64"),
-      ),
-    ).toBe(true);
-    expect(
-      yield* isLinuxArm64SeaTarget("linux-arm64").pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.Architecture, "x64"),
-      ),
-    ).toBe(true);
-    expect(
-      yield* isLinuxArm64SeaTarget("win-arm64").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Architecture, "arm64"),
-      ),
-    ).toBe(false);
-  }),
-);
