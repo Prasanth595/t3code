@@ -5747,8 +5747,15 @@ describe("regate: a failed re-gate of a ready pull request", () => {
         assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
         rig.t3.status = status("completed", 1);
         assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
-        // The same pull request: no second `pr_opened`.
-        assert.strictEqual(eventsOf(rig, "pr_opened").length, 1);
+        // The same pull request is reported again for the gate: its wait is not charged.
+        assert.strictEqual(eventsOf(rig, "pr_opened").length, 2);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.deepStrictEqual(seen.opened, [12]);
+        assert.strictEqual(seen.prReported, true);
+        assert.strictEqual(seen.workingSince, null);
+        // Read again before the gate decides, it is not written a third time.
+        assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+        assert.strictEqual(eventsOf(rig, "pr_opened").length, 2);
       }),
   );
 

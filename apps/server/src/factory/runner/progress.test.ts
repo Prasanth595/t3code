@@ -78,6 +78,17 @@ describe("readProgress: the pull request", () => {
     assert.strictEqual(seen.prReported, true);
   });
 
+  it("keeps a pull request reported again after a send-back once, and reported", () => {
+    const url = "https://github.com/rawphp/softfac/pull/12";
+    const seen = readProgress([
+      line(1, "pr_opened", { pr: 12, url }),
+      line(2, "gate_sent_back", { attempt: 1, run_ordinal: 1 }),
+      line(3, "pr_opened", { pr: 12, url }),
+    ]);
+    assert.deepStrictEqual(seen.opened, [12]);
+    assert.strictEqual(seen.prReported, true);
+  });
+
   it("is reported from pr_opened until the run is building again", () => {
     const opened = line(1, "pr_opened", {
       pr: 12,
@@ -268,6 +279,33 @@ describe("readProgress: the time worked", () => {
     ]);
     assert.strictEqual(seen.workedMs, 20 * MINUTE);
     assert.strictEqual(seen.workingSince, 100 * MINUTE);
+  });
+
+  it("keeps counting through a pr_opened line it does not accept", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(0, "triage", "building"),
+      line(20 * MINUTE, "pr_opened", { pr: "12" }),
+    ]);
+    assert.strictEqual(seen.workingSince, 0);
+  });
+
+  it("keeps the start of a clock already running when a gate is sent back", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(0, "triage", "building"),
+      sentBack(10 * MINUTE),
+    ]);
+    assert.strictEqual(seen.workingSince, 0);
+  });
+
+  it("never counts a pull request reported before the stint began", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(30 * MINUTE, "triage", "building"),
+      opened(10 * MINUTE),
+    ]);
+    assert.strictEqual(seen.workedMs, 30 * MINUTE);
   });
 
   it("leaves a gate sent back while the pull request is open to the next state change", () => {
