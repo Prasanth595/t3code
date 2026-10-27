@@ -10,7 +10,10 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { MuseSettings } from "../settings.ts";
-import { refreshMuseUsage } from "./usageProbe.ts";
+import { refreshMuseUsage as refreshState, type MuseUsageReport } from "./usageProbe.ts";
+import type { MuseUsageAccount } from "./usageLimits.ts";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 const settings = Schema.decodeEffect(MuseSettings);
 
@@ -71,6 +74,22 @@ const fixture = (source = `process.stdout.write(${JSON.stringify(JSON.stringify(
       latestUsage: undefined,
     };
   });
+
+const refreshMuseUsage = Effect.fn("test.refreshMuseUsage")(function* (
+  input: Omit<Parameters<typeof refreshState>[0], "state"> & {
+    readonly account: MuseUsageAccount;
+    readonly latestUsage: MuseUsageReport | undefined;
+  },
+) {
+  return yield* refreshState({
+    ...input,
+    state: {
+      account: yield* Ref.make(input.account),
+      latestUsage: yield* Ref.make(input.latestUsage),
+      permit: yield* Semaphore.make(1),
+    },
+  });
+});
 
 it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
   it.effect("fills limits on the first status refresh without a model turn", () =>
@@ -212,6 +231,8 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
             { ...provider, auth: { status: "unknown" } },
             { ...provider, enabled: false },
             { ...provider, status: "error" },
+            { ...provider, version: "1.4.12-R6909.1" },
+            { ...provider, version: null },
           ];
           for (const candidate of cases) {
             const refreshed = yield* refreshMuseUsage({
@@ -228,6 +249,105 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
           expect(yield* fs.exists(marker)).toBe(false);
         }),
       ),
+  );
+
+  it.effect(
+    "publishes a notification while the CLI read is stalled and retains the newer report",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const input = yield* fixture();
+          const state = {
+            account: yield* Ref.make<MuseUsageAccount>(account),
+            latestUsage: yield* Ref.make<MuseUsageReport | undefined>(report),
+            permit: yield* Semaphore.make(1),
+          };
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const pending = yield* refreshState({
+            ...input,
+            provider: { ...provider, auth: { ...provider.auth, email: "b@example.com" } },
+            state,
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+              ...spawner,
+              spawn: (command) =>
+                Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(spawner.spawn(command)),
+                ),
+            }),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(started);
+          expect(yield* Ref.get(state.account)).toEqual({
+            generation: 1,
+            identity: "b@example.com",
+          });
+          const newer = {
+            ...report,
+            generation: 1,
+            usage: {
+              ...report.usage,
+              observedAtMs: observedAtMs + 1,
+              window: { ...report.usage.window, usedPercent: 10 },
+            },
+          };
+          const published = yield* Deferred.make<void>();
+          yield* state.permit.withPermits(1)(
+            Ref.set(state.latestUsage, newer).pipe(
+              Effect.andThen(Deferred.succeed(published, undefined)),
+            ),
+          );
+          yield* Deferred.await(published);
+          expect(yield* Ref.get(state.latestUsage)).toBe(newer);
+          yield* Deferred.succeed(release, undefined);
+          const refreshed = yield* Fiber.join(pending);
+          expect(refreshed.latestUsage).toBe(newer);
+          expect(refreshed.provider.usageLimits?.windows[0]?.usedPercent).toBe(10);
+        }),
+      ),
+  );
+
+  it.effect("discards an in-flight read after the account generation changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const input = yield* fixture();
+        const state = {
+          account: yield* Ref.make<MuseUsageAccount>(account),
+          latestUsage: yield* Ref.make<MuseUsageReport | undefined>(report),
+          permit: yield* Semaphore.make(1),
+        };
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const pending = yield* refreshState({ ...input, state }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+            ...spawner,
+            spawn: (command) =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(spawner.spawn(command)),
+              ),
+          }),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        const signedOut = { generation: 1, identity: null };
+        yield* state.permit.withPermits(1)(
+          Ref.set(state.account, signedOut).pipe(
+            Effect.andThen(Ref.set(state.latestUsage, undefined)),
+          ),
+        );
+        yield* Deferred.succeed(release, undefined);
+        const refreshed = yield* Fiber.join(pending);
+        expect(refreshed.account).toBe(signedOut);
+        expect(refreshed.latestUsage).toBeUndefined();
+        expect(refreshed.provider.usageLimits).toBeUndefined();
+        expect(yield* Ref.get(state.account)).toBe(signedOut);
+      }),
+    ),
   );
 
   it.effect("bounds a stalled CLI read and keeps the last observation", () =>

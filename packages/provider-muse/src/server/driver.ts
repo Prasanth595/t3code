@@ -120,8 +120,8 @@ export const MuseDriver: ProviderDriver<
     const latestUsage = yield* Ref.make<
       { readonly usage: MuseSubscriptionUsage; readonly generation: number } | undefined
     >(undefined);
-    // Reports and status checks take turns, so an older report cannot publish after a
-    // newer one, and none publishes for a generation a check has just replaced.
+    // Serialize state changes and publication; CLI reads run outside this permit
+    // so slow refreshes cannot block the adapter's notification stream.
     const usagePermit = yield* Semaphore.make(1);
     const withUsageLimits = Effect.fn("MuseDriver.withUsageLimits")(function* (
       provider: ServerProviderDraft,
@@ -131,13 +131,10 @@ export const MuseDriver: ProviderDriver<
         environment: processEnvironment,
         cwd,
         provider,
-        account: yield* Ref.get(usageAccount),
-        latestUsage: yield* Ref.get(latestUsage),
+        state: { account: usageAccount, latestUsage, permit: usagePermit },
       });
-      yield* Ref.set(usageAccount, refreshed.account);
-      yield* Ref.set(latestUsage, refreshed.latestUsage);
       return refreshed.provider;
-    }, usagePermit.withPermits(1));
+    });
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
         binaryPath: effectiveConfig.binaryPath,
