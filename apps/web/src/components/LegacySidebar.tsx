@@ -873,7 +873,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       render={
                         <span
                           aria-label={jumpLabel}
-                          className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-3xs font-medium tracking-tight text-foreground shadow-sm"
+                          className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-sans text-xs font-medium tabular-nums text-foreground shadow-sm"
                         />
                       }
                     >
