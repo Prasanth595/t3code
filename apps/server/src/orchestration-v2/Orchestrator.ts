@@ -7943,6 +7943,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: plan.message,
       });
     }
+    return plan.parentRun?.id;
   });
 
 
@@ -13301,7 +13302,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchWorkflowUpdate(command, events);
         break;
       case "workflow.complete":
-        yield* dispatchWorkflowComplete(command, events);
+        updateDelegatedCompletionOnlyRunId = yield* dispatchWorkflowComplete(command, events);
         break;
       case "workflow.stop":
         yield* dispatchWorkflowStop(command, events);
