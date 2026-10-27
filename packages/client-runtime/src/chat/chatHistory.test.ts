@@ -305,6 +305,22 @@ describe("ChatHistory", () => {
     expect(result).toMatchObject({ ok: false, code: "network" });
   });
 
+  it("reports a reply whose stream closes before it is done", async () => {
+    // Cloudflare closes the stream cleanly when it stops a Worker over its CPU limit.
+    const reply = (body: string) =>
+      requestChatReply({
+        relayUrl: "https://relay.test",
+        clerkToken: null,
+        deviceId: "device",
+        messages: [{ role: "user", content: "Hi" }],
+        onText: () => {},
+        fetch: async () => new Response(body),
+      });
+    const opened = 'data: {"choices":[{"delta":{"content":"\\n\\n````visual\\n"}}]}\n\n';
+    expect(await reply(opened)).toMatchObject({ ok: false, code: "network" });
+    expect(await reply(`${opened}data: [DONE]\n\n`)).toMatchObject({ ok: true });
+  });
+
   it("keeps syncing when one chat fails to save", async () => {
     const { history } = makeHistory({});
     const stuck = await history.send(null, "Stuck");

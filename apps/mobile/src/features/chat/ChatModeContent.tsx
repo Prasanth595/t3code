@@ -5,7 +5,7 @@ import {
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
 import { EnvironmentId } from "@t3tools/contracts";
-import { chatVisualsAsText, splitChatVisuals } from "@t3tools/shared/htmlRender";
+import { chatVisualsAsText, splitChatVisuals, withoutOpenVisual } from "@t3tools/shared/htmlRender";
 import type {
   SaasChatAttachment,
   SaasChatConversation,
@@ -280,17 +280,19 @@ function AssistantRow(props: { readonly text: string; readonly streaming: boolea
       className={props.streaming ? "mb-1 px-1" : "mb-5 px-1"}
       entering={FadeIn.duration(220)}
     >
-      {splitChatVisuals(props.text).map((segment, index) =>
-        segment.kind === "visual" ? (
-          <ChatVisual key={index} html={segment.html} complete={segment.complete} />
-        ) : (
-          <SelectableMarkdownText
-            key={index}
-            markdown={segment.text}
-            textStyle={styles.assistant.nativeTextStyle}
-            onLinkPress={(href) => void Linking.openURL(href)}
-          />
-        ),
+      {/* A saved reply cut off inside a visual would otherwise wait on it forever. */}
+      {splitChatVisuals(props.streaming ? props.text : withoutOpenVisual(props.text)).map(
+        (segment, index) =>
+          segment.kind === "visual" ? (
+            <ChatVisual key={index} html={segment.html} complete={segment.complete} />
+          ) : (
+            <SelectableMarkdownText
+              key={index}
+              markdown={segment.text}
+              textStyle={styles.assistant.nativeTextStyle}
+              onLinkPress={(href) => void Linking.openURL(href)}
+            />
+          ),
       )}
       {props.streaming ? null : (
         <View className="mt-1 flex-row items-center gap-1">
