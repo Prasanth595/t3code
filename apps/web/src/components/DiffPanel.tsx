@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type { ScopedThreadRef, RunId, ReviewDiffPreviewInput } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -324,12 +324,12 @@ export default function DiffPanel({
   const selectedGitSourceKind = selectedGitScope === "unstaged" ? "working-tree" : "branch-range";
   const branchDiffPreviewInput =
     canReadFiles && selectedRunId === null && activeThread && activeCwd
-      ? {
+      ? ({
           cwd: activeCwd,
           sourceKind: selectedGitSourceKind,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
-        }
+        } satisfies ReviewDiffPreviewInput)
       : undefined;
   const canRefreshGitDiff =
     isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
