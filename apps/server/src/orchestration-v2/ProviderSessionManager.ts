@@ -404,7 +404,7 @@ export const layerWithOptions = (
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-settings-unavailable", {
                     cause,
-                  }).pipe(Effect.as(null)),
+                  }).pipe(Effect.as(DEFAULT_IDLE_TIMEOUT_MS / 60_000)),
                 ),
               );
               const elapsed = (yield* Clock.currentTimeMillis) - startedAt;

@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderThread,
   type Project,
   ProjectId,
+  ServerSettingsError,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
@@ -3541,6 +3542,47 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 falls back to 30 minutes when idle settings cannot be read",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
+      const settingsLayer = Layer.succeed(ServerSettings.ServerSettingsService, {
+        ...settings,
+        getSettings: Effect.fail(
+          new ServerSettingsError({
+            settingsPath: "<test>",
+            operation: "read-file",
+            cause: new Error("Settings unavailable"),
+          }),
+        ),
+      });
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("unreadable-idle-settings");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust("29 minutes");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* TestClock.adjust("1 minute");
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, serverSettingsLayer: settingsLayer })));
     }),
 );
 
