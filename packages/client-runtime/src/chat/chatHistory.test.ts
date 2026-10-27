@@ -136,6 +136,67 @@ describe("ChatHistory", () => {
     expect(second.history.getSnapshot().chats[0]?.title).toBe("Remember me");
   });
 
+  it("starts and sends without Web Crypto when given random bytes, as on Hermes", async () => {
+    const crypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    try {
+      const history = new ChatHistory({
+        storage: memoryStorage(),
+        randomBytes: (count) => new Uint8Array(count).fill(7),
+        requestReply: async () => ({ ok: true, text: "Hi" }),
+      });
+      await history.send(null, "Hello");
+      expect(history.deviceId).toBe("07".repeat(16));
+      expect(history.getSnapshot().chats[0]?.messages).toHaveLength(2);
+    } finally {
+      if (crypto) Object.defineProperty(globalThis, "crypto", crypto);
+    }
+  });
+
+  it("hands out a new chat's id before its reply streams", async () => {
+    const started: Array<string> = [];
+    let startedBeforeReply = false;
+    const history = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async () => {
+        startedBeforeReply = started.length === 1;
+        return { ok: true, text: "Hi" };
+      },
+    });
+    const chatId = await history.send(null, "Hello", { onStarted: (id) => started.push(id) });
+    expect(startedBeforeReply).toBe(true);
+    expect(started).toEqual([chatId]);
+  });
+
+  it("keeps attachments on the message, sends them, and shows when Mira searches", async () => {
+    const photo = {
+      id: "photo1",
+      kind: "image" as const,
+      name: "cat.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const searching: Array<boolean> = [];
+    let sentAttachments: unknown;
+    const history = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async (request) => {
+        sentAttachments = request.messages[0]?.attachments;
+        request.onSearching?.();
+        searching.push(history.getSnapshot().streaming?.searching === true);
+        request.onText("A cat");
+        searching.push(history.getSnapshot().streaming?.searching === true);
+        return { ok: true, text: "A cat" };
+      },
+    });
+    await history.send(null, "", { attachments: [photo] });
+    expect(sentAttachments).toEqual([photo]);
+    expect(searching).toEqual([true, false]);
+    const chat = history.getSnapshot().chats[0];
+    expect(chat?.title).toBe("cat.png");
+    expect(chat?.messages[0]?.attachments).toEqual([photo]);
+  });
+
   it("titles empty and long first messages", () => {
     expect(chatTitle("   ")).toBe("New chat");
     expect(chatTitle("x".repeat(100))).toHaveLength(60);

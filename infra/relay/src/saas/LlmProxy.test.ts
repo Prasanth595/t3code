@@ -10,6 +10,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import * as ChatAttachments from "./ChatAttachments.ts";
 import * as LlmProxy from "./LlmProxy.ts";
 import * as SaasAccounts from "./SaasAccounts.ts";
 import * as SaasChat from "./SaasChat.ts";
@@ -46,6 +47,7 @@ function makeHarness(options: {
   const counts = new Map<string, number>();
   const sent: Array<HttpClientRequest.HttpClientRequest> = [];
   const recorded: Array<{ inputTokens: number; outputTokens: number }> = [];
+  const files = new Map<string, { readonly bytes: Uint8Array; readonly contentType: string }>();
   const layer = Layer.effect(LlmProxy.LlmProxy, LlmProxy.make).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -89,6 +91,15 @@ function makeHarness(options: {
         Layer.succeed(LlmProxy.ChatBearerVerifier, (token) =>
           Effect.succeed(token === "clerk-valid" ? Option.some("user_1") : Option.none()),
         ),
+        ChatAttachments.layer.pipe(
+          Layer.provide(
+            Layer.succeed(ChatAttachments.ChatAttachmentStore, {
+              put: (key, bytes, contentType) =>
+                Effect.sync(() => void files.set(key, { bytes, contentType })),
+              get: (key) => Effect.sync(() => Option.fromNullishOr(files.get(key))),
+            }),
+          ),
+        ),
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
@@ -116,7 +127,10 @@ function makeHarness(options: {
       ),
       Effect.provide(layer),
     );
-  const chatMode = (headers: Record<string, string>) =>
+  const chatMode = (
+    headers: Record<string, string>,
+    body: unknown = { messages: [{ role: "user", content: "Hi" }] },
+  ) =>
     LlmProxy.LlmProxy.pipe(
       Effect.flatMap((proxy) =>
         proxy.chat(
@@ -124,14 +138,29 @@ function makeHarness(options: {
             new Request("https://relay.test/v1/chat/completions", {
               method: "POST",
               headers: { "content-type": "application/json", ...headers },
-              body: JSON.stringify({ messages: [{ role: "user", content: "Hi" }] }),
+              body: JSON.stringify(body),
             }),
           ),
         ),
       ),
       Effect.provide(layer),
     );
-  return { sent, recorded, chat, chatMode };
+  const upload = (headers: Record<string, string>, body: BodyInit) =>
+    LlmProxy.LlmProxy.pipe(
+      Effect.flatMap((proxy) =>
+        proxy.uploadAttachment(
+          HttpServerRequest.fromWeb(
+            new Request("https://relay.test/v1/chat/attachments", {
+              method: "POST",
+              headers,
+              body,
+            }),
+          ),
+        ),
+      ),
+      Effect.provide(layer),
+    );
+  return { sent, recorded, chat, chatMode, upload };
 }
 
 const readText = (response: HttpServerResponse.HttpServerResponse) =>
@@ -270,6 +299,124 @@ describe("chat mode", () => {
       const stale = yield* harness.chatMode({ authorization: "Bearer clerk-stale" });
       expect(stale.status).toBe(401);
       expect(JSON.parse(yield* readText(stale)).error.code).toBe("session_expired");
+    }),
+  );
+});
+
+describe("chat mode search and attachments", () => {
+  const device = { "x-mira-device-id": "device-0123456789abcdef" };
+  const stream = (...events: ReadonlyArray<unknown>) =>
+    new Response(
+      [...events.map((event) => `data: ${JSON.stringify(event)}\n\n`), "data: [DONE]\n\n"].join(""),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+
+  it.effect("runs the model's web search and keeps streaming the reply", () =>
+    Effect.gen(function* () {
+      let modelTurns = 0;
+      const harness = makeHarness({
+        upstream: (request) => {
+          if (request.url.endsWith("/v1/tools/search")) {
+            return Response.json({
+              results: [{ title: "Weather", url: "https://w.test", summary: "Sunny, 21C" }],
+            });
+          }
+          modelTurns += 1;
+          return modelTurns === 1
+            ? stream(
+                {
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: "call_1",
+                            function: { name: "web_search", arguments: '{"query":"weather' },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+                {
+                  choices: [
+                    { delta: { tool_calls: [{ index: 0, function: { arguments: ' Iasi"}' } }] } },
+                  ],
+                  usage: { prompt_tokens: 5, completion_tokens: 2 },
+                },
+              )
+            : stream(
+                { choices: [{ delta: { content: "It is sunny." } }] },
+                { choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
+              );
+        },
+      });
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(body).toContain('"mira":{"status":"searching"}');
+      expect(body).toContain("It is sunny.");
+      expect(body.endsWith("data: [DONE]\n\n")).toBe(true);
+      const search = harness.sent.find((request) => request.url.endsWith("/v1/tools/search"));
+      expect(sentJson(search)?.query).toBe("weather Iasi");
+      const followUp = sentJson(harness.sent.at(-1))?.messages as ReadonlyArray<{
+        role: string;
+        content: unknown;
+      }>;
+      expect(followUp.at(-1)).toMatchObject({ role: "tool", tool_call_id: "call_1" });
+      expect(String(followUp.at(-1)?.content)).toContain("Sunny, 21C");
+    }),
+  );
+
+  it.effect("stores a document and reads its text into the conversation", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ upstream: () => stream() });
+      const uploaded = yield* harness.upload(
+        { ...device, "content-type": "text/csv", "x-mira-file-name": "prices.csv" },
+        "item,price\napple,3",
+      );
+      expect(uploaded.status).toBe(200);
+      const attachment = JSON.parse(yield* readText(uploaded));
+      expect(attachment).toMatchObject({ kind: "document", name: "prices.csv", sizeBytes: 18 });
+
+      yield* readText(
+        yield* harness.chatMode(device, {
+          messages: [{ role: "user", content: "Total?", attachments: [attachment] }],
+        }),
+      );
+      const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
+      expect(String(messages.at(-1)?.content)).toContain('<document name="prices.csv">');
+      expect(String(messages.at(-1)?.content)).toContain("apple,3");
+    }),
+  );
+
+  it.effect("sends recent photos to the model and refuses unreadable formats", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ upstream: () => stream() });
+      const photo = JSON.parse(
+        yield* readText(
+          yield* harness.upload(
+            { ...device, "content-type": "image/png", "x-mira-file-name": "cat.png" },
+            new Uint8Array([1, 2, 3]),
+          ),
+        ),
+      );
+      expect(photo.kind).toBe("image");
+      yield* readText(
+        yield* harness.chatMode(device, {
+          messages: [{ role: "user", content: "What is this?", attachments: [photo] }],
+        }),
+      );
+      const messages = sentJson(harness.sent[0])?.messages as ReadonlyArray<{ content: unknown }>;
+      expect(messages.at(-1)?.content).toEqual([
+        { type: "text", text: "What is this?" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AQID" } },
+      ]);
+
+      const legacy = yield* harness.upload(
+        { ...device, "content-type": "application/msword", "x-mira-file-name": "old.doc" },
+        "x",
+      );
+      expect(legacy.status).toBe(415);
     }),
   );
 });

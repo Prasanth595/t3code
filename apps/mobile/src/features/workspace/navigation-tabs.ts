@@ -16,11 +16,12 @@ import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
 export const WORKSPACE_TAB_LABELS = {
   ...NAVIGATION_TAB_LABELS,
-  ...(Platform.OS === "ios" ? { threads: "Chats", pullRequests: "PRs" } : {}),
+  ...(Platform.OS === "ios" ? { pullRequests: "PRs" } : {}),
 };
 
 export const NAVIGATION_TAB_ICONS = {
-  threads: "text.bubble",
+  chats: "text.bubble",
+  threads: "bolt.circle",
   pullRequests: PullRequestGlyph.pullRequest,
   usage: "chart.bar.xaxis",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;

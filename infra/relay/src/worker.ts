@@ -44,6 +44,7 @@ import {
   RelayApnsDeliveryQueue,
   RelayFcmDeliveryQueue,
   RelayFcmDeliveryDeadLetterQueue,
+  RelayChatAttachmentsBucket,
 } from "./queues.ts";
 import * as WebCrypto from "./WebCrypto.ts";
 import * as FcmAssertionSigner from "./agentActivity/FcmAssertionSigner.ts";
@@ -73,6 +74,7 @@ import * as AdminPanel from "./saas/adminPanel.ts";
 import * as LlmProxy from "./saas/LlmProxy.ts";
 import * as SaasAccounts from "./saas/SaasAccounts.ts";
 import * as SaasApi from "./saas/SaasApi.ts";
+import * as ChatAttachments from "./saas/ChatAttachments.ts";
 import * as SaasChat from "./saas/SaasChat.ts";
 import * as SaasCrypto from "./saas/SaasCrypto.ts";
 import * as StripeBilling from "./saas/StripeBilling.ts";
@@ -141,6 +143,7 @@ export const layer = Api.make(
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
     const fcmDeliveryDeadLetterQueue = yield* RelayFcmDeliveryDeadLetterQueue;
+    const chatAttachmentsBucket = yield* RelayChatAttachmentsBucket;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
@@ -168,6 +171,7 @@ export const layer = Api.make(
     const saasSettingsSecret = yield* randomSaasSettingsSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
+    const chatAttachmentsStore = yield* Cloudflare.R2.ReadWriteBucket(chatAttachmentsBucket);
 
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
@@ -278,6 +282,31 @@ export const layer = Api.make(
         hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey)),
     });
 
+    const inRuntime = <A, E>(effect: Effect.Effect<A, E, Alchemy.RuntimeContext>) =>
+      effect.pipe(
+        Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+        Effect.mapError((cause) => new ChatAttachments.ChatAttachmentStoreError({ cause })),
+      );
+    const layerChatAttachmentStore = Layer.succeed(ChatAttachments.ChatAttachmentStore, {
+      put: (key, bytes, contentType) =>
+        inRuntime(chatAttachmentsStore.put(key, bytes, { httpMetadata: { contentType } })).pipe(
+          Effect.asVoid,
+        ),
+      get: (key) =>
+        inRuntime(
+          Effect.flatMap(chatAttachmentsStore.get(key), (file) =>
+            file === null
+              ? Effect.succeed(Option.none())
+              : Effect.map(file.bytes(), (bytes) =>
+                  Option.some({
+                    bytes,
+                    contentType: file.httpMetadata?.contentType ?? "application/octet-stream",
+                  }),
+                ),
+          ),
+        ),
+    });
+
     const layerRuntime = Layer.empty.pipe(
       Layer.provideMerge(
         Layer.merge(
@@ -287,6 +316,7 @@ export const layer = Api.make(
               Layer.mergeAll(
                 SaasApi.layerClerkUsers,
                 SaasChat.layer,
+                ChatAttachments.layer.pipe(Layer.provide(layerChatAttachmentStore)),
                 RelayHttpApi.layerChatBearerVerifier,
                 Layer.succeed(SaasApi.SaasAdmins, saasAdminEmails),
                 Layer.succeed(StripeBilling.StripeConfig, stripeSettings),
@@ -533,6 +563,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Hyperdrive.ConnectBinding),
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
+        Layer.provideMerge(Cloudflare.R2.ReadWriteBucketBinding),
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
         Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),

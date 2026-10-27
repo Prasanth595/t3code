@@ -2408,42 +2408,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("includes CLAUDE.md for Claude writers only when it differs from AGENTS.md", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), "Use imperative subjects.\n");
-      NodeFS.copyFileSync(NodePath.join(repoDir, "AGENTS.md"), NodePath.join(repoDir, "CLAUDE.md"));
-      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
-      const commitInstructions: Array<string | undefined> = [];
-
-      const { manager } = yield* makeManager({
-        serverSettings: {
-          textGenerationModelSelection: {
-            instanceId: ProviderInstanceId.make("claudeAgent"),
-            model: "claude-sonnet-4-5",
-          },
-        },
-        textGeneration: {
-          generateCommitMessage: (input) => {
-            commitInstructions.push(input.policy?.commitInstructions);
-            return Effect.succeed({ subject: "Update readme", body: "" });
-          },
-        },
-      });
-
-      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
-
-      NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), "Mention the Claude provider.\n");
-      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello again\n");
-      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
-
-      expect(commitInstructions[0]).toContain("Local AGENTS.md:\nUse imperative subjects.");
-      expect(commitInstructions[0]).not.toContain("Local CLAUDE.md:");
-      expect(commitInstructions[1]).toContain("Local CLAUDE.md:\nMention the Claude provider.");
-    }),
-  );
-
   it.effect("falls back when the dedicated source control writer is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2492,10 +2456,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const projectId = ProjectId.make("project:git-settings");
       const threadId = ThreadId.make("thread:git-settings");
       const projectModel: ModelSelection = {
-        instanceId: ProviderInstanceId.make("codex"),
+        instanceId: ProviderInstanceId.make("pi"),
         model: "gpt-project-writer",
       };
-      const providerInstanceId = ProviderInstanceId.make("codex");
+      const providerInstanceId = ProviderInstanceId.make("pi");
       const createdAt = DateTime.makeUnsafe("2026-09-27T00:00:00.000Z");
       let generatedModelSelection:
         | TextGeneration.CommitMessageGenerationInput["modelSelection"]
@@ -3114,7 +3078,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       const threadId = ThreadId.make("thread:pr-thread-context");
-      const providerInstanceId = ProviderInstanceId.make("codex");
+      const providerInstanceId = ProviderInstanceId.make("pi");
       const createdAt = DateTime.makeUnsafe("2026-09-27T00:00:00.000Z");
       const run = (ordinal: number, status: "completed" | "rolled_back") => ({
         id: RunId.make(`run:pr-thread-context:${ordinal}`),

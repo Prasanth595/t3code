@@ -1,3 +1,4 @@
+export * from "./chatAttachments.ts";
 export * from "./chatHistory.ts";
 export * from "./chatReply.ts";
 export * from "./miraAccess.ts";

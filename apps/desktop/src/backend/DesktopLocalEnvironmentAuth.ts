@@ -98,7 +98,7 @@ export const make = Effect.gen(function* () {
           httpBaseUrl: config.httpBaseUrl.href,
           credential,
           clientMetadata: {
-            label: "T3 Code Desktop",
+            label: "Mira Desktop",
             deviceType: "desktop",
           },
         }).pipe(

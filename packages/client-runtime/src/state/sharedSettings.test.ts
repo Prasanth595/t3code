@@ -16,16 +16,12 @@ describe("filterSharedServerPatch", () => {
       const settings = {
         ...DEFAULT_SERVER_SETTINGS,
         providerInstances: {
-          codex: { driver: ProviderDriverKind.make("codex"), enabled: false, config: {} },
-          claudeAgent: {
-            driver: ProviderDriverKind.make("claudeAgent"),
-            enabled: true,
-            config: {},
-          },
+          pi: { driver: ProviderDriverKind.make("pi"), enabled: false, config: {} },
+          pi_work: { driver: ProviderDriverKind.make("pi"), enabled: true, config: {} },
         },
         textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude-opus-4-6",
+          instanceId: ProviderInstanceId.make("pi_work"),
+          model: "deepseek-flash",
         },
       };
       const patch = {

@@ -307,7 +307,11 @@ describe("mobile model options", () => {
       };
       const config = {
         providers: state === "missing" ? [] : [provider],
-        settings: { providerInstances: { google_work: { driver: "antigravity" } } },
+        settings: {
+          providerInstances: {
+            google_work: { driver: "antigravity", enabled: state !== "disabled" },
+          },
+        },
       } as unknown as ServerConfig;
       const options = buildModelOptions(config, selection, selection.instanceId, null);
       expect(options).toEqual(buildModelOptions(config, selection, undefined, null));

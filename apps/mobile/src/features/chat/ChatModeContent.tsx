@@ -1,29 +1,74 @@
-import type { ChatReplyError } from "@t3tools/client-runtime/chat";
-import type { SaasChatConversation } from "@t3tools/contracts/saas";
+import {
+  chatAttachmentProblem,
+  chatAttachmentUrl,
+  type ChatReplyError,
+} from "@t3tools/client-runtime/chat";
+import { EnvironmentId } from "@t3tools/contracts";
+import type {
+  SaasChatAttachment,
+  SaasChatConversation,
+  SaasChatMessage,
+} from "@t3tools/contracts/saas";
+import { Image } from "expo-image";
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
-import { Linking, ScrollView, type ScrollViewInstance, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-import { AppText, AppTextInput } from "../../components/ui/AppText";
-import { Button } from "../../components/ui/Button";
-import * as Dialog from "../../components/ui/Dialog";
-import { IconButton } from "../../components/ui/IconButton";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
-import { useMarkdownStyles } from "../threads/ThreadFeed";
 import {
-  hasAgenticAccess,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  type ScrollViewInstance,
+  View,
+} from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { FadeIn, FadeInUp, FadeOut, useAnimatedStyle } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useResolveClassNames } from "uniwind";
+
+import { ComposerActionButton } from "../../components/ComposerToolbar";
+import { ComposerEditor } from "../../components/ComposerEditor";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
+import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
+import {
+  ComposerAttachmentStrip,
+  ComposerAttachmentThumbnail,
+} from "../../components/ComposerAttachmentStrip";
+import {
+  convertPastedImagesToAttachments,
+  type DraftComposerAttachment,
+} from "../../lib/composerImages";
+import { AppText } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { CopyTextButton } from "../threads/CopyTextButton";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import {
+  ComposerSurface,
+  THREAD_COMPOSER_BOTTOM_GUTTER,
+  useCompactComposerEditor,
+} from "../threads/ThreadComposer";
+import { useMarkdownStyles } from "../threads/ThreadFeed";
+import { pickChatDocuments, pickChatPhotos } from "./chatFiles";
+import {
   miraChatHistory,
   openMiraUpgrade,
-  useMiraAccess,
+  uploadMiraAttachment,
   useMiraChatHistory,
+  useMiraRelayUrl,
 } from "./miraChat";
+
+// Chat files belong to no environment; the strip only shows their local previews.
+const CHAT_ENVIRONMENT_ID = EnvironmentId.make("mira-chat");
+
+const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /**
  * Chat mode: Mira answers from the account's model with no computer behind it, so it works on
- * a phone with nothing connected.
+ * a phone with nothing connected. Drawn with the thread feed's bubbles and composer.
  */
 export function ChatModeContent(props: {
   readonly chatId: string | null;
@@ -32,54 +77,27 @@ export function ChatModeContent(props: {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const history = useMiraChatHistory();
-  const access = useMiraAccess();
   const chat =
     props.chatId === null ? undefined : history.chats.find((item) => item.id === props.chatId);
   const busy = history.streaming !== null;
   const error = history.error !== null && history.error.chatId === chat?.id ? history.error : null;
 
-  const send = async (text: string) => {
-    const chatId = await miraChatHistory.send(chat?.id ?? null, text);
-    if (chatId !== props.chatId) props.onChatStarted(chatId);
-  };
-
-  const openAgentic = () => {
-    if (hasAgenticAccess(access)) {
-      navigation.navigate("Home");
-      return;
-    }
-    Dialog.confirm({
-      title: "Agentic mode is available with Pro",
-      message: access.signedIn
-        ? "With Pro, Mira works on your computer: it edits files, runs commands, and finishes tasks for you. Chat stays unlimited on every plan."
-        : "Create a free account first. Then upgrade to Pro to let Mira work on your computer.",
-      cancelText: "Not now",
-      confirmText: access.signedIn ? "Upgrade to Pro" : "Create free account",
-      onConfirm: () => {
-        if (access.signedIn) void openMiraUpgrade().catch(() => undefined);
-        else navigation.navigate("SettingsAuth");
+  const send = (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => {
+    void miraChatHistory.send(chat?.id ?? null, text, {
+      attachments,
+      onStarted: (chatId) => {
+        if (chatId !== props.chatId) props.onChatStarted(chatId);
       },
     });
   };
+  // Like the thread screen: the composer rides the keyboard and drops its bottom inset there.
+  const keyboard = useReanimatedKeyboardAnimation();
+  const keyboardStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(0, -keyboard.height.value - insets.bottom * keyboard.progress.value),
+  }));
 
   return (
-    <KeyboardAvoidingView behavior="padding" className="flex-1 bg-screen">
-      <View className="items-center px-4 pt-2 pb-1">
-        <SegmentedControl
-          size="compact"
-          options={[
-            { value: "chat", label: "Chat" },
-            {
-              value: "agentic",
-              label: hasAgenticAccess(access) ? "Agentic" : "Agentic · Pro",
-            },
-          ]}
-          selected="chat"
-          onSelect={(value) => {
-            if (value === "agentic") openAgentic();
-          }}
-        />
-      </View>
+    <Animated.View className="flex-1 bg-screen" style={keyboardStyle}>
       {chat === undefined ? (
         <View className="flex-1 items-center justify-center gap-2 px-8">
           <AppText className="text-center text-2xl font-t3-bold">What can I help with?</AppText>
@@ -90,68 +108,116 @@ export function ChatModeContent(props: {
       ) : (
         <ChatMessages
           chat={chat}
-          streamingText={history.streaming?.chatId === chat.id ? history.streaming.text : null}
+          streaming={history.streaming?.chatId === chat.id ? history.streaming : null}
         />
       )}
-      <View className="gap-2 px-4 pt-2" style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
-        {error !== null ? (
+      {error !== null ? (
+        <View className="px-[12px] pb-2">
           <ChatErrorNotice
             error={error}
             onSignIn={() => navigation.navigate("SettingsAuth")}
             onUpgrade={() => void openMiraUpgrade().catch(() => undefined)}
           />
-        ) : null}
-        <ChatComposer busy={busy} onSend={send} />
-      </View>
-    </KeyboardAvoidingView>
+        </View>
+      ) : null}
+      <ChatComposer busy={busy} bottomInset={insets.bottom} onSend={send} />
+    </Animated.View>
   );
 }
 
 function ChatMessages(props: {
   readonly chat: SaasChatConversation;
-  readonly streamingText: string | null;
+  readonly streaming: { readonly text: string; readonly searching?: boolean } | null;
 }) {
-  const styles = useMarkdownStyles();
   const scrollRef = useRef<ScrollViewInstance>(null);
   return (
     <ScrollView
       ref={scrollRef}
       className="flex-1"
-      contentContainerClassName="gap-4 px-4 py-4"
+      contentContainerClassName="px-4 pt-3 pb-4"
       keyboardDismissMode="interactive"
       onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+      // The keyboard shrinks the list; keep the latest message in view, as threads do.
+      onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
     >
-      {props.chat.messages.map((message) =>
-        message.role === "user" ? (
-          <View
-            key={message.id}
-            className="max-w-[85%] self-end rounded-3xl bg-user-bubble px-4 py-2.5"
-          >
-            <AppText selectable className="text-base text-user-bubble-foreground">
-              {message.content}
-            </AppText>
-          </View>
-        ) : (
-          <View key={message.id}>
-            <SelectableMarkdownText
-              markdown={message.content}
-              textStyle={styles.assistant.nativeTextStyle}
-              onLinkPress={(href) => void Linking.openURL(href)}
-            />
-          </View>
-        ),
-      )}
-      {props.streamingText !== null ? (
-        props.streamingText === "" ? (
-          <AppText className="text-sm text-foreground-secondary">Thinking…</AppText>
-        ) : (
-          <SelectableMarkdownText
-            markdown={props.streamingText}
-            textStyle={styles.assistant.nativeTextStyle}
-          />
-        )
+      {props.chat.messages.map((message) => (
+        <ChatMessageRow key={message.id} message={message} />
+      ))}
+      {props.streaming === null ? null : props.streaming.text !== "" ? (
+        <AssistantRow text={props.streaming.text} streaming />
+      ) : null}
+      {props.streaming !== null && (props.streaming.searching || props.streaming.text === "") ? (
+        <AppText className="mb-5 px-1 text-sm text-foreground-muted">
+          {props.streaming.searching ? "Searching the web…" : "Thinking…"}
+        </AppText>
       ) : null}
     </ScrollView>
+  );
+}
+
+// Same bubble, spacing and footer as a user message in the thread feed.
+function ChatMessageRow(props: { readonly message: SaasChatMessage }) {
+  const { message } = props;
+  const styles = useMarkdownStyles();
+  const { color: iconColor } = useResolveClassNames("text-icon-subtle");
+  if (message.role !== "user") return <AssistantRow text={message.content} streaming={false} />;
+  return (
+    <Animated.View className="mb-5 items-end" entering={FadeInUp.duration(220)}>
+      <View className="min-w-0 max-w-[85%] rounded-[20px] bg-user-bubble">
+        <View className="gap-2 px-3.5 pt-2.5 pb-2.5">
+          {message.attachments?.length ? (
+            <MessageAttachments attachments={message.attachments} />
+          ) : null}
+          {message.content !== "" ? (
+            <SelectableMarkdownText
+              markdown={message.content}
+              textStyle={styles.user.nativeTextStyle}
+              onLinkPress={(href) => void Linking.openURL(href)}
+            />
+          ) : null}
+        </View>
+      </View>
+      <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+        <AppText className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+          {MESSAGE_TIME_FORMATTER.format(Date.parse(message.createdAt))}
+        </AppText>
+        <CopyTextButton
+          accessibilityLabel="Copy message"
+          text={message.content}
+          tintColor={iconColor}
+          buttonSize={28}
+          iconSize={13}
+        />
+      </View>
+    </Animated.View>
+  );
+}
+
+function AssistantRow(props: { readonly text: string; readonly streaming: boolean }) {
+  const styles = useMarkdownStyles();
+  const { color: iconColor } = useResolveClassNames("text-icon-subtle");
+  return (
+    <Animated.View
+      className={props.streaming ? "mb-1 px-1" : "mb-5 px-1"}
+      entering={FadeIn.duration(220)}
+    >
+      <SelectableMarkdownText
+        markdown={props.text}
+        textStyle={styles.assistant.nativeTextStyle}
+        onLinkPress={(href) => void Linking.openURL(href)}
+      />
+      {props.streaming ? null : (
+        <View className="mt-1 flex-row items-center gap-1">
+          <CopyTextButton
+            accessibilityLabel="Copy message"
+            text={props.text}
+            tintColor={iconColor}
+            buttonSize={28}
+            iconSize={13}
+          />
+        </View>
+      )}
+    </Animated.View>
   );
 }
 
@@ -188,34 +254,226 @@ function ChatErrorNotice(props: {
   );
 }
 
+function MessageAttachments(props: { readonly attachments: ReadonlyArray<SaasChatAttachment> }) {
+  const relayUrl = useMiraRelayUrl();
+  return (
+    <View className="gap-2">
+      {props.attachments.map((attachment) =>
+        attachment.kind === "image" && relayUrl !== null ? (
+          <Pressable
+            key={attachment.id}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={`Open ${attachment.name}`}
+            onPress={() => void Linking.openURL(chatAttachmentUrl(relayUrl, attachment.id))}
+          >
+            <Image
+              source={{ uri: chatAttachmentUrl(relayUrl, attachment.id) }}
+              contentFit="cover"
+              style={{ width: 220, height: 170, borderRadius: 14 }}
+            />
+          </Pressable>
+        ) : (
+          <FileChip key={attachment.id} name={attachment.name} />
+        ),
+      )}
+    </View>
+  );
+}
+
+function FileChip(props: { readonly name: string }) {
+  return (
+    <View className="max-w-60 flex-row items-center gap-2 rounded-xl bg-subtle px-2.5 py-2">
+      <SymbolView name="doc.text" size={16} tintColorClassName="accent-icon-subtle" />
+      <View className="min-w-0 shrink">
+        <AppText className="text-sm text-foreground" numberOfLines={1}>
+          {props.name}
+        </AppText>
+      </View>
+    </View>
+  );
+}
+
+interface PendingFile {
+  readonly draft: DraftComposerAttachment;
+  readonly attachment: SaasChatAttachment | null;
+}
+
+/** Picked files upload right away, so sending only waits on the reply. */
+function usePendingFiles() {
+  const [files, setFiles] = useState<ReadonlyArray<PendingFile>>([]);
+  const add = (picked: {
+    readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+    readonly error: string | null;
+  }) => {
+    if (picked.error) Dialog.alert("Could not add the file", picked.error);
+    for (const draft of picked.attachments) {
+      const problem = chatAttachmentProblem(draft);
+      if (problem !== null) {
+        Dialog.alert("Could not add the file", problem);
+        continue;
+      }
+      setFiles((current) => [...current, { draft, attachment: null }]);
+      void uploadMiraAttachment(draft).then((result) => {
+        if (result.ok) {
+          setFiles((current) =>
+            current.map((item) =>
+              item.draft.id === draft.id ? { ...item, attachment: result.attachment } : item,
+            ),
+          );
+        } else {
+          setFiles((current) => current.filter((item) => item.draft.id !== draft.id));
+          Dialog.alert("Could not add the file", result.message);
+        }
+      });
+    }
+  };
+  return {
+    drafts: files.map((item) => item.draft),
+    uploading: files.some((item) => item.attachment === null),
+    ready: files.flatMap((item) => (item.attachment === null ? [] : [item.attachment])),
+    remove: (id: string) => setFiles((current) => current.filter((item) => item.draft.id !== id)),
+    add,
+    clear: () => setFiles([]),
+    pickPhotos: async () => add(await pickChatPhotos(files.length)),
+    pickDocuments: async () => add(await pickChatDocuments(files.length)),
+  };
+}
+
+const COMPACT_ATTACHMENT_LIMIT = 1;
+
+/**
+ * The thread composer's layout and motion: a one-row pill that grows with the text, attachments
+ * in the row or above it while editing, and the same attach and send buttons. No model control.
+ */
 function ChatComposer(props: {
   readonly busy: boolean;
-  readonly onSend: (text: string) => Promise<void>;
+  readonly bottomInset: number;
+  readonly onSend: (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => void;
 }) {
+  const bodyText = useScaledTextRole("body");
+  const { color: foregroundColor } = useResolveClassNames("text-foreground");
   const [text, setText] = useState("");
+  const [isFocused, setIsFocused] = useState(false);
+  const pending = usePendingFiles();
+  const compactEditor = useCompactComposerEditor(bodyText, text);
+  const isExpanded = isFocused;
+  const stripAttachments = pending.drafts;
+  const canSend =
+    !props.busy && !pending.uploading && (text.trim() !== "" || pending.ready.length > 0);
   const submit = () => {
+    if (!canSend) return;
     const trimmed = text.trim();
-    if (trimmed === "" || props.busy) return;
+    const attachments = pending.ready;
     setText("");
-    void props.onSend(trimmed);
+    pending.clear();
+    props.onSend(trimmed, attachments);
   };
+
   return (
-    <View className="flex-row items-end gap-2 rounded-3xl border border-border bg-card px-4 py-2">
-      <AppTextInput
-        accessibilityLabel="Message"
-        placeholder="Ask Mira anything"
-        multiline
-        value={text}
-        onChangeText={setText}
-        className="max-h-40 min-h-10 flex-1 py-2 text-base"
-      />
-      <IconButton
-        accessibilityLabel="Send"
-        icon="arrow.up"
-        variant="primary"
-        disabled={props.busy || text.trim() === ""}
-        onPress={submit}
-      />
+    <View
+      className={Platform.OS === "android" ? "bg-composer-panel px-[12px]" : "px-[12px]"}
+      style={{ paddingTop: 6, paddingBottom: props.bottomInset + THREAD_COMPOSER_BOTTOM_GUTTER }}
+    >
+      <View className="relative w-full self-center">
+        <ComposerSurface
+          animateLayout={false}
+          style={{
+            borderRadius: 27,
+            borderCurve: "circular",
+            overflow: "hidden",
+            paddingVertical: 2,
+          }}
+        >
+          {isExpanded && stripAttachments.length > 0 ? (
+            <Animated.View
+              className="px-[14px] pb-2.5 pt-2"
+              entering={FadeIn.duration(160)}
+              exiting={FadeOut.duration(120)}
+            >
+              <ComposerAttachmentStrip
+                environmentId={CHAT_ENVIRONMENT_ID}
+                attachments={stripAttachments}
+                onRemove={pending.remove}
+              />
+            </Animated.View>
+          ) : null}
+          <View onLayout={compactEditor.onRowLayout}>
+            <View className="flex-row items-end">
+              <ComposerAttachmentButton
+                supportsFiles
+                onPickMedia={pending.pickPhotos}
+                onPickFiles={pending.pickDocuments}
+              />
+              <Animated.View
+                className="min-w-0 flex-1"
+                onLayout={compactEditor.onEditorLayout}
+                style={[
+                  {
+                    minWidth: compactEditor.isExpanded || stripAttachments.length > 0 ? 0 : "40%",
+                  },
+                  compactEditor.containerStyle,
+                  compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
+                ]}
+              />
+              {!isExpanded && stripAttachments.length > 0 ? (
+                <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
+                  {stripAttachments.slice(0, COMPACT_ATTACHMENT_LIMIT).map((attachment) => (
+                    <ComposerAttachmentThumbnail
+                      environmentId={CHAT_ENVIRONMENT_ID}
+                      key={attachment.id}
+                      attachment={attachment}
+                      size={30}
+                      borderRadius={8}
+                      compact
+                    />
+                  ))}
+                  {stripAttachments.length > COMPACT_ATTACHMENT_LIMIT ? (
+                    <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
+                      <AppText className="text-foreground-muted text-2xs font-t3-bold">
+                        +{stripAttachments.length - COMPACT_ATTACHMENT_LIMIT}
+                      </AppText>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+              <View
+                className="min-w-0 shrink flex-row items-center"
+                style={
+                  compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
+                }
+              >
+                <ComposerActionButton
+                  accessibilityLabel={pending.uploading ? "Uploading files" : "Send message"}
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={submit}
+                />
+              </View>
+            </View>
+            <Animated.View style={compactEditor.editorStyle}>
+              <ComposerEditor
+                multiline
+                value={text}
+                onChangeText={setText}
+                placeholder="Ask anything..."
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                onPasteImages={(uris) =>
+                  void convertPastedImagesToAttachments({
+                    uris,
+                    existingCount: stripAttachments.length,
+                  }).then((attachments) => pending.add({ attachments, error: null }))
+                }
+                submitTitle="Send"
+                onSubmit={submit}
+                {...compactEditor.editorProps}
+                textStyle={{ ...bodyText, color: foregroundColor }}
+              />
+            </Animated.View>
+          </View>
+        </ComposerSurface>
+      </View>
     </View>
   );
 }

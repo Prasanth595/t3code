@@ -40,8 +40,8 @@ const clientLaunchHarness = (input: {
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
-    instanceId: ProviderInstanceId.make("claudeAgent"),
-    model: "claude-opus",
+    instanceId: ProviderInstanceId.make("pi"),
+    model: "deepseek-flash",
   };
   const layerDependencies = Layer.mergeAll(
     ServerSettings.layerTest({
@@ -188,7 +188,7 @@ it.effect(
       expect(untargeted.result).toMatchObject({ code: "target_required" });
 
       const overrideModel = {
-        instanceId: ProviderInstanceId.make("codex"),
+        instanceId: ProviderInstanceId.make("pi"),
         model: "gpt-settings",
       };
       const fromSettings = yield* launchWith("full-access", "full-access", {

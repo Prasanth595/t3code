@@ -16,10 +16,24 @@ import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as ChatAttachments from "./ChatAttachments.ts";
+import {
+  DEEPSEEK_SEARCH_URL,
+  MAX_SEARCH_ROUNDS,
+  ModelTurnReader,
+  WEB_SEARCH_TOOL,
+  contentEvent,
+  doneEvent,
+  formatSearchResults,
+  searchQuery,
+  searchRequestBody,
+  searchingEvent,
+} from "./chatSearch.ts";
 import * as SaasAccounts from "./SaasAccounts.ts";
 import * as SaasChat from "./SaasChat.ts";
 
@@ -27,7 +41,7 @@ export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/comp
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_CHAT_MESSAGES = 200;
 const CHAT_SYSTEM_PROMPT =
-  "You are Mira, a friendly and helpful assistant. Answer clearly, in the user's language.";
+  "You are Mira, a friendly and helpful assistant. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.";
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 export interface TokenUsage {
@@ -114,6 +128,10 @@ export class LlmProxy extends Context.Service<
     readonly chat: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<HttpServerResponse.HttpServerResponse>;
+    /** Stores a chat photo or document for anyone who may chat. */
+    readonly uploadAttachment: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<HttpServerResponse.HttpServerResponse>;
     readonly models: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<HttpServerResponse.HttpServerResponse>;
@@ -124,6 +142,7 @@ export const make = Effect.gen(function* () {
   const accounts = yield* SaasAccounts.SaasAccounts;
   const chats = yield* SaasChat.SaasChat;
   const verifyBearer = yield* ChatBearerVerifier;
+  const attachments = yield* ChatAttachments.ChatAttachments;
   const httpClient = yield* HttpClient.HttpClient;
 
   /** Sends an OpenAI-format body to DeepSeek and relays the reply, reporting its usage. */
@@ -317,17 +336,14 @@ export const make = Effect.gen(function* () {
         return chatError(503, "model_unavailable", "The model is not configured yet.");
       }
       const subject = chatter.subjects[0] ?? "device:unknown";
-      return yield* forward({
+      const messages = yield* attachments.toModelMessages(
+        parsed.value.messages.slice(-MAX_CHAT_MESSAGES),
+      );
+      return yield* chatReply({
         apiKey: access.apiKey,
-        body: {
-          model: access.model,
-          stream: true,
-          ...reasoningFields(access.chatReasoningEffort),
-          messages: [
-            { role: "system", content: CHAT_SYSTEM_PROMPT },
-            ...parsed.value.messages.slice(-MAX_CHAT_MESSAGES),
-          ],
-        },
+        model: access.model,
+        effort: access.chatReasoningEffort,
+        messages: [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...messages],
         onUsage: (usage) => recordChat(subject, usage),
       });
     },
@@ -337,6 +353,163 @@ export const make = Effect.gen(function* () {
       ),
     ),
   );
+
+  const modelTurn = (input: {
+    readonly apiKey: Redacted.Redacted<string>;
+    readonly model: string;
+    readonly effort: SaasReasoningEffort;
+    readonly messages: ReadonlyArray<unknown>;
+    readonly search: boolean;
+  }) =>
+    httpClient.execute(
+      HttpClientRequest.post(DEEPSEEK_CHAT_COMPLETIONS_URL).pipe(
+        HttpClientRequest.setHeader("authorization", `Bearer ${Redacted.value(input.apiKey)}`),
+        HttpClientRequest.bodyJsonUnsafe({
+          model: input.model,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...reasoningFields(input.effort),
+          messages: input.messages,
+          ...(input.search ? { tools: [WEB_SEARCH_TOOL] } : {}),
+        }),
+      ),
+    );
+
+  const webSearch = Effect.fn("relay.chat.web_search")(
+    function* (apiKey: Redacted.Redacted<string>, query: string) {
+      const response = yield* httpClient.execute(
+        HttpClientRequest.post(DEEPSEEK_SEARCH_URL).pipe(
+          HttpClientRequest.setHeader("authorization", `Bearer ${Redacted.value(apiKey)}`),
+          HttpClientRequest.bodyJsonUnsafe(searchRequestBody(query)),
+        ),
+      );
+      const text = yield* response.text;
+      yield* Effect.annotateCurrentSpan({ "relay.chat.search_status": response.status });
+      if (response.status !== 200) return "The search failed. Answer from what you know.";
+      return formatSearchResults(Option.getOrUndefined(parseJson(text)));
+    },
+    Effect.catch(() => Effect.succeed("The search failed. Answer from what you know.")),
+  );
+
+  /**
+   * Streams a chat reply. When the model asks to search, the relay runs the search and feeds the
+   * results back, so clients see one reply that keeps streaming.
+   */
+  const chatReply = Effect.fn("relay.chat.reply")(function* (input: {
+    readonly apiKey: Redacted.Redacted<string>;
+    readonly model: string;
+    readonly effort: SaasReasoningEffort;
+    readonly messages: ReadonlyArray<unknown>;
+    readonly onUsage: (usage: TokenUsage | undefined) => Effect.Effect<void>;
+  }) {
+    const first = yield* modelTurn({ ...input, search: true });
+    yield* Effect.annotateCurrentSpan({ "relay.llm.upstream_status": first.status });
+    if (first.status !== 200) {
+      yield* Effect.logWarning("Chat model refused the request", {
+        status: first.status,
+        body: (yield* first.text).slice(0, 500),
+      });
+      return chatError(502, "upstream_unavailable", "The model is unavailable right now.");
+    }
+    const usage = { inputTokens: 0, outputTokens: 0 };
+
+    const turn = (
+      response: HttpClientResponse.HttpClientResponse,
+      messages: ReadonlyArray<unknown>,
+      round: number,
+    ): Stream.Stream<Uint8Array, unknown> => {
+      const reader = new ModelTurnReader();
+      const text = response.stream.pipe(
+        Stream.map((chunk) => reader.push(chunk)),
+        Stream.concat(Stream.fromEffect(Effect.sync(() => reader.finish()))),
+        Stream.filter((part) => part !== ""),
+        Stream.map(contentEvent),
+      );
+      const next = Stream.unwrap(
+        Effect.gen(function* () {
+          usage.inputTokens += reader.inputTokens;
+          usage.outputTokens += reader.outputTokens;
+          const calls = reader.toolCalls;
+          if (calls.length === 0) return Stream.empty;
+          const results = yield* Effect.forEach(
+            calls,
+            (call) => {
+              const query = searchQuery(call);
+              return query === undefined
+                ? Effect.succeed("The search needs a query.")
+                : webSearch(input.apiKey, query);
+            },
+            { concurrency: 3 },
+          );
+          const following = [
+            ...messages,
+            {
+              role: "assistant",
+              content: reader.content,
+              ...(reader.reasoning === "" ? {} : { reasoning_content: reader.reasoning }),
+              tool_calls: calls.map((call) => ({
+                id: call.id,
+                type: "function",
+                function: { name: call.name, arguments: call.arguments },
+              })),
+            },
+            ...calls.map((call, index) => ({
+              role: "tool",
+              tool_call_id: call.id,
+              content: results[index] ?? "",
+            })),
+          ];
+          const response = yield* modelTurn({
+            ...input,
+            messages: following,
+            // The last turn has to answer with what it found.
+            search: round + 1 < MAX_SEARCH_ROUNDS,
+          });
+          if (response.status !== 200) {
+            yield* Effect.logWarning("Chat model refused a search follow-up", {
+              status: response.status,
+            });
+            return Stream.make(contentEvent("Mira could not finish searching. Try again."));
+          }
+          return turn(response, following, round + 1);
+        }),
+      );
+      return Stream.concat(
+        text,
+        Stream.unwrap(
+          Effect.sync(() =>
+            reader.toolCalls.length === 0
+              ? next
+              : Stream.concat(Stream.make(searchingEvent()), next),
+          ),
+        ),
+      );
+    };
+
+    const body = turn(first, input.messages, 0).pipe(
+      Stream.concat(Stream.make(doneEvent())),
+      Stream.ensuring(Effect.suspend(() => input.onUsage(usage))),
+    );
+    return HttpServerResponse.stream(body, {
+      status: 200,
+      contentType: "text/event-stream",
+      headers: { "cache-control": "no-store" },
+    });
+  });
+
+  const uploadAttachment = Effect.fn("relay.chat.upload_attachment")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    const bearer = readBearer(request);
+    if (bearer !== "") {
+      if (Option.isNone(yield* verifyBearer(bearer))) {
+        return chatError(401, "session_expired", "Sign in again to send files.");
+      }
+    } else if (!SaasChat.isDeviceId(request.headers[SAAS_CHAT_DEVICE_HEADER] ?? "")) {
+      return chatError(400, "invalid_request", "This app is missing its device id.");
+    }
+    return yield* attachments.upload(request);
+  });
 
   const models = Effect.fn("relay.llm.models")(
     function* (request: HttpServerRequest.HttpServerRequest) {
@@ -354,7 +527,7 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  return LlmProxy.of({ chatCompletions, chat, models });
+  return LlmProxy.of({ chatCompletions, chat, uploadAttachment, models });
 });
 
 export const layer = Layer.effect(LlmProxy, make).pipe(Layer.provide(FetchHttpClient.layer));
@@ -375,6 +548,10 @@ export const layerChatApi = HttpApiBuilder.group(
   "chat",
   Effect.fnUntraced(function* (handlers) {
     const proxy = yield* LlmProxy;
-    return handlers.handleRaw("chatCompletions", ({ request }) => proxy.chat(request));
+    const attachments = yield* ChatAttachments.ChatAttachments;
+    return handlers
+      .handleRaw("chatCompletions", ({ request }) => proxy.chat(request))
+      .handleRaw("uploadAttachment", ({ request }) => proxy.uploadAttachment(request))
+      .handleRaw("attachment", ({ params }) => attachments.download(params.attachmentId));
   }),
 );

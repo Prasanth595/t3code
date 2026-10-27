@@ -1357,6 +1357,17 @@ const RelayAdminPanelGroup = HttpApiGroup.make("adminPanel")
 // counts the free messages. The reply streams in the OpenAI SSE format.
 const RelayChatGroup = HttpApiGroup.make("chat")
   .add(HttpApiEndpoint.post("chatCompletions", "/v1/chat/completions"))
+  .add(
+    HttpApiEndpoint.post("uploadAttachment", "/v1/chat/attachments").annotate(
+      OpenApi.Summary,
+      "Store a photo or document for a chat message",
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("attachment", "/v1/chat/attachments/:attachmentId", {
+      params: Schema.Struct({ attachmentId: SaasChatId }),
+    }).annotate(OpenApi.Summary, "Read a stored photo or document"),
+  )
   .annotate(OpenApi.Description, "Chat mode: model replies that need no connected computer.");
 
 const chatParams = Schema.Struct({ chatId: SaasChatId });

@@ -1,5 +1,6 @@
 import {
   SaasChatConversation,
+  type SaasChatAttachment,
   type SaasChatMessage,
   type SaasChatSummary,
 } from "@t3tools/contracts/saas";
@@ -34,8 +35,12 @@ export interface ChatHistoryState {
   readonly loaded: boolean;
   /** Newest first. */
   readonly chats: ReadonlyArray<SaasChatConversation>;
-  /** The reply streaming in right now, keyed by its chat. */
-  readonly streaming: { readonly chatId: string; readonly text: string } | null;
+  /** The reply streaming in right now, keyed by its chat; `searching` while Mira searches. */
+  readonly streaming: {
+    readonly chatId: string;
+    readonly text: string;
+    readonly searching?: boolean;
+  } | null;
   readonly error: ChatReplyError | null;
 }
 
@@ -66,10 +71,7 @@ const byNewest = (left: SaasChatConversation, right: SaasChatConversation) =>
   right.updatedAt.localeCompare(left.updatedAt);
 
 // `crypto.randomUUID` is missing over plain-HTTP LAN origins; random bytes are not.
-const randomId = () =>
-  Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+const webRandomBytes = (count: number) => globalThis.crypto.getRandomValues(new Uint8Array(count));
 
 export interface ChatHistoryOptions {
   readonly storage: ChatHistoryStorage;
@@ -78,6 +80,8 @@ export interface ChatHistoryOptions {
     deviceId: string,
   ) => Promise<ChatReplyResult>;
   readonly now?: () => string;
+  /** Hermes has no Web Crypto, so React Native passes its own source of random bytes. */
+  readonly randomBytes?: (count: number) => Uint8Array;
 }
 
 /**
@@ -86,13 +90,7 @@ export interface ChatHistoryOptions {
  */
 export class ChatHistory {
   private state: ChatHistoryState = { loaded: false, chats: [], streaming: null, error: null };
-  private stored: StoredHistory = {
-    deviceId: randomId(),
-    owner: null,
-    chats: [],
-    dirty: [],
-    synced: [],
-  };
+  private stored: StoredHistory;
   private readonly listeners = new Set<() => void>();
   private remote: ChatHistoryRemote | null = null;
   private loading: Promise<void> | null = null;
@@ -103,6 +101,12 @@ export class ChatHistory {
   constructor(options: ChatHistoryOptions) {
     this.options = options;
     this.now = options.now ?? (() => DateTime.formatIso(DateTime.nowUnsafe()));
+    this.stored = { deviceId: this.randomId(), owner: null, chats: [], dirty: [], synced: [] };
+  }
+
+  private randomId() {
+    const bytes = (this.options.randomBytes ?? webRandomBytes)(16);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   readonly subscribe = (listener: () => void) => {
@@ -215,32 +219,59 @@ export class ChatHistory {
     this.commit();
   }
 
-  /** Sends a message, starting a new chat when `chatId` is null. Resolves to the chat's id. */
-  async send(chatId: string | null, text: string): Promise<string> {
+  /**
+   * Sends a message, starting a new chat when `chatId` is null. `onStarted` gets the chat's id as
+   * soon as the question is saved, before the reply streams; the promise resolves with it too.
+   */
+  async send(
+    chatId: string | null,
+    text: string,
+    options: {
+      readonly attachments?: ReadonlyArray<SaasChatAttachment>;
+      readonly onStarted?: (chatId: string) => void;
+    } = {},
+  ): Promise<string> {
     await this.load();
     const content = text.trim();
+    const attachments = options.attachments ?? [];
     const now = this.now();
     const existing = chatId === null ? undefined : this.find(chatId);
-    const userMessage: SaasChatMessage = { id: randomId(), role: "user", content, createdAt: now };
+    const userMessage: SaasChatMessage = {
+      id: this.randomId(),
+      role: "user",
+      content,
+      createdAt: now,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    };
     const chat: SaasChatConversation = existing
       ? { ...existing, updatedAt: now, messages: [...existing.messages, userMessage] }
       : {
-          id: randomId(),
-          title: chatTitle(content),
+          id: this.randomId(),
+          title: chatTitle(content || attachments[0]?.name || ""),
           createdAt: now,
           updatedAt: now,
           messages: [userMessage],
         };
     this.write(chat);
     this.publish({ streaming: { chatId: chat.id, text: "" }, error: null });
+    options.onStarted?.(chat.id);
 
     const result = await this.options.requestReply(
       {
         messages: chat.messages.map((message) => ({
           role: message.role,
           content: message.content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
         })),
         onText: (partial) => this.publish({ streaming: { chatId: chat.id, text: partial } }),
+        onSearching: () =>
+          this.publish({
+            streaming: {
+              chatId: chat.id,
+              text: this.state.streaming?.text ?? "",
+              searching: true,
+            },
+          }),
       },
       this.stored.deviceId,
     );
@@ -252,7 +283,7 @@ export class ChatHistory {
         updatedAt: repliedAt,
         messages: [
           ...latest.messages,
-          { id: randomId(), role: "assistant", content: result.text, createdAt: repliedAt },
+          { id: this.randomId(), role: "assistant", content: result.text, createdAt: repliedAt },
         ],
       });
       this.publish({ streaming: null });

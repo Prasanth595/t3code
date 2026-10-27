@@ -8,6 +8,7 @@ import {
   useMiraAccess,
   useMiraChatHistory,
 } from "~/cloud/miraChat";
+import { RelativeTimeLabel } from "../sidebar/SidebarThreadRow";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
@@ -51,7 +52,10 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
                   <Link to="/ask/$chatId" params={{ chatId: chat.id }} onClick={onNavigate} />
                 }
               >
-                <span>{chat.title}</span>
+                <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+                <span className="shrink-0 text-xs tabular-nums text-secondary-label group-hover/chat-row:opacity-0">
+                  <RelativeTimeLabel timestamp={chat.updatedAt} />
+                </span>
               </SidebarMenuButton>
               <span className="absolute end-1 top-1 opacity-0 group-hover/chat-row:opacity-100 has-focus-visible:opacity-100">
                 <Button

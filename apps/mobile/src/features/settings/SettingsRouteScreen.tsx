@@ -273,7 +273,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
     },
     {
       title: "App",
-      rows: [page("SettingsAbout", "info.circle", "About T3 Code")],
+      rows: [page("SettingsAbout", "info.circle", "About Mira")],
     },
   ];
 }
