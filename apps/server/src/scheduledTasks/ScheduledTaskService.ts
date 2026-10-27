@@ -1090,7 +1090,14 @@ export const layer = Layer.effect(
                     : undefined),
               ),
             }
-          : input.schedule;
+          : input.schedule.type === "fixed_time" &&
+              input.schedule.missedRun === undefined &&
+              existingTask?.schedule.type === "fixed_time" &&
+              existingTask.schedule.missedRun !== undefined
+            ? // Omitted keeps the stored choice, so a client that predates missedRun
+              // can re-save a task without clearing it.
+              { ...input.schedule, missedRun: existingTask.schedule.missedRun }
+            : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
