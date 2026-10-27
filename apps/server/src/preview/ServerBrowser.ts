@@ -306,7 +306,8 @@ interface ServerTab {
   } | null;
   dialog: Dialog | null;
   setting: PreviewViewportSetting;
-  colorScheme: PreviewAppearancePreference;
+  /** Null until first applied, so a `system` tab still clears Playwright's default light. */
+  colorScheme: PreviewAppearancePreference | null;
   zoomFactor: number;
   loading: boolean;
   closing: boolean;
@@ -765,7 +766,7 @@ const make = Effect.gen(function* () {
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
-      colorScheme: "system",
+      colorScheme: null,
       zoomFactor: 1,
       loading: false,
       closing: false,
@@ -1191,6 +1192,7 @@ const make = Effect.gen(function* () {
         ...(/^https?:/i.test(url) ? { url } : {}),
         runtime: "server",
         ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
+        ...(opener.colorScheme === null ? {} : { colorScheme: opener.colorScheme }),
         ...(opener.control.agentId === null
           ? {}
           : { automationOwner: opener.control.agentId, reveal: false }),
