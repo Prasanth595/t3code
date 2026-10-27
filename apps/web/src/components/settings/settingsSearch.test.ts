@@ -20,6 +20,11 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 
+vi.mock("~/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/env")>()),
+  isSecretsFeatureEnabled: false,
+}));
+
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "word-wrap",
@@ -60,7 +65,7 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
 
-  it("hides secret providers while T3CODE_FEATURE_SECRETS is unset", () => {
+  it("hides secret providers while the secrets feature is disabled", () => {
     expect(searchSettings("secret providers").map((item) => item.id)).not.toContain(
       "secret-providers",
     );
