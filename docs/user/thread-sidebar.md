@@ -10,6 +10,12 @@ and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
+On mobile, **New thread** starts in the current thread's project, or else in the
+last project you opened or chose on that device. If neither is available, the
+project picker opens. Turn off **Settings → General → Use last project** to
+choose a project every time. When you pick a project that is on more than one
+machine, the thread starts on a connected one if any is connected.
+
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
@@ -244,6 +250,13 @@ thread asks for it.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+On web and desktop, the thread details card lists the web servers that the
+thread's terminals or its Claude agent started, with their ports. A server the
+agent started stays listed after the agent's turn ends.
+Select a server to open it in the browser panel. **Stop** ends the server's job
+and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
+access to the environment and is not available on Windows.
 
 ## Snooze until later
 
