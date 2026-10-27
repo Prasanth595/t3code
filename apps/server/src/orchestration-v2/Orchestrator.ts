@@ -3415,9 +3415,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ],
                 }),
             ...(command.regenerateTitle === true
-              ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
+              ? {
+                  titleRegeneration: { requestId: command.commandId, startedAt: now },
+                  titleRegenerationFailure: null,
+                }
               : command.regenerateTitle === false || command.title !== undefined
-                ? { titleRegeneration: null }
+                ? { titleRegeneration: null, titleRegenerationFailure: null }
                 : {}),
             updatedAt: now,
           };
@@ -3644,6 +3647,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ...thread,
                 ...(command.title === undefined ? {} : { title: command.title }),
                 titleRegeneration: null,
+                titleRegenerationFailure:
+                  command.failure === undefined
+                    ? null
+                    : { requestId: command.requestId, message: command.failure },
                 updatedAt: now,
               }
             : thread;
@@ -5173,6 +5180,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...projection.thread,
         title: command.titleSeed ?? projection.thread.title,
         titleRegeneration: { requestId: command.commandId, startedAt: now },
+        titleRegenerationFailure: null,
         updatedAt: now,
       };
       yield* emit(

@@ -1534,10 +1534,12 @@ export function presentThreadShellFromProjection(
   const runtime = deriveThreadRuntime({ ...projection, updatedAt });
   const pendingRuntimeRequest =
     projection.runtimeRequests.findLast((request) => request.status === "pending") ?? null;
+  const { titleRegenerationFailure, ...thread } = projection.thread;
   // Direct links can hydrate detail before the thread enters the shell index.
   return {
     ...presentThreadShell(environmentId, {
-      ...projection.thread,
+      ...thread,
+      ...(titleRegenerationFailure ? { titleRegenerationFailure } : {}),
       lastVisitedAt,
       latestRunId: latestRun?.runId ?? null,
       activeRunId: runtime?.activeRunId ?? null,

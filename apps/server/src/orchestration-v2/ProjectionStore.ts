@@ -1713,6 +1713,9 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    ...(projection.thread.titleRegenerationFailure
+      ? { titleRegenerationFailure: projection.thread.titleRegenerationFailure }
+      : {}),
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1973,6 +1976,9 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    ...(input.state.thread.titleRegenerationFailure
+      ? { titleRegenerationFailure: input.state.thread.titleRegenerationFailure }
+      : {}),
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };

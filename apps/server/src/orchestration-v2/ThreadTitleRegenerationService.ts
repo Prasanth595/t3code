@@ -1,6 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  TITLE_GENERATION_FAILED_MESSAGE,
   type ChatAttachment,
   type MessageId,
   type OrchestrationV2AppThread,
@@ -24,6 +25,14 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+
+type TitleOutcome =
+  | { readonly type: "stale" }
+  | {
+      readonly type: "complete";
+      readonly title?: string;
+      readonly failure?: typeof TITLE_GENERATION_FAILED_MESSAGE;
+    };
 
 export class ThreadTitleRegenerationService extends Context.Service<
   ThreadTitleRegenerationService,
@@ -54,6 +63,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly failure?: typeof TITLE_GENERATION_FAILED_MESSAGE;
   }) =>
     threads
       .dispatch({
@@ -62,6 +72,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.failure === undefined ? {} : { failure: input.failure }),
       })
       .pipe(Effect.asVoid);
 
@@ -107,9 +118,7 @@ const make = Effect.gen(function* () {
   const execute: ThreadTitleRegenerationService["Service"]["execute"] = Effect.fn(
     "ThreadTitleRegenerationService.execute",
   )(function* (input) {
-    const outcome:
-      | { readonly type: "stale" }
-      | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
+    const outcome: TitleOutcome = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
         ["messages"],
@@ -182,7 +191,13 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
+            }).pipe(
+              Effect.as({
+                type: "complete",
+                // CLI output belongs in the logged cause, never the durable failure.
+                failure: TITLE_GENERATION_FAILED_MESSAGE,
+              } as const),
+            ),
       ),
     );
 
@@ -192,6 +207,7 @@ const make = Effect.gen(function* () {
     yield* complete({
       ...input,
       ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
     });
   });
 

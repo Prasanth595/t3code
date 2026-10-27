@@ -191,6 +191,8 @@ export interface EnvironmentThreadShell {
   /** Server-tracked open history for search ranking. */
   readonly opens?: import("@t3tools/contracts").OrchestrationV2ThreadOpens | null;
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
+  /** Latest failed title generation; absent when the last one did not fail. */
+  readonly titleRegenerationFailure?: { readonly requestId: string; readonly message: string };
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
 }
@@ -345,6 +347,9 @@ export function presentThreadShell(
             requestId: thread.titleRegeneration.requestId,
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
+    ...(thread.titleRegenerationFailure === undefined
+      ? {}
+      : { titleRegenerationFailure: thread.titleRegenerationFailure }),
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
   };
