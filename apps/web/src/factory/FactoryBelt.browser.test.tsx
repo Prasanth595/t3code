@@ -545,7 +545,7 @@ describe("stopping a run from the readout", () => {
         (b) => b.textContent === "Stop",
       )!,
     );
-    expect(readout(page)!.textContent).toContain("Missing permission orchestration:operate");
+    expect(page.text()).toContain("Missing permission orchestration:operate");
   });
 });
 
@@ -724,6 +724,24 @@ describe("Attention, Needs info and Stuck", () => {
     expect(stuck.textContent).toContain("Nothing is stuck");
   });
 
+  it("keeps the Attention panel, saying so, when nothing needs a person", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    const attention = page
+      .all("section")
+      .find((section) => section.getAttribute("aria-label") === "Needs attention")!;
+    expect(attention.textContent).toContain("Nothing needs a person.");
+    expect(page.button("Dismiss all")).toBeUndefined();
+    const tops = ["Needs attention", "Needs info", "Stuck"].map(
+      (name) =>
+        page
+          .all("section")
+          .find((s) => s.getAttribute("aria-label") === name)!
+          .getBoundingClientRect().top,
+    );
+    expect(new Set(tops).size).toBe(1);
+  });
+
   it("puts the attention section first, beside the bins", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
@@ -756,6 +774,118 @@ describe("Attention, Needs info and Stuck", () => {
           .getBoundingClientRect().top,
     );
     expect(new Set(tops).size).toBe(1);
+  });
+});
+
+describe("what the belt does not know yet", () => {
+  const unknown = (status: "loading" | "error"): Belt["environments"][number] => ({
+    environmentId: DESKTOP,
+    label: "Desktop",
+    status: resource<FactoryStatus>({
+      status,
+      error: status === "error" ? new Error("down") : null,
+    }),
+  });
+
+  it.each(["loading", "error"] as const)(
+    "does not call an environment Running, or switch it on, while its status is %s",
+    async (status) => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(FactoryBelt, props({ environments: [unknown(status)], recent: new Map() })),
+      );
+      expect(page.all('section[aria-label="Controls"]')[0]!.textContent).not.toContain("Running");
+      expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("false");
+      expect(claimsSwitch(page).hasAttribute("data-disabled")).toBe(true);
+    },
+  );
+
+  it.each(["loading", "error"] as const)(
+    "shows no counts, and no empty bins, while an answered environment's recent runs are %s",
+    async (status) => {
+      using _state = await setup();
+      const belt = twoEnvironments();
+      belt.recent = new Map([
+        [DESKTOP, belt.recent.get(DESKTOP)!],
+        [
+          STUDIO,
+          resource<{ runs: ReadonlyArray<FactoryRunRow> }>({
+            status,
+            error: status === "error" ? new Error("down") : null,
+          }),
+        ],
+      ]);
+      await using page = await render(createElement(FactoryBelt, belt));
+      for (const label of ["Runs today", "Merged today", "Stuck"]) {
+        expect(stat(page, label)).toBe("-");
+      }
+      const text = (name: string) =>
+        page.all("section").find((section) => section.getAttribute("aria-label") === name)!
+          .textContent;
+      expect(text("Needs info")).not.toContain("Nothing needs info");
+      expect(text("Stuck")).not.toContain("Nothing is stuck");
+      if (status === "error") {
+        expect(countOf(station(page, "done"))).toBe("-");
+        expect(lane(page, "done").textContent).not.toContain("merged");
+      }
+    },
+  );
+});
+
+describe("the rail keeps its pick", () => {
+  it("stays on the open post when a second environment answers for the first time", async () => {
+    using _state = await setup();
+    const full = twoEnvironments();
+    const waiting = {
+      ...full.environments[1]!,
+      status: resource<FactoryStatus>({ status: "loading" }),
+    };
+    await using page = await render(
+      createElement(FactoryBelt, {
+        ...full,
+        environments: [full.environments[0]!, waiting],
+        recent: new Map([[DESKTOP, full.recent.get(DESKTOP)!]]),
+      }),
+    );
+    await page.click(station(page, "gate"));
+    expect(readout(page)!.getAttribute("aria-label")).toBe("Gate readout");
+    // Studio answers, and its recent runs are still loading.
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...full,
+        recent: new Map([
+          [DESKTOP, full.recent.get(DESKTOP)!],
+          [STUDIO, resource<{ runs: ReadonlyArray<FactoryRunRow> }>({ status: "loading" })],
+        ]),
+      }),
+    );
+    expect(readout(page)!.getAttribute("aria-label")).toBe("Gate readout");
+    await page.rerender(createElement(FactoryBelt, full));
+    expect(readout(page)!.getAttribute("aria-label")).toBe("Gate readout");
+  });
+
+  it("keeps a stop's answer when its readout is folded before the call ends", async () => {
+    using _state = await setup();
+    let resolve!: (value: { stopped: string; already: boolean; message: string }) => void;
+    __setFactoryApiForTests(
+      api({
+        stopRun: () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      }),
+    );
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    await page.click(station(page, "building"));
+    await page.click(
+      Array.from(rowsOf(page)[0]!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Stop",
+      )!,
+    );
+    await page.click(station(page, "building"));
+    expect(readout(page)).toBeUndefined();
+    await act(async () => resolve({ stopped: runId(2), already: false, message: "stopping #2" }));
+    expect(page.all('[role="status"]').some((p) => p.textContent === "stopping #2")).toBe(true);
   });
 });
 
@@ -863,6 +993,27 @@ describe("the belt's layout", () => {
     await expect.poll(() => lane(page, "pr").querySelector("button")).not.toBeNull();
     const tiles = [...tilesOf(lane(page, "pr")), lane(page, "pr").querySelector("button")!];
     expect(new Set(tiles.map((tile) => (tile as HTMLElement).offsetTop)).size).toBe(1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+      document.documentElement.clientWidth,
+    );
+  });
+
+  it("keeps the environment, step and pull request link of a readout row at 390 px", async () => {
+    using _state = await setup(390);
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    await page.click(station(page, "pr"));
+    const row = rowsOf(page)[0]!;
+    const shown = (node: Element) => node.getClientRects().length > 0;
+    const link = Array.from(row.querySelectorAll("a")).find(
+      (a) => a.getAttribute("href") === "https://github.com/acme/widgets/pull/40" && shown(a),
+    );
+    expect(link).toBeDefined();
+    const visibleText = (text: string) =>
+      Array.from(row.querySelectorAll("*")).some(
+        (node) => shown(node) && node.children.length === 0 && node.textContent === text,
+      );
+    expect(visibleText("Desktop")).toBe(true);
+    expect(visibleText("pr-open")).toBe(true);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     );

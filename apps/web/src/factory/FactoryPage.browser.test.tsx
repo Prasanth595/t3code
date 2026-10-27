@@ -174,7 +174,7 @@ describe("FactoryPage", () => {
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Factory");
     expect(page.text()).toContain("No runs in the last week");
-    expect(page.text()).not.toContain("Needs attention");
+    expect(page.text()).toContain("Nothing needs a person.");
     await page.click(page.button("Show all runs")!);
     expect(page.text()).toContain("No runs yet");
   });
@@ -914,8 +914,8 @@ describe("FactoryPage dismissing attention items", () => {
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
-    expect(section(page)).toBeUndefined();
-    expect(page.text()).not.toContain("Needs attention");
+    expect(section(page)?.textContent).toContain("Nothing needs a person.");
+    expect(page.button("Dismiss all")).toBeUndefined();
   });
 
   it("keeps the claims switch disabled when a dismiss finishes while the pause is pending", async () => {
