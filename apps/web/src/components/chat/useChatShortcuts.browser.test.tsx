@@ -262,3 +262,18 @@ it("types Shift+J into the composer while the guide holds J/K", async () => {
   expect(composerKeys).toEqual(["J"]);
   await expect.element(stop("First change")).toBeVisible();
 });
+
+it("steps the guide when Caps Lock turns Shift+J into j", async () => {
+  setup(guide);
+  const composerKeys: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<ChatBesideGuide composerKeys={composerKeys} number={6} />);
+  await stop("First change").click();
+
+  document.body.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "j", shiftKey: true, bubbles: true, cancelable: true }),
+  );
+
+  await expect.element(stop("Second change")).toBeVisible();
+  expect(composerKeys).toEqual([]);
+});

@@ -80,7 +80,8 @@ export function GuideTour({
 
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // Shift+J is "J" and types; Caps Lock+Shift+J is "j", which type-to-focus leaves to us.
     if (event.key !== "j" && event.key !== "k") return;
     if (isEditableFocused(event.target)) return;
     event.preventDefault();
