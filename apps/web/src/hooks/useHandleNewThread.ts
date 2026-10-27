@@ -81,7 +81,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
-      /** Composer text for the draft, set before it shows. Drafts are reused only while empty. */
+      /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
