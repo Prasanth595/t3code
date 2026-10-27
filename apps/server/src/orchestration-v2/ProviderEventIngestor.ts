@@ -275,6 +275,7 @@ function runsOffNativeBranch(input: {
 }
 
 export interface ProviderEventIngestInput {
+  readonly skipProviderThreadSnapshot?: boolean;
   readonly providerSessionId: ProviderSessionId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly commandId?: CommandId;
@@ -582,15 +583,20 @@ export const layer: Layer.Layer<
               ];
             case "provider_thread.updated": {
               const threadId = input.event.providerThread.appThreadId ?? input.threadId;
-              const updated = yield* makeDomainEvent(input, {
-                type: "provider-thread.updated",
-                threadId,
-                payload: input.event.providerThread,
-              });
+              const updates =
+                input.skipProviderThreadSnapshot === true
+                  ? []
+                  : [
+                      yield* makeDomainEvent(input, {
+                        type: "provider-thread.updated",
+                        threadId,
+                        payload: input.event.providerThread,
+                      }),
+                    ];
               return input.event.retainedNativeTurnIds === undefined
-                ? [updated]
+                ? updates
                 : [
-                    updated,
+                    ...updates,
                     ...(yield* rollBackRewoundRuns(input, {
                       threadId,
                       providerThreadId: input.event.providerThread.id,
