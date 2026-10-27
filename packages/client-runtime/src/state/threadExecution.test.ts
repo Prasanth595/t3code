@@ -14,7 +14,10 @@ import {
   type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  resumableContinuationRun,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
@@ -51,6 +54,18 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("resumes the latest executed run after any failure, not only a usage limit", () => {
+    const failed = run("run-failed", 1, "failed");
+    const interrupted = run("run-interrupted", 1, "interrupted");
+    const completed = run("run-completed", 1, "completed");
+    const queued = run("run-queued", 2, "queued");
+
+    expect(resumableContinuationRun([failed, queued])?.id).toBe(failed.id);
+    expect(resumableContinuationRun([interrupted, queued])?.id).toBe(interrupted.id);
+    expect(resumableContinuationRun([completed, queued])).toBeNull();
+    expect(resumableContinuationRun([failed, run("run-running", 2, "running")])).toBeNull();
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {
