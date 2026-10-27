@@ -397,21 +397,29 @@ describe("provider-reported model selection", () => {
 
 describe("isBackgroundWorkStopPending", () => {
   const tasks = [{ taskId: "dev-server" }];
-  const sent = { threadKey: "env:thread", taskIds: ["dev-server"], accepted: false };
-  const accepted = { ...sent, accepted: true };
+  const sent = { threadKey: "env:thread", taskIds: ["dev-server"], retryAt: null };
+  const accepted = { ...sent, retryAt: 10_000 };
 
   it("stays pending after acceptance while a stopped task is still listed", () => {
-    expect(isBackgroundWorkStopPending(sent, "env:thread", tasks)).toBe(true);
-    expect(isBackgroundWorkStopPending(accepted, "env:thread", tasks)).toBe(true);
+    expect(isBackgroundWorkStopPending(sent, "env:thread", tasks, 0)).toBe(true);
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", tasks, 0)).toBe(true);
   });
 
   it("ends once the stopped tasks leave, even if new work starts", () => {
-    expect(isBackgroundWorkStopPending(accepted, "env:thread", [])).toBe(false);
-    expect(isBackgroundWorkStopPending(accepted, "env:thread", [{ taskId: "next" }])).toBe(false);
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", [], 0)).toBe(false);
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", [{ taskId: "next" }], 0)).toBe(
+      false,
+    );
+  });
+
+  it("allows retry at the deadline even if a stopped task remains", () => {
+    const request = { ...accepted, retryAt: 10_000 };
+    expect(isBackgroundWorkStopPending(request, "env:thread", tasks, 9_999)).toBe(true);
+    expect(isBackgroundWorkStopPending(request, "env:thread", tasks, 10_000)).toBe(false);
   });
 
   it("only applies to the thread that sent the Stop", () => {
-    expect(isBackgroundWorkStopPending(null, "env:thread", tasks)).toBe(false);
-    expect(isBackgroundWorkStopPending(sent, "env:other", tasks)).toBe(false);
+    expect(isBackgroundWorkStopPending(null, "env:thread", tasks, 0)).toBe(false);
+    expect(isBackgroundWorkStopPending(sent, "env:other", tasks, 0)).toBe(false);
   });
 });

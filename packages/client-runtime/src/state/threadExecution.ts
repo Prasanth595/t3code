@@ -317,7 +317,7 @@ export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
 export interface BackgroundWorkStopRequest {
   readonly threadKey: string;
   readonly taskIds: ReadonlyArray<string>;
-  readonly accepted: boolean;
+  readonly retryAt: number | null;
 }
 
 /** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
@@ -325,9 +325,13 @@ export function isBackgroundWorkStopPending(
   request: BackgroundWorkStopRequest | null,
   threadKey: string,
   tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  nowMs: number,
 ): boolean {
   if (request === null || request.threadKey !== threadKey) return false;
-  return !request.accepted || tasks.some((task) => request.taskIds.includes(task.taskId));
+  return (
+    request.retryAt === null ||
+    (nowMs < request.retryAt && tasks.some((task) => request.taskIds.includes(task.taskId)))
+  );
 }
 
 export function presentPendingBackgroundWork(

@@ -38,7 +38,7 @@ import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction, useEffect, useRef, useState } from "react";
+import { type SetStateAction, useRef, useState } from "react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -382,21 +382,19 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     backgroundWorkStop,
     `${environmentId}:${activeThreadId}`,
     pendingBackgroundTasks,
+    useNowAfter(backgroundWorkStop?.retryAt ?? null),
   );
-  useEffect(() => {
-    if (backgroundWorkStop?.accepted !== true) return;
-    const timer = setTimeout(() => {
-      setBackgroundWorkStop((current) => (current === backgroundWorkStop ? null : current));
-    }, BACKGROUND_WORK_STOP_RETRY_AFTER_MS);
-    return () => clearTimeout(timer);
-  }, [backgroundWorkStop]);
   const handleStopBackgroundWork = async () => {
-    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    if (
+      isStoppingBackgroundWork ||
+      !activeThread ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    )
       return;
     const request: BackgroundWorkStopRequest = {
       threadKey: `${environmentId}:${activeThread.id}`,
       taskIds: pendingBackgroundTasks.map((task) => task.taskId),
-      accepted: false,
+      retryAt: null,
     };
     setBackgroundWorkStop(request);
     const result = await interruptThreadTurn({
@@ -408,7 +406,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         ? current
         : result._tag === "Failure"
           ? null
-          : { ...request, accepted: true },
+          : { ...request, retryAt: Date.now() + BACKGROUND_WORK_STOP_RETRY_AFTER_MS },
     );
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {

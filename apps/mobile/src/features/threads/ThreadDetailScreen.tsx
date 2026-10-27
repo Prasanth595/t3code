@@ -57,6 +57,7 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { useNowAfter } from "../../lib/clock";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -532,14 +533,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     statusRequest,
     selectedThreadKey,
     props.selectedThread.pendingBackgroundTasks,
+    useNowAfter(statusRequest?.retryAt ?? null),
   );
-  useEffect(() => {
-    if (statusRequest?.accepted !== true) return;
-    const timer = setTimeout(() => {
-      setStatusRequest((current) => (current === statusRequest ? null : current));
-    }, BACKGROUND_WORK_STOP_RETRY_AFTER_MS);
-    return () => clearTimeout(timer);
-  }, [statusRequest]);
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(
     useCallback(() => {
@@ -582,7 +577,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         action === "stop"
           ? props.selectedThread.pendingBackgroundTasks.map((task) => task.taskId)
           : [],
-      accepted: false,
+      retryAt: null,
     };
     setStatusRequest(request);
     const target = {
@@ -622,7 +617,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       current !== request
         ? current
         : action === "stop" && result._tag !== "Failure"
-          ? { ...request, accepted: true }
+          ? { ...request, retryAt: Date.now() + BACKGROUND_WORK_STOP_RETRY_AFTER_MS }
           : null,
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
