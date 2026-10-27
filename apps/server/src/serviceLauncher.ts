@@ -556,7 +556,12 @@ export class Launcher {
           if (this.#child !== null || this.#stopping) return;
           if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
           this.#clearTimer();
-          await this.#startChild(version, role, update);
+          try {
+            await this.#startChild(version, role, update);
+          } catch (error) {
+            if (role !== "trial" || update?.status !== "pending") throw error;
+            await this.#returnToPrevious(update, "failed", "candidate-start-failed");
+          }
         }),
       DISK_SPACE_RETRY_MS,
     );
@@ -795,7 +800,14 @@ export class Launcher {
     const diskSpaceBlocker = await this.#serviceStartDiskSpaceBlocker();
     if (diskSpaceBlocker !== undefined) {
       this.#clearTimer();
-      this.#waitForDiskSpace(diskSpaceBlocker, child.version, child.role, this.#state.update);
+      const pending = this.#state.update;
+      const retryingTrial = child.role === "trial" || pending?.status === "pending";
+      this.#waitForDiskSpace(
+        diskSpaceBlocker,
+        retryingTrial && pending?.status === "pending" ? pending.targetVersion : child.version,
+        retryingTrial ? "trial" : "active",
+        pending,
+      );
       return;
     }
     if (child.role === "trial") {
