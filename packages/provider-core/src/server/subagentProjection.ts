@@ -21,7 +21,32 @@ import type {
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as JsonSchema from "effect/JsonSchema";
+import * as Schema from "effect/Schema";
+import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+
+/** Parse a provider's structured answer without giving prose a false typed value. */
+export function parseDelegatedResultValue(
+  text: string,
+  resultSchema?: Record<string, unknown>,
+): { readonly value: unknown } | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  const candidate = trimmed.startsWith("```")
+    ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+    : trimmed;
+  try {
+    const value = JSON.parse(candidate) as unknown;
+    if (resultSchema === undefined) return { value };
+    const schema = SchemaRepresentation.fromJsonSchemaDocument(
+      JsonSchema.fromSchemaDraft07(resultSchema as JsonSchema.JsonSchema),
+    );
+    return Schema.is(schema)(value) ? { value } : null;
+  } catch {
+    return null;
+  }
+}
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -53,9 +78,14 @@ export function makeSubagentChildThread(input: {
   readonly now: DateTime.Utc;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  readonly delegatedResultSchema?: Record<string, unknown>;
 }): OrchestrationV2AppThread {
+  const { delegatedResultSchema: _parentResultSchema, ...parentThread } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...parentThread,
+    ...(input.delegatedResultSchema === undefined
+      ? {}
+      : { delegatedResultSchema: input.delegatedResultSchema }),
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

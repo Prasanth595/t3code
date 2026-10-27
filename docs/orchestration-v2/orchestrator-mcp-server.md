@@ -230,6 +230,7 @@ type DelegateTaskInput = {
   };
   title?: string;
   role?: "implementation" | "research" | "review" | "design" | "test" | "general";
+  resultSchema?: Record<string, unknown>;
   mode?: "async" | "wait";
   timeoutMs?: number;
   clientRequestId?: string;
@@ -237,6 +238,13 @@ type DelegateTaskInput = {
   interactionMode?: "inherit" | "plan" | "default";
 };
 ```
+
+`resultSchema` is a JSON Schema for the child's final answer. Only providers
+advertising `canEnforceResultSchema: true` accept this request; unsupported
+providers fail with `result_schema_unsupported` instead of degrading to prose.
+For a completed child, `typedResult` contains the parsed value that conforms to
+the requested schema. `summary` remains the child's textual result. Failed or
+invalid structured results leave `typedResult` null.
 
 Provider, model, runtime mode, and interaction mode inherit from the parent
 when omitted. A driver-only target inherits the parent's provider instance
@@ -289,6 +297,7 @@ type DelegateTaskResult = {
   providerInstanceId: string;
   model: string | null;
   summary: string | null;
+  typedResult: { value: unknown } | null;
   resultContextTransferId: string | null;
   latestTerminalRunId: string | null;
   latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;

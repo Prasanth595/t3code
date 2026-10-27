@@ -24,6 +24,7 @@ import {
   makeSubagentConversationArtifacts,
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
+  parseDelegatedResultValue,
 } from "@t3tools/provider-core/server/subagentProjection";
 
 import { emptyProjection } from "./ProjectionStore.ts";
@@ -44,6 +45,25 @@ const parentCreatedAt = DateTime.makeUnsafe("2026-07-24T09:00:00.000Z");
 const snoozedAt = DateTime.makeUnsafe("2026-07-24T09:05:00.000Z");
 const snoozedUntil = DateTime.makeUnsafe("2026-07-25T09:00:00.000Z");
 const childCreatedAt = DateTime.makeUnsafe("2026-07-24T09:10:00.000Z");
+
+it("parses delegated JSON results without treating prose as typed data", () => {
+  assert.deepEqual(parseDelegatedResultValue('{"decision":"ready"}'), {
+    value: { decision: "ready" },
+  });
+  assert.deepEqual(parseDelegatedResultValue("```json\n[1, 2]\n```"), { value: [1, 2] });
+  assert.isNull(parseDelegatedResultValue("The patch is ready."));
+  const resultSchema = {
+    type: "object",
+    properties: { decision: { enum: ["ready", "blocked"] } },
+    required: ["decision"],
+    additionalProperties: false,
+  };
+  assert.deepEqual(parseDelegatedResultValue('{"decision":"ready"}', resultSchema), {
+    value: { decision: "ready" },
+  });
+  assert.isNull(parseDelegatedResultValue('{"decision":"unknown"}', resultSchema));
+  assert.isNull(parseDelegatedResultValue('{"other":true}', resultSchema));
+});
 
 function makeParentThread(): OrchestrationV2AppThread {
   return {
