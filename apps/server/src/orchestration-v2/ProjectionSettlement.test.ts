@@ -402,6 +402,46 @@ it.effect.each([
 it.effect.each([
   ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
+] as const)("%s: pull-request discovery reads match its shell scope", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const legacy = yield* createThread("discovery-legacy", {
+      linkedPullRequest: {
+        projectId: ProjectId.make("project:settlement"),
+        repository: "acme/project",
+        number: 5,
+        url: "https://github.com/acme/project/pull/5",
+      },
+    });
+    const settled = yield* createThread("discovery-settled", { settledAt: old });
+    const archived = yield* createThread("discovery-archived", { archivedAt: old });
+
+    const unsettled = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: true });
+    assert.deepEqual(
+      unsettled.threads.map((thread) => thread.id),
+      [legacy],
+    );
+    // Older payloads carry only linkedPullRequest; discovery must see it as a link, as shells do.
+    assert.deepEqual(
+      unsettled.threads[0]?.pullRequests?.map((link) => link.number),
+      [5],
+    );
+    const active = yield* store.getPullRequestDiscoverySnapshot({});
+    assert.deepEqual(
+      new Set(active.threads.map((thread) => thread.id)),
+      new Set([legacy, settled]),
+    );
+    const single = yield* store.getPullRequestDiscoverySnapshot({ threadId: archived });
+    assert.deepEqual(
+      single.threads.map((thread) => thread.id),
+      [archived],
+    );
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
 ] as const)("%s: an unsettled-only shell read skips settled threads", ([, testLayer]) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
