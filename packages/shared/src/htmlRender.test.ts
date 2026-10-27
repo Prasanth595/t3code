@@ -5,7 +5,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
-import { htmlRenderFromToolItem } from "./toolOutput.ts";
+import { htmlRenderFromToolItem, htmlRendersFromToolOutput } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
 
@@ -130,5 +130,31 @@ describe("htmlRenderFromToolItem", () => {
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
+  });
+});
+
+describe("htmlRendersFromToolOutput", () => {
+  const second = { attachmentId: "thread-abc-456.html", title: "Heatmap", height: 300 };
+
+  it("lifts pages out of Code Mode execute output", () => {
+    const output = JSON.stringify({
+      dashboard: { htmlRender: reference },
+      heatmap: { htmlRender: second },
+    });
+    expect(htmlRendersFromToolOutput(output)).toEqual([reference, second]);
+    expect(htmlRendersFromToolOutput({ content: [{ type: "text", text: output }] })).toEqual([
+      reference,
+      second,
+    ]);
+  });
+
+  it("ignores duplicates and non-page output", () => {
+    expect(
+      htmlRendersFromToolOutput({
+        first: { htmlRender: reference },
+        again: { htmlRender: reference },
+      }),
+    ).toEqual([reference]);
+    expect(htmlRendersFromToolOutput("not json")).toEqual([]);
   });
 });

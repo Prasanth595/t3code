@@ -2365,6 +2365,112 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("renders a published HTML attachment from a completed T3 MCP call", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-render" };
+      const name = "t3-code-thread_opencode2-adapter_html_render";
+      const input = { html: "<p>hockey stick</p>", title: "FAFO", height: 294 };
+      const page = {
+        attachmentId: "thread-opencode2-adapter-html",
+        title: "FAFO",
+        height: 294,
+      };
+      yield* mcpSessions.recordHtmlRender(threadId, input, page);
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name }),
+        event("session.tool.called", { ...tool, name, input, executed: true }),
+        event("session.tool.success", {
+          ...tool,
+          content: [{ type: "text", text: "Shown to the reader above your reply." }],
+          metadata: {},
+          executed: true,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const items = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+          ? [event.turnItem]
+          : [],
+      );
+      const completed = items.at(-1);
+      assert.equal(completed?.type, "dynamic_tool");
+      assert.deepEqual(completed?.type === "dynamic_tool" ? completed.output : null, {
+        htmlRender: page,
+      });
+      assert.isUndefined(yield* mcpSessions.takeHtmlRender(threadId, input));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lifts HTML pages out of Code Mode execute output", () =>
+    Effect.gen(function* () {
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-execute" };
+      const page = {
+        attachmentId: "thread-opencode2-adapter-execute-html",
+        title: "Chart",
+        height: 320,
+      };
+      const output = JSON.stringify({ chart: { htmlRender: page } });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name: "execute" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "execute",
+          input: { code: "return { chart: { htmlRender: page } }" },
+          executed: true,
+        }),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_toolsuccess_call-execute",
+              created: 1,
+              type: "session.tool.success",
+              data: {
+                ...tool,
+                content: [{ type: "text", text: output }],
+                metadata: {},
+                executed: true,
+              },
+              durable: { aggregateID: SESSION, seq: 1, version: 2 },
+            },
+          },
+        },
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const items = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId?.includes(tool.id)
+          ? [event.turnItem]
+          : [],
+      );
+      const render = items.find(
+        (item) => item.type === "dynamic_tool" && item.toolName === "html_render",
+      );
+      assert.deepEqual(render?.type === "dynamic_tool" ? render.output : null, {
+        htmlRender: page,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;

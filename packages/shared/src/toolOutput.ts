@@ -185,6 +185,59 @@ export function htmlRenderFromToolItem(item: {
   return output?.isError ? undefined : output?.htmlRender;
 }
 
+const MAX_NESTED_HTML_RENDERS = 8;
+const MAX_NESTED_HTML_RENDER_DEPTH = 6;
+const MAX_NESTED_HTML_RENDER_NODES = 256;
+
+/**
+ * Code Mode wrappers carry nested tool results inside one outer tool call, so
+ * the page lives below the top level. Collect those references in order.
+ */
+export function htmlRendersFromToolOutput(value: unknown): ReadonlyArray<HtmlRenderReference> {
+  const pages: Array<HtmlRenderReference> = [];
+  const seen = new Set<string>();
+  let nodes = MAX_NESTED_HTML_RENDER_NODES;
+  const visit = (input: unknown, depth: number): void => {
+    if (
+      nodes-- <= 0 ||
+      depth > MAX_NESTED_HTML_RENDER_DEPTH ||
+      pages.length >= MAX_NESTED_HTML_RENDERS
+    ) {
+      return;
+    }
+    if (typeof input === "string") {
+      if (input.length === 0 || input.length > MAX_PARSED_BYTES) return;
+      const trimmed = input.trim();
+      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return;
+      try {
+        visit(JSON.parse(trimmed), depth + 1);
+      } catch {
+        // Not a JSON envelope.
+      }
+      return;
+    }
+    if (Array.isArray(input)) {
+      for (const entry of input) {
+        visit(entry, depth + 1);
+        if (pages.length >= MAX_NESTED_HTML_RENDERS) break;
+      }
+      return;
+    }
+    if (!Predicate.isObject(input)) return;
+    const page = readHtmlRenderReference(input.htmlRender);
+    if (page !== undefined && !seen.has(page.attachmentId)) {
+      seen.add(page.attachmentId);
+      pages.push(page);
+    }
+    for (const entry of Object.values(input)) {
+      visit(entry, depth + 1);
+      if (pages.length >= MAX_NESTED_HTML_RENDERS) break;
+    }
+  };
+  visit(value, 0);
+  return pages;
+}
+
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
 export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;

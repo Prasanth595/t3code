@@ -1058,6 +1058,161 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect("attaches a published HTML render to completed OpenCode MCP calls", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-html-render";
+      const harness = yield* makeOpenCodeRuntimeHarness("html-render", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+        mcp: {
+          status: async () => ({ data: { "t3-code": { status: "connected" } } }),
+        },
+      });
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const input = { html: "<p>hockey stick</p>", title: "FAFO", height: 294 };
+      const page = {
+        attachmentId: "thread-opencode-html-render-html",
+        title: "FAFO",
+        height: 294,
+      };
+      yield* mcpSessions.recordHtmlRender(harness.threadId, input, page);
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const completedPart = {
+        type: "message.part.updated",
+        properties: {
+          sessionID: nativeSessionId,
+          part: {
+            id: "html-render-part",
+            sessionID: nativeSessionId,
+            messageID: "html-render-assistant",
+            type: "tool",
+            callID: "html-render-call",
+            tool: "t3-code_html_render",
+            state: {
+              status: "completed",
+              input,
+              title: "Render HTML",
+              metadata: {},
+              output: "Shown to the reader above your reply.",
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      };
+      yield* Effect.promise(() => nativeEvents.push(completedPart));
+      yield* Effect.promise(() => nativeEvents.push(completedPart));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.compacted",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+      const renders = (yield* Fiber.join(received))
+        .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+        .flatMap((item) =>
+          item.type === "dynamic_tool" && item.toolName === "t3-code_html_render"
+            ? [item.output]
+            : [],
+        );
+      assert.deepEqual(renders, [{ htmlRender: page }, { htmlRender: page }]);
+      assert.isUndefined(yield* mcpSessions.takeHtmlRender(harness.threadId, input));
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("lifts HTML pages out of Code Mode execute output", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-execute-render";
+      const harness = yield* makeOpenCodeRuntimeHarness("execute-render", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      const page = {
+        attachmentId: "thread-opencode-execute-render-html",
+        title: "Chart",
+        height: 320,
+      };
+      const output = JSON.stringify({ chart: { htmlRender: page } });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            part: {
+              id: "execute-part",
+              sessionID: nativeSessionId,
+              messageID: "execute-assistant",
+              type: "tool",
+              callID: "execute-call",
+              tool: "execute",
+              state: {
+                status: "completed",
+                input: { code: "return { chart: { htmlRender: page } }" },
+                title: "Execute",
+                metadata: {},
+                output,
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.compacted",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+      const items = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const render = items.find(
+        (item) => item.type === "dynamic_tool" && item.toolName === "html_render",
+      );
+      assert.deepEqual(render?.type === "dynamic_tool" ? render.output : null, {
+        htmlRender: page,
+      });
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("admits a native command on its user receipt before generation completes", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

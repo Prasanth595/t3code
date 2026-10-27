@@ -9,9 +9,12 @@ import type {
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
+import { HTML_RENDER_TOOL_NAME, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { htmlRenderFromToolItem, htmlRendersFromToolOutput } from "@t3tools/shared/toolOutput";
 import {
   defaultInstanceIdForDriver,
   type ModelSelection,
@@ -977,6 +980,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const pendingRequestsByNativeId = new Map<string, PendingOpenCodeRequest>();
         const subagentsByNativeItemId = new Map<string, OpenCodeSubagentContext>();
         const subagentsByChildSessionId = new Map<string, OpenCodeSubagentContext>();
+        // OpenCode returns MCP results as text; keep the published page for repeated completion events.
+        const htmlRendersByPartId = new Map<string, HtmlRenderReference>();
         const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
         // Busy children outlive parent settlement; keep their server open.
         const busySessionIds = new Set<string>();
@@ -1553,7 +1558,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             | "updatedAt"
           >;
           const input = toolInput(part);
-          const output = toolOutput(part);
+          const rawOutput = toolOutput(part);
+          let output: unknown = rawOutput;
           const isNativeTool = part.tool === "code_search" || part.tool === "apply_patch";
           if (!isNativeTool && part.tool.includes("_") && turn.mcpServerNames === undefined) {
             const serverNames = yield* OpenCodeRuntime.runOpenCodeSdk("mcp.status", (signal) =>
@@ -1578,6 +1584,25 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
                   title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
                 });
+          if (
+            matchingServers?.length === 1 &&
+            part.state.status === "completed" &&
+            resolveT3McpToolId(part.tool) === HTML_RENDER_TOOL_NAME
+          ) {
+            const reported = htmlRenderFromToolItem({ toolName: part.tool, output });
+            if (reported !== undefined) {
+              yield* mcpSessions.takeHtmlRender(turn.threadId, input, reported).pipe(Effect.ignore);
+            } else {
+              const key = `${turn.threadId}:${part.id}`;
+              const page =
+                htmlRendersByPartId.get(key) ??
+                (yield* mcpSessions.takeHtmlRender(turn.threadId, input));
+              if (page !== undefined) {
+                htmlRendersByPartId.set(key, page);
+                output = { htmlRender: page };
+              }
+            }
+          }
           const turnItem: OrchestrationV2TurnItem = matchingServers?.length
             ? {
                 ...base,
@@ -1590,7 +1615,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             : openCodeToolTurnItem(base, {
                 name: part.tool,
                 input,
-                output,
+                output: rawOutput,
                 completedMetadata:
                   part.state.status === "completed" ? part.state.metadata : undefined,
               });
@@ -1620,6 +1645,32 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             driver: OPENCODE_PROVIDER,
             turnItem,
           });
+          if (part.state.status === "completed" && part.tool.toLowerCase() === "execute") {
+            for (const [index, page] of htmlRendersFromToolOutput(rawOutput).entries()) {
+              const renderNativeId = `${part.id}:html-render:${index}`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: OPENCODE_PROVIDER,
+                turnItem: {
+                  ...base,
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: OPENCODE_PROVIDER,
+                    nativeItemId: renderNativeId,
+                  }),
+                  nodeId,
+                  nativeItemRef: providerRef(renderNativeId, "weak"),
+                  ordinal: itemOrdinal(turn, renderNativeId),
+                  status: "completed",
+                  title: page.title,
+                  type: "dynamic_tool",
+                  toolName: "html_render",
+                  input: {},
+                  output: { htmlRender: page },
+                  completedAt,
+                },
+              });
+            }
+          }
         });
 
         const emitTodo = Effect.fnUntraced(function* (

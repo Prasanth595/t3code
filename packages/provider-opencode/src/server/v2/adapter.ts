@@ -60,9 +60,12 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { HTML_RENDER_TOOL_NAME, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { htmlRenderFromToolItem, htmlRendersFromToolOutput } from "@t3tools/shared/toolOutput";
 
 import {
   isProviderNativeImageAttachment,
@@ -711,6 +714,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
+    // OpenCode 2 returns MCP results as text; keep the published page for repeated completion events.
+    const htmlRendersByToolCallId = new Map<string, HtmlRenderReference>();
     const stagedReverts = new Set<string>();
     const sessionGates = yield* KeyedLock.make<string>();
     const exclusive =
@@ -976,19 +981,65 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const completedAt = status === "running" ? null : updatedAt;
       const nativeId = `${turn.scope}${id}`;
       yield* emitNode(state, turn, nativeId, "tool_call", status, startedAt, completedAt);
+      let turnItem = openCodeToolTurnItem(
+        itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
+        {
+          name: tool.name,
+          input: tool.input,
+          output: result?.output,
+          completedMetadata: status === "completed" ? result?.metadata : undefined,
+        },
+      );
+      if (status === "completed" && resolveT3McpToolId(tool.name) === HTML_RENDER_TOOL_NAME) {
+        const reported = htmlRenderFromToolItem({ toolName: tool.name, output: result?.output });
+        if (reported !== undefined) {
+          yield* mcpSessions
+            .takeHtmlRender(turn.input.threadId, tool.input, reported)
+            .pipe(Effect.ignore);
+        } else {
+          const key = `${turn.input.threadId}:${nativeId}`;
+          const page =
+            htmlRendersByToolCallId.get(key) ??
+            (yield* mcpSessions.takeHtmlRender(turn.input.threadId, tool.input));
+          if (page !== undefined && turnItem.type === "dynamic_tool") {
+            htmlRendersByToolCallId.set(key, page);
+            turnItem = { ...turnItem, output: { htmlRender: page } };
+          }
+        }
+      }
       yield* emit({
         type: "turn_item.updated",
         driver,
-        turnItem: openCodeToolTurnItem(
-          itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
-          {
-            name: tool.name,
-            input: tool.input,
-            output: result?.output,
-            completedMetadata: status === "completed" ? result?.metadata : undefined,
-          },
-        ),
+        turnItem,
       });
+      if (status === "completed" && tool.name.toLowerCase() === "execute") {
+        const pages = htmlRendersFromToolOutput(result?.output);
+        const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId: nativeId });
+        for (const [index, page] of pages.entries()) {
+          const renderNativeId = `${nativeId}:html-render:${index}`;
+          yield* emit({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...itemBase(
+                state,
+                turn,
+                renderNativeId,
+                "completed",
+                startedAt,
+                completedAt,
+                updatedAt,
+              ),
+              nodeId,
+              type: "dynamic_tool",
+              toolName: "html_render",
+              input: {},
+              output: { htmlRender: page },
+              title: page.title,
+            },
+          });
+        }
+      }
     });
 
     const emitCompaction = Effect.fnUntraced(function* (
