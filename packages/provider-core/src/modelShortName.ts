@@ -18,6 +18,7 @@ const VARIANT_WORDS = new Set([
   "thinking",
   "reasoning",
   "build",
+  "code",
   "image",
   "vision",
   "audio",
