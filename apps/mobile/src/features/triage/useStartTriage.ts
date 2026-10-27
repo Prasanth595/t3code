@@ -58,8 +58,12 @@ export function useStartTriage() {
     // If the user goes elsewhere while this waits, the draft stays closed
     // instead of pulling them away. Split view changes params, not the route.
     const startRoute = activeRoute();
-    const routeChanged = () =>
-      activeRoute()?.key !== startRoute?.key || activeRoute()?.params !== startRoute?.params;
+    const routeChanged = () => {
+      const route = activeRoute();
+      if (route === startRoute) return false;
+      if (route === undefined || startRoute === undefined) return true;
+      return route.key !== startRoute.key || route.params !== startRoute.params;
+    };
     const scratch = await openScratch({ environmentId, input: {} });
     if (scratch._tag === "Failure") {
       if (!isAtomCommandInterrupted(scratch)) {
