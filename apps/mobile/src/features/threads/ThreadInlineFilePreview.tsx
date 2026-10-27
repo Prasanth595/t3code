@@ -84,7 +84,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
   }, []);
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pauses the native audio player when fullscreen video opens and drops the play request on finish or error
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the play request on fullscreen video, finish or error, and pauses the player for fullscreen
   useEffect(() => {
     if (fullscreenVideoOpen || status.didJustFinish || status.error) {
       // oxlint-disable-next-line react/set-state-in-effect -- Native completion and fullscreen takeover invalidate the pending playback request.

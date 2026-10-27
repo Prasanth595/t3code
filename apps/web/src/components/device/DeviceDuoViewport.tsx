@@ -39,7 +39,7 @@ export function DeviceDuoViewport(props: {
     onFrameListener,
   } = props;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes screen and model changes into the imperative 3D Duo viewer
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stores screen and model in refs, ends any active interaction, and pushes the screen into the 3D Duo viewer
   useEffect(() => {
     screenRef.current = props.screen;
     modelRef.current = props.model;

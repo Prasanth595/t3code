@@ -2943,7 +2943,7 @@ export default function ChatView(props: ChatViewProps) {
     !activeEnvironmentUnavailable &&
     !activePendingProgress &&
     !feedbackUploading;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resends the waiting message after the thread switches to local mode and sending is idle
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- switches the draft to local mode, then resends the waiting message once sending is idle
   useEffect(() => {
     if (
       !workLocallyResendReady ||

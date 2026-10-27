@@ -123,7 +123,7 @@ export function CloudEnvironmentConnectRows({
       .map((environment) => environment.environmentId),
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches relay environment discovery on mount and reports readiness when it resolves
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches relay discovery when its inputs change, unless hidden polling covers it, and reports readiness
   useEffect(() => {
     let active = true;
     if (onDiscoveryReady || !refreshWhileEmpty || document.visibilityState === "visible") {

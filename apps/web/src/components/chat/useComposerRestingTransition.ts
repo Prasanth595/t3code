@@ -435,7 +435,7 @@ export function useComposerRestingTransition(
     };
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the FLIP animation against committed DOM geometry before paint when the composer collapses
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the FLIP animation against committed DOM geometry before paint when the collapsed state changes
   useLayoutEffect(() => {
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;

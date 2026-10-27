@@ -151,7 +151,7 @@ export function FileTreeBrowser(props: {
     revealSelection(controlledSelectedPath);
   }, [controlledSelectedPath, revealSelection]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests directory listings from the server for every expanded directory
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests listings for expanded directories that are not yet loaded or pending
   useEffect(() => {
     const visit = (nodes: ReadonlyArray<FileTreeNode>) => {
       for (const node of nodes) {
