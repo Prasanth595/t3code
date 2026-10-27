@@ -1362,6 +1362,36 @@ describe("tile motion", () => {
       recent: recentOf([DESKTOP, rows]),
     });
   const gateRun = (issue: number) => statusRun(issue, { last_event: "gate_command" });
+  const near = (actual: number, expected: number) =>
+    expect(Math.abs(actual - expected)).toBeLessThan(2);
+  /** A ghost's laid-out box in the page, before its transition moves it: the layer's, and its offsets. */
+  const boxOf = (ghost: Element) => {
+    const element = ghost as HTMLElement;
+    const layer = element.offsetParent!.getBoundingClientRect();
+    return {
+      left: layer.left + element.offsetLeft,
+      top: layer.top + element.offsetTop,
+      width: element.offsetWidth,
+      height: element.offsetHeight,
+    };
+  };
+  /** The keyframes of the transition of one property of a ghost: where it starts, where it ends. */
+  const keyframesOf = (ghost: Element, property: string) => {
+    const flight = ghost
+      .getAnimations()
+      .find((animation) => (animation as CSSTransition).transitionProperty === property)!;
+    return (flight.effect as KeyframeEffect).getKeyframes();
+  };
+  /** Where a ghost's flight starts in the page: its box, displaced by the first transform. */
+  const startOf = (ghost: Element) => {
+    const start = new DOMMatrixReadOnly(String(keyframesOf(ghost, "transform")[0]!.transform));
+    const box = boxOf(ghost);
+    return { left: box.left + start.m41, top: box.top + start.m42 };
+  };
+  const flashOf = (node: Element) =>
+    node
+      .getAnimations()
+      .find((animation) => (animation as CSSAnimation).animationName === "factory-post-flash");
   const land = (ghost: Element) =>
     act(() => {
       ghost.dispatchEvent(
@@ -1389,7 +1419,27 @@ describe("tile motion", () => {
 
   it("animates nothing on the first load", async () => {
     using _state = await setup();
-    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    const loading = (environmentId: EnvironmentId, label: string) => ({
+      environmentId,
+      label,
+      status: resource<FactoryStatus>({ status: "loading" }),
+    });
+    await using page = await render(
+      createElement(
+        FactoryBelt,
+        props({
+          environments: [loading(DESKTOP, "Desktop"), loading(STUDIO, "Studio")],
+          showEnvironment: true,
+          recent: new Map([
+            [DESKTOP, resource({ status: "loading" })],
+            [STUDIO, resource({ status: "loading" })],
+          ]),
+        }),
+      ),
+    );
+    expect(page.all("[data-tile]")).toEqual([]);
+    await page.rerender(createElement(FactoryBelt, twoEnvironments()));
+    expect(page.all("[data-tile]").length).toBeGreaterThan(0);
     expect(ghostsOf(page)).toEqual([]);
     expect(page.all(".factory-tile-enter, .factory-tile-glow, .factory-post-flash")).toEqual([]);
   });
@@ -1426,11 +1476,21 @@ describe("tile motion", () => {
       easing: "cubic-bezier(0.2, 0.7, 0.2, 1)",
     });
 
+    // It flies to the tile that is hidden until it lands.
+    const destination = tile.getBoundingClientRect();
+    const box = boxOf(ghost!);
+    near(box.left, destination.left);
+    near(box.top, destination.top);
+    near(box.width, destination.width);
+    near(box.height, destination.height);
+
     await land(ghost!);
     expect(ghostsOf(page)).toEqual([]);
     expect(tile.style.visibility).toBe("");
     expect(tile.classList.contains("factory-tile-glow")).toBe(true);
     expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
+    const flash = flashOf(post(page, "gate"))!;
+    expect(flash.effect!.getTiming().duration).toBe(300);
 
     // The animations end on the elements that play them, and a child's ending is not theirs.
     await endFlash(tile.firstElementChild!, "x");
@@ -1491,12 +1551,22 @@ describe("tile motion", () => {
     expect(ghostsOf(page)).toHaveLength(1);
     expect(countOf(station(page, "done"))).toBe("0");
     expect(lane(page, "done").textContent).toContain("0 merged · 0 closed");
+    // It ends centred on the Done bin, shrunk and faded out.
+    const bin = page.all('[data-bin="done"]')[0]!.getBoundingClientRect();
+    const box = boxOf(ghost!);
+    near(box.left + box.width / 2, bin.left + bin.width / 2);
+    near(box.top + box.height / 2, bin.top + bin.height / 2);
+    const end = new DOMMatrixReadOnly(String(keyframesOf(ghost!, "transform").at(-1)!.transform));
+    expect([end.a, end.d].map((scale) => Math.round(scale * 100) / 100)).toEqual([0.55, 0.55]);
+    expect(String(keyframesOf(ghost!, "opacity").at(-1)!.opacity)).toBe("0");
 
     await land(ghost!);
     expect(ghostsOf(page)).toEqual([]);
     expect(countOf(station(page, "done"))).toBe("1");
     expect(lane(page, "done").textContent).toContain("1 merged · 0 closed");
     expect(post(page, "done").classList.contains("factory-post-flash")).toBe(true);
+    const flash = flashOf(post(page, "done"))!;
+    expect(flash.effect!.getTiming().duration).toBe(300);
   });
 
   it("holds the Stuck bin's count until the run that got stuck has slid into it", async () => {
@@ -1549,14 +1619,258 @@ describe("tile motion", () => {
     expect(fresh!.classList.contains("factory-tile-enter")).toBe(false);
   });
 
-  it("makes no ghost for a run that is gone from the board", async () => {
-    using _state = await setup();
-    await using page = await render(
-      createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+  describe("a run the status read drops before the recent runs list has a bin for it", () => {
+    const openRow = recentRow(4, { state: "pr-open", pr_url: "https://x/pull/4" });
+    const onRail = () => world([statusRun(4, { state: "pr-open" })], [openRow]);
+    const settledRow = (bin: "done" | "stuck") =>
+      bin === "done"
+        ? doneRow(4, "merged", at(14))
+        : recentRow(4, { state: "stuck", finished: true, status: "finished", reason: "no luck" });
+    const countIn = (page: Page, bin: "done" | "stuck") =>
+      bin === "done" ? countOf(station(page, "done")) : binCount(page, "stuck");
+
+    it.each(["done", "stuck"] as const)(
+      "parks the tile where it stood, reads the recent list now, then flies it to %s",
+      async (bin) => {
+        using _state = await setup();
+        await using page = await render(createElement(FactoryBelt, onRail()));
+        const stood = tilesOf(lane(page, "pr"))[0]!.getBoundingClientRect();
+
+        const dropped = world([], [openRow]);
+        await page.rerender(createElement(FactoryBelt, dropped));
+        const [parked] = ghostsOf(page);
+        expect(ghostsOf(page)).toHaveLength(1);
+        expect(tilesOf(lane(page, "pr"))).toEqual([]);
+        const box = boxOf(parked!);
+        near(box.left, stood.left);
+        near(box.top, stood.top);
+        near(box.width, stood.width);
+        near(box.height, stood.height);
+        // It stands still, and the bin has not heard of the run.
+        expect(parked!.getAnimations()).toEqual([]);
+        expect(countIn(page, bin)).toBe("0");
+        expect(dropped.recent.get(DESKTOP)!.refresh).toHaveBeenCalledTimes(1);
+
+        const settled = world([], [settledRow(bin)]);
+        await page.rerender(createElement(FactoryBelt, settled));
+        const [flying] = ghostsOf(page);
+        expect(ghostsOf(page)).toHaveLength(1);
+        expect(flying).not.toBe(parked);
+        expect(parked!.isConnected).toBe(false);
+        // It flies on from the place the parked one stood, and the count holds until it lands.
+        near(startOf(flying!).left, stood.left);
+        near(startOf(flying!).top, stood.top);
+        expect(countIn(page, bin)).toBe("0");
+        // Neither read asks for the list again: the first did.
+        expect(settled.recent.get(DESKTOP)!.refresh).not.toHaveBeenCalled();
+
+        await land(flying!);
+        expect(ghostsOf(page)).toEqual([]);
+        expect(countIn(page, bin)).toBe("1");
+        if (bin === "done") {
+          expect(post(page, "done").classList.contains("factory-post-flash")).toBe(true);
+        } else {
+          expect(page.all(".factory-post-flash")).toEqual([]);
+        }
+      },
     );
-    await page.rerender(createElement(FactoryBelt, world([], [])));
-    expect(ghostsOf(page)).toEqual([]);
-    expect(tilesOf(lane(page, "building"))).toEqual([]);
+
+    it("fades a parked tile out in place once nothing has listed it for five seconds", async () => {
+      using _state = await setup();
+      using _timers = fakeTimers();
+      vi.setSystemTime(NOW);
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
+      const [parked] = ghostsOf(page);
+      expect(ghostsOf(page)).toHaveLength(1);
+      await act(async () => void (await vi.advanceTimersByTimeAsync(4_999)));
+      expect(parked!.isConnected).toBe(true);
+      expect(parked!.style.opacity).toBe("");
+      await act(async () => void (await vi.advanceTimersByTimeAsync(1)));
+      expect(parked!.isConnected).toBe(true);
+      expect(parked!.style.opacity).toBe("0");
+      await act(async () => {
+        parked!.dispatchEvent(
+          new TransitionEvent("transitionend", { propertyName: "opacity", bubbles: true }),
+        );
+      });
+      expect(ghostsOf(page)).toEqual([]);
+    });
+
+    it("removes a faded ghost whose transition never ends", async () => {
+      using _state = await setup();
+      using _timers = fakeTimers();
+      vi.setSystemTime(NOW);
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(5_000)));
+      expect(ghostsOf(page)).toHaveLength(1);
+      await act(async () => void (await vi.advanceTimersByTimeAsync(1_000)));
+      expect(ghostsOf(page)).toEqual([]);
+    });
+
+    it("lands at once a run that a bin lists after its parked tile has faded", async () => {
+      using _state = await setup();
+      using _timers = fakeTimers();
+      vi.setSystemTime(NOW);
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(6_000)));
+      expect(ghostsOf(page)).toEqual([]);
+      await page.rerender(createElement(FactoryBelt, world([], [settledRow("done")])));
+      expect(ghostsOf(page)).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("1");
+    });
+
+    it("lands at once a run that a bin lists with no tile ever parked", async () => {
+      using _state = await setup();
+      await using page = await render(createElement(FactoryBelt, world([], [])));
+      await page.rerender(createElement(FactoryBelt, world([], [doneRow(9, "merged", at(14))])));
+      expect(ghostsOf(page)).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("1");
+    });
+
+    it("slides a parked tile from where it stands to its tile when the run is back on the rail", async () => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+      );
+      await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
+      const [parked] = ghostsOf(page);
+      expect(ghostsOf(page)).toHaveLength(1);
+      const stood = parked!.getBoundingClientRect();
+
+      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
+      const [sliding] = ghostsOf(page);
+      expect(ghostsOf(page)).toHaveLength(1);
+      expect(sliding).not.toBe(parked);
+      expect(parked!.isConnected).toBe(false);
+      const tile = tilesOf(lane(page, "gate"))[0]!;
+      expect(tile.style.visibility).toBe("hidden");
+      near(startOf(sliding!).left, stood.left);
+      near(startOf(sliding!).top, stood.top);
+      const destination = tile.getBoundingClientRect();
+      near(boxOf(sliding!).left, destination.left);
+      near(boxOf(sliding!).top, destination.top);
+
+      await land(sliding!);
+      expect(ghostsOf(page)).toEqual([]);
+      expect(tile.style.visibility).toBe("");
+      expect(tile.classList.contains("factory-tile-glow")).toBe(true);
+      expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
+    });
+
+    it("does not time out a parked tile that came back", async () => {
+      using _state = await setup();
+      using _timers = fakeTimers();
+      vi.setSystemTime(NOW);
+      await using page = await render(
+        createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+      );
+      await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
+      await page.rerender(createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])));
+      await land(ghostsOf(page)[0]!);
+      expect(ghostsOf(page)).toEqual([]);
+      await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+      expect(ghostsOf(page)).toEqual([]);
+      expect(tilesOf(lane(page, "building"))).toHaveLength(1);
+    });
+
+    it("keeps a run whose bin is known first on its lane, then flies it when the status drops it", async () => {
+      using _state = await setup();
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      const open = statusRun(4, { state: "pr-open" });
+      await page.rerender(
+        createElement(FactoryBelt, world([open], [doneRow(4, "merged", at(14))])),
+      );
+      expect(tilesOf(lane(page, "pr"))).toHaveLength(1);
+      expect(countOf(station(page, "done"))).toBe("0");
+      expect(ghostsOf(page)).toEqual([]);
+
+      await page.rerender(createElement(FactoryBelt, world([], [doneRow(4, "merged", at(14))])));
+      const [ghost] = ghostsOf(page);
+      expect(ghostsOf(page)).toHaveLength(1);
+      expect(tilesOf(lane(page, "pr"))).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("0");
+      await land(ghost!);
+      expect(ghostsOf(page)).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("1");
+      expect(post(page, "done").classList.contains("factory-post-flash")).toBe(true);
+    });
+  });
+
+  describe("a bin's count when the ghost's transition does not end", () => {
+    it("lands a run folded into a lane's +N tile at once, as it has no tile to fly", async () => {
+      using _state = await setup(1440);
+      const runs = Array.from({ length: 12 }, (_, i) =>
+        statusRun(100 + i, { state: "pr-open", for_ms: (i + 1) * 3_600_000 }),
+      );
+      const rows = runs.map((_, i) =>
+        recentRow(100 + i, { state: "pr-open", started_ts: iso(at(14) - i * 60_000) }),
+      );
+      await using page = await render(createElement(FactoryBelt, world(runs, rows)));
+      await expect.poll(() => lane(page, "pr").querySelector("button")).not.toBeNull();
+      // The oldest start is the last of the lane, and so is folded.
+      expect(tilesOf(lane(page, "pr")).length).toBeLessThan(12);
+      expect(binCount(page, "stuck")).toBe("0");
+      await page.rerender(
+        createElement(
+          FactoryBelt,
+          world(runs.slice(0, 11), [
+            ...rows.slice(0, 11),
+            recentRow(111, {
+              state: "stuck",
+              finished: true,
+              status: "finished",
+              started_ts: rows[11]!.started_ts,
+            }),
+          ]),
+        ),
+      );
+      expect(binCount(page, "stuck")).toBe("1");
+      expect(ghostsOf(page)).toEqual([]);
+    });
+
+    it("lands a run when the transition of its ghost is cancelled", async () => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(
+          FactoryBelt,
+          world([statusRun(4, { state: "pr-open" })], [recentRow(4, { state: "pr-open" })]),
+        ),
+      );
+      await page.rerender(createElement(FactoryBelt, world([], [doneRow(4, "merged", at(14))])));
+      const [ghost] = ghostsOf(page);
+      expect(ghostsOf(page)).toHaveLength(1);
+      expect(countOf(station(page, "done"))).toBe("0");
+      await act(async () => {
+        ghost!.dispatchEvent(
+          new TransitionEvent("transitioncancel", { propertyName: "transform", bubbles: true }),
+        );
+      });
+      expect(ghostsOf(page)).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("1");
+    });
+
+    it("lands a run when its ghost's transition has not ended a little after the slide should have", async () => {
+      using _state = await setup();
+      using _timers = fakeTimers();
+      vi.setSystemTime(NOW);
+      await using page = await render(
+        createElement(
+          FactoryBelt,
+          world([statusRun(4, { state: "pr-open" })], [recentRow(4, { state: "pr-open" })]),
+        ),
+      );
+      await page.rerender(createElement(FactoryBelt, world([], [doneRow(4, "merged", at(14))])));
+      expect(ghostsOf(page)).toHaveLength(1);
+      await act(async () => void (await vi.advanceTimersByTimeAsync(999)));
+      expect(ghostsOf(page)).toHaveLength(1);
+      expect(countOf(station(page, "done"))).toBe("0");
+      await act(async () => void (await vi.advanceTimersByTimeAsync(1)));
+      expect(ghostsOf(page)).toEqual([]);
+      expect(countOf(station(page, "done"))).toBe("1");
+    });
   });
 
   describe("with reduced motion", () => {
