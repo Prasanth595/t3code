@@ -6,6 +6,8 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -23,10 +25,12 @@ import {
 } from "./fixtures/transferBudget.ts";
 
 export const THREAD_ID = ThreadId.make("transfer-budget-thread");
+type ThreadCreatedEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "thread.created" }>;
 export function threadCreated(
   provider: ProviderDriverKind,
   threadId: ThreadId = THREAD_ID,
-): OrchestrationV2DomainEvent {
+  overrides: Partial<ThreadCreatedEvent["payload"]> = {},
+): ThreadCreatedEvent {
   const now = DateTime.makeUnsafe("2026-06-01T00:00:00Z");
   return {
     id: EventId.make(`thread-created:${threadId}`),
@@ -58,6 +62,7 @@ export function threadCreated(
       settledAt: null,
       lastVisitedAt: null,
       deletedAt: null,
+      ...overrides,
     },
   };
 }
@@ -192,6 +197,8 @@ export const LONG_TURN_WORK_ROWS = 900;
 /**
  * Three short user turns, then one agent turn far longer than a cold-open
  * window, with the item kinds a long agent run produces. One batch per turn.
+ * IDs follow the composite shapes the Claude adapter stores, and every
+ * assistant message has its record, as real threads do.
  */
 export function longTurnThreadBatches(
   provider: ProviderDriverKind,
@@ -208,8 +215,14 @@ export function longTurnThreadBatches(
 
   const turn = (index: number, workRows: number): OrchestrationV2DomainEvent[] => {
     const now = DateTime.makeUnsafe(`2026-06-02T00:${String(index).padStart(2, "0")}:00Z`);
-    const runId = RunId.make(`long-turn-run-${index}`);
-    const nodeId = NodeId.make(`long-turn-node-${index}`);
+    const runId = RunId.make(`run:thread:${threadId}:ordinal:${index + 1}`);
+    const nodeId = NodeId.make(`node:run:${encodeURIComponent(runId)}:root`);
+    const providerThreadId = ProviderThreadId.make(
+      `provider-thread:provider:${provider}:native-thread:${encodeURIComponent(`pending:${runId}`)}`,
+    );
+    const providerTurnId = ProviderTurnId.make(
+      `provider-turn:provider:${provider}:native-turn:${encodeURIComponent(`turn:run-attempt:${encodeURIComponent(runId)}:attempt:1`)}`,
+    );
     const common = {
       threadId,
       runId,
@@ -237,14 +250,15 @@ export function longTurnThreadBatches(
     };
     const base = (row: string, title: string | null) => {
       ordinal += 1;
+      const nativeId = `toolu_01LongTurn${index}x${row}`;
       return {
-        id: TurnItemId.make(`long-turn-item-${index}-${row}`),
+        id: TurnItemId.make(`turn-item:provider:${provider}:native-item:${nativeId}`),
         threadId,
         runId,
         nodeId,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: { driver: provider, nativeId, strength: "strong" as const },
         parentItemId: null,
         ordinal,
         status: "completed" as const,
@@ -360,14 +374,6 @@ export function longTurnThreadBatches(
             input: { query: `module ${row}` },
             output: { text: text(index, row, 6_144) },
           };
-        case 5:
-          return {
-            ...base(String(row), null),
-            type: "assistant_message",
-            messageId: MessageId.make(`long-turn-progress-${index}-${row}`),
-            text: text(index, row, 600),
-            streaming: false,
-          };
         default:
           return {
             ...base(String(row), `Run check ${row}`),
@@ -381,6 +387,10 @@ export function longTurnThreadBatches(
 
     message("user", "prompt", `Continue the feature work, step ${index}.`);
     for (let row = 0; row < workRows; row++) {
+      if (row % 8 === 5) {
+        message("assistant", String(row), text(index, row, 1_500));
+        continue;
+      }
       events.push({
         ...common,
         id: EventId.make(`long-turn-work-${index}-${row}`),
@@ -405,4 +415,41 @@ export function longTurnThreadBatches(
     turn(2, 4),
     turn(3, LONG_TURN_WORK_ROWS),
   ];
+}
+
+export const SHELL_SETTLED_THREADS = 100;
+export const SHELL_IDLE_SUBAGENTS = 40;
+
+/**
+ * A busy sidebar: settled top-level threads, settled a minute apart, with idle subagent children
+ * under the newest ones. Opted-in cold connects skip the children and all but 25 settled threads.
+ */
+export function shellFleetEvents(
+  provider: ProviderDriverKind,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  return Array.from({ length: SHELL_SETTLED_THREADS }, (_, index) => {
+    const threadId = ThreadId.make(`transfer-budget-settled-${index}`);
+    const settledAt = DateTime.makeUnsafe(Date.UTC(2026, 5, 3, 0, index));
+    const settled = threadCreated(provider, threadId, {
+      title: `Settled transfer thread ${index}`,
+      branch: `feature/settled-${index}`,
+      settledOverride: "settled",
+      settledAt,
+      updatedAt: settledAt,
+    });
+    if (index < SHELL_SETTLED_THREADS - SHELL_IDLE_SUBAGENTS) return [settled];
+    const childId = ThreadId.make(`transfer-budget-settled-${index}-subagent`);
+    return [
+      settled,
+      threadCreated(provider, childId, {
+        title: `Subagent of settled thread ${index}`,
+        createdBy: "agent",
+        lineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: threadId,
+        },
+      }),
+    ];
+  }).flat();
 }
