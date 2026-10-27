@@ -22,7 +22,7 @@ export class AgentAlerts extends Context.Service<
   }
 >()("t3/notifications/AgentAlerts") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const subscribers = yield* Ref.make(0);
   const alerts = yield* PubSub.unbounded<AgentAlert>();
@@ -30,11 +30,14 @@ export const make = Effect.gen(function* () {
 
   const stream = Stream.unwrap(
     Effect.gen(function* () {
+      // Subscribe first. Counting before the subscription exists tells Claude the
+      // alert was sent in a window where publish has nobody to deliver to.
+      const subscription = yield* PubSub.subscribe(alerts);
       yield* Ref.update(subscribers, (count) => count + 1);
       yield* Effect.addFinalizer(() =>
         Ref.update(subscribers, (count) => (count > 0 ? count - 1 : 0)),
       );
-      return Stream.fromPubSub(alerts);
+      return Stream.fromSubscription(subscription);
     }),
   );
 

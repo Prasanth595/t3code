@@ -741,7 +741,9 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
-    Ws.layer.pipe(Layer.provide(layerAgentAlerts)),
+    // serve forks its memo map. Building AgentAlerts inside the route would be a
+    // second instance, and Claude would publish to a pubsub no client reads.
+    Ws.layer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
