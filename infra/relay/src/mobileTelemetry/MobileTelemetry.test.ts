@@ -47,7 +47,7 @@ interface Harness {
   readonly objects?: Readonly<Record<string, string>>;
 }
 
-const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
+const makeHarness = (options: Harness = {}) => {
   const sent: Array<HttpClientRequest.HttpClientRequest> = [];
   const execute =
     options.execute ??
@@ -115,7 +115,7 @@ const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
       return yield* Deferred.await(response);
     });
   return { sent, send };
-});
+};
 
 const ingest = (signal: string, body: string) =>
   new Request(`https://relay.test/v1/mobile/observe/${PROJECT_ID}/v1/${signal}`, {
@@ -165,7 +165,7 @@ const forwardedExceptions = (request: HttpClientRequest.HttpClientRequest) => {
 describe("MobileTelemetry", () => {
   it.effect("forwards each signal to its Axiom dataset with the relay's token", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = makeHarness();
       const body = encodeJson({ resourceMetrics: [] });
       for (const signal of ["metrics", "traces", "logs"] as const) {
         const response = yield* harness.send(ingest(signal, body));
@@ -191,7 +191,7 @@ describe("MobileTelemetry", () => {
 
   it.effect("passes Axiom's status and Retry-After back for Observe's retries", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({
+      const harness = makeHarness({
         execute: (request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -211,7 +211,7 @@ describe("MobileTelemetry", () => {
 
   it.effect("symbolicates JS exceptions with the OTA update's map, else the build's", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({
+      const harness = makeHarness({
         objects: {
           [`android/ota/${UPDATE_ID}.map`]: SOURCE_MAP,
           [`ios/build/${BUILD_ID}.map`]: SOURCE_MAP,
@@ -245,7 +245,7 @@ describe("MobileTelemetry", () => {
   it.effect("forwards the stack untouched when the OTA update's map is missing", () =>
     Effect.gen(function* () {
       // The build's map describes the embedded bundle, not the update that threw.
-      const harness = yield* makeHarness({
+      const harness = makeHarness({
         objects: { [`android/build/${BUILD_ID}.map`]: SOURCE_MAP },
       });
       const body = encodeJson({
@@ -270,7 +270,7 @@ describe("MobileTelemetry", () => {
 
   it.effect("answers 413 for a body over the cap without forwarding it", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = makeHarness();
       const tooLarge = "x".repeat(MobileTelemetry.MOBILE_TELEMETRY_MAX_BODY_BYTES + 1);
       expect((yield* harness.send(ingest("logs", tooLarge))).status).toBe(413);
       expect(harness.sent).toEqual([]);
