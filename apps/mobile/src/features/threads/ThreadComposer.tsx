@@ -201,8 +201,11 @@ export function useCompactComposerEditor(
         editorX.set(x);
         editorWidth.set(width);
         const compactWidth = Math.max(0, width - 8);
+        const attachmentCount = state.rowAttachmentCount;
         setSlot((current) =>
-          current.compactWidth === compactWidth ? current : { ...current, compactWidth },
+          current.compactWidth === compactWidth && current.attachmentCount === attachmentCount
+            ? current
+            : { ...current, compactWidth, attachmentCount },
         );
       }
     },

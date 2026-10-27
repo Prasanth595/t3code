@@ -23,6 +23,7 @@ function composer(
     readonly contentSize?: { readonly width: number; readonly height: number };
     readonly compactWidth?: number;
     readonly attachmentCount?: number;
+    readonly measuredAttachmentCount?: number;
   } = {},
 ) {
   const { isExpanded, modelIconOnly } = resolveCompactComposerLayout({
@@ -30,6 +31,7 @@ function composer(
       ...EMPTY_COMPACT_COMPOSER_SLOT,
       rowWidth: input.rowWidth ?? NARROW,
       compactWidth: input.compactWidth ?? 200,
+      attachmentCount: input.measuredAttachmentCount ?? input.attachmentCount ?? 0,
     },
     isFocused: input.isFocused ?? false,
     isAndroid: input.isAndroid ?? false,
@@ -117,5 +119,17 @@ describe("compact composer layout", () => {
 
     slot = compactSlotAfterLabelLayout(slot, { ...label, width: 160 });
     expect(composer({ ...line, compactWidth: slot.compactWidth }).isExpanded).toBe(false);
+  });
+
+  it("re-measures a narrow row's slot when its thumbnail is removed with the card open", () => {
+    const line = { value: "a short line", contentSize: { width: 150, height: LINE_HEIGHT } };
+    const measuredWithThumbnail = { compactWidth: 138, measuredAttachmentCount: 1 };
+    expect(composer({ ...line, ...measuredWithThumbnail, attachmentCount: 1 }).isExpanded).toBe(
+      true,
+    );
+    expect(composer({ ...line, ...measuredWithThumbnail, attachmentCount: 0 }).isExpanded).toBe(
+      false,
+    );
+    expect(composer({ ...line, compactWidth: 172 }).isExpanded).toBe(false);
   });
 });

@@ -8,12 +8,15 @@ interface CompactComposerSlot {
   readonly rowWidth: number;
   /** The editor's collapsed width, or 0 until it is measured again. */
   readonly compactWidth: number;
+  /** Thumbnails in the row when `compactWidth` was measured; it is stale for any other count. */
+  readonly attachmentCount: number;
   readonly label: { readonly width: number; readonly isExpanded: boolean };
 }
 
 export const EMPTY_COMPACT_COMPOSER_SLOT: CompactComposerSlot = {
   rowWidth: 0,
   compactWidth: 0,
+  attachmentCount: 0,
   label: { width: 0, isExpanded: false },
 };
 
@@ -64,7 +67,9 @@ export function resolveCompactComposerLayout(input: {
   readonly modelIconOnly: boolean;
   readonly labelShownAtRest: boolean;
 } {
-  const { rowWidth, compactWidth } = input.slot;
+  const { rowWidth } = input.slot;
+  const compactWidth =
+    input.slot.attachmentCount === input.rowAttachmentCount ? input.slot.compactWidth : 0;
   const isWide = isWideComposerRow(rowWidth);
   const opensOnFocus =
     rowWidth > 0 &&
