@@ -102,11 +102,14 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-// What the streams report about their source. It lives outside the player so
-// the chat canvas lays out the frame from the same source size the player uses.
-const useStreamedSourceSizes = create<{
-  readonly viewports: Record<string, PreviewStreamViewport>;
-}>(() => ({ viewports: {} }));
+// What the stream reports about its source. It lives outside the player so the
+// chat canvas lays out the frame from the same source size the player uses. One
+// slot is enough, since only the shown thread renders a player, and it keeps the
+// store from collecting an entry for every tab a session ever streamed.
+const useStreamedSourceSize = create<{
+  readonly key: string;
+  readonly viewport: PreviewStreamViewport;
+} | null>(() => null);
 
 const NO_DEVICE_SCREEN_ATOM = Atom.make<DeviceScreenSize | null>(null).pipe(
   Atom.withLabel("device-stream-screen:none"),
@@ -140,11 +143,12 @@ function useBrowserMiniPlayerSource(threadRef: ScopedThreadRef | null, tabId: st
     threadRef !== null &&
     snapshot?.runtime === "server" &&
     !rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot);
-  const streamViewport = useStreamedSourceSizes((state) =>
-    threadRef && tabId !== null
-      ? (state.viewports[
-          streamedSourceKey(threadRef, previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)))
-        ] ?? null)
+  const streamViewport = useStreamedSourceSize((state) =>
+    threadRef &&
+    tabId !== null &&
+    state?.key ===
+      streamedSourceKey(threadRef, previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)))
+      ? state.viewport
       : null,
   );
   const sourceSize: PreviewMiniPlayerSize =
@@ -314,12 +318,15 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               followSize={false}
               controlPosition="bottom"
               onViewport={(viewport) =>
-                useStreamedSourceSizes.setState((state) => {
-                  const current = state.viewports[viewportKey];
-                  return current?.width === viewport.width && current.height === viewport.height
-                    ? state
-                    : { viewports: { ...state.viewports, [viewportKey]: viewport } };
-                })
+                useStreamedSourceSize.setState(
+                  (state) =>
+                    state?.key === viewportKey &&
+                    state.viewport.width === viewport.width &&
+                    state.viewport.height === viewport.height
+                      ? state
+                      : { key: viewportKey, viewport },
+                  true,
+                )
               }
               onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "floating")}
               className="size-full"

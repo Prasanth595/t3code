@@ -75,7 +75,8 @@ export function ThreadDetailsCard({
           ? current
           : { key: measurementKey, heights: { ...heights, [density]: fittingHeight } };
       });
-      // The canvas keeps preview frames clear of the full card.
+      // Only the laid-out DOM knows the full card height, and the canvas keeps preview
+      // frames clear of it, so it is reported from this measure effect.
       if (density === "full" && cardWidth !== undefined) {
         measureDetailsCard?.({
           threadRef: { environmentId, threadId },
