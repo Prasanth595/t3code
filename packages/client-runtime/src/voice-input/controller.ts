@@ -66,6 +66,8 @@ type TranscriptCommitResult =
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
 
+const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
+
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
   current: VoiceDraftSnapshot | null,
@@ -87,19 +89,19 @@ export function resolveTranscriptCommit(
   }
 
   const isEmptySelection = captured.selection.start === captured.selection.end;
-  const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
-  const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
+  const language = locale.split(/[-_]/)[0]!.toLowerCase();
+  const usesWordSpacing = !WORD_SPACELESS_LANGUAGES.has(language);
   let insertion = replacement;
-  if (isEmptySelection && usesEnglishSpacing) {
+  if (isEmptySelection && usesWordSpacing) {
     const left = captured.text[captured.selection.start - 1];
     const right = captured.text[captured.selection.start];
     const leftNeedsBoundary =
       left !== undefined &&
-      /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
+      /[\p{L}\p{M}\p{N}.!?,:;)\]}'"]/u.test(left) &&
       (right === undefined || /\s/.test(right));
     const rightNeedsBoundary =
       right !== undefined &&
-      /[A-Za-z0-9([{'"]/.test(right) &&
+      /[\p{L}\p{N}([{'"]/u.test(right) &&
       (left === undefined || /\s/.test(left));
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
@@ -184,7 +186,7 @@ export class VoiceInputController {
   private state: VoiceInputState = IDLE_STATE;
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
-  private transcription: PreparedVoiceTranscription | null = null;
+  private transcription: Promise<PreparedVoiceTranscription> | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
@@ -245,15 +247,21 @@ export class VoiceInputController {
         return;
       }
 
-      try {
-        this.transcription = await runTranscriptionOperation(() =>
-          transcriber.prepare({ signal: abortController.signal }),
-        );
-      } catch (error) {
-        if (this.isCurrent(operationToken)) this.setError(preparationErrorMessage(error), "retry");
-        return;
-      }
-      if (!this.isCurrent(operationToken)) return;
+      // Record while the speech model prepares so the first words are not lost.
+      const transcription = runTranscriptionOperation(() =>
+        transcriber.prepare({ signal: abortController.signal }),
+      );
+      this.transcription = transcription;
+      transcription.catch((error: unknown) => {
+        if (!this.isCurrent(operationToken)) return;
+        const message = preparationErrorMessage(error);
+        if (this.state.phase === "recording") {
+          void this.discardRecording(message);
+        } else if (this.state.phase === "preparing") {
+          this.invalidateOperation();
+          this.setError(message, "retry");
+        }
+      });
 
       await this.dependencies.configureRecording();
       this.recordingConfigured = true;
@@ -388,9 +396,18 @@ export class VoiceInputController {
       }
 
       const recordingUri = this.recordingUri;
-      const transcription = this.transcription;
       const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
+      let transcription: PreparedVoiceTranscription;
+      try {
+        transcription = await this.transcription;
+      } catch (error) {
+        if (this.isCurrent(operationToken)) {
+          this.setError(preparationErrorMessage(error), "retry");
+        }
+        return;
+      }
+      if (!this.isCurrent(operationToken)) return;
       let transcript: string;
       try {
         transcript = await runTranscriptionOperation(() =>
@@ -462,6 +479,10 @@ export class VoiceInputController {
     }
     this.ownedRecordingUris.clear();
     await this.releaseAudioSession();
+    // Preparation cancels cooperatively; the next session must not overlap it.
+    if (this.sessionToken) this.sessionToken.abandoned = true;
+    this.transcriptionAbortController?.abort();
+    await this.transcription?.catch(() => {});
     releaseSession(this.sessionToken);
     this.sessionToken = null;
     this.capturedDraft = null;

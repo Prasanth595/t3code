@@ -971,7 +971,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               ]}
             >
               <ComposerEditor
-                hidden={props.hidden}
+                // display: none recreates the iOS view, so its revision history must reset too.
+                hidden={props.hidden || showsCompactDictation}
                 draftKey={composerDraftKey}
                 environmentId={props.environmentId}
                 onOpenMention={(path) => {
