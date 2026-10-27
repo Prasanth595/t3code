@@ -59,7 +59,7 @@ export function secretProviderFromDraft(
     id = target.mode === "edit" ? target.id : secretProviderIdFromName(label.success);
     if (id === null) nameIssue = "The name needs at least one letter or digit.";
     else if (target.mode === "add" && existingIds.has(id))
-      nameIssue = `A secret provider named ${label.success} exists.`;
+      nameIssue = "A secret provider with this name exists.";
   }
 
   if (

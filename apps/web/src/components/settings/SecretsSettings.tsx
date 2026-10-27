@@ -36,18 +36,12 @@ const SECRET_PROVIDER_KINDS: Readonly<
   "1password": { name: "1Password", icon: OnePasswordIcon },
 };
 
-/** Secret providers belong to one environment, so this page shows the representative one. */
 export function SecretsSettingsPanel() {
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
-  const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
+  const { environment } = useSettingsScope();
   return (
     <SettingsPageContainer>
       {environment?.connection.phase === "connected" ? (
-        <EnvironmentSecretProviders
-          key={environment.environmentId}
-          environment={environment}
-          titleSuffix={aggregate ? ` · ${environment.label}` : ""}
-        />
+        <EnvironmentSecretProviders key={environment.environmentId} environment={environment} />
       ) : (
         <SettingsSection {...searchableSetting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
@@ -61,10 +55,8 @@ export function SecretsSettingsPanel() {
 
 function EnvironmentSecretProviders({
   environment,
-  titleSuffix,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly titleSuffix: string;
 }) {
   const environmentId = environment.environmentId;
   const sessionState = useEnvironmentSessionState(environmentId);
@@ -90,13 +82,10 @@ function EnvironmentSecretProviders({
     dialog?.mode === "edit" && editingConfig !== undefined
       ? { id: dialog.id, config: editingConfig }
       : undefined;
-  const section = searchableSetting("secret-providers");
-
   return (
     <>
       <SettingsSection
-        id={section.id}
-        title={`${section.title}${titleSuffix}`}
+        {...searchableSetting("secret-providers")}
         headerAction={
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setDialog({ mode: "add" })}>

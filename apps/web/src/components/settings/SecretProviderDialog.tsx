@@ -88,6 +88,7 @@ export function SecretProviderDialog({
                 value={draft.name}
                 onChange={(event) => update({ name: event.target.value })}
                 readOnly={existing !== undefined}
+                maxLength={64}
                 aria-invalid={nameError !== undefined}
                 aria-describedby={
                   nameError !== undefined ? "secret-provider-name-error" : undefined
@@ -132,7 +133,8 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                The account shorthand, sign-in address, or ID that op account list shows.
+                The account shorthand, sign-in address without https://, or ID that op account list
+                shows.
               </p>
             </div>
           </form>
