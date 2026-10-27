@@ -5,7 +5,7 @@
 // A dependency change also gets the unused-patch install check below. CI still
 // runs the full test suites and the jobs listed in the summary.
 //
-//   vp run check:changed          compare against the merge base with origin/main
+//   vp run check:changed          compare against the closest merge base with any remote main
 //   vp run check:changed <ref>    compare against the merge base with <ref>
 //
 // Uncommitted and untracked files count. Affected packages come from
@@ -32,18 +32,34 @@ const git = (...args: Array<string>) =>
     .split("\n")
     .filter(Boolean);
 
-const ref = process.argv[2] ?? "origin/main";
-const mergeBase = NodeChildProcess.spawnSync("git", ["merge-base", "HEAD", ref], {
-  cwd: root,
-  encoding: "utf8",
-});
-if (mergeBase.status !== 0) {
-  console.error(
-    `check:changed: no merge base with ${ref}. Run \`git fetch origin\` or pass a ref.`,
-  );
+const mergeBaseWith = (ref: string) => {
+  const result = NodeChildProcess.spawnSync("git", ["merge-base", "HEAD", ref], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() : undefined;
+};
+
+// A fork's own main often lags upstream, so take whichever remote main is closest to HEAD.
+// Remote names can contain "/", so build each ref from `git remote` rather than a refs glob.
+const explicitRef = process.argv[2];
+const candidates = explicitRef
+  ? [{ ref: explicitRef, rev: explicitRef }]
+  : git("remote").map((name) => ({ ref: `${name}/main`, rev: `refs/remotes/${name}/main` }));
+const closest = candidates
+  .flatMap(({ ref, rev }) => {
+    const candidateBase = mergeBaseWith(rev);
+    if (!candidateBase) return [];
+    const ahead = Number(git("rev-list", "--count", `${candidateBase}..HEAD`)[0]);
+    return [{ ref, base: candidateBase, ahead }];
+  })
+  .sort((a, b) => a.ahead - b.ahead)[0];
+if (!closest) {
+  const tried = candidates.map((candidate) => candidate.ref).join(", ") || "a remote main";
+  console.error(`check:changed: no merge base with ${tried}. Run \`git fetch\` or pass a ref.`);
   process.exit(1);
 }
-const base = mergeBase.stdout.trim();
+const { ref, base } = closest;
 // --no-renames lists a rename as its old and new path, as CI does.
 const untracked = git("ls-files", "--others", "--exclude-standard");
 const files = [
@@ -51,10 +67,10 @@ const files = [
 ].sort();
 
 if (files.length === 0) {
-  console.log(`check:changed: no changes since ${base.slice(0, 12)}.`);
+  console.log(`check:changed: no changes since ${base.slice(0, 12)} (${ref}).`);
   process.exit(0);
 }
-console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
+console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)} (${ref})`);
 
 // Ignored generated sources, declarations, env files, and install state affect check results.
 // Include them in the key, but skip large ignored folders that no check reads.
