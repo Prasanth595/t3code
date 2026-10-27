@@ -465,6 +465,7 @@ it.layer(
               }),
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
+                listLocalBranchNames: () => Effect.succeed(["feature"]),
                 createWorktree: () =>
                   Effect.gen(function* () {
                     creations++;
