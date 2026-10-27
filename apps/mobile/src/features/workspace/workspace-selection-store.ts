@@ -46,6 +46,8 @@ export function saveWorkspaceSelections(): Promise<void> {
   // Marked saved only once written, so a failed write is retried on the next background.
   return savePreferencesPatch({ workspaceSelections: writing }).then(() => {
     saved = writing;
+    // Pages opened while it wrote, such as after a quick return, are written before resolving.
+    if (selections !== writing) return saveWorkspaceSelections();
   });
 }
 
