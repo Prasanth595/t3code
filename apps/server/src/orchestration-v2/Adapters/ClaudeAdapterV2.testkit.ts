@@ -813,7 +813,7 @@ function makeReplayQueryRunner(
         ),
         offer: (message, onQueued, canQueue) =>
           replayEffect(() => {
-            if (canQueue?.() === false) throw new Error("Input is no longer eligible.");
+            if (canQueue?.() === false) return false;
             assertNextOutboundFrame(makeClaudePromptOfferFrame(message));
             onQueued?.();
           }),

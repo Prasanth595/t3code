@@ -158,7 +158,7 @@ it.effect.each(deliveries)(
                 offer: (message, onQueued, canQueue) =>
                   Effect.try({
                     try: () => {
-                      if (canQueue?.() === false) throw new Error("Input is no longer eligible.");
+                      if (canQueue?.() === false) return false;
                       offers.push(message);
                       nativeQueue.push(message);
                       onQueued?.();
