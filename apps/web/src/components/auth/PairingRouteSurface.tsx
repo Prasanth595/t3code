@@ -73,6 +73,7 @@ export function PairingRouteSurface({
     void submitCredential(token);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- strips the pairing token from the URL and submits it once when the route carries one
   useEffect(() => {
     if (!autoPairToken || autoSubmitAttemptedRef.current) {
       return;
@@ -197,6 +198,7 @@ export function HostedPairingRouteSurface() {
     void submitHostedPairingRequest();
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- strips the pairing token from the URL and submits the hosted pairing request once on mount
   useEffect(() => {
     if (submitAttemptedRef.current) {
       return;

@@ -165,6 +165,7 @@ function ProjectFaviconImage(props: {
   );
   // Registers with the module-level loader before the Image's native onLoad/onError can fire,
   // so stale loads for a superseded URL under the same cacheKey are ignored.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers with the module-level favicon loader before the native Image can report load or error
   useLayoutEffect(() => {
     if (faviconRequest === null) return;
     return beginProjectFaviconRequest(faviconRequest);
