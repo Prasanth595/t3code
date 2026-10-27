@@ -38,6 +38,7 @@ import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEnt
 import { useNowMinute } from "~/hooks/useNowMinute";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
+import { resolveModelShortName } from "~/modelSelection";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
@@ -557,7 +558,12 @@ function UnplacedGuestMessage({
 
 /** The thread's model, labeled as the owner's composer labels it, with no way to change it. */
 function GuestModelLabel({ model }: { readonly model: GuestThreadModel }) {
-  const label = getTriggerDisplayModelName({ slug: model.name, ...model });
+  const shortName = resolveModelShortName(model, model.driver);
+  const label = getTriggerDisplayModelName({
+    slug: model.name,
+    ...model,
+    ...(shortName ? { shortName } : {}),
+  });
   return (
     <ComposerControl
       render={<span />}

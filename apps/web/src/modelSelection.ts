@@ -87,6 +87,15 @@ function appendUnavailableDynamicModelSelection(
   return [...options, { slug, name: slug, isCustom: false, isUnavailable: true }];
 }
 
+export function resolveModelShortName(
+  model: { readonly name: string; readonly shortName?: string | undefined },
+  driverKind: ProviderDriverKind | null,
+): string | undefined {
+  if (model.shortName) return model.shortName;
+  const families = driverKind ? providerClients.get(driverKind)?.modelFamilies : undefined;
+  return modelShortName(model.name, families ?? []);
+}
+
 function toAppModelOption(
   model: ServerProvider["models"][number],
   driverKind: ProviderDriverKind,
@@ -96,9 +105,7 @@ function toAppModelOption(
     name: model.name,
     isCustom: model.isCustom,
   };
-  const shortName =
-    model.shortName ??
-    modelShortName(model.name, providerClients.get(driverKind)?.modelFamilies ?? []);
+  const shortName = resolveModelShortName(model, driverKind);
   if (shortName) option.shortName = shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.aliases) option.aliases = model.aliases;
@@ -183,7 +190,13 @@ function getAppModelOptions(
     }
 
     seen.add(entry.slug);
-    options.push({ slug: entry.slug, name: entry.name, isCustom: true });
+    const shortName = resolveModelShortName(entry, provider);
+    options.push({
+      slug: entry.slug,
+      name: entry.name,
+      isCustom: true,
+      ...(shortName ? { shortName } : {}),
+    });
   }
 
   const preferences = readInstanceModelPreferences(settings, defaultInstanceId);
@@ -218,7 +231,13 @@ export function getAppModelOptionsForInstance(
     }
 
     seen.add(custom.slug);
-    options.push({ slug: custom.slug, name: custom.name, isCustom: true });
+    const shortName = resolveModelShortName(custom, entry.driverKind);
+    options.push({
+      slug: custom.slug,
+      name: custom.name,
+      isCustom: true,
+      ...(shortName ? { shortName } : {}),
+    });
   }
 
   const preferences = readInstanceModelPreferences(settings, entry.instanceId);
