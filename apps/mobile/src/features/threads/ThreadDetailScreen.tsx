@@ -26,6 +26,7 @@ import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
+import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import {
   childThreadInputsTitle,
   type CodexFeedbackSubmission,
@@ -40,9 +41,7 @@ import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/r
 import type {
   EnvironmentId,
   MessageId,
-  ModelSelection,
   ProviderInteractionMode,
-  RuntimeMode,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
@@ -285,8 +284,6 @@ export interface ThreadDetailScreenProps {
   ) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
-  readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
-  readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
@@ -785,6 +782,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const composerSlotHidden =
     activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+  const pendingMessageEditBlocked =
+    queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
+    null;
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1175,6 +1175,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   };
 
   const handleEditPendingMessage = async (message: QueuedThreadMessage) => {
+    if (pendingMessageEditBlocked) return;
     const scope = threadScope.current.signal;
     const edited = await settlePromise(() => editPendingThreadMessage(message));
     if (AsyncResult.isFailure(edited)) {
@@ -1304,7 +1305,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               dispatchingMessageId={props.dispatchingMessageId}
               // A native subagent has no composer to edit a pending message in;
               // Cancel on the edit banner would discard it.
-              onEditPendingMessage={isProviderSubagent ? null : handleEditPendingMessage}
+              onEditPendingMessage={
+                isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
+              }
               contentPresentation={props.contentPresentation}
               agentLabel={agentLabel}
               threadTitle={props.selectedThread.title}
@@ -1383,40 +1386,40 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 onLayout={handleComposerOverlayLayout}
                 className="w-full"
               >
-                <FloatingWorkingControl
-                  colorScheme={isDarkMode ? "dark" : "light"}
-                  status={floatingStatus}
-                  lift={floatingControlLift}
-                  devicePreview={
-                    devicePreviews.length > 0
-                      ? { count: devicePreviews.length, onPress: openDevicePreview }
-                      : null
-                  }
-                  browserPreview={
-                    browserTabs.tabs.length > 0
-                      ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
-                      : null
-                  }
-                  showScrollToEnd={showScrollToEndButton}
-                  onScrollToEnd={handleScrollToEnd}
-                  agents={agentsSegment}
-                  onOpenAgents={() => {
-                    Keyboard.dismiss();
-                    navigation.navigate("ThreadAgents", {
-                      environmentId: props.environmentId,
-                      threadId: props.selectedThread.id,
-                    });
-                  }}
-                  queuedCount={queuedCount}
-                  onOpenQueue={() => {
-                    Keyboard.dismiss();
-                    navigation.navigate("ThreadQueue", {
-                      environmentId: props.environmentId,
-                      threadId: props.selectedThread.id,
-                    });
-                  }}
-                />
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                  <FloatingWorkingControl
+                    colorScheme={isDarkMode ? "dark" : "light"}
+                    status={floatingStatus}
+                    lift={floatingControlLift}
+                    devicePreview={
+                      devicePreviews.length > 0
+                        ? { count: devicePreviews.length, onPress: openDevicePreview }
+                        : null
+                    }
+                    browserPreview={
+                      browserTabs.tabs.length > 0
+                        ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                        : null
+                    }
+                    showScrollToEnd={showScrollToEndButton}
+                    onScrollToEnd={handleScrollToEnd}
+                    agents={agentsSegment}
+                    onOpenAgents={() => {
+                      Keyboard.dismiss();
+                      navigation.navigate("ThreadAgents", {
+                        environmentId: props.environmentId,
+                        threadId: props.selectedThread.id,
+                      });
+                    }}
+                    queuedCount={queuedCount}
+                    onOpenQueue={() => {
+                      Keyboard.dismiss();
+                      navigation.navigate("ThreadQueue", {
+                        environmentId: props.environmentId,
+                        threadId: props.selectedThread.id,
+                      });
+                    }}
+                  />
                   {props.queuedRunEdit !== null ? (
                     <Animated.View
                       className="shrink-0"
@@ -1637,8 +1640,6 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}
-                        onUpdateModelSelection={props.onUpdateThreadModelSelection}
-                        onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}

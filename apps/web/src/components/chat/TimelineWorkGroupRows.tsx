@@ -9,8 +9,9 @@ import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { observeResize } from "~/lib/observeResize";
+import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
-import { memo, use, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, use, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
@@ -110,24 +111,12 @@ export const WorkGroupSection = memo(function WorkGroupSection({
 
 function WorkingTimer({ createdAt }: { createdAt: string }) {
   const { activeThreadEnvironmentId } = use(TimelineRowCtx);
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt, activeThreadEnvironmentId);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt, activeThreadEnvironmentId);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [activeThreadEnvironmentId, createdAt]);
 
   return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
+    <span
+      ref={tickTextContent(() => formatWorkingTimerNow(createdAt, activeThreadEnvironmentId), true)}
+      className="tabular-nums"
+    />
   );
 }
 
