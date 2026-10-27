@@ -152,6 +152,35 @@ it("updates the selected provider and leaves another provider's skill uninstalle
   expect(state.catalog!.targets[0]!.skills[0]!.status).toBe("not_installed");
 });
 
+it("keeps external connection requirements visible after installing instructions", async () => {
+  setup();
+  const target = state.catalog!.targets[0]!;
+  const requirements =
+    "Requires a Linear MCP connection. Installing this skill does not connect your account.";
+  state.catalog = {
+    targets: [
+      {
+        ...target,
+        skills: [
+          {
+            ...target.skills[0]!,
+            id: "t3code-linear",
+            title: "Linear",
+            description: "Read issues and report verified PR results to Linear.",
+            path: "/home/user/.codex/skills/t3code-linear",
+            requirements,
+          },
+        ],
+      },
+    ],
+  };
+  await using screen = await render(<EnvironmentSkillsSettings environmentId={environmentId} />);
+  await expect.element(screen.getByText(requirements, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Install Linear" }).click();
+  await expect.element(page.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText(requirements, { exact: true })).toBeVisible();
+});
+
 it("keeps a removal confirmation bound to its provider when the catalog changes", async () => {
   setup();
   const original = state.catalog!.targets[0]!;

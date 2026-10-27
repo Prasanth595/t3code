@@ -159,6 +159,9 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">{skill.description}</p>
+              {skill.requirements ? (
+                <p className="text-sm text-muted-foreground">{skill.requirements}</p>
+              ) : null}
               <p className="break-all text-xs text-muted-foreground">{skill.path}</p>
               <div className="flex flex-wrap items-center gap-2">
                 {installable ? (
