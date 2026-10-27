@@ -117,6 +117,7 @@ export function SecretProviderDialog({
                 placeholder="my.1password.com"
                 value={draft.account}
                 onChange={(event) => update({ account: event.target.value })}
+                maxLength={253}
                 spellCheck={false}
                 aria-invalid={accountError !== undefined}
                 aria-describedby={
