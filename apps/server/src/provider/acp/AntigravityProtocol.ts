@@ -44,17 +44,23 @@ export function isAntigravityUserInputRequest(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): boolean {
   if (!request.toolCall.toolCallId.startsWith("interaction_")) return false;
-  // A mode switch is approval-gated even under a native-question id, unless the
-  // agent offered no allow option for the approval card to answer with.
-  if (request.toolCall.kind === "switch_mode") return !hasAntigravityApprovalOption(request);
+  // Keep native choices when approval decisions cannot represent every option.
+  if (request.toolCall.kind === "switch_mode") return !hasAntigravityApprovalOptions(request);
   return true;
 }
 
-function hasAntigravityApprovalOption(request: EffectAcpSchema.RequestPermissionRequest): boolean {
-  return request.options.some(
-    (option) =>
-      (option.kind === "allow_once" || option.kind === "allow_always") &&
-      option.optionId.trim().length > 0,
+function hasAntigravityApprovalOptions(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const kinds = new Set(request.options.map((option) => option.kind));
+  return (
+    kinds.size === request.options.length &&
+    (kinds.has("allow_once") || kinds.has("allow_always")) &&
+    request.options.every(
+      (option) =>
+        (option.kind === "allow_once" ||
+          option.kind === "allow_always" ||
+          option.kind === "reject_once") &&
+        option.optionId.trim().length > 0,
+    )
   );
 }
 

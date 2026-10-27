@@ -263,6 +263,19 @@ describe("Antigravity permissions and questions", () => {
     ).toEqual(["proceed", "stay"]);
   });
 
+  it("keeps every mode-switch choice when permission kinds repeat", () => {
+    const modeSwitch = {
+      ...questionRequest,
+      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+    };
+    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
+    for (const option of modeSwitch.options) {
+      expect(
+        makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: option.optionId }),
+      ).toEqual({ outcome: { outcome: "selected", optionId: option.optionId } });
+    }
+  });
+
   it("returns exact opaque IDs and accepts a unique label from an older client", () => {
     for (const answer of ["1", ["1"], "Verified"]) {
       expect(
