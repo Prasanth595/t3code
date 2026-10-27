@@ -755,7 +755,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
   const titleAndReason = (dataDir: string) =>
     listRuns(dataDir).map((run) => [run.id.issue, run.title, run.reason]);
 
-  it("reads the title of the first launch that has one, and the reason the last state asks for, as the whole read does", () => {
+  it("reads the title of the first launch, and the reason the last state asks for, as the whole read does", () => {
     const dataDir = tempDir();
     const files = [
       // The first titled launch wins; the stuck line before the state change gives the reason.
@@ -780,15 +780,14 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
         "needs-info",
         null,
       ),
-      // A launch without a title is skipped, and the title is far from the end.
+      // The first launch has no title, so the run has none, whatever a later launch carries.
       finishedRun(
         dataDir,
         rid(3),
         [
           sessionLaunched(),
-          sessionLaunched("Far title"),
-          ...padding(80),
           sessionLaunched("Later title"),
+          ...padding(80),
           moved("ready", "building"),
         ],
         "pr-open",
@@ -812,7 +811,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(titleAndReason(dataDir)).toEqual([
       ["1", "Old title", "gate failed"],
       ["2", null, "which db?"],
-      ["3", "Far title", null],
+      ["3", null, null],
       ["4", null, null],
       ["5", null, null],
     ]);
@@ -828,6 +827,58 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     ledger.append(moved("building", "stuck") as never, cause);
     expect(titleAndReason(dataDir)).toEqual([["1", "Open run", "gate failed"]]);
     expect(readRuns(dataDir)[0]?.summary).toEqual(listRuns(dataDir)[0]);
+  });
+
+  it("caps a long reason at 300 characters on a character boundary, in both reads", () => {
+    const dataDir = tempDir();
+    // Astral characters are two code units each, so a cut by code unit could split one.
+    const long = "\u{1F600}".repeat(400);
+    finishedRun(dataDir, rid(1), [stuckLine(long), moved("building", "stuck")], "stuck", null);
+    finishedRun(
+      dataDir,
+      rid(2),
+      [asked("short?"), moved("triage", "needs-info")],
+      "needs-info",
+      null,
+    );
+    const ledger = Ledger.create(dataDir, rid(3), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    ledger.append(stuckLine(long) as never, cause);
+    ledger.append(moved("building", "stuck") as never, cause);
+    const listed = listRuns(dataDir);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
+    const [capped, short, open] = listed.map((run) => run.reason ?? "");
+    for (const reason of [capped, open]) {
+      expect(reason.isWellFormed()).toBe(true);
+      expect([...reason]).toHaveLength(300);
+      expect(reason.endsWith("\u2026")).toBe(true);
+      expect(reason).toBe(`${"\u{1F600}".repeat(299)}\u2026`);
+    }
+    expect(short).toBe("short?");
+  });
+
+  it("stops the title read at the first launch when it has no title, so a large untitled run is read from its ends", () => {
+    const dataDir = tempDir();
+    const path = finishedRun(
+      dataDir,
+      rid(1),
+      [sessionLaunched(), ...padding(2000), opened(2), moved("building", "pr-open")],
+      "pr-open",
+      PR_URL,
+    );
+    // A run that never launched has no launch to stop at; it is small.
+    finishedRun(dataDir, rid(2), [moved("triage", "needs-info")], "needs-info", null);
+    const size = NodeFS.statSync(path).size;
+    vi.mocked(NodeFS.readSync).mockClear();
+    const listed = listRuns(dataDir);
+    const chunked = vi
+      .mocked(NodeFS.readSync)
+      .mock.results.reduce((sum, result) => sum + (result.value as number), 0);
+    expect(size).toBeGreaterThan(1_000_000);
+    expect(chunked).toBeLessThan(100_000);
+    expect(listed.map((run) => run.title)).toEqual([null, null]);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
   });
 
   it("skips damaged lines at both ends as the whole read does", () => {
