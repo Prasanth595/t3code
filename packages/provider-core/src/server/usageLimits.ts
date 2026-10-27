@@ -51,58 +51,57 @@ export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
   readonly checkedAt: string;
-  /**
-   * The update is the account's whole state: windows it leaves out are
-   * dropped, and a reset time it omits is cleared rather than kept.
-   */
+  /** Replace the whole window set, including omitted resets and windows. */
   readonly replace?: boolean;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  const replace = input.replace === true;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (previous?.unavailable?.reason === "unsupported") return previous;
+  if (input.replace) {
+    const next = makeUsageLimits({
+      checkedAt: input.checkedAt,
+      windows: update.windows.map((window) => ({
+        ...window,
+        usedPercent: clampPercent(window.usedPercent),
+      })),
+    });
+    if (
+      previous &&
+      !previous.unavailable &&
+      previous.checkedAt === next.checkedAt &&
+      previous.windows.length === next.windows.length &&
+      previous.windows.every((window, index) => usageWindowEquals(window, next.windows[index]!))
+    )
+      return previous;
+    return { ...next, ...(previous?.resetCredits ? { resetCredits: previous.resetCredits } : {}) };
+  }
+  if (update.windows.length === 0) {
     return previous;
   }
-  const published = new Map(previous?.windows.map((window) => [window.id, window] as const));
-  const merged = replace
-    ? new Map<ServerProviderUsageWindow["id"], ServerProviderUsageWindow>()
-    : new Map(published);
-  // Decide "nothing changed" per window so a no-op never allocates a new
-  // snapshot. A whole-state report that only moves the time is still news:
-  // Limits picks the freshest report per account by `checkedAt`.
-  let changed =
-    replace &&
-    (update.windows.length !== published.size ||
-      input.checkedAt !== previous?.checkedAt ||
-      previous?.unavailable !== undefined);
+  const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
+  // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
+  let changed = false;
   for (const window of update.windows) {
-    const existing = published.get(window.id);
+    const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
-      ...(!replace && window.resetsAt === undefined && existing?.resetsAt !== undefined
+      ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
         ? { resetsAt: existing.resetsAt }
         : {}),
-      ...(!replace &&
-      window.windowDurationMins === undefined &&
-      existing?.windowDurationMins !== undefined
+      ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
       changed = true;
-    } else if (replace) {
-      merged.set(window.id, existing);
     }
   }
   if (!changed && previous !== undefined) {
     return previous;
   }
-  const unavailable = replace
-    ? undefined
-    : previous === undefined
-      ? { reason: "probeFailed" as const }
-      : previous.unavailable;
+  const unavailable =
+    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),

@@ -58,17 +58,7 @@ export function museUsageLimitResetAt(
 
 const WEEK_MINS = 7 * 24 * 60;
 
-/** One report of the account's windows, as Muse forwards it. */
-export interface MuseUsageObservation {
-  readonly observedAtMs: number;
-  /** Meta's five-hour-class block. */
-  readonly window?: {
-    readonly usedPercent: number;
-    readonly windowDurationMins: number;
-    readonly resetsAtMs: number;
-  };
-  readonly weekly?: { readonly usedPercent: number; readonly resetsAtMs: number };
-}
+type MuseUsageObservation = Pick<MuseSubscriptionUsage, "observedAtMs" | "window" | "weekly">;
 
 const isoFromMillis = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
@@ -99,20 +89,8 @@ export function museUsageWindows(
 ): ReadonlyArray<ServerProviderUsageWindow> {
   const { window, weekly } = observation;
   return [
-    ...(window
-      ? [
-          makeWindow(
-            "window",
-            window.windowDurationMins,
-            window.usedPercent,
-            window.resetsAtMs,
-            nowMs,
-          ),
-        ]
-      : []),
-    ...(weekly
-      ? [makeWindow("weekly", WEEK_MINS, weekly.usedPercent, weekly.resetsAtMs, nowMs)]
-      : []),
+    makeWindow("window", window.windowDurationMins, window.usedPercent, window.resetsAtMs, nowMs),
+    makeWindow("weekly", WEEK_MINS, weekly.usedPercent, weekly.resetsAtMs, nowMs),
   ];
 }
 
@@ -148,7 +126,8 @@ export function nextMuseUsageAccount(
   account: MuseUsageAccount,
   auth: ServerProviderAuth,
 ): MuseUsageAccount {
-  const identity = auth.status === "unauthenticated" ? null : museUsageAccount(auth);
+  const identity =
+    auth.status === "unauthenticated" || auth.type === "apiKey" ? null : museUsageAccount(auth);
   if (identity === undefined || identity === account.identity) return account;
   // The first login a check names is the one the hosts so far started under.
   if (account.identity === undefined) return { ...account, identity };

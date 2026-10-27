@@ -77,6 +77,17 @@ describe("applyUsageLimitsUpdate", () => {
     ).toEqual(published);
   });
 
+  it("clears all windows when a whole-state report is empty", () => {
+    expect(
+      applyUsageLimitsUpdate({
+        previous: published,
+        checkedAt,
+        update: { windows: [] },
+        replace: true,
+      }),
+    ).toEqual({ checkedAt, windows: [] });
+  });
+
   it("clears a failed probe on replacement even when windows and time are unchanged", () => {
     const previous = {
       ...published,

@@ -132,12 +132,8 @@ describe("Muse model catalog", () => {
         },
       })).pipe(Effect.scoped, Effect.forkChild);
       yield* Effect.promise(() => accountRequested);
-      yield* Effect.yieldNow;
       yield* TestClock.adjust("2 seconds");
-      // Bounded in real time, so a probe that waits on account/read fails here instead of hanging.
-      const { models, account } = yield* TestClock.withLive(
-        Fiber.join(probing).pipe(Effect.timeout("1 second")),
-      );
+      const { models, account } = yield* Fiber.join(probing);
       expect(models.map(({ slug }) => slug)).toEqual(["muse-spark-1.3"]);
       expect(account).toBeUndefined();
     }),

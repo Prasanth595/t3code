@@ -28,6 +28,7 @@ import { makeMuseEnvironment } from "./sdk.ts";
 import type { MuseSubscriptionUsage } from "./protocol.ts";
 import {
   museStatusUsageLimits,
+  museUsageAccount,
   museUsageWindows,
   nextMuseUsageAccount,
   type MuseUsageAccount,
@@ -245,8 +246,10 @@ export const MuseDriver: ProviderDriver<
                 ? [false, previous]
                 : [true, { usage, generation: hostGeneration }],
             );
-            // An API key names no account; see museStatusUsageLimits.
-            if (!newer || (yield* snapshot.getSnapshot).auth.type === "apiKey") return;
+            const { auth } = yield* snapshot.getSnapshot;
+            // The probe may have advanced the generation before publishing its new account.
+            if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity)
+              return;
             const now = yield* DateTime.now;
             yield* snapshot.applyUsageLimits({
               windows: museUsageWindows(usage, DateTime.toEpochMillis(now)),

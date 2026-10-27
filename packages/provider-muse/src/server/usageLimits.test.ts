@@ -173,7 +173,12 @@ describe("Muse usage limits", () => {
     expect(nextMuseUsageAccount(named, login)).toBe(named);
     // Nothing names the login without account/read, and an API key names no account.
     expect(nextMuseUsageAccount(named, { status: "unknown" })).toBe(named);
-    expect(nextMuseUsageAccount(named, apiKey)).toBe(named);
+    const keyAccount = nextMuseUsageAccount(named, apiKey);
+    expect(keyAccount).toEqual({ generation: 1, identity: null });
+    expect(nextMuseUsageAccount(keyAccount, login)).toEqual({
+      generation: 2,
+      identity: "a@example.com",
+    });
     expect(museUsageAccount(apiKey)).toBeUndefined();
     const other = nextMuseUsageAccount(named, { ...login, email: "b@example.com" });
     expect(other).toEqual({ generation: 1, identity: "b@example.com" });
