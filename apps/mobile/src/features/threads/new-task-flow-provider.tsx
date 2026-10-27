@@ -310,12 +310,16 @@ export function NewTaskFlowProvider(
     Arr.filter((project) => project.environmentId === selectedEnvironmentId),
   );
 
+  // A route draft still waiting for its environment has no project yet: the
+  // fallback would show, and could send to, another environment's project.
   const selectedProject =
-    projectsForEnvironment.find(
-      (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-    ) ??
-    projectsForEnvironment[0] ??
-    null;
+    routeDraftResolution.kind === "pending"
+      ? null
+      : (projectsForEnvironment.find(
+          (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
+        ) ??
+        projectsForEnvironment[0] ??
+        null);
 
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
