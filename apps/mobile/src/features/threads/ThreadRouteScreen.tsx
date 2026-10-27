@@ -471,7 +471,7 @@ function ThreadRouteContent(
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
   const currentRouteThreadIdentityRef = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- route identity must update before pending results resume
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed route identity to a ref that pending action results check before opening
   useLayoutEffect(() => {
     currentRouteThreadIdentityRef.current = routeThreadIdentity;
     return () => {

@@ -731,12 +731,32 @@ it.layer(
     }),
   );
 
-  it.effect("TerminalWrite-afterRestartOrExit-rejectsStaleProcessOwnership", () =>
+  it.effect("TerminalWrite-afterExitOrReopen-rejectsStaleProcessOwnership", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
       const originalProcess = ptyAdapter.processes[0]!;
-      const restarted = yield* manager.restart(restartInput());
+
+      const exited = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited" && event.terminalId === DEFAULT_TERMINAL_ID
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      originalProcess.emitExit({ exitCode: 0, signal: 0 });
+      yield* Deferred.await(exited);
+      unsubscribe();
+      const exitedWrite = yield* manager
+        .write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          expectedPid: originalProcess.pid,
+          data: "after exit\r",
+        })
+        .pipe(Effect.flip);
+      assert.equal(exitedWrite._tag, "TerminalNotRunningError");
+
+      const reopened = yield* manager.open(openInput());
       const currentProcess = ptyAdapter.processes[1]!;
       const staleWrite = yield* manager
         .write({
@@ -750,29 +770,10 @@ it.layer(
       yield* manager.write({
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        expectedPid: restarted.pid!,
+        expectedPid: reopened.pid!,
         data: "current\r",
       });
-      expect(currentProcess.writes).toEqual(["current\r"]);
-
-      const exited = yield* Deferred.make<void>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "exited" && event.terminalId === DEFAULT_TERMINAL_ID
-          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
-          : Effect.void,
-      );
-      currentProcess.emitExit({ exitCode: 0, signal: 0 });
-      yield* Deferred.await(exited);
-      unsubscribe();
-      const exitedWrite = yield* manager
-        .write({
-          threadId: "thread-1",
-          terminalId: DEFAULT_TERMINAL_ID,
-          expectedPid: currentProcess.pid,
-          data: "after exit\r",
-        })
-        .pipe(Effect.flip);
-      assert.equal(exitedWrite._tag, "TerminalNotRunningError");
+      expect(originalProcess.writes).toEqual([]);
       expect(currentProcess.writes).toEqual(["current\r"]);
     }),
   );

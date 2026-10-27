@@ -72,6 +72,9 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
     const layer = ProjectSetupScriptRunner.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () => Effect.succeed(null),
+          }),
           Layer.mock(ProjectService.ProjectService)({
             getById: () => Effect.succeedSome(project),
           }),
@@ -299,7 +302,6 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
         threadId: input.threadId,
         projectId,
         worktreePath: input.worktreePath,
-        preferredTerminalId: "setup-output",
         observeCompletion: {
           onOutputLine: (line) =>
             Effect.sync(() => {
@@ -315,7 +317,7 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
       yield* publish({
         type: "output",
         threadId: input.threadId,
-        terminalId: "setup-output",
+        terminalId: "setup-preview",
         data: `${wrapper}\r\n% (\r\nsubsh> )\r\nReady (vite)\r\nBuild complete ( 42 files )\r\nbackend\r\n__T3_SETUP_DONE___${outputToken}:0\r\n$ `,
       });
       assert.equal((yield* observed.completion!).exitCode, 0);
