@@ -329,6 +329,8 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
       windowsInstalled: Schema.Boolean,
     }),
   ),
+  /** The app's bundled `t3` launcher, which runs without Node or a PATH entry. */
+  launcherPath: Schema.NullOr(Schema.String),
 });
 export type DesktopCliCommandState = typeof DesktopCliCommandStateSchema.Type;
 
