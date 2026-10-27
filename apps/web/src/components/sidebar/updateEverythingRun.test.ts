@@ -48,6 +48,7 @@ describe("startDesktopUpdateLaunchNotice", () => {
         targetVersion: "9.9.9",
       });
     } finally {
+      await vi.advanceTimersByTimeAsync(32 * 60 * 1000);
       stop();
     }
   });
