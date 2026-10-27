@@ -456,6 +456,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     identity: string;
     entryId: string | undefined;
     ready: boolean;
+    contentKey?: string;
   } | null>(null);
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
@@ -474,12 +475,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const element = listRef.current?.getScrollableNode();
     const index = state?.indexByKey(anchorKey);
     const row = index === undefined ? undefined : state?.elementAtIndex(index);
-    if (!element || !row) return;
+    if (!element || !(row instanceof HTMLElement)) return;
     const viewport = element.getBoundingClientRect();
-    const bounds = row.getBoundingClientRect();
+    const entry = pending.entryId
+      ? row.querySelector<HTMLElement>(`[data-work-entry-id="${CSS.escape(pending.entryId)}"]`)
+      : null;
+    const contentIndex = pending.contentKey ? state?.indexByKey(pending.contentKey) : undefined;
+    const content = contentIndex === undefined ? null : state?.elementAtIndex(contentIndex);
+    const bounds = (entry ?? row).getBoundingClientRect();
     const delta = resolveDisclosureRevealScrollDelta({
       rowTop: bounds.top,
-      rowBottom: bounds.bottom,
+      rowBottom: content?.getBoundingClientRect().bottom ?? bounds.bottom,
       viewportTop: viewport.top,
       viewportBottom: viewport.bottom,
       composerOverlayHeight: contentInsetEndAdjustment,
@@ -555,6 +561,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+    if (disclosureRevealRef.current) {
+      disclosureRevealRef.current.contentKey = `${groupId}:details`;
+    }
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
