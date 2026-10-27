@@ -792,16 +792,13 @@ describe("useFactoryEnvironments with a status poll", () => {
   it("keeps its 5 second period when an answer lands mid-period and the page renders again", async () => {
     await using _state = setup();
     environments.freshIds = true;
-    // The answer takes 3 seconds, so the page renders again at 3 seconds, between two ticks.
-    const fetchStatus = vi.fn(
-      (_env: EnvironmentId) =>
-        new Promise<ReturnType<typeof status>>((resolve) => {
-          setTimeout(() => resolve(status(0)), 3_000);
-        }),
-    );
+    // The answer lands at 3 seconds, so the page renders again between two ticks.
+    const answer = deferred<ReturnType<typeof status>>();
+    const fetchStatus = vi.fn((_env: EnvironmentId) => answer.promise);
     __setFactoryApiForTests(api({ status: fetchStatus }));
     await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
     await settle(3_000);
+    await act(async () => answer.resolve(status(0)));
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     await settle(2_000);
     expect(fetchStatus).toHaveBeenCalledTimes(2);

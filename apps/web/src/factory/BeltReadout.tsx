@@ -24,11 +24,9 @@ export const READOUT_ID = "factory-readout";
 const WIDE_ONLY = "hidden @3xl:table-cell";
 
 /**
- * The open post's runs as a table under the rail, with a notch pointing at the post: a grid of the
- * posts' own column template, so the notch sits in the post's column without measuring. A row is a
- * link to its run's page, stretched over the whole row; its Stop and pull request link sit above it.
- * Stop is enabled as the run page enables its own and calls `onStop`; the belt holds its answer, so
- * it outlives this panel. Narrow, the environment, step and pull request stack under the title.
+ * The open post's runs as a table under the rail, with a notch in the post's own column. A row
+ * links to its run, stretched over the row; Stop (enabled as the run page enables it, answered by
+ * the belt) and the PR link sit above it. Narrow, env, step and PR stack under the title.
  */
 export function BeltReadout({
   station,
