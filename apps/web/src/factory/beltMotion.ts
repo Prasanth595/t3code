@@ -124,10 +124,9 @@ function fly(
 
 /**
  * What the motion keeps between renders, outside React's state. A tile that changes post is
- * removed and mounted again: `tileRef` sees it go and `play` flies a copy to where it lands, since
- * the lanes clip what they hold. A tile that leaves for no place draws nothing, as the lane closes
- * up over it; its place is remembered for `MEMORY_MS`, to fly from if a bin lists it or the lane
- * takes it back.
+ * removed and mounted again: `tileRef` sees it go and `play` flies a copy to where it lands. A tile
+ * that leaves for no place draws nothing, as the lane closes up over it; its place is remembered
+ * for `MEMORY_MS`, to fly from if a bin lists it or the lane takes it back.
  */
 function createMotion() {
   const tiles = new Map<string, HTMLElement>();
