@@ -127,18 +127,33 @@ export function ChatModeContent(props: {
   );
 }
 
+const FOLLOW_THRESHOLD = 80;
+
 function ChatMessages(props: {
   readonly chat: SaasChatConversation;
   readonly streaming: { readonly text: string; readonly searching?: boolean } | null;
 }) {
   const scrollRef = useRef<ScrollViewInstance>(null);
+  // Follow new content only from the bottom, so a visual resizing above (a tab switch) keeps its place.
+  const atBottom = useRef(true);
+  const followedMessages = useRef(props.chat.messages.length);
   return (
     <ScrollView
       ref={scrollRef}
       className="flex-1"
       contentContainerClassName="px-4 pt-3 pb-4"
       keyboardDismissMode="interactive"
-      onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+      scrollEventThrottle={64}
+      onScroll={({ nativeEvent }) => {
+        const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+        atBottom.current =
+          contentSize.height - contentOffset.y - layoutMeasurement.height < FOLLOW_THRESHOLD;
+      }}
+      onContentSizeChange={() => {
+        const newMessage = props.chat.messages.length !== followedMessages.current;
+        followedMessages.current = props.chat.messages.length;
+        if (newMessage || atBottom.current) scrollRef.current?.scrollToEnd({ animated: true });
+      }}
       // The keyboard shrinks the list; keep the latest message in view, as threads do.
       onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
     >
