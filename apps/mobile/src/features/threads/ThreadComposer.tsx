@@ -106,6 +106,13 @@ import {
   ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import {
+  compactSlotAfterRowLayout,
+  composerModelIconOnly,
+  composerOpensCardOnFocus,
+  isCompactComposerExpanded,
+  isWideComposerRow,
+} from "./compactComposerLayout";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
@@ -144,13 +151,14 @@ export function useCompactComposerEditor(
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const wraps = contentHeight > text.lineHeight * 1.5;
-  // A line that fits the expanded editor may still overflow its compact slot.
-  // Compare its measured width too so widening cannot trigger a collapse loop.
-  const isExpanded =
-    opensOnFocus ||
-    (value.length > 0 &&
-      (wraps || (compactWidth > 0 && contentSize.width > compactWidth - text.fontSize)));
+  const isExpanded = isCompactComposerExpanded({
+    opensOnFocus,
+    value,
+    contentSize,
+    compactWidth,
+    lineHeight: text.lineHeight,
+    fontSize: text.fontSize,
+  });
   const height = Math.max(
     minimum,
     Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
@@ -172,9 +180,10 @@ export function useCompactComposerEditor(
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       const width = event.nativeEvent.layout.width;
       rowWidth.set(width);
-      if (width !== measuredRowWidth) {
-        setMeasuredRowWidth(width);
-        setCompactWidth(0);
+      const slot = compactSlotAfterRowLayout({ rowWidth: measuredRowWidth, compactWidth }, width);
+      if (slot.rowWidth !== measuredRowWidth) {
+        setMeasuredRowWidth(slot.rowWidth);
+        setCompactWidth(slot.compactWidth);
       }
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
@@ -592,15 +601,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   const [compactRowWidth, setCompactRowWidth] = useState(0);
-  const isWideRow = compactRowWidth >= 500;
-  const compactAttachmentLimit = isWideRow ? 3 : 1;
-  const opensCard =
-    (isFocused && (Platform.OS !== "android" || keyboardVisible)) ||
-    settingsSheetPresentation.keepsComposerExpanded;
+  const compactAttachmentLimit = isWideComposerRow(compactRowWidth) ? 3 : 1;
   const compactEditor = useCompactComposerEditor(
     bodyText,
     draftMessage,
-    opensCard && compactRowWidth > 0 && !isWideRow,
+    composerOpensCardOnFocus({
+      rowWidth: compactRowWidth,
+      isFocused,
+      isAndroid: Platform.OS === "android",
+      keyboardVisible,
+      keepsSettingsOpen: settingsSheetPresentation.keepsComposerExpanded,
+    }),
   );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
@@ -811,7 +822,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded && (!isWideRow || stripAttachments.length > 0)}
+        iconOnly={composerModelIconOnly({
+          isExpanded: compactEditor.isExpanded,
+          rowWidth: compactRowWidth,
+          attachmentCount: stripAttachments.length,
+        })}
         onPress={openSettings}
       />
     </View>
