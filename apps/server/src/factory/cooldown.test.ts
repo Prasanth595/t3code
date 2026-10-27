@@ -155,6 +155,22 @@ describe("recordRateLimit after a quiet spell", () => {
       raised: false,
     });
   });
+
+  it("goes by when the session ended: one of the old burst seen late, or a hit inside the quiet time, keeps the streak", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    recordRateLimit(cooldowns, "k", null, T0, T0, null);
+    const until = cooldowns.get("k")!.untilMs;
+    const late = until + COOLDOWN_QUIET_MS;
+    recordRateLimit(cooldowns, "k", null, until - 1, late, null);
+    assert.deepStrictEqual(cooldowns.get("k"), {
+      model: null,
+      untilMs: until,
+      windows: 1,
+      raised: false,
+    });
+    recordRateLimit(cooldowns, "k", null, late - 1, late, null);
+    assert.strictEqual(cooldowns.get("k")!.windows, 2);
+  });
 });
 
 describe("coolingDown and forgetQuietCooldowns", () => {
