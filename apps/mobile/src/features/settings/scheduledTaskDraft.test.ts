@@ -99,7 +99,7 @@ describe("scheduleFromDraft", () => {
 });
 
 describe("scheduled task model defaults", () => {
-  const instanceId = ProviderInstanceId.make("codex");
+  const instanceId = ProviderInstanceId.make("pi");
   const projectId = ProjectId.make("project");
   const environmentSelection = {
     instanceId,
@@ -112,8 +112,8 @@ describe("scheduled task model defaults", () => {
     providers: [
       {
         instanceId,
-        driver: "codex",
-        displayName: "Codex",
+        driver: "pi",
+        displayName: "Pi",
         enabled: true,
         installed: true,
         status: "ready",
