@@ -7,6 +7,10 @@
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
     },
+    "./windowTitle": {
+      "types": "./src/windowTitle.ts",
+      "import": "./src/windowTitle.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"

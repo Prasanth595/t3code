@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Electron from "electron";
 
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import { resolveDesktopWindowTitle } from "@t3tools/shared/windowTitle";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -660,9 +661,9 @@ export const make = Effect.gen(function* () {
       runFork(zoomWindow(window, direction));
     });
 
-    window.on("page-title-updated", (event) => {
+    window.on("page-title-updated", (event, pageTitle) => {
       event.preventDefault();
-      window.setTitle(environment.displayName);
+      window.setTitle(resolveDesktopWindowTitle(pageTitle, environment.displayName));
     });
     window.on("resize", scheduleBoundsPersist);
     window.on("move", scheduleBoundsPersist);
@@ -737,7 +738,9 @@ export const make = Effect.gen(function* () {
       }
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
-      window.setTitle(environment.displayName);
+      window.setTitle(
+        resolveDesktopWindowTitle(window.webContents.getTitle(), environment.displayName),
+      );
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
     window.webContents.on(

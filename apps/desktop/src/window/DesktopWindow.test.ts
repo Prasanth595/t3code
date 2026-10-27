@@ -72,6 +72,7 @@ function makeFakeBrowserWindow() {
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
     getURL: vi.fn(() => "t3code-dev://app/"),
+    getTitle: vi.fn(() => "T3 Code (Beta)"),
     getZoomLevel: vi.fn(() => zoomLevel),
     getZoomFactor: vi.fn(() => 1.2 ** zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -613,6 +614,32 @@ describe("DesktopWindow", () => {
           [0.5, 0, -0.5],
         );
         assert.deepEqual(previewZoomReapplies, [0.5, 0, -0.5]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps the page's thread context in front of the desktop app name", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const setTitle = vi.spyOn(fakeWindow.window, "setTitle");
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const titleUpdated = fakeWindow.windowListeners.get("page-title-updated");
+        if (!titleUpdated)
+          return yield* Effect.die("page-title-updated listener was not registered");
+
+        titleUpdated({ preventDefault: () => {} }, "T3 Code (Beta)");
+        const appName = setTitle.mock.lastCall?.[0];
+        assert.isString(appName);
+        assert.notInclude(appName, " · ");
+
+        titleUpdated({ preventDefault: () => {} }, "Fix login · acme-api · T3 Code (Beta)");
+        assert.strictEqual(setTitle.mock.lastCall?.[0], `Fix login · acme-api · ${appName}`);
       }).pipe(Effect.provide(layer));
     }),
   );

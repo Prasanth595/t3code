@@ -1,6 +1,13 @@
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import { formatWindowTitle } from "@t3tools/shared/windowTitle";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
+import { Atom } from "effect/reactivity";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
 import { applyAppearanceFontVariables } from "./appearanceFonts";
@@ -45,8 +52,9 @@ import { primaryServerConfigAtom } from "./state/server";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
+import { environmentProjects } from "./state/projects";
 import { environmentThreadShells } from "./state/threads";
-import { resolveThreadRouteTarget } from "./threadRoutes";
+import { resolveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -97,16 +105,41 @@ function startClientAppearance(): void {
   apply();
 }
 
-function startDocumentTitle(): void {
+const routeThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("document-title:route-thread"),
+);
+
+const documentTitleAtom = Atom.make((get) => {
+  const appName = resolveServerBackedAppDisplayName({
+    baseName: APP_BASE_NAME,
+    fallbackDisplayName: APP_DISPLAY_NAME,
+    fallbackStageLabel: APP_STAGE_LABEL,
+    primaryServerVersion: get(primaryServerConfigAtom)?.environment.serverVersion ?? null,
+  });
+  const threadRef = get(routeThreadRefAtom);
+  const thread = threadRef ? get(environmentThreadShells.quietThreadShellAtom(threadRef)) : null;
+  const project = thread
+    ? get(environmentProjects.projectAtom(scopeProjectRef(thread.environmentId, thread.projectId)))
+    : null;
+  return formatWindowTitle({ appName, context: [thread?.title, project?.title] });
+}).pipe(Atom.withLabel("document-title"));
+
+/** `Thread · Project · App` on a thread route, so window switchers can tell threads apart. */
+function startDocumentTitle(router: AppRouter): void {
+  const syncRoute = () => {
+    const threadRef = resolveThreadRouteRef(router.state.matches.at(-1)?.params ?? {});
+    const current = appAtomRegistry.get(routeThreadRefAtom);
+    const key = threadRef ? scopedThreadKey(threadRef) : null;
+    if (key === (current ? scopedThreadKey(current) : null)) return;
+    appAtomRegistry.set(routeThreadRefAtom, threadRef);
+  };
+  syncRoute();
+  router.subscribe("onResolved", syncRoute);
   appAtomRegistry.subscribe(
-    primaryServerConfigAtom,
-    (config) => {
-      document.title = resolveServerBackedAppDisplayName({
-        baseName: APP_BASE_NAME,
-        fallbackDisplayName: APP_DISPLAY_NAME,
-        fallbackStageLabel: APP_STAGE_LABEL,
-        primaryServerVersion: config?.environment.serverVersion ?? null,
-      });
+    documentTitleAtom,
+    (title) => {
+      if (document.title !== title) document.title = title;
     },
     { immediate: true },
   );
@@ -160,7 +193,7 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
-  startDocumentTitle();
+  startDocumentTitle(router);
   startEnvironmentThemeRepaint();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
