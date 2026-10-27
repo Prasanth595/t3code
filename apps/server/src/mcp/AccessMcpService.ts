@@ -88,12 +88,21 @@ const make = Effect.gen(function* () {
   });
 
   return AccessMcpService.of({
-    createPairingCredential: (scope, input) =>
+    createPairingCredential: Effect.fn("AccessMcpService.createPairingCredential")((scope, input) =>
       administer(scope, auth.issuePairingCredential(input)),
-    listPairingLinks: (scope) => administer(scope, auth.listPairingLinks()),
-    revokePairingLink: (scope, id) => administer(scope, auth.revokePairingLink(id)),
-    listClients: (scope) => administer(scope, auth.listSessions()),
-    revokeClient: (scope, sessionId) => administer(scope, auth.revokeSession(sessionId)),
+    ),
+    listPairingLinks: Effect.fn("AccessMcpService.listPairingLinks")((scope) =>
+      administer(scope, auth.listPairingLinks()),
+    ),
+    revokePairingLink: Effect.fn("AccessMcpService.revokePairingLink")((scope, id) =>
+      administer(scope, auth.revokePairingLink(id)),
+    ),
+    listClients: Effect.fn("AccessMcpService.listClients")((scope) =>
+      administer(scope, auth.listSessions()),
+    ),
+    revokeClient: Effect.fn("AccessMcpService.revokeClient")((scope, sessionId) =>
+      administer(scope, auth.revokeSession(sessionId)),
+    ),
   });
 });
 
