@@ -8363,11 +8363,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     // A compacting turn cannot take steering input, so steering skips the compaction instead.
     if (
-      goalCommand === null &&
       target !== undefined &&
       targetMessage !== undefined &&
       isCompactionCommandMessage(targetMessage)
     ) {
+      if (goalCommand !== null) {
+        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      }
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
