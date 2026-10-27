@@ -398,6 +398,8 @@ describe("readProgress: an interruption", () => {
       runOrdinal: 2,
       branch: "t3code/abc",
       sent: false,
+      rateLimited: false,
+      model: null,
     });
     const sent = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 1")]);
     assert.strictEqual(sent.interruption?.sent, true);
@@ -441,6 +443,8 @@ describe("readProgress: an interruption", () => {
       runOrdinal: null,
       branch: "t3code/def",
       sent: false,
+      rateLimited: false,
+      model: null,
     });
     // A count that is not a number is no line at all, so the older decision stands.
     const odd = readProgress([

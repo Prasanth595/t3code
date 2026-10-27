@@ -46,6 +46,7 @@ import {
   advance,
   forward,
   interrupted,
+  resumeAfterCooldown,
   timeLimit,
   watch,
   type AdvanceOutcome,
@@ -499,8 +500,9 @@ const rigFor = (
         ? Effect.fail(answer)
         : Effect.succeed(answer);
     },
-    send: (threadId, commandId, text) => {
-      t3.push(`send ${threadId} ${commandId} ${text}`);
+    send: (threadId, commandId, text, model) => {
+      const on = model === undefined ? "" : ` [on ${model.instanceId} ${model.model}]`;
+      t3.push(`send ${threadId} ${commandId} ${text}${on}`);
       if (world.sendNotFound) return Effect.fail(notFound());
       const failure = world.sendFailure;
       world.sendFailure = null;
@@ -534,6 +536,12 @@ const rigFor = (
 };
 
 const advanceIn = (rig: Rig, run: RunId = rig.run) => advance(rig.ctx, run);
+/** The entries a ledger seeded with `events` reads back as. */
+const seededEntries = (events: ReadonlyArray<RunEvent>) => {
+  const dataDir = tempDir();
+  seed(dataDir, run10, events);
+  return readRun(dataDir, run10).entries;
+};
 const decide = (rig: Rig, ev: Evidence, run: RunId = rig.run) => interrupted(rig.ctx, run, ev);
 const forwardIn = (rig: Rig) => forward(rig.ctx, rig.run);
 /** What the pass does for a run after a resume or a relaunch that left the issue to `start`. */
@@ -2326,6 +2334,294 @@ describe("interrupted: a stop by hand", () => {
         ),
         JSON.stringify(lines),
       );
+    }),
+  );
+});
+
+/** What Claude Code ended a session with while every credential was cooling down. */
+const COOLING_DOWN =
+  "API Error: Request rejected (429) · All credentials for model claude-fable-5-1 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.)";
+
+/** The message a resume after a rate limit sends, written out independently of the code under test. */
+const COOLED_MESSAGE =
+  "The provider's rate limit cut your last turn off, so the factory is not treating it as your decision. It waited for the limit to cool down before sending this. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+
+const cooledCall = (ordinal: number) =>
+  `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${COOLED_MESSAGE}`;
+
+/** The model the rig's session was launched on, and the one a rate limit moves it to. */
+const OPUS = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+const SONNET = { instanceId: "claudeAgent", model: "claude-sonnet-5-5" };
+const ON_SONNET = " [on claudeAgent claude-sonnet-5-5]";
+/** What the resume says when it moves the session to another model, written out independently. */
+const MOVED_MESSAGE =
+  "The provider's rate limit cut your last turn off, so the factory is not treating it as your decision. It moved this thread to claude-sonnet-5-5, which is not limited, to carry on. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+const movedCall = (ordinal: number) =>
+  `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${MOVED_MESSAGE}${ON_SONNET}`;
+
+const cooledLine = (resumes: number, runOrdinal: number, model?: string): RunEvent => ({
+  event: "session_rate_limited",
+  data: {
+    run_ordinal: runOrdinal,
+    branch: "t3code/abc",
+    resumes,
+    ...(model !== undefined && { model }),
+  },
+});
+const cooledSent = (runOrdinal: number) => step(`rate-limited-sent ${runOrdinal}`);
+
+describe("a provider rate limit", () => {
+  it.effect("is told apart from a session that ended badly, and nothing is written", () =>
+    Effect.gen(function* () {
+      for (const status of ["failed", "cancelled"] as const) {
+        const rig = rigFor();
+        rig.world.status = () =>
+          statusOf(status, COOLING_DOWN, { runOrdinal: 1, runCompletedAt: T0 - MINUTE });
+        const before = bytesOf(rig);
+        assert.deepStrictEqual(
+          yield* advanceIn(rig),
+          { kind: "rate-limited", endedMs: T0 - MINUTE, retryAfterMs: null, model: OPUS },
+          status,
+        );
+        theIssueIsStillBuilding(rig);
+        assert.strictEqual(bytesOf(rig), before, status);
+        assert.deepStrictEqual(rig.t3, ["status thread-1"], status);
+      }
+    }),
+  );
+
+  it.effect("is resumed after the cooldown without using an interruption resume", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), cooledSent(1)]);
+      assert.deepStrictEqual(rig.t3, ["status thread-1", cooledCall(1)]);
+      theIssueIsStillBuilding(rig);
+      // The session is working until a run newer than the one that ended has ended.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+
+      // It ran into the limit again, and is resumed again under a command id of its own.
+      endedAs(rig, "failed", 2, COOLING_DOWN);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "rate-limited");
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(sends(rig), [cooledCall(1), cooledCall(2)]);
+
+      // A real interruption later still has both of its resumes.
+      endedAs(rig, "failed", 3, "it crashed");
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "resumed",
+        resumes: 1,
+        limit: 2,
+        status: "failed",
+      });
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("keeps the count of an earlier interruption on its line", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, resumeLine(1, 1, T3_ERROR, 1), sentStep(1)]);
+      endedAs(rig, "failed", 2, COOLING_DOWN);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+        cooledLine(1, 2),
+        cooledSent(2),
+      ]);
+    }),
+  );
+
+  it.effect("cut short before its send is sent again under the same command id", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, cooledLine(0, 1)]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), [cooledCall(1)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), cooledSent(1)]);
+    }),
+  );
+
+  it.effect("is not resumed once the thread has moved on, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      setActive(rig, 2);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), {
+        kind: "unchanged",
+        why: "its thread has moved on since",
+      });
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  it.effect(
+    "moved to another model sends the resume on it, and the run is on that model after",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        endedAs(rig, "failed", 1, COOLING_DOWN);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run, SONNET), {
+          kind: "resumed",
+        });
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          cooledLine(0, 1, "claude-sonnet-5-5"),
+          cooledSent(1),
+        ]);
+        assert.deepStrictEqual(rig.t3, ["status thread-1", movedCall(1)]);
+        assert.deepStrictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).model, SONNET);
+        // The next rate limit is the new model's.
+        endedAs(rig, "failed", 2, COOLING_DOWN);
+        assert.deepStrictEqual(yield* advanceIn(rig), {
+          kind: "rate-limited",
+          endedMs: 0,
+          retryAfterMs: null,
+          model: SONNET,
+        });
+      }),
+  );
+
+  it.effect(
+    "moved to another model and cut short before its send is sent again on that model",
+    () =>
+      Effect.gen(function* () {
+        const switched = cooledLine(0, 1, "claude-sonnet-5-5");
+        const rig = rigFor([...STARTED, switched]);
+        endedAs(rig, "failed", 1, COOLING_DOWN);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+        assert.deepStrictEqual(sends(rig), [movedCall(1)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, switched, cooledSent(1)]);
+      }),
+  );
+
+  it.effect("takes the provider's retry-after from the error", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.status = () =>
+        statusOf(
+          "failed",
+          "API Error: Request rejected (429) · rate_limit_error, retry-after: 120",
+          {
+            runOrdinal: 1,
+            runCompletedAt: T0 - MINUTE,
+          },
+        );
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "rate-limited",
+        endedMs: T0 - MINUTE,
+        retryAfterMs: 120_000,
+        model: OPUS,
+      });
+    }),
+  );
+
+  it.effect("with no end from T3 is placed at its start, else long ago, never at the clock", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.status = () =>
+        statusOf("failed", COOLING_DOWN, { runOrdinal: 1, runStartedAt: T0 - 3 * MINUTE });
+      const started = {
+        kind: "rate-limited" as const,
+        endedMs: T0 - 3 * MINUTE,
+        retryAfterMs: null,
+        model: OPUS,
+      };
+      assert.deepStrictEqual(yield* advanceIn(rig), started);
+      rig.clock.now += 30 * MINUTE;
+      assert.deepStrictEqual(yield* advanceIn(rig), started);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      assert.deepStrictEqual(yield* advanceIn(rig), { ...started, endedMs: 0 });
+    }),
+  );
+
+  it.effect("is not resumed once a stop by hand is requested, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run, SONNET), {
+        kind: "unchanged",
+        why: "a stop by hand was requested",
+      });
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  it.effect(
+    "into a thread that is gone writes nothing, and its send gone leaves the resume owed",
+    () =>
+      Effect.gen(function* () {
+        const gone = rigFor();
+        threadGone(gone);
+        const before = bytesOf(gone);
+        assert.deepStrictEqual(yield* resumeAfterCooldown(gone.ctx, gone.run), {
+          kind: "unchanged",
+          why: "its thread is gone",
+        });
+        assert.strictEqual(bytesOf(gone), before);
+
+        const refused = rigFor();
+        endedAs(refused, "failed", 1, COOLING_DOWN);
+        refused.world.sendNotFound = true;
+        assert.deepStrictEqual(yield* resumeAfterCooldown(refused.ctx, refused.run), {
+          kind: "unchanged",
+          why: "its thread is gone",
+        });
+        assert.deepStrictEqual(linesOf(refused), [...STARTED, cooledLine(0, 1)]);
+      }),
+  );
+
+  it.effect("owed when its thread is gone charges the relaunch nothing", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+        cooledLine(1, 2),
+      ]);
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      const outcome = yield* decide(rig, afterOutage());
+      assert.strictEqual(outcome.kind, "relaunched");
+      // One real interruption before, and the relaunch: two, not one.
+      assert.ok(outcome.kind === "relaunched" && outcome.resumes === 2);
+    }),
+  );
+
+  it.effect("moved to another model keeps the session's provider options", () =>
+    Effect.gen(function* () {
+      const options = [{ id: "effort", value: "high" }];
+      const launched = STARTED.map((line): RunEvent =>
+        line.event === "session_launched"
+          ? ({ ...line, data: { ...line.data, model_options: options } } as RunEvent)
+          : line,
+      );
+      const moved = cooledLine(0, 1, "claude-sonnet-5-5");
+      assert.deepStrictEqual(readProgress(seededEntries([...launched, moved])).model, {
+        ...SONNET,
+        options,
+      });
+    }),
+  );
+
+  it.effect("is not resumed once a relaunch is decided, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, relaunchLine(1, "t3code/abc")]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), {
+        kind: "unchanged",
+        why: "a relaunch is already decided",
+      });
+      assert.strictEqual(bytesOf(rig), before);
     }),
   );
 });

@@ -138,6 +138,7 @@ const freeingShared = (freed: Queue.Queue<string>): LiveShared => {
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
     lastGood: new Map(),
+    cooldowns: new Map(),
   };
 };
 
@@ -776,6 +777,7 @@ describe("liveWorld", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1335,6 +1337,7 @@ describe("liveWorld", () => {
         lastGood: new Map(
           withLastGood ? [[REPO.toLowerCase(), { project: timeLimitOnlyProjectConfig() }]] : [],
         ),
+        cooldowns: new Map(),
       },
     );
     return Effect.result(world.project({ repo, path: root })).pipe(
@@ -1768,6 +1771,7 @@ describe("the gate in the background", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2111,6 +2115,7 @@ describe("the gate in the background", () => {
     minFreeGib: 0,
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
+    modelFallbacks: {},
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2195,6 +2200,7 @@ describe("the gate in the background", () => {
         brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
         configSkips: new Map<string, number>(),
         lastGood: new Map(),
+        cooldowns: new Map(),
       };
       const build = () =>
         liveWorld(
@@ -2456,6 +2462,7 @@ describe("the gate in the background", () => {
         minFreeGib: 0,
         maxLoadPerCore: 0,
         deployWaitMinutes: 120,
+        modelFallbacks: {},
       };
       const world = liveWorld(
         machine,
@@ -2514,6 +2521,7 @@ describe("the gate in the background", () => {
             minFreeGib: 0,
             maxLoadPerCore: 0,
             deployWaitMinutes: 120,
+            modelFallbacks: {},
           },
           dataDir,
           { run: () => Effect.die("no gh") },

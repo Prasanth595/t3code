@@ -16,6 +16,7 @@ import {
   type ProjectConfig,
   type WatchedProject,
 } from "./config.ts";
+import { COOLDOWN_QUIET_MS, type Cooldown } from "./cooldown.ts";
 import { readFreeSpace } from "./disk.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
@@ -48,6 +49,7 @@ import {
   NotBuildingError,
   type AdvanceOutcome,
   type BuildingError,
+  type CooldownOutcome,
   type Evidence,
   type ForwardOutcome,
   type InterruptOutcome,
@@ -58,7 +60,12 @@ import type { FeedbackStep } from "./runner/feedback.ts";
 import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
-import { MessageRejectedError, SessionsError, type ThreadOnBrokenWorktree } from "./t3/sessions.ts";
+import {
+  MessageRejectedError,
+  SessionsError,
+  type Model,
+  type ThreadOnBrokenWorktree,
+} from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker, type Mergeable } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
@@ -83,9 +90,15 @@ const machine = (max: number): MachineConfig => ({
   minFreeGib: 10,
   maxLoadPerCore: 1,
   deployWaitMinutes: 120,
+  modelFallbacks: {},
 });
 
 const GIB = 1024 ** 3;
+const MINUTE = 60_000;
+
+/** The model the repos' T3 projects run on unless a test says otherwise, and its fallback. */
+const FABLE: Model = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
+const OPUS: Model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 
 /** What the T3 projects list as watched, for the repos a test names. */
 const watchedOf = (repos: ReadonlyArray<string>): Array<WatchedProject> =>
@@ -539,6 +552,30 @@ class Fake implements PassWorld {
     return this.pending;
   }
 
+  /** Each model's cooldown, kept from pass to pass as the live world keeps it. */
+  cooldowns = new Map<string, Cooldown>();
+  /** The machine's `model_fallbacks` for the passes `pass` runs. */
+  modelFallbacks: Record<string, string> = {};
+  /** The model of each repo's T3 project: `FABLE` unless scripted; `"error"` is a lookup that fails. */
+  projectModels: Record<string, Model | null | "error"> = {};
+  /** What resuming a rate-limited session answers per `"<repo>#<issue>"`; a resume otherwise. */
+  cooledResumes: Record<string, Array<CooldownOutcome | BuildingError>> = {};
+
+  projectModel(repo: Repo) {
+    this.calls.push(`project_model ${repo.watched.repo}`);
+    const found = this.projectModels[repo.watched.repo];
+    if (found === "error") return Effect.fail<PassError>({ kind: "t3", message: "store down" });
+    return Effect.succeed(found === undefined ? FABLE : found);
+  }
+
+  resumeAfterCooldown(repo: Repo, run: RunId, base: string | null, model: Model | null) {
+    this.onBase("cooled_resume", run, base);
+    const key = `${repo.watched.repo}#${run.issue}`;
+    this.calls.push(`cooled_resume ${key}${model === null ? "" : ` on ${model.model}`}`);
+    const answer = this.cooledResumes[key]?.shift() ?? { kind: "resumed" as const };
+    return "kind" in answer ? Effect.succeed(answer) : Effect.fail(answer);
+  }
+
   /** The live threads on a broken worktree; an archived thread leaves the list. */
   onBroken: Array<ThreadOnBrokenWorktree> = [];
   brokenFails = false;
@@ -688,6 +725,7 @@ const pass = (
         minFreeGib: fake.minFreeGib,
         maxLoadPerCore: fake.maxLoadPerCore,
         deployWaitMinutes: fake.deployWaitMinutes,
+        modelFallbacks: fake.modelFallbacks,
       },
       (line) => lines.push(line),
     );
@@ -5583,6 +5621,346 @@ describe("pr-open runs: instructor feedback", () => {
       assert.equal(report.errors, 1);
       assert.deepEqual(gated(fake), []);
       assert.ok(lines[0]!.startsWith(`error: ${REPO}#12 feedback:`), `${lines}`);
+    }),
+  );
+});
+
+describe("a provider rate limit", () => {
+  const FABLE_KEY = "claudeAgent claude-fable-5-1";
+  const limited = (
+    endedMs: number,
+    model: Model | null = FABLE,
+    retryAfterMs: number | null = null,
+  ): AdvanceOutcome => ({ kind: "rate-limited", endedMs, retryAfterMs, model });
+  const cooledResumes = (fake: Fake) => fake.calls.filter((c) => c.startsWith("cooled_resume "));
+  const coolingLines = (lines: ReadonlyArray<string>) =>
+    lines.filter((l) => l.startsWith("provider cooling down"));
+  const coolingLine = (until: number, key: string, windows: number, tail: string) =>
+    `provider cooling down until ${formatTs(until)}: ${key} hit its rate limit (${windows} ${windows === 1 ? "window" : "windows"} in a row); ${tail}`;
+  const HELD = "no issue is claimed on it";
+  const coolingSkips = (fake: Fake) =>
+    fake.events.filter(
+      (e) =>
+        e.event === "claim_skipped" && (e.data as { reason: string }).reason === "cooling-down",
+    );
+  const lineFor = (lines: ReadonlyArray<string>, issue: number) =>
+    runLine(lines, `rawphp/softfac#${issue} `);
+
+  it.effect(
+    "ten sessions that hit it: none is stuck, nothing is claimed in the backoff, and claims resume after it",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        for (let issue = 1; issue <= 10; issue++) {
+          fake.runIn(issue, BUILDING, REPO, true);
+          fake.advances[`${REPO}#${issue}`] = [
+            limited(T0 - 1000),
+            limited(T0 - 1000),
+            limited(T0 - 1000),
+          ];
+        }
+        fake.ready[REPO] = [20];
+        fake.pushStart(`${REPO}#20`, started(20));
+        const until = T0 + 5 * MINUTE;
+
+        const first = yield* pass(fake, [REPO], 20);
+        assert.deepEqual(starts(fake), []);
+        assert.deepEqual(cooledResumes(fake), []);
+        assert.ok(!fake.calls.some((c) => c.startsWith("interrupted ")));
+        assert.deepEqual(fake.items, []);
+        assert.equal(first.report.errors, 0);
+        assert.deepEqual(coolingLines(first.lines), [coolingLine(until, FABLE_KEY, 1, HELD)]);
+        assert.deepEqual(coolingSkips(fake), [
+          { event: "claim_skipped", data: { reason: "cooling-down" } },
+        ]);
+        assert.equal(
+          lineFor(first.lines, 1),
+          `rawphp/softfac#1 building: session hit the provider's rate limit on ${FABLE_KEY}; it is resumed once the cooldown ends at ${formatTs(until)}`,
+        );
+
+        // Still in the window: the sessions that ended in the same burst do not move it.
+        fake.calls = [];
+        fake.now = T0 + 4 * MINUTE;
+        const during = yield* pass(fake, [REPO], 20);
+        assert.deepEqual(starts(fake), []);
+        assert.deepEqual(cooledResumes(fake), []);
+        assert.deepEqual(coolingLines(during.lines), [coolingLine(until, FABLE_KEY, 1, HELD)]);
+
+        // The window is over: each session is resumed once and claims go on.
+        fake.calls = [];
+        fake.now = until;
+        const after = yield* pass(fake, [REPO], 20);
+        assert.deepEqual(
+          cooledResumes(fake),
+          Array.from({ length: 10 }, (_, i) => `cooled_resume ${REPO}#${i + 1}`),
+        );
+        assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+        assert.deepEqual(coolingLines(after.lines), []);
+        assert.equal(
+          lineFor(after.lines, 1),
+          `rawphp/softfac#1 building: session hit the provider's rate limit on ${FABLE_KEY}; the cooldown is over, sent it a resume`,
+        );
+        assert.deepEqual(fake.items, []);
+      }),
+  );
+
+  /** Five windows in a row on fable, each hit a minute after the last one ended. */
+  const fiveWindows = (fake: Fake) =>
+    Effect.gen(function* () {
+      fake.runIn(12, BUILDING, REPO, true);
+      let ended = T0 - 1000;
+      const lengths: Array<number> = [];
+      for (let window = 1; window <= 5; window++) {
+        fake.advances[`${REPO}#12`] = [limited(ended)];
+        const { report } = yield* pass(fake, [REPO], 1);
+        const cooldown = fake.cooldowns.get(FABLE_KEY)!;
+        lengths.push((cooldown.untilMs - fake.now) / MINUTE);
+        const items = fake.items.filter((item) => item.id === `cooldown:${FABLE_KEY}`);
+        assert.equal(items.length, window > 3 ? 1 : 0, `window ${window}`);
+        assert.equal(report.attention, window === 4 ? 1 : 0, `window ${window}`);
+        ended = cooldown.untilMs + MINUTE;
+        fake.now = ended + MINUTE;
+      }
+      return lengths;
+    });
+
+  it.effect(
+    "backs off longer each window it is hit again, raises one item after three, and forgets it once quiet",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        assert.deepEqual(yield* fiveWindows(fake), [5, 10, 20, 40, 60]);
+        assert.deepEqual(
+          fake.items.map((item) => [item.kind, item.repo, item.message]),
+          [
+            [
+              "attention",
+              null,
+              `${FABLE_KEY} has hit its provider rate limit 4 windows in a row; claims on it wait for each cooldown to end`,
+            ],
+          ],
+        );
+        // Quiet past its window: the streak is over and so is the item.
+        fake.now = fake.cooldowns.get(FABLE_KEY)!.untilMs + COOLDOWN_QUIET_MS;
+        yield* pass(fake, [REPO], 1);
+        assert.equal(fake.cooldowns.size, 0);
+        assert.deepEqual(fake.items, []);
+      }),
+  );
+
+  it.effect("with a fallback, the item says the work runs on it", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.modelFallbacks = { "claude-fable-5-1": "claude-opus-5-5" };
+      yield* fiveWindows(fake);
+      assert.deepEqual(
+        fake.items.map((item) => item.message),
+        [
+          `${FABLE_KEY} has hit its provider rate limit 4 windows in a row; new sessions and rate-limited sessions run on claude-opus-5-5`,
+        ],
+      );
+    }),
+  );
+
+  it.effect("an item a restart left behind is cleared", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items.push({
+        id: `cooldown:${FABLE_KEY}`,
+        kind: "attention",
+        repo: null,
+        issue: null,
+        run: null,
+        message: "old",
+        firstSeenMs: T0 - 60 * MINUTE,
+      });
+      yield* pass(fake, [REPO], 1);
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
+  it.effect("an item a restart left behind is cleared while the model cools down afresh", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items.push({
+        id: `cooldown:${FABLE_KEY}`,
+        kind: "attention",
+        repo: null,
+        issue: null,
+        run: null,
+        message: "old",
+        firstSeenMs: T0 - 60 * MINUTE,
+      });
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      yield* pass(fake, [REPO], 1);
+      assert.equal(fake.cooldowns.get(FABLE_KEY)!.windows, 1);
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
+  it.effect(
+    "with a fallback the session moves to it in place, and claims go on while the fallback is free",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.modelFallbacks = { "claude-fable-5-1": "claude-opus-5-5" };
+        fake.runIn(12, BUILDING, REPO, true);
+        fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+        fake.ready[REPO] = [20];
+        fake.pushStart(`${REPO}#20`, started(20));
+        const { lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(cooledResumes(fake), [`cooled_resume ${REPO}#12 on claude-opus-5-5`]);
+        assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+        assert.equal(
+          lineFor(lines, 12),
+          `rawphp/softfac#12 building: session hit the provider's rate limit on ${FABLE_KEY}; moved it to claude-opus-5-5 and sent it a resume`,
+        );
+        assert.deepEqual(coolingLines(lines), [
+          coolingLine(T0 + 5 * MINUTE, FABLE_KEY, 1, "new sessions run on claude-opus-5-5"),
+        ]);
+        assert.deepEqual(coolingSkips(fake), []);
+      }),
+  );
+
+  it.effect("when the fallback cools down too, claims stop and the session waits", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.modelFallbacks = { "claude-fable-5-1": "claude-opus-5-5" };
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.runIn(13, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000, OPUS)];
+      fake.advances[`${REPO}#13`] = [limited(T0 - 1000)];
+      fake.ready[REPO] = [20];
+      fake.pushStart(`${REPO}#20`, started(20));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(cooledResumes(fake), []);
+      const until = T0 + 5 * MINUTE;
+      assert.deepEqual(coolingLines(lines), [
+        coolingLine(until, "claudeAgent claude-opus-5-5", 1, HELD),
+        coolingLine(until, FABLE_KEY, 1, HELD),
+      ]);
+      assert.equal(coolingSkips(fake).length, 1);
+    }),
+  );
+
+  it.effect("holds back only the repos whose project runs on a model that cools down", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      fake.projectModels[OTHER] = OPUS;
+      fake.ready[REPO] = [20];
+      fake.ready[OTHER] = [4];
+      fake.pushStart(`${OTHER}#4`, started(4, OTHER));
+      yield* pass(fake, [REPO, OTHER], 5);
+      assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
+    }),
+  );
+
+  it.effect("reads no project model while nothing cools down", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [20];
+      fake.pushStart(`${REPO}#20`, started(20));
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+      assert.ok(!fake.calls.some((c) => c.startsWith("project_model ")));
+    }),
+  );
+
+  it.effect("opens the window the provider's retry-after asks for", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000, FABLE, 30 * MINUTE)];
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.equal(fake.cooldowns.get(FABLE_KEY)!.untilMs, T0 + 30 * MINUTE);
+      assert.deepEqual(coolingLines(lines), [coolingLine(T0 + 30 * MINUTE, FABLE_KEY, 1, HELD)]);
+    }),
+  );
+
+  it.effect("records claim_skipped only when a claim is held back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      fake.projectModels[OTHER] = OPUS;
+      fake.ready[OTHER] = [4];
+      fake.pushStart(`${OTHER}#4`, started(4, OTHER));
+      yield* pass(fake, [REPO, OTHER], 5);
+      assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
+      assert.deepEqual(coolingSkips(fake), []);
+    }),
+  );
+
+  it.effect("a project model that cannot be read holds that repo's claims, with an error", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      fake.projectModels[REPO] = "error";
+      fake.ready[REPO] = [20];
+      fake.pushStart(`${REPO}#20`, started(20));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.includes("error: rawphp/softfac: cannot read the T3 project's model: store down"),
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("a project with no model is left to the claim, which says why", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      fake.projectModels[REPO] = null;
+      fake.ready[REPO] = [20];
+      fake.pushStart(`${REPO}#20`, started(20));
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+    }),
+  );
+
+  it.effect("a resume that fails is an error, and one with nothing to resume is left alone", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.runIn(13, BUILDING, REPO, true);
+      fake.modelFallbacks = { "claude-fable-5-1": "claude-opus-5-5" };
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      fake.advances[`${REPO}#13`] = [limited(T0 - 1000)];
+      fake.cooledResumes[`${REPO}#12`] = [new NotBuildingError({ run: rid(12) })];
+      fake.cooledResumes[`${REPO}#13`] = [{ kind: "unchanged", why: "its thread is gone" }];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith("error: rawphp/softfac#12 resume after the rate limit: ")),
+        lines.join("\n"),
+      );
+      assert.equal(
+        lineFor(lines, 13),
+        `rawphp/softfac#13 building: session hit the provider's rate limit on ${FABLE_KEY}, but its thread is gone; left alone`,
+      );
+    }),
+  );
+
+  it.effect("a session whose launch named no model waits out a backoff of its own", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000, null)];
+      fake.ready[REPO] = [20];
+      fake.pushStart(`${REPO}#20`, started(20));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(cooledResumes(fake), []);
+      assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+      assert.equal(coolingLines(lines).length, 1);
+      assert.ok(coolingLines(lines)[0]!.endsWith("; its sessions wait for it to end"));
     }),
   );
 });
