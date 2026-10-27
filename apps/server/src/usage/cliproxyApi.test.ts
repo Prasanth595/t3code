@@ -49,9 +49,10 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 function fixture(
   options: {
     accounts?: Array<
-      (typeof accounts)[number] & {
+      Omit<(typeof accounts)[number], "id_token"> & {
         disabled?: boolean;
-        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+        account_id?: string;
+        id_token: { chatgpt_account_id?: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
@@ -424,6 +425,31 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* api.consume(config, "missing.json", "credit").pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       expect(test.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reads a Codex workspace from account_id when the id token omits it", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            ...accounts[0]!,
+            id: "plain.json",
+            auth_index: "p",
+            email: "plain@example.com",
+            id_token: {},
+            account_id: "workspace-plain",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.workspaceId).toBe("workspace-plain");
+      expect(
+        test.requests.find((request) => request.body?.url?.endsWith("/usage"))?.body?.header?.[
+          "Chatgpt-Account-Id"
+        ],
+      ).toBe("workspace-plain");
     }),
   );
 });
