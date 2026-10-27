@@ -89,6 +89,7 @@ import {
   NewTaskThreadSettingsRouteScreen,
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
+import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
@@ -482,9 +483,12 @@ export function workspaceLocationFromState(state: NavigationState) {
       ? ({ ...state, routes, index: routes.length - 1 } as NavigationState)
       : state;
   const path = getPathFromState(effectiveState, navigationPathConfig);
+  const route = effectiveState.routes[effectiveState.index];
   return {
     pathname: path.startsWith("/") ? path : `/${path}`,
-    routeKey: effectiveState.routes[effectiveState.index]?.key,
+    routeKey: route?.key,
+    routeName: route?.name,
+    routeKeys: effectiveState.routes.map((stackRoute) => stackRoute.key),
   };
 }
 
@@ -500,7 +504,12 @@ function RootStackLayout(props: {
       .slice(0, props.state.index + 1)
       .filter((route) => !isWorkspaceOverlayRoute(route.name)),
   );
-  const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
+  // The flow follows the draft route even while a pushed Thread covers it, so
+  // its state lives exactly as long as the route.
+  const draftRoute = props.state.routes.findLast(isDraftThreadRoute);
+  const draftRouteOnTop =
+    draftRoute !== undefined &&
+    props.state.routes.findLast((route) => route.name === "Thread") === draftRoute;
   const draftParams = (
     draftRoute?.params as { draft?: { draftId?: string | string[] } } | undefined
   )?.draft;
@@ -509,7 +518,11 @@ function RootStackLayout(props: {
     : draftParams?.draftId;
 
   return (
-    <NewTaskFlowProvider active={isDraftThreadRoute(draftRoute)} routeDraftId={routeDraftId}>
+    <NewTaskFlowProvider
+      active={draftRouteOnTop}
+      flowKey={draftRoute === undefined ? undefined : newTaskFlowKey(draftRoute)}
+      routeDraftId={routeDraftId}
+    >
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ShowcaseCaptureCoordinator pathname={pathname} />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
@@ -518,6 +531,8 @@ function RootStackLayout(props: {
               <AdaptiveWorkspaceLayout
                 pathname={workspaceLocation.pathname}
                 workspaceRouteKey={workspaceLocation.routeKey}
+                workspaceRouteName={workspaceLocation.routeName}
+                workspaceRouteKeys={workspaceLocation.routeKeys}
                 selectedPullRequestKey={selectedPullRequestKey(props.state)}
               >
                 {props.children}
