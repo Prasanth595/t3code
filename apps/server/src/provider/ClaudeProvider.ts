@@ -61,6 +61,7 @@ const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
   reportsContextWindow: true,
+  modelFamilies: ["Claude "],
 } as const;
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];

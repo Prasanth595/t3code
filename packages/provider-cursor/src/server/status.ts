@@ -27,6 +27,7 @@ const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   supportsConversationRollback: false,
   showInteractionModeToggle: true,
+  modelFamilies: ["Grok "],
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

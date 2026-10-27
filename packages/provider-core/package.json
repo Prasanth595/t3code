@@ -79,6 +79,10 @@
       "types": "./src/server/ModelCatalog.ts",
       "import": "./src/server/ModelCatalog.ts"
     },
+    "./server/modelShortName": {
+      "types": "./src/server/modelShortName.ts",
+      "import": "./src/server/modelShortName.ts"
+    },
     "./server/nativeProtocolLogging": {
       "types": "./src/server/nativeProtocolLogging.ts",
       "import": "./src/server/nativeProtocolLogging.ts"

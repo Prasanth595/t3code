@@ -22,6 +22,7 @@ import { readCustomModelEntries } from "@t3tools/shared/model";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createProviderVersionAdvisory } from "./maintenanceResolver.ts";
 import { collectUint8StreamText } from "./collectStreamText.ts";
+import { withModelShortNames } from "./modelShortName.ts";
 
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
   /is not recognized as an internal or external command/i,
@@ -89,6 +90,7 @@ export interface ServerProviderPresentation {
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
+  readonly modelFamilies?: ReadonlyArray<string>;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -267,7 +269,7 @@ export function buildServerProvider(input: {
     setup: { canAuthenticate: false, canInstall: false },
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
-    models: input.models,
+    models: withModelShortNames(input.models, input.presentation.modelFamilies ?? []),
     ...(input.updateRequiredModels?.length
       ? { updateRequiredModels: input.updateRequiredModels }
       : {}),
