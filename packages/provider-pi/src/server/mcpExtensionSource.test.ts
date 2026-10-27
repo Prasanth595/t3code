@@ -8,7 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { providerTextForTurn } from "../../../../apps/server/src/orchestration-v2/agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 

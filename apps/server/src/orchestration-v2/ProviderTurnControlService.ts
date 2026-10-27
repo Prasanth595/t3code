@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { providerTextForTurn } from "./agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 

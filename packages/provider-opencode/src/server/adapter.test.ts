@@ -36,7 +36,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
-import { providerTextForTurn } from "../../../../apps/server/src/orchestration-v2/agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import {
   advanceOpenCodePromptAdmission,
   cancelOpenCodePromptAdmission,

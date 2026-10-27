@@ -1,7 +1,8 @@
 import type { OrchestrationV2Actor, OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+
+import { SKILL_MENTION_PATTERN } from "./composerInlineTokens.ts";
 
 const SKILL_AT_START = new RegExp(SKILL_MENTION_PATTERN.source, "u");
 

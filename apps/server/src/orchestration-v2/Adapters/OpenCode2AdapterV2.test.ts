@@ -38,7 +38,7 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { providerTextForTurn } from "../agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";

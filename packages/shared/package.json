@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agentSendProvenance": {
+      "types": "./src/agentSendProvenance.ts",
+      "import": "./src/agentSendProvenance.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

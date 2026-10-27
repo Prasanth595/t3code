@@ -4,7 +4,7 @@ import { leadingGrokSkillMention } from "@t3tools/provider-grok/server/skills";
 import { parsePiCompactCommand } from "@t3tools/provider-pi/server/commands";
 import * as Effect from "effect/Effect";
 
-import { providerTextForTurn } from "./agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 
 const senderThreadId = ThreadId.make("thread:child-review");

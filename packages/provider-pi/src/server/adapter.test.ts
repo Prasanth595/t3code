@@ -1,4 +1,4 @@
-import { providerTextForTurn } from "../../../../apps/server/src/orchestration-v2/agentSendProvenance.ts";
+import { providerTextForTurn } from "@t3tools/shared/agentSendProvenance";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
