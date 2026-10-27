@@ -28,6 +28,8 @@
         "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        // Maintainers run this fixture by hand to reproduce a blocked branch switch.
+        "seed-branch-checkout-conflict.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "smoke-desktop-app.ts",
