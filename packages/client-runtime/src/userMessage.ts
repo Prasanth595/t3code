@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
+import { ULTRATHINK_PROMPT_PREFIX } from "./modelTraits.ts";
+
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
   beforeCacheExpires: "Compacting before the cache expires…",
@@ -21,7 +23,12 @@ export const IDLE_COMPACTION_TITLES = {
 
 /** Attachment-only sends carry a prompt for the agent; people see only the attachments. */
 export function userVisibleMessageText(text: string): string {
-  return text.trim() === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ? "" : text;
+  const trimmed = text.trim();
+  // Claude's Ultrathink effort prefixes the outgoing prompt, including this one.
+  const prompt = trimmed.startsWith(ULTRATHINK_PROMPT_PREFIX)
+    ? trimmed.slice(ULTRATHINK_PROMPT_PREFIX.length)
+    : trimmed;
+  return prompt === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ? "" : text;
 }
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
