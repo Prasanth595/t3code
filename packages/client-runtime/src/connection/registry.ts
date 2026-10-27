@@ -53,6 +53,8 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  routesWithCopiedLabel,
+  routesWithHostLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -102,10 +104,12 @@ export class EnvironmentRegistry extends Context.Service<
     readonly start: Effect.Effect<void>;
     /**
      * Succeeds with `false` and changes nothing when the environment is
-     * platform-managed, since the host owns that entry.
+     * platform-managed, since the host owns that entry. `paired` means the
+     * server at this address just confirmed its environment id.
      */
     readonly register: (
       registration: ConnectionRegistration,
+      options?: { readonly paired?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
@@ -536,10 +540,12 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
+    options?: { readonly paired?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    return yield* withLeaseLock(
+    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+    const saved = yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
@@ -548,15 +554,20 @@ export const make = Effect.gen(function* () {
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
-          const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
+          const routes =
+            sameAddress === undefined ||
+            connectionRouteId(sameAddress.target) === connectionRouteId(route.target)
+              ? existing
+              : routesAfterRemoving(existing, connectionRouteId(sameAddress.target));
+          const upserted = upsertRoute(routes, route);
+          const next = withRoutes(
+            previous,
+            registration._tag === "RelayConnectionRegistration"
+              ? upserted
+              : (routesWithCopiedLabel(upserted, registered.target.label) ?? upserted),
           );
-          const next = withRoutes(previous, upsertRoute(routes, route));
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
           }
@@ -569,6 +580,48 @@ export const make = Effect.gen(function* () {
         yield* installEntryLocked(entry);
         return true;
       }),
+    );
+    if (saved && options?.paired === true && registration._tag === "BearerConnectionRegistration") {
+      yield* dropAddressFromOtherEnvironments(environmentId, route);
+    }
+    return saved;
+  });
+
+  /**
+   * An address reaches one server, so a pairing proves that other environments
+   * saved there are gone from it. SSH is left alone: removing its route would
+   * tear down the tunnel the new pairing uses.
+   */
+  const dropAddressFromOtherEnvironments = Effect.fn(
+    "EnvironmentRegistry.dropAddressFromOtherEnvironments",
+  )(function* (environmentId: EnvironmentId, route: ConnectionRoute) {
+    const others = [...(yield* SubscriptionRef.get(entries)).keys()].filter(
+      (id) => id !== environmentId,
+    );
+    yield* Effect.forEach(
+      others,
+      (other) =>
+        withLeaseLock(
+          other,
+          Effect.gen(function* () {
+            // Checked under the lock: the route may have been edited to another address.
+            const entry = (yield* SubscriptionRef.get(entries)).get(other);
+            const stale =
+              entry === undefined
+                ? undefined
+                : findRouteToSameAddress(connectionRoutes(entry), route);
+            if (stale === undefined) return;
+            yield* removeRouteLocked(other, connectionRouteId(stale.target));
+          }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not drop a stale route at a newly paired address.", {
+              environmentId: other,
+              error,
+            }),
+          ),
+        ),
+      { discard: true },
     );
   });
 
@@ -874,7 +927,8 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+    readonly label: string;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -884,12 +938,17 @@ export const make = Effect.gen(function* () {
         }
         const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
         if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
-        const routes = mergeLearnedRoutes({
-          entry,
-          activeRoute: input.activeRoute,
-          reported: input.reported,
-          allowInsecure: allowInsecureRoutes,
-        });
+        const learned =
+          input.reported === undefined
+            ? null
+            : mergeLearnedRoutes({
+                entry,
+                activeRoute: input.activeRoute,
+                reported: input.reported,
+                allowInsecure: allowInsecureRoutes,
+              });
+        const routes =
+          routesWithHostLabel(learned ?? connectionRoutes(entry), input.label) ?? learned;
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(
@@ -936,22 +995,25 @@ export const make = Effect.gen(function* () {
   ) {
     // One lock for the whole decision: a route registered between "this was
     // the last route" and the removal must not be deleted with it.
-    yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = yield* userEntry(environmentId);
-        const routes = connectionRoutes(entry);
-        const route = routes.find((candidate) => connectionRouteId(candidate.target) === routeId);
-        if (route === undefined) return;
-        const remaining = routesAfterRemoving(routes, routeId);
-        if (remaining.length === 0) return yield* removeLocked(environmentId);
-        yield* replaceRoutesLocked(entry, remaining);
-        const profile = Option.getOrNull(route.profile);
-        if (profile !== null && isSshConnectionProfile(profile)) {
-          yield* disconnectSsh(environmentId, profile);
-        }
-      }),
-    );
+    yield* withLeaseLock(environmentId, removeRouteLocked(environmentId, routeId));
+  });
+
+  /** Callers hold its lease lock. */
+  const removeRouteLocked = Effect.fn("EnvironmentRegistry.removeRouteLocked")(function* (
+    environmentId: EnvironmentId,
+    routeId: string,
+  ) {
+    const entry = yield* userEntry(environmentId);
+    const routes = connectionRoutes(entry);
+    const route = routes.find((candidate) => connectionRouteId(candidate.target) === routeId);
+    if (route === undefined) return;
+    const remaining = routesAfterRemoving(routes, routeId);
+    if (remaining.length === 0) return yield* removeLocked(environmentId);
+    yield* replaceRoutesLocked(entry, remaining);
+    const profile = Option.getOrNull(route.profile);
+    if (profile !== null && isSshConnectionProfile(profile)) {
+      yield* disconnectSsh(environmentId, profile);
+    }
   });
 
   const reorderRoutes = Effect.fn("EnvironmentRegistry.reorderRoutes")(function* (

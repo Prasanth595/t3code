@@ -164,6 +164,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly serverLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -406,9 +407,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Effect.succeed({
           client: {} as RpcSession.RpcSession["client"],
           initialConfig:
-            options?.directEndpoints === undefined
+            options?.directEndpoints === undefined && options?.serverLabel === undefined
               ? Effect.die(new Error("Config is not used by registry tests."))
-              : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
+              : Effect.succeed({
+                  ...(options.directEndpoints === undefined
+                    ? {}
+                    : { directEndpoints: options.directEndpoints }),
+                  environment: { label: options.serverLabel ?? "Registry test server" },
+                } as ServerConfig),
           subscribeServerConfig: () =>
             Stream.die(new Error("Config is not used by registry tests.")),
           ready: Effect.void,
@@ -1900,11 +1906,23 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
-  it.effect("re-pairing the same address replaces that route rather than adding another", () =>
+  it.effect("re-pairing the same address replaces that route and the routes borrowing it", () =>
     Effect.gen(function* () {
+      const learned = new BearerConnectionTarget({
+        ...LAN_TARGET,
+        connectionId: `learned:${LAN_TARGET.environmentId}:http://100.64.0.9:3773@${LAN_TARGET.connectionId}`,
+      });
       const harness = yield* makeHarness(
-        [LAN_TARGET, RELAY_TARGET],
-        [LAN_PROFILE],
+        [LAN_TARGET, learned, RELAY_TARGET],
+        [
+          LAN_PROFILE,
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId: learned.connectionId,
+            httpBaseUrl: "http://100.64.0.9:3773/",
+            learned: true,
+          }),
+        ],
         [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
       );
       yield* Effect.gen(function* () {
@@ -1923,6 +1941,112 @@ describe("EnvironmentRegistry routes", () => {
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
           repaired,
           RELAY_TARGET,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("pairing a new server at a saved address drops the old server's route there", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, LAN_TARGET, RELAY_TARGET],
+        [BEARER_PROFILE, LAN_PROFILE],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [LAN_TARGET.connectionId, BEARER_CREDENTIAL],
+        ],
+      );
+      const newServer = (id: string, httpBaseUrl: string) => {
+        const target = new BearerConnectionTarget({
+          environmentId: EnvironmentId.make(id),
+          label: "New server",
+          connectionId: `bearer:${id}`,
+        });
+        return lanRegistration(
+          target,
+          new BearerConnectionProfile({
+            connectionId: target.connectionId,
+            environmentId: target.environmentId,
+            label: target.label,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+          }),
+        );
+      };
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(newServer("environment-new", `${BEARER_PROFILE.httpBaseUrl}/`), {
+          paired: true,
+        });
+        yield* registry.register(newServer("environment-new-lan", LAN_PROFILE.httpBaseUrl), {
+          paired: true,
+        });
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, BEARER_TARGET.environmentId)).toBe(false);
+        expect(routesOf(targets, RELAY_TARGET.environmentId)).toEqual([RELAY_TARGET]);
+        const entries = yield* SubscriptionRef.get(registry.entries);
+        expect([...entries.keys()].toSorted()).toEqual([
+          "environment-new",
+          "environment-new-lan",
+          RELAY_TARGET.environmentId,
+        ]);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("editing an address to another environment's address keeps that environment", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, LAN_TARGET],
+        [BEARER_PROFILE, LAN_PROFILE],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [LAN_TARGET.connectionId, BEARER_CREDENTIAL],
+        ],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: new BearerConnectionProfile({
+              ...BEARER_PROFILE,
+              httpBaseUrl: LAN_PROFILE.httpBaseUrl,
+              wsBaseUrl: LAN_PROFILE.wsBaseUrl,
+            }),
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          LAN_TARGET,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("renaming a paired address renames the environment when T3 Connect is first", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [RELAY_TARGET, LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const renamed = new BearerConnectionTarget({ ...LAN_TARGET, label: "Studio" });
+        yield* registry.register(
+          lanRegistration(
+            renamed,
+            new BearerConnectionProfile({ ...LAN_PROFILE, label: "Studio" }),
+          ),
+        );
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          new RelayConnectionTarget({ ...RELAY_TARGET, label: "Studio" }),
+          renamed,
         ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
@@ -2121,6 +2245,45 @@ describe("EnvironmentRegistry routes", () => {
           learned: true,
           httpBaseUrl,
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a T3 Connect environment takes its host's name; a paired one keeps its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [RELAY_TARGET, BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          directEndpoints: [{ kind: "lan", httpBaseUrl: "https://lan.example.test/" }],
+          serverLabel: "Renamed host",
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const entries = yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((current) =>
+            [RELAY_TARGET, BEARER_TARGET].every(
+              (target) => current.get(target.environmentId)?.alternateRoutes !== undefined,
+            ),
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+
+        const relay = entries.get(RELAY_TARGET.environmentId)!;
+        expect([relay.target, ...relay.alternateRoutes!.map((route) => route.target)]).toEqual([
+          expect.objectContaining({ label: "Renamed host" }),
+          expect.objectContaining({ label: "Renamed host" }),
+        ]);
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Renamed host", "Renamed host"]);
+        expect(entries.get(BEARER_TARGET.environmentId)?.target.label).toBe(BEARER_TARGET.label);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

@@ -1683,9 +1683,16 @@ describe("EnvironmentSupervisor routes", () => {
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         initialConfig: () =>
           Ref.get(lanAddress).pipe(
-            Effect.map((httpBaseUrl): Pick<ServerConfig, "directEndpoints"> => ({
-              directEndpoints: [{ kind: "lan", httpBaseUrl }],
-            })),
+            Effect.map(
+              (
+                httpBaseUrl,
+              ): Pick<ServerConfig, "directEndpoints"> & {
+                environment: Pick<ServerConfig["environment"], "label">;
+              } => ({
+                directEndpoints: [{ kind: "lan", httpBaseUrl }],
+                environment: { label: TARGET.label },
+              }),
+            ),
             Effect.map((config) => config as ServerConfig),
           ),
       });
@@ -1698,7 +1705,7 @@ describe("EnvironmentSupervisor routes", () => {
             const routes = mergeLearnedRoutes({
               entry,
               activeRoute,
-              reported,
+              reported: reported ?? [],
               allowInsecure: true,
             });
             if (routes === null) return Option.none();
