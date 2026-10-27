@@ -17,7 +17,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { LoadingScreen } from "../../components/LoadingScreen";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -39,6 +40,8 @@ import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 type NewTaskRouteParams = {
+  readonly startWithoutProject?: boolean;
+  readonly requestId?: string;
   readonly incomingShareId?: string | string[];
   readonly prompt?: string | string[];
   readonly repo?: string | string[];
@@ -211,6 +214,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     null;
   const canStartScratch = scratchEnvironment !== null && reservedDestinationProject === null;
   const scratchStartInFlightRef = useRef(false);
+  const automaticScratchStartedRef = useRef(false);
+  const [scratchStartFailed, setScratchStartFailed] = useState(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
@@ -231,7 +236,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       : navigation.getParent();
     const rootState = root?.getState();
     const threadRoute = rootState?.routes[rootState.index - 1];
-    if (isDraftThreadRoute(threadRoute)) {
+    if (isDraftThreadRoute(threadRoute) && !route.params?.requestId) {
       setProject(project);
       root?.goBack();
       return;
@@ -240,6 +245,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       name: "Thread",
       params: {
         draft: {
+          requestId: route.params?.requestId,
           environmentId: String(project.environmentId),
           projectId: String(project.id),
           incomingShareId: incomingShare?.id,
@@ -255,6 +261,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     const result = await openScratch({ environmentId, input: {} });
     if (result._tag === "Failure") {
       scratchStartInFlightRef.current = false;
+      setScratchStartFailed(true);
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
@@ -266,10 +273,30 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       }
       return;
     }
+    // A second shortcut press stacks another picker; only the one on top may navigate.
+    // This one shows the project list if the user comes back to it.
+    if (!navigation.isFocused()) {
+      scratchStartInFlightRef.current = false;
+      setScratchStartFailed(true);
+      return;
+    }
     // selectProject handles its own failures, so this never throws.
     await selectProject(result.value);
     scratchStartInFlightRef.current = false;
   }
+
+  const startScratchFromShortcut = useEffectEvent(() => void startScratch());
+  // oxlint-disable-next-line t3code/react-effect-budget -- A shortcut waits for connection hydration before opening the server's no-project workspace.
+  useEffect(() => {
+    if (
+      !route.params?.startWithoutProject ||
+      !canStartScratch ||
+      automaticScratchStartedRef.current
+    )
+      return;
+    automaticScratchStartedRef.current = true;
+    startScratchFromShortcut();
+  }, [route.params?.startWithoutProject, canStartScratch]);
 
   useEffect(() => {
     const destination = incomingShare?.destination;
@@ -302,6 +329,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       },
     });
   }, [incomingShare, isFocused, reservedDestinationProject, selectDetail]);
+
+  if (
+    route.params?.startWithoutProject &&
+    !scratchStartFailed &&
+    (canStartScratch ||
+      catalogState.isLoadingConnections ||
+      (!catalogState.hasLoadedShellSnapshot &&
+        catalogState.hasConnectingEnvironment &&
+        catalogState.connectionError === null))
+  ) {
+    return <LoadingScreen message="Opening new task…" />;
+  }
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

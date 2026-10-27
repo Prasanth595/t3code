@@ -220,6 +220,9 @@ export interface ThreadComposerProps {
   readonly canSteerActiveTurn: boolean;
   readonly hidden: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
+  readonly autoFocus?: boolean;
+  /** Returns true once when this composer should open already dictating. */
+  readonly takeDictationRequest?: () => boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
@@ -556,6 +559,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  const startRequestedDictation = useEffectEvent(() => {
+    if (props.takeDictationRequest?.()) voiceInput.start();
+  });
+  const hasDictationRequest = props.takeDictationRequest !== undefined;
+  // oxlint-disable-next-line t3code/react-effect-budget -- The voice shortcut opens a new task already listening; the request is one-shot.
+  useEffect(() => {
+    if (hasDictationRequest) startRequestedDictation();
+  }, [hasDictationRequest]);
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const voicePresentation = resolveVoiceComposerPresentation(
@@ -972,6 +983,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             >
               <ComposerEditor
                 hidden={props.hidden}
+                autoFocus={props.autoFocus ?? false}
                 draftKey={composerDraftKey}
                 environmentId={props.environmentId}
                 onOpenMention={(path) => {

@@ -207,6 +207,8 @@ export interface ThreadDetailScreenProps {
     ) => React.ReactNode;
     readonly controls: React.ReactNode;
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
+    readonly autoFocus: boolean;
+    readonly takeDictationRequest: (() => boolean) | undefined;
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
   };
@@ -453,11 +455,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
   const editingRunId = props.queuedRunEdit?.runId ?? null;
+  const autoFocusDraftKey = props.draftMode?.autoFocus ? props.composerDraftKey : null;
   useEffect(() => {
-    if (editingRunId === null) return;
+    if (editingRunId === null && !autoFocusDraftKey) return;
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [editingRunId, composerEditorRef]);
+  }, [editingRunId, autoFocusDraftKey, composerEditorRef]);
   const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
@@ -1580,6 +1583,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
+                        autoFocus={props.draftMode?.autoFocus ?? false}
+                        takeDictationRequest={props.draftMode?.takeDictationRequest}
                         placeholder={
                           props.activePendingApproval
                             ? props.activePendingApproval.supportsFeedback
