@@ -1241,6 +1241,8 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   readonly assistantMessages: Map<string, string>;
+  /** Replies with text a delayed flush has not emitted yet. */
+  readonly pendingTextFlushes: Set<string>;
   readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
   terminalStatusProjected: boolean;
@@ -2540,6 +2542,52 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* publishTextSegment(context, kind);
         });
 
+        /**
+         * Emits the latest text of each listed child reply that still has
+         * unsent text. The permit keeps a delayed flush from landing after
+         * the child's status update.
+         */
+        const flushSubagentText = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          nativeItemIds: Iterable<string>,
+        ) {
+          for (const nativeItemId of nativeItemIds) {
+            if (!subagent.pendingTextFlushes.delete(nativeItemId)) continue;
+            const text = subagent.assistantMessages.get(nativeItemId);
+            if (text === undefined) continue;
+            const now = yield* DateTime.now;
+            const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
+            const artifacts = makeSubagentConversationArtifacts({
+              messageId: providerMessageId(nativeItemId),
+              turnItemId: providerTurnItemId(nativeItemId),
+              threadId: subagent.childThreadId,
+              rootNodeId: subagent.childRootNodeId,
+              providerThreadId: subagent.task.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+              role: "assistant",
+              text,
+              ordinal,
+              now,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              driver,
+              message: artifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver,
+              turnItem: artifacts.turnItem,
+            });
+          }
+        }, textEmissionPermit.withPermit);
+
+        /**
+         * A child reply's first text and replacements emit at once; later
+         * chunks coalesce into one snapshot per ACP_TEXT_FLUSH_INTERVAL, like
+         * root replies.
+         */
         const emitSubagentAssistant = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           text: string,
@@ -2548,31 +2596,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (text.length === 0 && mode === "append") return;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
-          const previous = subagent.assistantMessages.get(nativeItemId) ?? "";
-          const messageText = mode === "replace" ? text : `${previous}${text}`;
+          const previous = subagent.assistantMessages.get(nativeItemId);
+          const messageText = mode === "replace" ? text : `${previous ?? ""}${text}`;
           subagent.assistantMessages.set(nativeItemId, messageText);
           subagent.assistantText = messageText;
-          const now = yield* DateTime.now;
-          const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
-          const artifacts = makeSubagentConversationArtifacts({
-            messageId: providerMessageId(nativeItemId),
-            turnItemId: providerTurnItemId(nativeItemId),
-            threadId: subagent.childThreadId,
-            rootNodeId: subagent.childRootNodeId,
-            providerThreadId: subagent.task.providerThreadId,
-            providerTurnId: null,
-            nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
-            role: "assistant",
-            text: subagent.assistantText,
-            ordinal,
-            now,
-          });
-          yield* emitProviderEvent({ type: "message.updated", driver, message: artifacts.message });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver,
-            turnItem: artifacts.turnItem,
-          });
+          const delayed = mode === "append" && previous !== undefined;
+          if (delayed && subagent.pendingTextFlushes.has(nativeItemId)) return;
+          subagent.pendingTextFlushes.add(nativeItemId);
+          if (!delayed) return yield* flushSubagentText(subagent, [nativeItemId]);
+          yield* flushSubagentText(subagent, [nativeItemId]).pipe(
+            Effect.delay(ACP_TEXT_FLUSH_INTERVAL),
+            Effect.forkIn(sessionScope),
+          );
         });
 
         const projectSubagentNotification = Effect.fnUntraced(function* (
@@ -2781,6 +2816,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             childSessionId: null,
             assistantText: "",
             assistantMessages: new Map(),
+            pendingTextFlushes: new Set(),
             childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
             terminalStatusProjected: false,
@@ -2882,6 +2918,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          // The child's reply, including replayed buffered chunks, lands before
+          // the status that may settle it.
+          yield* flushSubagentText(subagent, subagent.pendingTextFlushes);
           if (
             taskStatus !== "running" &&
             subagent.assistantText.length === 0 &&
@@ -5442,6 +5481,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: OrchestrationV2Subagent["status"],
           resultOverride?: string | null,
         ) {
+          yield* flushSubagentText(subagent, subagent.pendingTextFlushes);
           yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
           const now = subagent.task.updatedAt;
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id;
