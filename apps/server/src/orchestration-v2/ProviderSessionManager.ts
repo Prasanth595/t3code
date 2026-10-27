@@ -819,14 +819,14 @@ export const layerWithOptions = (
           { discard: true },
         );
 
-      const writeReleaseRecords = (input: {
-        readonly entry: LiveSessionEntry;
-        readonly reason: ProviderSessionReleaseReason;
-        readonly detail?: string;
-        readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
-        readonly releasedAt: DateTime.Utc;
-      }) =>
-        Effect.gen(function* () {
+      const writeReleaseRecords = Effect.fn("ProviderSessionManager.writeReleaseRecords")(
+        function* (input: {
+          readonly entry: LiveSessionEntry;
+          readonly reason: ProviderSessionReleaseReason;
+          readonly detail?: string;
+          readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
+          readonly releasedAt: DateTime.Utc;
+        }) {
           // The open lock protects status ownership, including after a replacement closes.
           const key = sessionKey(input.entry.runtime.providerSessionId);
           const ownsStatus = (yield* Ref.get(latestOpened)).get(key) === input.entry.runtime;
@@ -850,7 +850,8 @@ export const layerWithOptions = (
             updated.delete(key);
             return updated;
           });
-        });
+        },
+      );
 
       // Retry after removal from the live map; later releases cannot clear stale ready sessions and approvals.
       const retryReleaseRecords = (input: Parameters<typeof writeReleaseRecords>[0]) => {

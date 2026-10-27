@@ -40,6 +40,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
@@ -64,6 +65,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ServerConfig from "../../config.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
@@ -1210,10 +1212,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      // Liveness probes follow the clock, not the recorded conversation.
                       request: (method, params) =>
-                        onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
-                        ),
+                        method === "thread/loaded/list"
+                          ? Effect.succeed({ data: [] } as never)
+                          : onRequest(method, params).pipe(
+                              Effect.andThen(client.request(method, params)),
+                            ),
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -2235,6 +2240,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ],
           });
           const compactionStarted = yield* Deferred.make<ProviderTurnId>();
+          // Before the session opens, so its liveness timer does not replay the jump.
+          yield* TestClock.setTime(1782622445000);
           const harness = yield* makeCodexReplayHarness(transcript, (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.nativeItemRef?.nativeId === "unfinished-item" &&
@@ -2243,7 +2250,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ? Deferred.succeed(compactionStarted, event.turnItem.providerTurnId)
               : Effect.void,
           );
-          yield* TestClock.setTime(1782622445000);
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
               threadId: harness.threadId,
