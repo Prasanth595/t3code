@@ -50,10 +50,11 @@ to an origin because each DPoP proof names the URL it signs, or the paired
 bearer token. A paired token only learns a plain HTTP address off the tailnet
 when it was itself paired over plain HTTP, so a token paired over HTTPS never
 starts travelling unencrypted; if the environment also has a T3 Connect route,
-that address is learned with the T3 Connect token instead. Learned routes the server stops reporting are
-dropped, which is how a changed LAN address replaces the old one; routes the
-user saved are never touched. The reported addresses are hints like any advertised endpoint, so a
-learned route still has to answer as this environment before it is used.
+that address is learned with the T3 Connect token instead. Learned routes the
+server stops reporting are dropped, which is how a changed LAN address replaces
+the old one; routes the user saved are never touched. The reported addresses are
+hints like any advertised endpoint, so a learned route still has to answer as
+this environment before it is used.
 
 A background service with no configured host is what makes this work for
 headless machines. It listens on every IPv4 interface and closes each

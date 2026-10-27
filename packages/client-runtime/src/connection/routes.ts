@@ -269,7 +269,6 @@ export function mergeLearnedRoutes(input: {
       !tailscaleOrigins.has(url.origin) &&
       !tokenAllowsPlainHttp(saved, credential)
     ) {
-      // The paired token stays off this address, but T3 Connect can authorize it.
       if (!hasRelayRoute(entry)) continue;
       credential = undefined;
     }
