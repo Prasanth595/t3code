@@ -187,6 +187,7 @@ export function turnEvents(
     });
   }
   // The live turn repeats its answer in a turn item, as adapters do, so live dedupe has work.
+  // History turns skip it to keep the fallback thread snapshot under its wire ceiling.
   if (measured)
     events.push({
       ...common,
@@ -215,8 +216,8 @@ export const LONG_TURN_WORK_ROWS = 900;
 /**
  * Three short user turns, then one agent turn far longer than a cold-open
  * window, with the item kinds a long agent run produces. One batch per turn.
- * IDs follow the composite shapes the Claude adapter stores, and every
- * assistant message has its record, as real threads do.
+ * Run, node, provider and item IDs follow the composite shapes the Claude
+ * adapter stores, and every assistant message has its record, as real threads do.
  */
 export function longTurnThreadBatches(
   provider: ProviderDriverKind,
