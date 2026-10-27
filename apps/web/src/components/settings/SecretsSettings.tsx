@@ -118,14 +118,14 @@ function EnvironmentSecretProviders({
               <SettingsRow
                 key={id}
                 title={
-                  <span className="flex items-center gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
                     <kind.icon className="size-4.5 shrink-0 text-foreground/80" aria-hidden />
-                    {config.label}
+                    <span className="min-w-0 wrap-anywhere">{config.label}</span>
                   </span>
                 }
                 description={
                   <span className="flex min-w-0 items-center gap-1">
-                    {kind.name} ·
+                    <span className="shrink-0">{kind.name} ·</span>
                     <RedactedSensitiveText
                       value={config.account}
                       ariaLabel="Toggle account visibility"
