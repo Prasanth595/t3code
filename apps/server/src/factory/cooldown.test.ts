@@ -121,6 +121,14 @@ describe("recordRateLimit", () => {
     assert.deepStrictEqual(cooldowns.get("k"), first);
   });
 
+  it("opens the next window for a session that ended as the window did", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    recordRateLimit(cooldowns, "k", null, T0, T0, null);
+    const until = cooldowns.get("k")!.untilMs;
+    recordRateLimit(cooldowns, "k", null, until, until, null);
+    assert.strictEqual(cooldowns.get("k")!.windows, 2);
+  });
+
   it("uses the provider's retry-after for the window when it gives one", () => {
     const cooldowns = new Map<string, Cooldown>();
     recordRateLimit(cooldowns, "k", null, T0, T0, 90 * MINUTE);

@@ -5779,6 +5779,26 @@ describe("a provider rate limit", () => {
     }),
   );
 
+  it.effect("an item a restart left behind is cleared while the model cools down afresh", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items.push({
+        id: `cooldown:${FABLE_KEY}`,
+        kind: "attention",
+        repo: null,
+        issue: null,
+        run: null,
+        message: "old",
+        firstSeenMs: T0 - 60 * MINUTE,
+      });
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [limited(T0 - 1000)];
+      yield* pass(fake, [REPO], 1);
+      assert.equal(fake.cooldowns.get(FABLE_KEY)!.windows, 1);
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
   it.effect(
     "with a fallback the session moves to it in place, and claims go on while the fallback is free",
     () =>
