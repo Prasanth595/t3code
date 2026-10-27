@@ -20,11 +20,11 @@ export type BrowserSessionPartitionNamespace = "profile";
 
 // Electron's clipboard API uses clipboard-sanitized-write and checks both permission handlers.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
-  "clipboard-read",
   "clipboard-sanitized-write",
   "geolocation",
   // DesktopWindow confines HTML fullscreen to the guest's webview.
   "fullscreen",
+  // Deny clipboard-read: any page could read the system clipboard silently; native paste needs no grant.
   // Deny local-fonts to untrusted previews: it exposes installed-font fingerprints and file bytes.
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
