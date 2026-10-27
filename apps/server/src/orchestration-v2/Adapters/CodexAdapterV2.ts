@@ -1640,21 +1640,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
+        type CodexAdditionalContext = NonNullable<
+          CodexTurnStartParamsWithCollaborationMode["additionalContext"]
+        >;
         const additionalContextByThread = yield* Ref.make(
-          new Map<
-            string,
-            NonNullable<CodexTurnStartParamsWithCollaborationMode["additionalContext"]>
-          >(),
+          new Map<string, CodexAdditionalContext>(),
         );
-        // Codex drops client developer messages during compaction but only
-        // resends additionalContext when it changes.
+        const compactedThreads = new Set<string>();
+        // Codex drops client developer messages during compaction but only resends
+        // additionalContext keys that change. Restore before the next turn: items
+        // injected mid-turn become pending input that forces another sampling round.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
-          function* (threadId: string) {
-            const context = (yield* Ref.get(additionalContextByThread)).get(threadId);
-            if (!context) return;
+          function* (threadId: string, next: CodexAdditionalContext | undefined) {
+            if (!compactedThreads.delete(threadId)) return;
+            const previous = (yield* Ref.get(additionalContextByThread)).get(threadId);
+            const unchanged = Object.entries(next ?? {}).filter(
+              ([key, entry]) =>
+                previous?.[key]?.kind === entry.kind && previous[key].value === entry.value,
+            );
+            if (unchanged.length === 0) return;
             yield* client.request("thread/inject_items", {
               threadId,
-              items: Object.entries(context).map(([key, entry]) =>
+              items: unchanged.map(([key, entry]) =>
                 entry.kind === "untrusted"
                   ? {
                       type: "message",
@@ -4737,11 +4744,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.item.type === "contextCompaction")
-              // Fork requests off the notification reader so it can read their responses.
-              yield* restoreAdditionalContext(payload.threadId).pipe(
-                Effect.forkIn(scope, { startImmediately: true }),
-              );
+            if (payload.item.type === "contextCompaction") compactedThreads.add(payload.threadId);
             if (
               (payload.item.type === "subAgentActivity" ||
                 payload.item.type === "collabAgentToolCall") &&
@@ -6311,6 +6314,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(threadId, turnInput);
               return updated;
             });
+            yield* restoreAdditionalContext(threadId, turnStartParams.additionalContext);
             yield* Ref.update(additionalContextByThread, (current) => {
               const next = new Map(current);
               if (turnStartParams.additionalContext)

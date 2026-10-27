@@ -1719,11 +1719,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("preserves T3 context on the wire and restores it after compaction", () =>
+  it.effect("restores unchanged T3 context before the turn after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        const nextModelSelection = {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } satisfies ModelSelection;
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
@@ -1731,9 +1735,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
         });
+        const nextParams = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "more" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: nextModelSelection,
+          hasT3Mcp: true,
+        });
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
           "delegate_task",
+        );
+        // Codex resends changed keys itself, so only unchanged ones need restoring.
+        assert.notEqual(
+          params.additionalContext?.t3_code_runtime?.value,
+          nextParams.additionalContext?.t3_code_runtime?.value,
+        );
+        const restored = Object.entries(nextParams.additionalContext ?? {}).filter(
+          ([key, entry]) => params.additionalContext?.[key]?.value === entry.value,
         );
         const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
         const transcript = makeCodexReplayTranscript({
@@ -1759,6 +1778,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
             {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+            {
               type: "expect_outbound",
               label: "restore context",
               frame: {
@@ -1766,7 +1796,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 method: "thread/inject_items",
                 params: {
                   threadId: nativeThreadId,
-                  items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                  items: restored.map(([key, entry]) => ({
                     type: "message",
                     role: "developer",
                     content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
@@ -1776,14 +1806,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
             {
+              type: "expect_outbound",
+              label: "next turn",
+              frame: { id: 5, method: "turn/start", params: nextParams },
+            },
+            {
               type: "emit_inbound",
-              label: "done",
+              label: "next turn",
               frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
+                id: 5,
+                result: { turn: makeCodexReplayTurn({ id: "next-turn", status: "inProgress" }) },
               },
             },
           ],
@@ -1809,6 +1841,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("context-attempt-2"),
+            text: "more",
+          }),
+          modelSelection: nextModelSelection,
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
