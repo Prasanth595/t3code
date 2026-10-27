@@ -168,6 +168,36 @@ describe("deriveThreadTurnSubagents", () => {
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1/2");
   });
 
+  it("keeps the finished agents reachable while their turn is the latest", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({ id: "a", status: "completed" }),
+        subagent({ id: "b", status: "failed" }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("2 done");
+  });
+
+  it("drops finished agents from the pill once a later turn ran without any", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toBeNull();
+  });
+
+  it("shows finished agents again when the later turn was rolled back", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "rolled_back")],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
   it("counts idle as neither working nor done", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [activeRun],

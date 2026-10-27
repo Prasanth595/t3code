@@ -12,6 +12,8 @@ type RunId = Projection["runs"][number]["id"];
 export interface ThreadTurnSubagents {
   readonly runId: RunId | null;
   readonly turnActive: boolean;
+  /** No later turn has run since these agents' turn. */
+  readonly latestTurn: boolean;
   readonly subagents: ReadonlyArray<Subagent>;
   readonly liveCount: number;
   readonly settledCount: number;
@@ -51,6 +53,7 @@ export function deriveThreadTurnSubagents(
     first,
   );
   const runId = activeRun?.id ?? latestUpdated.runId;
+  const latestRunId = projection.runs.findLast((run) => !rolledBackRunIds.has(run.id))?.id ?? null;
   const subagents = copySorted(
     eligible.filter(
       (subagent) => subagent.runId === runId || isActiveSubagentStatus(subagent.status),
@@ -65,14 +68,22 @@ export function deriveThreadTurnSubagents(
     if (isActiveSubagentStatus(subagent.status)) liveCount += 1;
     else if (isTerminalSubagentStatus(subagent.status)) settledCount += 1;
   }
-  return { runId, turnActive: activeRun !== null, subagents, liveCount, settledCount };
+  return {
+    runId,
+    turnActive: activeRun !== null,
+    latestTurn: runId === null || runId === latestRunId,
+    subagents,
+    liveCount,
+    settledCount,
+  };
 }
 
 export function resolveSubagentPillSegment(
   turn: ThreadTurnSubagents | null,
 ): SubagentPillSegment | null {
   if (turn === null) return null;
-  if (!turn.turnActive && turn.liveCount === 0) return null;
+  // Finished agents stay reachable until a later turn replaces them.
+  if (!turn.turnActive && !turn.latestTurn && turn.liveCount === 0) return null;
   const total = turn.subagents.length;
   if (turn.liveCount > 0) {
     return {
