@@ -259,9 +259,7 @@ export function FactoryBelt({
     nowMs,
   );
   // The belt as drawn: a bin does not count a run until the run has slid into it.
-  const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined, (environmentId) =>
-    recent.get(environmentId)?.refresh(),
-  );
+  const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined);
   // What the recent runs lists say (the counters, Done, the bins, and the rail's first pick) is known
   // once some status has answered and no answered environment's list is still loading. A list that
   // failed before its first answer adds nothing; the page names it. The rail's pick is made then,

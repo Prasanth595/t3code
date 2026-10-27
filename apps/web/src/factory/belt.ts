@@ -338,22 +338,22 @@ export function tileMotions(
 
 /**
  * The belt with the runs that are not in a bin yet left out of them, so a bin's count changes when
- * the slide ends: those in `landing`, still sliding into a bin, and those still on a lane. Lanes
- * and counters are as they were. The same belt when nothing is left out.
+ * the slide ends: those in `landing`, still sliding into a bin, and those whose `places` put them
+ * elsewhere (a lane wins over a bin there). Lanes and counters are as they were. The same belt when
+ * nothing is left out.
  */
-export function holdBins(belt: Belt, landing: ReadonlySet<string>): Belt {
-  const onLane = new Set<string>();
-  for (const station of STATIONS) {
-    if (station === "done") continue;
-    for (const run of belt.runs[station]) onLane.add(run.key);
-  }
-  const kept = (runs: ReadonlyArray<BeltRun>) => {
-    const rest = runs.filter((run) => !landing.has(run.key) && !onLane.has(run.key));
+export function holdBins(
+  belt: Belt,
+  places: ReadonlyMap<string, Place>,
+  landing: ReadonlySet<string>,
+): Belt {
+  const kept = (runs: ReadonlyArray<BeltRun>, bin: Bin) => {
+    const rest = runs.filter((run) => places.get(run.key) === bin && !landing.has(run.key));
     return rest.length === runs.length ? runs : rest;
   };
-  const done = kept(belt.runs.done);
-  const stuck = kept(belt.stuck);
-  const info = kept(belt.info);
+  const done = kept(belt.runs.done, "done");
+  const stuck = kept(belt.stuck, "stuck");
+  const info = kept(belt.info, "info");
   if (done === belt.runs.done && stuck === belt.stuck && info === belt.info) return belt;
   return {
     ...belt,

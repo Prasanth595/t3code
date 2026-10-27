@@ -1,51 +1,44 @@
-import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { holdBins, placesOf, tileMotions, type Belt, type Place, type TileMotion } from "./belt";
 
 /** How long a slide takes; belt.css has the rest of the transition of `.factory-ghost`. */
 const SLIDE_MS = 750;
-/** How long a run that left its lane waits, as a ghost where it stood, for a bin to list it. */
-const PARK_MS = 5000;
+/** How long the place of a tile that left its lane is remembered, for a bin or the lane to want it. */
+const MEMORY_MS = 5000;
 /** How big a tile is when it lands in a bin. */
 const BIN_SCALE = "scale(.55)";
 
 interface Seen {
   readonly places: ReadonlyMap<string, Place> | null;
-  /** The environment of each run of the belt, by key: where a run that left a lane is read again. */
-  readonly environments: ReadonlyMap<string, EnvironmentId>;
   /** What changed in the latest read of the belt: played once, after the commit that shows it. */
   readonly motions: ReadonlyArray<TileMotion>;
-  /** The environments whose recent runs list is read again, for the runs that exited. */
-  readonly refresh: ReadonlyArray<EnvironmentId>;
   /** The runs still sliding into a bin: the bin does not count them yet. */
   readonly landing: ReadonlySet<string>;
 }
 
 const FIRST_READ: Seen = {
   places: null,
-  environments: new Map(),
   motions: [],
-  refresh: [],
   landing: new Set(),
 };
 
-/** A tile that left the DOM in this commit: where it was, and what it looked like. */
+/** Where a ghost sits, and how big it is. */
+interface Box {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A tile that left the DOM: where it was in the page, and what it looked like. */
 interface Departed {
-  readonly rect: DOMRect;
+  readonly rect: Box;
   readonly node: HTMLElement;
 }
 
 const reducedMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-
-const environmentsOf = (belt: Belt): ReadonlyMap<string, EnvironmentId> => {
-  const environments = new Map<string, EnvironmentId>();
-  for (const runs of [...Object.values(belt.runs), belt.stuck, belt.info]) {
-    for (const run of runs) environments.set(run.key, run.environmentId);
-  }
-  return environments;
-};
 
 const samePlaces = (a: ReadonlyMap<string, Place>, b: ReadonlyMap<string, Place>) =>
   a.size === b.size && Array.from(a).every(([key, place]) => b.get(key) === place);
@@ -64,14 +57,6 @@ function oneShot(element: Element | null | undefined, cls: string) {
     element.removeEventListener("animationend", end);
   };
   element.addEventListener("animationend", end);
-}
-
-/** Where a ghost sits in the layer, and how big it is. */
-interface Box {
-  readonly left: number;
-  readonly top: number;
-  readonly width: number;
-  readonly height: number;
 }
 
 /**
@@ -137,31 +122,12 @@ function fly(
   const fallback = setTimeout(land, SLIDE_MS + 250);
 }
 
-/** A tile that left its lane for no place, standing as a ghost where it was until a bin lists it. */
-interface Parked {
-  readonly ghost: HTMLElement;
-  readonly node: HTMLElement;
-  readonly timer: ReturnType<typeof setTimeout>;
-}
-
-/** Fades `ghost` out where it stands, then removes it. */
-function fadeAway(ghost: HTMLElement) {
-  ghost.style.opacity = "0";
-  const remove = () => {
-    clearTimeout(fallback);
-    ghost.remove();
-  };
-  ghost.addEventListener("transitionend", (event) => {
-    if (event.propertyName === "opacity") remove();
-  });
-  ghost.addEventListener("transitioncancel", remove);
-  const fallback = setTimeout(remove, SLIDE_MS + 250);
-}
-
 /**
  * What the motion keeps between renders, outside React's state. A tile that changes post is
  * removed and mounted again: `tileRef` sees it go and `play` flies a copy to where it lands, since
- * the lanes clip what they hold. A tile that leaves for no place waits as a copy (parked).
+ * the lanes clip what they hold. A tile that leaves for no place draws nothing, as the lane closes
+ * up over it; its place is remembered for `MEMORY_MS`, to fly from if a bin lists it or the lane
+ * takes it back.
  */
 function createMotion() {
   const tiles = new Map<string, HTMLElement>();
@@ -192,26 +158,16 @@ function createMotion() {
     };
   };
 
-  const parked = new Map<string, Parked>();
-
-  /** Takes a parked tile's ghost out of the page: where it stands now, and what it copied. */
-  const unpark = (key: string): Departed | undefined => {
-    const entry = parked.get(key);
-    if (entry === undefined) return undefined;
-    parked.delete(key);
-    clearTimeout(entry.timer);
-    // Measured as it is now: the page may have scrolled since it was parked.
-    const rect = entry.ghost.getBoundingClientRect();
-    entry.ghost.remove();
-    return { rect, node: entry.node };
-  };
+  /** Where a tile that left its lane for no place stood, relative to the layer, and when. */
+  const remembered = new Map<
+    string,
+    { readonly node: HTMLElement; readonly box: Box; readonly at: number }
+  >();
 
   /** Plays `motions` in `layer`, once every tile of their commit is in place. */
   const play = (
     layer: HTMLElement,
     motions: ReadonlyArray<TileMotion>,
-    refresh: ReadonlyArray<EnvironmentId>,
-    refreshRecent: (environmentId: EnvironmentId) => void,
     landed: (keys: ReadonlyArray<string>) => void,
   ) => {
     const root = layer.parentElement;
@@ -219,6 +175,22 @@ function createMotion() {
     if (root === null || motions === played) return;
     played = motions;
     const find = (selector: string) => root.querySelector(selector);
+    const origin = layer.getBoundingClientRect();
+    const now = Date.now();
+    for (const [key, memory] of remembered) {
+      if (now - memory.at > MEMORY_MS) remembered.delete(key);
+    }
+    /** Takes a remembered place out of memory, as it was in the page. */
+    const recall = (key: string): Departed | undefined => {
+      const memory = remembered.get(key);
+      if (memory === undefined) return undefined;
+      remembered.delete(key);
+      const { left, top, width, height } = memory.box;
+      return {
+        rect: { left: left + origin.left, top: top + origin.top, width, height },
+        node: memory.node,
+      };
+    };
     const slide = (tile: HTMLElement, from: Departed, to: Place) => {
       tile.style.visibility = "hidden";
       fly(layer, from, tile.getBoundingClientRect(), { transform: "" }, () => {
@@ -227,13 +199,11 @@ function createMotion() {
         oneShot(find(`[data-post="${to}"]`), "factory-post-flash");
       });
     };
-    // The status read has dropped runs that no bin lists yet: read the lists that would.
-    for (const environmentId of refresh) refreshRecent(environmentId);
     const immediate: Array<string> = [];
     for (const motion of motions) {
       const tile = tiles.get(motion.key);
       if (motion.kind === "enter") {
-        const was = unpark(motion.key);
+        const was = recall(motion.key);
         if (was === undefined) oneShot(tile, "factory-tile-enter");
         // A tile folded into a lane's `+N` has no element to fly to.
         else if (tile !== undefined) slide(tile, was, motion.to);
@@ -245,14 +215,12 @@ function createMotion() {
       } else if (motion.kind === "exit") {
         const from = departed.get(motion.key);
         if (from === undefined) continue;
-        const ghost = ghostOf(layer, from.node, from.rect);
-        const timer = setTimeout(() => {
-          parked.delete(motion.key);
-          fadeAway(ghost);
-        }, PARK_MS);
-        parked.set(motion.key, { ghost, node: from.node, timer });
+        // Relative to the layer, so a scroll before it is wanted does not stale it.
+        const { left, top, width, height } = from.rect;
+        const box = { left: left - origin.left, top: top - origin.top, width, height };
+        remembered.set(motion.key, { node: from.node, box, at: now });
       } else {
-        const from = motion.kind === "leave" ? departed.get(motion.key) : unpark(motion.key);
+        const from = motion.kind === "leave" ? departed.get(motion.key) : recall(motion.key);
         const bin = find(`[data-bin="${motion.to}"]`);
         if (bin === null || from === undefined) {
           immediate.push(motion.key);
@@ -280,46 +248,26 @@ function createMotion() {
  * Motion for the belt's tiles, from the belt as each poll derives it. Draw `shown`, put `tileRef` on
  * every tile (the run's key in `data-tile`) and `layerRef` on an empty last child of the element
  * holding the tiles and bins. `live` is false until the belt has a first read; that one, and
- * `prefers-reduced-motion`, move nothing. `refreshRecent` reads a recent runs list at once.
+ * `prefers-reduced-motion`, move nothing.
  */
-export function useBeltMotion(
-  belt: Belt,
-  live: boolean,
-  refreshRecent: (environmentId: EnvironmentId) => void,
-) {
+export function useBeltMotion(belt: Belt, live: boolean) {
   const [motion] = useState(createMotion);
   const [seen, setSeen] = useState(FIRST_READ);
 
-  if (live) {
-    const places = placesOf(belt);
-    if (seen.places === null || !samePlaces(seen.places, places)) {
-      const changes = tileMotions(seen.places, places);
-      const motions = reducedMotion() ? [] : changes;
-      const landing = new Set(seen.landing);
-      for (const { kind, key } of motions) {
-        if (kind === "leave" || kind === "arrive") landing.add(key);
-      }
-      // Whatever the motion, a run that dropped off the rail is a bin that is out of date.
-      const refresh = new Set<EnvironmentId>();
-      for (const change of changes) {
-        const environmentId =
-          change.kind === "exit" ? seen.environments.get(change.key) : undefined;
-        if (environmentId !== undefined) refresh.add(environmentId);
-      }
-      setSeen({
-        places,
-        environments: environmentsOf(belt),
-        motions,
-        refresh: Array.from(refresh),
-        landing,
-      });
+  const places = placesOf(belt);
+  if (live && (seen.places === null || !samePlaces(seen.places, places))) {
+    const motions = reducedMotion() ? [] : tileMotions(seen.places, places);
+    const landing = new Set(seen.landing);
+    for (const { kind, key } of motions) {
+      if (kind === "leave" || kind === "arrive") landing.add(key);
     }
+    setSeen({ places, motions, landing });
   }
 
   // Last child of the belt, so it is set after every tile ref of the commit that shows the motions.
   const layerRef = (layer: HTMLDivElement | null) => {
     if (layer === null) return;
-    motion.play(layer, seen.motions, seen.refresh, refreshRecent, (keys) =>
+    motion.play(layer, seen.motions, (keys) =>
       setSeen((current) => {
         const landing = new Set(current.landing);
         for (const key of keys) landing.delete(key);
@@ -328,5 +276,5 @@ export function useBeltMotion(
     );
   };
 
-  return { shown: holdBins(belt, seen.landing), tileRef: motion.tileRef, layerRef };
+  return { shown: holdBins(belt, places, seen.landing), tileRef: motion.tileRef, layerRef };
 }
