@@ -325,6 +325,46 @@ describe("pull request list answers across a reload", () => {
     ).toEqual([]);
   });
 
+  it("keeps saved me-filtered rows when an action outlives their viewer data", () => {
+    const storage = makeStorage();
+    const shared = {
+      ...listEntry(2),
+      projectId: ProjectId.make("project-shared"),
+      author: { login: "Bilal", name: null, avatarUrl: null },
+    };
+    const own = {
+      ...listEntry(1),
+      projectId: ProjectId.make("project-own"),
+      host: "github.example.com",
+      author: shared.author,
+    };
+    const mine: PullRequestListInput = {
+      ...input,
+      state: "all",
+      filters: { author: "me" },
+    };
+    rememberPullRequestListAnswer(storage, { environmentId: local, input: mine }, answer([shared]));
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: { ...mine, projectIds: [own.projectId] } },
+      answer([own], own.host),
+      new Map([
+        [
+          JSON.stringify([local, own.projectId, own.repository, own.number]),
+          { state: "closed", updatedAt: own.updatedAt, observedAt: 300, token: 0, at: 300 },
+        ],
+      ]),
+    );
+    expect(
+      restorePullRequestList(storage, [{ environmentId: local, input: mine }])
+        ?.entries.toSorted((a, b) => a.number - b.number)
+        .map(({ number, state }) => [number, state]),
+    ).toEqual([
+      [1, "closed"],
+      [2, "open"],
+    ]);
+  });
+
   it("restores every environment's first page as one merged list without stale failures or cursors", () => {
     const storage = makeStorage();
     rememberPullRequestListAnswer(

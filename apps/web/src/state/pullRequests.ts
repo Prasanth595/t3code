@@ -34,7 +34,6 @@ import {
   mergePullRequestLists,
   applyPullRequestOverrides,
   pullRequestResultOverride,
-  matchesPullRequestFilters,
   type PullRequestListOverride,
   type EnvironmentPullRequestStat,
   type MergedPullRequestList,
@@ -120,16 +119,13 @@ function applyListActionOverrides(
   overrides: ReadonlyMap<string, PullRequestListOverride>,
 ): PullRequestListResult {
   if (overrides.size === 0) return answer;
+  const draft = target.input.filters?.draft;
   const entries = applyPullRequestOverrides(
     answer.entries,
     overrides,
     (entry) => pullRequestSummaryKey(target.environmentId, entry),
     target.input.state,
-  ).filter(
-    (entry) =>
-      target.input.filters === undefined ||
-      matchesPullRequestFilters(entry, target.input.filters, answer.viewers[entry.host]),
-  );
+  ).filter((entry) => draft === undefined || entry.isDraft === (draft === "only"));
   return { ...answer, entries };
 }
 
