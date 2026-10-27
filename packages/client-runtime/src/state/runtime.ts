@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
+import type { ConnectionAttemptError, SupervisorConnectionState } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
@@ -560,22 +560,28 @@ const refreshEveryUntilFinal =
 export const selectEnvironmentQueryData = <A, E>(result: AsyncResult.AsyncResult<A, E>): A | null =>
   Option.getOrNull(AsyncResult.value(result));
 
-export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+type EnvironmentConnection = readonly [
+  SupervisorConnectionState,
+  Option.Option<RpcSession.RpcSession>,
+];
+
+const connectionAtomsByRuntime = new WeakMap<
+  object,
+  (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>
+>();
+
+/**
+ * One connection atom per environment for every query on a runtime, so a reader of the session
+ * generation and a query it re-runs see the same connection change at once.
+ */
+function environmentConnectionAtoms<R, ER>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
-  options: EnvironmentQueryAtomOptions<
-    Input,
-    A,
-    E,
-    | EnvironmentSupervisor.EnvironmentSupervisor
-    | EnvironmentRegistry.EnvironmentRegistry
-    | AtomRegistry.AtomRegistry
-    | R
-  >,
-): (target: {
-  readonly environmentId: EnvironmentIdType;
-  readonly input: Input;
-}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
+) {
+  const existing = connectionAtomsByRuntime.get(runtime);
+  if (existing !== undefined) return existing;
+  const family = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
@@ -591,7 +597,61 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       ),
       { initialValue: null },
     ),
-  );
+  ) as (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>;
+  connectionAtomsByRuntime.set(runtime, family);
+  return family;
+}
+
+const sessionGenerationAtomsByRuntime = new WeakMap<
+  object,
+  (environmentId: EnvironmentIdType) => Atom.Atom<number>
+>();
+
+/**
+ * The generation of the environment's latest established session, kept while it reconnects.
+ * It changes only when a new session comes up, so a one-shot read that failed while the
+ * environment was unreachable can watch it to run again once it is back.
+ */
+export function environmentSessionGenerationAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+): Atom.Atom<number> {
+  let family = sessionGenerationAtomsByRuntime.get(runtime);
+  if (family === undefined) {
+    const connectionAtom = environmentConnectionAtoms(runtime);
+    family = Atom.family((id: EnvironmentIdType) =>
+      Atom.make((get): number => {
+        const connection = Option.getOrNull(AsyncResult.value(get(connectionAtom(id))));
+        return connection !== null &&
+          connection[0].phase === "connected" &&
+          Option.isSome(connection[1])
+          ? connection[0].generation
+          : Option.getOrElse(get.self<number>(), () => 0);
+      }).pipe(Atom.withLabel(`environment-session-generation:${id}`)),
+    );
+    sessionGenerationAtomsByRuntime.set(runtime, family);
+  }
+  return family(environmentId);
+}
+
+export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentQueryAtomOptions<
+    Input,
+    A,
+    E,
+    | EnvironmentSupervisor.EnvironmentSupervisor
+    | EnvironmentRegistry.EnvironmentRegistry
+    | AtomRegistry.AtomRegistry
+    | R
+  >,
+): (target: {
+  readonly environmentId: EnvironmentIdType;
+  readonly input: Input;
+}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+  const connectionAtom = environmentConnectionAtoms(runtime);
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;

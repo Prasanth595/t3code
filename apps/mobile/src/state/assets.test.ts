@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
 vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => undefined,
   useAtomSubscribe: () => undefined,
   useAtomValue: (atom: unknown) =>
     atom === state.assetAtom

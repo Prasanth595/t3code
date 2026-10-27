@@ -1,4 +1,4 @@
-import { useAtomSubscribe, useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
@@ -174,13 +174,14 @@ export function useFreshAssetUrl(
       : freshAssetUrlFamily({ environmentId, resource, httpBaseUrl, revision });
   // Minting fails at once while the environment is unreachable; mint again once a new session is
   // up instead of keeping the error until Retry.
-  useAtomSubscribe(
+  const sessionGeneration =
     environmentId === null
       ? noSessionGeneration
-      : environmentCatalog.sessionGenerationAtom(environmentId),
-    () => {
-      if (AsyncResult.isFailure(appAtomRegistry.get(atom))) appAtomRegistry.refresh(atom);
-    },
-  );
+      : environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    if (AsyncResult.isFailure(appAtomRegistry.get(atom))) appAtomRegistry.refresh(atom);
+  });
   return useAtomValue(atom);
 }

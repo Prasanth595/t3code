@@ -42,6 +42,7 @@ import {
   selectEnvironmentQueryData,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
+  environmentSessionGenerationAtom,
   scheduleAtomCommandEffect,
   executeAtomQuery,
   type QueryAnswerHandler,
@@ -740,6 +741,50 @@ describe("environment query lifecycle", () => {
           expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("connected");
         }),
       ),
+  );
+
+  it.effect("a read started on a new session generation sees that session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("connected"), {
+          initialState: queryConnectionState({
+            phase: "backoff",
+            stage: null,
+            lastFailure: OFFLINE_QUERY_FAILURE,
+            retryAt: 1,
+          }),
+        });
+        const registry = AtomRegistry.make();
+        const answered = yield* Deferred.make<AsyncResult.AsyncResult<string, unknown>>();
+        const sessionGeneration = environmentSessionGenerationAtom(
+          harness.runtime,
+          QUERY_ENVIRONMENT.environmentId,
+        );
+        const unmount = registry.mount(sessionGeneration);
+        const unsubscribe = registry.subscribe(sessionGeneration, (generation) => {
+          void executeAtomQuery(registry, harness.atom, { reportFailure: false }).then((result) => {
+            if (generation === 2) Deferred.doneUnsafe(answered, Effect.succeed(result));
+          });
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            unsubscribe();
+            unmount();
+            registry.dispose();
+          }),
+        );
+        yield* Effect.yieldNow;
+
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ generation: 2 }),
+        );
+        expect(yield* Deferred.await(answered)).toMatchObject({
+          _tag: "Success",
+          value: "connected",
+        });
+      }),
+    ),
   );
 
   it.effect("keeps a genuine query failure settled while reconnecting", () =>

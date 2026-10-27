@@ -1,4 +1,4 @@
-import { useAtomSubscribe } from "@effect/atom-react";
+import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -101,14 +101,15 @@ export function useFileTreeEntries(input: {
   };
   // A folder read fails at once while its environment is unreachable; read it again once a new
   // session is up rather than leaving the error until someone refreshes.
-  useAtomSubscribe(
+  const sessionGeneration =
     environmentId === null
       ? noSessionGeneration
-      : environmentCatalog.sessionGenerationAtom(environmentId),
-    () => {
-      for (const path of directories.errors.keys()) void loadDirectory(path);
-    },
-  );
+      : environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    for (const path of directories.errors.keys()) void loadDirectory(path);
+  });
   const { refresh: refreshRoot, data: rootData } = root;
   const { refresh: refreshSearch, data: searchData } = search;
   const snapshot = (() => {

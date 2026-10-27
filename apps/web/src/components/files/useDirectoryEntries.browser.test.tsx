@@ -10,11 +10,14 @@ import { useDirectoryEntries } from "./useDirectoryEntries";
 
 const mocks = vi.hoisted(() => ({
   reachable: null as unknown as Atom.Writable<boolean>,
-  sessionGeneration: null as unknown as Atom.Writable<number>,
+  connectedSession: null as unknown as Atom.Writable<number>,
 }));
 
 vi.mock("~/connection/catalog", () => ({
-  environmentCatalog: { sessionGenerationAtom: () => mocks.sessionGeneration },
+  // Derived like the real one, which only follows the connection once something computes it.
+  environmentCatalog: {
+    sessionGenerationAtom: () => Atom.make((get) => get(mocks.connectedSession)),
+  },
 }));
 vi.mock("~/state/projects", () => ({
   projectEnvironment: {
@@ -32,7 +35,7 @@ vi.mock("~/state/projects", () => ({
 
 function setup() {
   mocks.reachable = Atom.make(false);
-  mocks.sessionGeneration = Atom.make(1);
+  mocks.connectedSession = Atom.make(1);
 }
 
 function Probe() {
@@ -56,7 +59,7 @@ describe("useDirectoryEntries", () => {
 
     await act(() => {
       appAtomRegistry.set(mocks.reachable, true);
-      appAtomRegistry.set(mocks.sessionGeneration, 2);
+      appAtomRegistry.set(mocks.connectedSession, 2);
     });
     await expect.element(screen.getByText("README.md")).toBeInTheDocument();
   });

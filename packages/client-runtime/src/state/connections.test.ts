@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -13,6 +14,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import type * as RpcSession from "../rpc/session.ts";
 import { createEnvironmentCatalogAtoms } from "./connections.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("catalog-environment");
@@ -33,8 +35,10 @@ describe("environment catalog atoms", () => {
         const state = yield* SubscriptionRef.make(
           connectionState({ phase: "connected", attempt: 1, generation: 1 }),
         );
+        const session = yield* SubscriptionRef.make(Option.some({} as RpcSession.RpcSession));
         const supervisor = {
           state,
+          session,
         } as unknown as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
         const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
           _environmentId,

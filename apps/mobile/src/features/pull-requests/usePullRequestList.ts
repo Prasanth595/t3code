@@ -1,4 +1,4 @@
-import { RegistryContext, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -168,6 +168,8 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
 
   // A page asked for while an environment was unreachable fails at once; ask again once it is
   // back, since the error stops loading on scroll.
+  // A listener alone does not compute the atom, so nothing would follow the connections.
+  useAtomMount(sessionsFamily(scopeKey));
   useAtomSubscribe(sessionsFamily(scopeKey), () => {
     if (settledError(registry.get(pageAtom)) !== null && !registry.get(refreshAtom).waiting) {
       registry.set(pageAtom, true);
