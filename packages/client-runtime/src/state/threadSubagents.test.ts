@@ -248,7 +248,7 @@ describe("deriveThreadTurnSubagents", () => {
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
   });
 
-  it("does not call held agents done", () => {
+  it("counts only terminal agents as done while a held agent remains", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [finishedRun],
       subagents: [
@@ -257,10 +257,7 @@ describe("deriveThreadTurnSubagents", () => {
       ],
     });
 
-    expect(resolveSubagentPillSegment(turn)).toEqual({
-      label: "2 agents",
-      accessibilityLabel: "2 agents",
-    });
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
   });
 
   it("counts idle as neither working nor done", () => {
@@ -276,5 +273,26 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.liveCount).toBe(1);
     expect(turn?.settledCount).toBe(1);
     expect(turn?.subagents).toHaveLength(3);
+  });
+
+  it("keeps settled workflows reachable without counting idle agents as done", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "workflow", status: "completed", workflow: { phases: [], agents: [] } }),
+        subagent({
+          id: "idle",
+          runId: RunId.make("run-2"),
+          status: "idle",
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["idle", "workflow"]);
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: "1 done",
+      accessibilityLabel: "1 agent done",
+    });
   });
 });
