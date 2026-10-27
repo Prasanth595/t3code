@@ -1,31 +1,40 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 interface FileRevealHandle {
   getInstance(): object | undefined;
+  getItem(id: string): object | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
-export function useCodeViewFileReveal<TScope>(
-  viewer: FileRevealHandle | null,
-  scope: TScope,
-  readyFileKeys?: ReadonlyArray<string>,
-) {
-  const [request, setRequest] = useState<{ fileKey: string; scope: TScope } | null>(null);
-  const handledRequest = useRef<typeof request>(null);
+/**
+ * Scrolls a code view to a file. A file the viewer does not hold yet stays
+ * pending until `flush` (from the viewer's post-render) finds it. A pending
+ * reveal belongs to the viewer it was asked of, so a remounted viewer, such as
+ * one for another diff scope, drops it.
+ */
+export function createCodeViewFileReveal() {
+  let pending: { readonly viewer: FileRevealHandle; readonly fileKey: string } | null = null;
+  const apply = (viewer: FileRevealHandle, fileKey: string) => {
+    if (!viewer.getInstance() || viewer.getItem(fileKey) === undefined) return false;
+    viewer.scrollTo({ type: "item", id: fileKey, align: "start" });
+    return true;
+  };
+  return {
+    /** Whether the viewer was positioned now, rather than left pending or dropped. */
+    request(viewer: FileRevealHandle | null, fileKey: string): boolean {
+      const applied = viewer !== null && apply(viewer, fileKey);
+      pending = viewer === null || applied ? null : { viewer, fileKey };
+      return applied;
+    },
+    flush(viewer: FileRevealHandle | null) {
+      if (pending === null || pending.viewer !== viewer) return;
+      if (apply(pending.viewer, pending.fileKey)) pending = null;
+    },
+  };
+}
 
-  useEffect(() => {
-    if (request === null || handledRequest.current === request) return;
-    if (request.scope !== scope) {
-      handledRequest.current = request;
-      return;
-    }
-    if (!viewer?.getInstance() || (readyFileKeys && !readyFileKeys.includes(request.fileKey)))
-      return;
-
-    viewer.scrollTo({ type: "item", id: request.fileKey, align: "start" });
-    handledRequest.current = request;
-  }, [request, scope, viewer, readyFileKeys]);
-
-  return (fileKey: string) => setRequest({ fileKey, scope });
+export function useCodeViewFileReveal(viewer: FileRevealHandle | null) {
+  const [reveal] = useState(createCodeViewFileReveal);
+  return (fileKey: string) => reveal.request(viewer, fileKey);
 }

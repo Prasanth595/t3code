@@ -36,11 +36,13 @@ import {
   use,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 
+import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -452,10 +454,8 @@ function PullRequestCodeTab({
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
-  // The viewer mounts its footer later; state ensures the observer sees the sentinel.
-  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
-  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
-  const answeredReveal = useRef<number | null>(null);
+  const requestTreeReveal = useCodeViewFileReveal(viewer);
+  const answeredRevealNonce = useRef<number | null>(null);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
@@ -667,6 +667,16 @@ function PullRequestCodeTab({
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
+  const sentinelRef = (node: HTMLDivElement | null) => {
+    if (node === null || !canLoadNextSlice) return;
+    return observeIntersection(
+      node,
+      (entry) => {
+        if (entry.isIntersecting) loadNextSlice();
+      },
+      { rootMargin: "240px" },
+    );
+  };
 
   const toggleFile = (fileKey: string) =>
     setToggledFiles((current) => {
@@ -691,9 +701,14 @@ function PullRequestCodeTab({
 
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
-    if (item === undefined) return;
-    if (item.collapsed === true) toggleFile(item.id);
-    requestTreeReveal(item.id);
+    if (item === undefined) return false;
+    // Unfold only: a reveal retried before the unfold renders must not fold the file again.
+    if (item.collapsed === true) {
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+      );
+    }
+    return requestTreeReveal(item.id);
   };
 
   const toggleAllFiles = () => {
@@ -762,7 +777,7 @@ function PullRequestCodeTab({
   const renderCodeViewFooter = () =>
     nextCursor === null ? null : (
       <div
-        ref={setSentinel}
+        ref={sentinelRef}
         className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
       >
         {diffQuery.error !== null ? (
@@ -1269,32 +1284,22 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // Hooks between diff derivations and their readers break compiler caching.
-  useEffect(() => {
-    if (sentinel === null || !canLoadNextSlice) return;
-    const observer = new IntersectionObserver(
-      (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
-      },
-      { rootMargin: "240px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadNextSlice, loadNextSlice, sentinel]);
+  // The viewer takes new items in its own layout effect and attaches after the first commit, so
+  // a reveal can only position after commit. It stays unanswered until it does, and a file not
+  // loaded yet pages forward each time a slice arrives.
   const answerReveal = useEffectEvent(() => {
-    if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
+    if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
-    answeredReveal.current = revealRequest.nonce;
-    revealFile(revealRequest.path);
+    if (revealFile(revealRequest.path)) answeredRevealNonce.current = revealRequest.nonce;
   });
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
+  useLayoutEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Positioning the viewer is the external sync; paging forward and unfolding set state only on the way there.
     answerReveal();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
-  }, [canLoadNextSlice, items, revealRequest]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load and the viewer attaches until the requested file is positioned.
+  }, [canLoadNextSlice, items, revealRequest, viewer]);
   useEffect(() => {
     if (commit !== null && selectedCommit === undefined) {
       onSelectedCommitChange(null);
