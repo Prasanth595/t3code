@@ -443,9 +443,9 @@ describe("ThreadInlineFilePreview playback", () => {
       await act(async () =>
         root!.render(
           createElement(ThreadFeed, {
-            threadDetailReady: true,
             environmentId,
             threadId,
+            detailRef: null,
             threadTitle: "preview",
             workspaceRoot: "/repo",
             feed,
@@ -1383,9 +1383,9 @@ describe("ThreadFeed previews", () => {
         Fragment,
         null,
         createElement(ThreadFeed, {
-          threadDetailReady: true,
           environmentId,
           threadId,
+          detailRef: null,
           threadTitle: "preview",
           workspaceRoot: "/repo",
           feed: feedFor(threadId),
@@ -1444,7 +1444,7 @@ it("does not read a newly created feed's guest details until creation completes"
   const container = document.createElement("div");
   const root = createRoot(container);
   const props: Parameters<typeof ThreadFeed>[0] = {
-    threadDetailReady: false,
+    detailRef: null,
     environmentId: EnvironmentId.make("environment-1"),
     threadId: ThreadId.make("pending-thread"),
     threadTitle: "pending",
@@ -1474,7 +1474,10 @@ it("does not read a newly created feed's guest details until creation completes"
         createElement(
           RegistryProvider,
           null,
-          createElement(ThreadFeed, { ...props, threadDetailReady: true }),
+          createElement(ThreadFeed, {
+            ...props,
+            detailRef: { environmentId: props.environmentId, threadId: props.threadId },
+          }),
         ),
       ),
     );

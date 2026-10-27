@@ -49,7 +49,7 @@ function setup() {
     detailAtom(ref.threadId),
   );
   function Consumer({ ready }: { ready: boolean }) {
-    const opening = useWorkflowOpening(environmentId, threadId, ready);
+    const opening = useWorkflowOpening(ready ? scopeThreadRef(environmentId, threadId) : null);
     return (
       <span>{opening === null ? "ordinary thread" : `${opening.name}: ${opening.script}`}</span>
     );

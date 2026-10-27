@@ -6,9 +6,10 @@ import {
   workflowOpeningParentThreadId,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useState } from "react";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import { Atom } from "effect/reactivity";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -21,19 +22,10 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 const FOLDED_SCRIPT_LINES = 10;
 
-const EMPTY_THREAD_ATOM = Atom.make(null);
+const NO_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null);
 
-/** The workflow opening for a thread, or null; the parent's detail loads only for a workflow. */
-export function useWorkflowOpening(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  detailReady: boolean,
-) {
-  // Loading an optimistic id before creation caches a not-found as deleted.
-  const threadAtom = detailReady
-    ? environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId))
-    : EMPTY_THREAD_ATOM;
-
+export function useWorkflowOpening(ref: ScopedThreadRef | null) {
+  const threadAtom = ref === null ? NO_THREAD_ATOM : environmentThreadDetails.threadAtom(ref);
   // Selected as a primitive so an ordinary thread's updates never change the result.
   const parentId = useAtomValue(threadAtom, (thread) =>
     thread === null
@@ -47,9 +39,9 @@ export function useWorkflowOpening(
     parentId === null ? null : (thread?.projection ?? null),
   );
   const parentSubagents = useAtomValue(
-    parentId === null
-      ? EMPTY_THREAD_ATOM
-      : environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, parentId)),
+    ref === null || parentId === null
+      ? NO_THREAD_ATOM
+      : environmentThreadDetails.threadAtom(scopeThreadRef(ref.environmentId, parentId)),
     (parent) => (parentId === null ? null : (parent?.projection.subagents ?? null)),
   );
   return projection === null
