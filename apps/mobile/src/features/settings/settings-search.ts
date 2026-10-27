@@ -42,6 +42,7 @@ const SETTINGS_SEARCH_TERMS = {
     "last project",
     "snooze presets",
     "wake times",
+    "today tomorrow next week weekday weekdays monday tuesday wednesday thursday friday saturday sunday morning afternoon evening tonight time duration durations relative absolute date hours days seven 1 3 7 168",
   ],
   SettingsThreads: [
     "new threads",

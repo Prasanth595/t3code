@@ -66,17 +66,20 @@ describe("filterSettingsSections", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
   });
 
-  it("finds snooze presets on the General page", () => {
-    const sections = [
-      {
-        rows: [
-          { id: "SettingsOrganization", label: "General" },
-          { id: "SettingsThreads", label: "Threads" },
-        ],
-      },
-    ];
-    expect(filterSettingsSections(sections, "snooze presets")).toEqual([
-      { rows: [{ id: "SettingsOrganization", label: "General" }] },
-    ]);
-  });
+  it.each(["snooze presets", "weekday", "168 hours"])(
+    "finds snooze presets on the General page for %s",
+    (query) => {
+      const sections = [
+        {
+          rows: [
+            { id: "SettingsOrganization", label: "General" },
+            { id: "SettingsThreads", label: "Threads" },
+          ],
+        },
+      ];
+      expect(filterSettingsSections(sections, query)).toEqual([
+        { rows: [{ id: "SettingsOrganization", label: "General" }] },
+      ]);
+    },
+  );
 });

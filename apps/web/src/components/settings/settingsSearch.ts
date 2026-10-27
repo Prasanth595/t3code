@@ -429,7 +429,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "snooze-presets",
     title: "Snooze presets",
     to: "/settings/general",
-    searchTerms: ["tomorrow next week Monday morning evening time hours seven days"],
+    searchTerms: [
+      "today tomorrow next week weekday weekdays monday tuesday wednesday thursday friday saturday sunday morning afternoon evening tonight time duration durations relative absolute date hours days seven 1 3 7 168",
+    ],
   },
   {
     id: "auto-settle-inactive-threads",
