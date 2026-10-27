@@ -39,9 +39,10 @@ export function ThreadFloatingTopScrim(): JSX.Element {
   const theme = useUniwindTheme();
   const height = insets.top + THREAD_FLOATING_CONTROL_ROW_OFFSET + THREAD_FLOATING_TOP_SCRIM_TAIL;
   const topColor = themeColorWithAlpha(theme["--color-header"], 1);
-  // Solid through the status bar and the whole pill row, then fade below it, so
-  // scrolled text never collides with the pills — like ChatGPT's header scrim.
-  const backgroundImage = `linear-gradient(to bottom, ${topColor} 0px, ${topColor} ${height - THREAD_FLOATING_TOP_SCRIM_TAIL}px, rgba(0, 0, 0, 0) ${height}px)`;
+  // Solid through the status bar and up to the pill row's top gap, then linear to clear.
+  const backgroundImage = `linear-gradient(to bottom, ${topColor} 0px, ${topColor} ${
+    insets.top + THREAD_FLOATING_CONTROL_TOP_GAP
+  }px, rgba(0, 0, 0, 0) ${height}px)`;
   return (
     <View
       pointerEvents="none"
