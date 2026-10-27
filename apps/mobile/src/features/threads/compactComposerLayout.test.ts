@@ -108,9 +108,11 @@ describe("compact composer layout", () => {
     slot = compactSlotAfterLabelLayout(slot, { ...label, width: 200 });
     expect(composer({ ...line, compactWidth: slot.compactWidth }).isExpanded).toBe(true);
 
-    // Opening and closing the card resizes a truncated label without resetting the slot.
+    // Opening and closing the card resizes a truncated label without resetting the slot,
+    // and a label that grows with the card open only narrows a slot the draft already fills.
     slot = compactSlotAfterLabelLayout(slot, { ...label, width: 240, isExpanded: false });
     slot = compactSlotAfterLabelLayout(slot, { ...label, width: 200 });
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 220 });
     expect(slot.compactWidth).toBe(320);
 
     slot = compactSlotAfterLabelLayout(slot, { ...label, width: 160 });

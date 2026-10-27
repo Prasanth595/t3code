@@ -27,8 +27,9 @@ export function compactSlotAfterRowLayout(
 
 /**
  * A label shown at rest shares the row with the compact slot, which is only measured while
- * collapsed, so a label that resizes while the card stays open forgets it. Layouts that
- * open or close the card only record the width: resetting on them would loop.
+ * collapsed, so a label that shrinks while the card stays open forgets it; a wider label only
+ * narrows the slot, which keeps an open card correct. Layouts that open or close the card
+ * only record the width: resetting on them would loop.
  */
 export function compactSlotAfterLabelLayout(
   slot: CompactComposerSlot,
@@ -36,11 +37,12 @@ export function compactSlotAfterLabelLayout(
 ): CompactComposerSlot {
   const previous = slot.label;
   if (previous.width === label.width && previous.isExpanded === label.isExpanded) return slot;
-  const resizedWhileOpen = label.shownAtRest && label.isExpanded && previous.isExpanded;
+  const shrankWhileOpen =
+    label.shownAtRest && label.isExpanded && previous.isExpanded && label.width < previous.width;
   return {
     ...slot,
     label: { width: label.width, isExpanded: label.isExpanded },
-    compactWidth: resizedWhileOpen ? 0 : slot.compactWidth,
+    compactWidth: shrankWhileOpen ? 0 : slot.compactWidth,
   };
 }
 
