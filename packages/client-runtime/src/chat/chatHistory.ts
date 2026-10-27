@@ -5,6 +5,7 @@ import {
   type SaasChatMessage,
   type SaasChatSummary,
 } from "@t3tools/contracts/saas";
+import { withoutOpenVisual } from "@t3tools/shared/htmlRender";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -42,9 +43,13 @@ export interface ChatHistoryState {
   readonly loaded: boolean;
   /** Newest first. */
   readonly chats: ReadonlyArray<SaasChatConversation>;
-  /** The reply streaming in right now, keyed by its chat; `searching` while Mira searches. */
+  /**
+   * The reply streaming in right now, keyed by its chat; `searching` while Mira searches. It is
+   * saved under `messageId`, so clients keep the same row when it finishes.
+   */
   readonly streaming: {
     readonly chatId: string;
+    readonly messageId: string;
     readonly text: string;
     readonly searching?: boolean;
   } | null;
@@ -101,6 +106,7 @@ export class ChatHistory {
   private readonly listeners = new Set<() => void>();
   private remote: ChatHistoryRemote | null = null;
   private loading: Promise<void> | null = null;
+  private stopReply: AbortController | null = null;
   private syncing: Promise<void> = Promise.resolve();
   private readonly now: () => string;
   private readonly options: ChatHistoryOptions;
@@ -274,7 +280,6 @@ export class ChatHistory {
           messages: [userMessage],
         };
     this.write(chat);
-    this.publish({ streaming: { chatId: chat.id, text: "" }, error: null });
     options.onStarted?.(chat.id);
     await this.reply(chat);
     return chat.id;
@@ -286,11 +291,18 @@ export class ChatHistory {
     const chat = this.find(chatId);
     if (chat === undefined || chat.messages.at(-1)?.role !== "user") return;
     if (this.state.streaming !== null) return;
-    this.publish({ streaming: { chatId, text: "" }, error: null });
     await this.reply(chat);
   }
 
   private async reply(chat: SaasChatConversation) {
+    const messageId = this.randomId();
+    const stopReply = new AbortController();
+    this.stopReply = stopReply;
+    const streaming = (text: string, searching?: boolean) =>
+      this.publish({
+        streaming: { chatId: chat.id, messageId, text, ...(searching ? { searching } : {}) },
+      });
+    this.publish({ streaming: { chatId: chat.id, messageId, text: "" }, error: null });
     const result = await this.options
       .requestReply(
         {
@@ -299,15 +311,9 @@ export class ChatHistory {
             content: message.content,
             ...(message.attachments ? { attachments: message.attachments } : {}),
           })),
-          onText: (partial) => this.publish({ streaming: { chatId: chat.id, text: partial } }),
-          onSearching: () =>
-            this.publish({
-              streaming: {
-                chatId: chat.id,
-                text: this.state.streaming?.text ?? "",
-                searching: true,
-              },
-            }),
+          onText: (partial) => streaming(partial),
+          onSearching: () => streaming(this.state.streaming?.text ?? "", true),
+          signal: stopReply.signal,
         },
         this.stored.deviceId,
       )
@@ -316,19 +322,26 @@ export class ChatHistory {
         code: "network",
         message: "Could not reach Mira. Check your internet connection.",
       }));
+    this.stopReply = null;
+    const stopped = stopReply.signal.aborted;
+    const text = stopped
+      ? withoutOpenVisual(this.state.streaming?.text ?? "")
+      : result.ok
+        ? result.text
+        : "";
     const latest = this.find(chat.id);
-    if (latest === undefined) {
-      this.publish({ streaming: null });
-    } else if (result.ok && result.text !== "") {
+    if (latest !== undefined && text !== "") {
       const repliedAt = this.now();
       this.write({
         ...latest,
         updatedAt: repliedAt,
         messages: [
           ...latest.messages,
-          { id: this.randomId(), role: "assistant", content: result.text, createdAt: repliedAt },
+          { id: messageId, role: "assistant", content: text, createdAt: repliedAt },
         ],
       });
+      this.publish({ streaming: null });
+    } else if (latest === undefined || stopped) {
       this.publish({ streaming: null });
     } else {
       this.publish({
@@ -338,6 +351,11 @@ export class ChatHistory {
           : { chatId: chat.id, code: result.code, message: result.message },
       });
     }
+  }
+
+  /** Stops the reply streaming in; what arrived so far stays as the answer. */
+  stop() {
+    this.stopReply?.abort();
   }
 
   remove(chatId: string) {
