@@ -1737,45 +1737,18 @@ describe("tile motion", () => {
       expect(countOf(station(page, "done"))).toBe("1");
     });
 
-    it("slides a run that dropped off and came back from where it stood to its tile", async () => {
-      using _state = await setup();
-      await using page = await render(
-        createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
-      );
-      const stood = tilesOf(lane(page, "building"))[0]!.getBoundingClientRect();
-      await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
-      expect(ghostsOf(page)).toEqual([]);
-
-      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
-      const [sliding] = ghostsOf(page);
-      expect(ghostsOf(page)).toHaveLength(1);
-      const tile = tilesOf(lane(page, "gate"))[0]!;
-      expect(tile.style.visibility).toBe("hidden");
-      near(startOf(sliding!).left, stood.left);
-      near(startOf(sliding!).top, stood.top);
-      const destination = tile.getBoundingClientRect();
-      near(boxOf(sliding!).left, destination.left);
-      near(boxOf(sliding!).top, destination.top);
-
-      await land(sliding!);
-      expect(ghostsOf(page)).toEqual([]);
-      expect(tile.style.visibility).toBe("");
-      expect(tile.classList.contains("factory-tile-glow")).toBe(true);
-      expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
-    });
-
-    it("fades in a run that comes back after its place has been forgotten", async () => {
+    it("fades in a run that drops off and comes back to its post, with no slide or flash", async () => {
       using _state = await setup();
       await using page = await render(
         createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
       );
       await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
-      vi.setSystemTime(NOW + 5_001);
-      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
+      await page.rerender(createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])));
       expect(ghostsOf(page)).toEqual([]);
-      const tile = tilesOf(lane(page, "gate"))[0]!;
+      const tile = tilesOf(lane(page, "building"))[0]!;
       expect(tile.style.visibility).toBe("");
       expect(tile.classList.contains("factory-tile-enter")).toBe(true);
+      expect(post(page, "building").classList.contains("factory-post-flash")).toBe(false);
     });
 
     it("keeps a run whose bin is known first on its lane, then flies it when the status drops it", async () => {
