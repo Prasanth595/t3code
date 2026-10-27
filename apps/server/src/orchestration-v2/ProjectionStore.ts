@@ -1547,6 +1547,7 @@ function pendingRuntimeRequestSummary(
     kind: request.kind,
     createdAt: request.createdAt,
     blocking: request.responseCapability.type !== "message",
+    secret: false,
   };
 }
 
@@ -1559,6 +1560,7 @@ function secretRequestAsPendingInput(
     kind: "user_input",
     createdAt: item.startedAt ?? item.updatedAt,
     blocking: true,
+    secret: true,
   };
 }
 
