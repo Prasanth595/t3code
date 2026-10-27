@@ -295,7 +295,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. Pass one's environmentId to any tool that takes environmentId, such as t3_thread_launch, t3_thread_send, t3_pending_request_respond, t3_queue_list or t3_project_list, to act there. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
+    "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. Pass one's environmentId to any tool that takes environmentId, such as t3_thread_launch, t3_thread_send, t3_pending_request, t3_queue or t3_project_list, to act there. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
