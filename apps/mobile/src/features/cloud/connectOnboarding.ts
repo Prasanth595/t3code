@@ -23,10 +23,16 @@ export function requestConnectOnboarding(accountId: string): void {
         // A sign-out or a newer sign-in may have replaced this request while
         // the opt-out read was in flight.
         if (pending !== request) return;
-        pending = null;
-        if (!optedOut) {
-          whenRootNavigationReady(() => rootNavigationRef.navigate("ConnectOnboarding"));
+        if (optedOut) {
+          pending = null;
+          return;
         }
+        // Stays pending until navigation is ready, so a sign-out meanwhile still cancels it.
+        whenRootNavigationReady(() => {
+          if (pending !== request) return;
+          pending = null;
+          rootNavigationRef.navigate("ConnectOnboarding");
+        });
       })();
     }, PRESENT_ONBOARDING_DELAY_MS),
   };
