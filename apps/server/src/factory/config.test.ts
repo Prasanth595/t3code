@@ -444,6 +444,7 @@ describe("machine config", () => {
       minFreeGib: 10,
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
+      modelFallbacks: {},
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
   });
@@ -544,6 +545,34 @@ describe("machine config", () => {
     for (const bad of ["0", "-1", "1.5", '"two"']) {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "deploy_wait_minutes", bad)));
       assertOne(errs, "deploy_wait_minutes", MFILE);
+    }
+  });
+
+  it("machine model_fallbacks defaults to none and maps a model to the one its sessions move to", () => {
+    expect(machine(MACHINE).modelFallbacks).toEqual({});
+    expect(
+      machine(
+        edit(MACHINE, (t) =>
+          set(t, "model_fallbacks", "{claude-fable-5-1: claude-opus-5-5, gpt-5.5: gpt-5.4}"),
+        ),
+      ).modelFallbacks,
+    ).toEqual({ "claude-fable-5-1": "claude-opus-5-5", "gpt-5.5": "gpt-5.4" });
+  });
+
+  it("machine model_fallbacks must be a mapping of model ids to other model ids", () => {
+    for (const bad of ["claude-opus-5-5", "[claude-opus-5-5]", "5"]) {
+      assertOne(
+        machineErr(edit(MACHINE, (t) => set(t, "model_fallbacks", bad))),
+        "model_fallbacks",
+        MFILE,
+      );
+    }
+    for (const bad of ["{a: 1}", '{a: ""}', "{a: [b]}", "{a: a}"]) {
+      assertOne(
+        machineErr(edit(MACHINE, (t) => set(t, "model_fallbacks", bad))),
+        "model_fallbacks.a",
+        MFILE,
+      );
     }
   });
 
@@ -804,6 +833,7 @@ describe("loaders", () => {
             minFreeGib: 10,
             maxLoadPerCore: 1,
             deployWaitMinutes: 120,
+            modelFallbacks: {},
           },
         }),
       );

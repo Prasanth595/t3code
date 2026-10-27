@@ -36,6 +36,8 @@ Other limits in the repo's [factory block](/guide/add-a-repo#_1-commit-the-facto
 
 If T3 itself had trouble (the server restarted, or several sessions failed at once), the factory resumes the session instead of giving up, up to `limits.interruption_resumes` times. A session someone stopped in T3 waits rather than counting as a failure.
 
+A provider rate limit doesn't stop a run either. The factory resumes the session once the limit has cooled down, or at once on the [`model_fallbacks`](/guide/machine-config#keys) model, and that doesn't use up `limits.interruption_resumes`. The time limit keeps counting while the run waits.
+
 ## Stopping a run by hand
 
 A run in `factory:building` can be stopped from its [run page](/guide/watching-runs#a-run-s-page), or on the server's Mac with:

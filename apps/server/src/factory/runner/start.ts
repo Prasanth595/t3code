@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
+import { fallbackOf } from "../cooldown.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
 import { issueBase } from "../domain/base.ts";
 import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
@@ -44,6 +45,7 @@ import type {
   FactoryProject,
   FactorySessions,
   MessageRejectedError,
+  Model,
   SessionsError,
   ThreadNotFoundError,
 } from "../t3/sessions.ts";
@@ -63,6 +65,7 @@ import { launchable } from "./launchTarget.ts";
 import {
   APPROVAL_RECHECKED,
   LAUNCH_BASE,
+  LAUNCH_MODEL,
   LAUNCH_PULL_REQUEST,
   LAUNCH_SENDING,
   LAUNCH_SENDING_RESUMED,
@@ -161,6 +164,11 @@ export interface StartContext {
   readonly sessions: Sessions;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
+  /**
+   * The model a session launched now runs on, given the project's: its fallback while the
+   * project's model cools down from a provider rate limit (`cooldown.ts`). Absent is the project's.
+   */
+  readonly launchModel?: (model: Model) => Model;
 }
 
 /** What `start` did. */
@@ -662,7 +670,12 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
     };
   }
   const project = target.success;
-  // A launch sent again keeps the base the first send was decided on.
+  // A launch sent again keeps the model and the base the first send was decided on.
+  const model = seen.launchSent
+    ? seen.launchModel === null
+      ? project.model
+      : fallbackOf(project.model, seen.launchModel)
+    : (ctx.launchModel?.(project.model) ?? project.model);
   const based = seen.launchSent
     ? ({ ok: true, base: seen.launchBase ?? ctx.project.base } as const)
     : yield* runBase(ctx, detail);
@@ -675,6 +688,15 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
       : yield* recordedResume(ctx, run, seen.launchResumedFrom, seen.launchResumedPr)
     : yield* resumeFrom(ctx, run, issue, base);
   if (!seen.launchSent) {
+    // Also over a step a crash left before `launch-sending`, which a resend would read instead.
+    if (model.model !== project.model.model || seen.launchModel !== null) {
+      yield* ledger(() =>
+        out.append(
+          { event: "step_changed", data: { step: `${LAUNCH_MODEL}${model.model}` } },
+          makeCause("start", "launch-sending"),
+        ),
+      );
+    }
     if (named) {
       yield* ledger(() =>
         out.append(
@@ -721,7 +743,7 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
         resumed ?? undefined,
         named ? base : undefined,
       ),
-      model: project.model,
+      model,
       ...(resumed?.after === "existing-pr" && { pullRequestUrl: resumed.prUrl }),
     }),
   );
@@ -740,9 +762,9 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
           thread_id: threadId,
           worktree: worktreePath,
           branch,
-          model_instance: project.model.instanceId,
-          model: project.model.model,
-          model_options: project.model.options ?? null,
+          model_instance: model.instanceId,
+          model: model.model,
+          model_options: model.options ?? null,
           resumed_from:
             resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           base,

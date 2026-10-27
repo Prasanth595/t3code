@@ -306,6 +306,16 @@ const sampleEvents: ReadonlyArray<{ readonly event: RunEvent; readonly line: str
     ),
   },
   {
+    event: {
+      event: "session_rate_limited",
+      data: { run_ordinal: 3, branch: "t3code/abc", resumes: 1, model: "claude-opus-5-5" },
+    },
+    line: lineAtT0(
+      "session_rate_limited",
+      `{"run_ordinal":3,"branch":"t3code/abc","resumes":1,"model":"claude-opus-5-5"}`,
+    ),
+  },
+  {
     event: { event: "session_paused", data: { run_ordinal: 3 } },
     line: lineAtT0("session_paused", `{"run_ordinal":3}`),
   },
@@ -636,9 +646,9 @@ describe("append", () => {
       expect(readText(ledger.path), event.event).toBe(line);
       seen.add(event.event);
     });
-    // Every one of the 32 event types has at least one exact line.
+    // Every one of the 33 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(RUN_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(32);
+    expect(seen.size).toBe(33);
   });
 
   it("event name is the snake case type, and data holds exactly the field list in order", () => {
