@@ -773,6 +773,15 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.resignFirstResponder()
   }
 
+  func readState() -> [String: Any] {
+    let selection = sourceSelection()
+    return [
+      "value": value,
+      "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
+    ]
+  }
+
   func setSelection(start: Int, end: Int) {
     let previousSelection = sourceSelection()
     requestedSelection = ComposerSelectionPayload(start: start, end: end)
