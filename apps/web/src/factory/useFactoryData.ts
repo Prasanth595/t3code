@@ -90,17 +90,15 @@ const read = (key: string, store: Store): void => {
     store.inFlight = false;
     store.state = next;
     store.listeners.forEach((listener) => listener());
-    // A run the status no longer lists has finished, and the runs lists have the news before their
-    // next poll would: read them now, so a bin learns of it within seconds, not half a minute.
+    // A run the status no longer lists has finished, and the recent runs list has the news before
+    // its next poll would: read it now, so a bin learns of it within seconds, not half a minute.
     if (
       store.resource === "status" &&
       next.status === "ready" &&
       previous !== null &&
       droppedRun(previous, next.data as FactoryStatus)
     ) {
-      for (const resource of ["runs", "runs:all"] as const) {
-        refresh(keyOf(store.environmentId, resource));
-      }
+      refresh(keyOf(store.environmentId, "runs"));
     }
   };
   load(store).then(
