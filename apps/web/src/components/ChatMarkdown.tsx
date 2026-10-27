@@ -1522,12 +1522,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </RenderErrorBoundary>
     );
     if (language === CHAT_VISUAL_LANGUAGE) {
-      return (
-        <ChatVisualBlock
-          html={codeBlock.code}
-          complete={!isStreaming || isClosedCodeFence(node, text, codeBlock.code)}
-        />
-      );
+      const complete = !isStreaming || isClosedCodeFence(node, text, codeBlock.code);
+      // The relay closes a visual whose page was cut off with nothing in it.
+      if (complete && codeBlock.code.trim() === "") return null;
+      return <ChatVisualBlock html={codeBlock.code} complete={complete} />;
     }
     if (language === "mermaid") {
       return (

@@ -94,6 +94,13 @@ describe("splitChatVisuals", () => {
     ]);
   });
 
+  it("leaves out an empty visual, as the relay sends for a cut-off page", () => {
+    expect(splitChatVisuals(["Hi", "````visual", "", "````", "Bye"].join("\n"))).toEqual([
+      { kind: "markdown", text: "Hi" },
+      { kind: "markdown", text: "Bye" },
+    ]);
+  });
+
   it("keeps visual fences quoted inside another code block as markdown", () => {
     const text = ["````md", "```visual", "<div/>", "```", "````"].join("\n");
     expect(splitChatVisuals(text)).toEqual([{ kind: "markdown", text }]);

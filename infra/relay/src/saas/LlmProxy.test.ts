@@ -435,6 +435,63 @@ describe("chat mode search and attachments", () => {
     }),
   );
 
+  const visualReply = (...firstTurn: ReadonlyArray<unknown>) => {
+    let modelTurns = 0;
+    return makeHarness({
+      upstream: () => {
+        modelTurns += 1;
+        return modelTurns === 1
+          ? stream(...firstTurn)
+          : stream({ choices: [{ delta: { content: "Bye." } }] });
+      },
+    });
+  };
+  const toolDelta = (call: Record<string, unknown>) => ({
+    choices: [{ delta: { tool_calls: [{ index: 0, ...call }] } }],
+  });
+
+  it.effect("opens the visual when its tool name arrives in pieces", () =>
+    Effect.gen(function* () {
+      const harness = visualReply(
+        toolDelta({ id: "call_1", function: { name: "show_", arguments: "" } }),
+        toolDelta({ function: { name: "visual", arguments: '{"html":"<p>x</p>"}' } }),
+      );
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(streamedContent(body)).toBe("\n\n````visual\n<p>x</p>\n````\n\nBye.");
+    }),
+  );
+
+  it.effect("asks again for a visual whose HTML was cut off, showing nothing broken", () =>
+    Effect.gen(function* () {
+      const harness = visualReply(toolCall("call_1", "show_visual", '{"html":"<p>Half'));
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(streamedContent(body)).toBe("\n\n````visual\n\n````\n\nBye.");
+      expect(String(lastMessage(harness.sent.at(-1)!)?.content)).toContain("not shown");
+    }),
+  );
+
+  it.effect("keeps text written during a visual call out of its HTML", () =>
+    Effect.gen(function* () {
+      const harness = visualReply(
+        toolCall("call_1", "show_visual", '{"html":"<p>'),
+        { choices: [{ delta: { content: "Look:" } }] },
+        toolDelta({ function: { arguments: 'x</p>"}' } }),
+      );
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(streamedContent(body)).toBe("\n\n````visual\n<p>x</p>\n````\n\nLook:Bye.");
+    }),
+  );
+
+  it.effect("unwraps visual HTML the model put in a code fence", () =>
+    Effect.gen(function* () {
+      const harness = visualReply(
+        toolCall("call_1", "show_visual", JSON.stringify({ html: "```html\n<p>x</p>\n```" })),
+      );
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(streamedContent(body)).toBe("\n\n````visual\n<p>x</p>\n````\n\nBye.");
+    }),
+  );
+
   it.effect("stores a document and reads its text into the conversation", () =>
     Effect.gen(function* () {
       const harness = makeHarness({ upstream: () => stream() });
