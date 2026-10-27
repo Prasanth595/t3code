@@ -12,9 +12,7 @@ describe("maskMarkdownFrontmatter", () => {
   });
 
   it("handles a byte order mark, CR line endings, and a ... closing fence", () => {
-    expect(maskMarkdownFrontmatter("\uFEFF---\na: 1\n---\n# Body")).toBe(
-      "\uFEFF   \n    \n   \n# Body",
-    );
+    expect(maskMarkdownFrontmatter("\uFEFF---\na: 1\n---\n# Body")).toBe("    \n    \n   \n# Body");
     expect(maskMarkdownFrontmatter("---\ra: 1\r...\r# Body")).toBe("   \r    \r   \r# Body");
     expect(maskMarkdownFrontmatter("---\n---\n# Body")).toBe("   \n   \n# Body");
   });
