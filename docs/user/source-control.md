@@ -139,7 +139,7 @@ clones over HTTPS with Git's credentials for that host instead, and the project'
 HTTPS URL.
 
 To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
-under **Settings → General** (or **Source control** on mobile). Clones then default to
+under **Settings → Threads** (or **Source control** on mobile). Clones then default to
 `<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
 folders. You can still change the destination before cloning.
 
