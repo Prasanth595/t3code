@@ -109,6 +109,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
+import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
@@ -635,22 +636,17 @@ function OpenCommandPaletteDialog(props: {
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
-  // Triage the machine the user is looking at. With nothing open, the primary
-  // if it supports triage, else the first machine that does. Not limited to
-  // machines with No project threads: without them, the action explains the
-  // terminal fallback.
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
-  const triageEnvironmentId =
-    currentProjectEnvironmentId ??
-    (supportsTriage(primaryEnvironmentId)
-      ? primaryEnvironmentId
-      : (environments.find(
-          (environment) =>
-            environment.connection.phase === "connected" &&
-            supportsTriage(environment.environmentId),
-        )?.environmentId ?? null));
+  const triageEnvironmentId = pickTriageEnvironment({
+    onScreen: currentProjectEnvironmentId,
+    primary: primaryEnvironmentId,
+    connected: environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+    supportsTriage,
+  });
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
