@@ -47,18 +47,17 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
-  // Opening the guide precedes this lazy mount, so it starts engaged. Only the chat competes for
-  // J/K, so clicks anywhere else (the panel's tab bar, header, a standalone page) keep the guide
-  // engaged. Tracking lives here, not in the tour, so a chat click while the guide loads counts.
+  // Only the chat competes for J/K, so the guide holds them until the user clicks or focuses the
+  // chat column, and takes them back whenever it is shown again.
   const [engaged, setEngaged] = useState(true);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (active) setEngaged(true);
+  }
   useEffect(() => {
-    const record = (event: Event) => {
-      setEngaged(
-        !event
-          .composedPath()
-          .some((node) => node instanceof Element && node.matches("[data-chat-column]")),
-      );
-    };
+    const record = (event: Event) =>
+      setEngaged(!(event.target instanceof Element && event.target.closest("[data-chat-column]")));
     window.addEventListener("pointerdown", record, true);
     window.addEventListener("focusin", record, true);
     return () => {
@@ -159,8 +158,7 @@ export function PullRequestGuideTab({
         reference={reference}
         guide={guide}
         banner={banner}
-        active={active}
-        engaged={engaged}
+        active={active && engaged}
         commenting={commenting}
         onAsk={
           onAskAboutStop === null

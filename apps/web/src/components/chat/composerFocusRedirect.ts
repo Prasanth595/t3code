@@ -1,5 +1,3 @@
-import { isEditableFocused } from "../../lib/editableFocus";
-
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -45,16 +43,15 @@ export function eventPathContainsSelector(event: Event, selector: string): boole
 }
 
 const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
-const SURFACE_LAUNCHER_KEYS_ATTRIBUTE = "data-surface-launcher-keys";
+const CLAIMED_KEYS_ATTRIBUTE = "data-claimed-keys";
 
-// The right-panel launcher registers its own window capture listener when it
-// mounts. When the panel opens after page load that listener runs after ours,
-// so we must leave its letters alone or the composer takes them first.
-function isSurfaceLauncherKey(key: string): boolean {
-  const launcherKeys = document
-    .querySelector(`[${SURFACE_LAUNCHER_KEYS_ATTRIBUTE}]`)
-    ?.getAttribute(SURFACE_LAUNCHER_KEYS_ATTRIBUTE);
-  return launcherKeys?.toLowerCase().includes(key.toLowerCase()) ?? false;
+// Surfaces that handle their own letters (the right-panel launcher, the review
+// guide) listen after our window capture listener, so we must leave the letters
+// they advertise alone or the composer takes them first. Matching is case-sensitive.
+function isClaimedKey(key: string): boolean {
+  return Array.from(document.querySelectorAll(`[${CLAIMED_KEYS_ATTRIBUTE}]`)).some((element) =>
+    element.getAttribute(CLAIMED_KEYS_ATTRIBUTE)?.includes(key),
+  );
 }
 
 export function shouldRedirectInputToComposer(event: Event): boolean {
@@ -67,26 +64,12 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
-// An engaged review guide owns J/K even when clicking its prose leaves focus on body.
-export function guideTourTakesKey(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
-  if (event.key !== "j" && event.key !== "k") return false;
-  if (isEditableFocused(event.target)) return false;
-  const guide = document.querySelector("[data-guide-tour-keys]");
-  if (guide === null) return false;
-  // A narrow layout hosts the guide in a sheet; only other overlays block its keys.
-  return !Array.from(document.querySelectorAll(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)).some(
-    (layer) => !layer.contains(guide),
-  );
-}
-
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
-  if (isSurfaceLauncherKey(event.key)) return false;
+  if (isClaimedKey(event.key)) return false;
 
   return true;
 }

@@ -27,7 +27,7 @@ const shortcutContext = {
 const focusOnMount = (element: HTMLElement | null) => element?.focus();
 
 // Stands in for the right panel's launcher, which needs the whole app around it. Like the
-// real one it takes focus, advertises its letters in `data-surface-launcher-keys`, and
+// real one it takes focus, advertises its letters in both cases in `data-claimed-keys`, and
 // claims one from its own window capture listener unless the key was already handled.
 function Launcher(props: { keys: string; received: string[] }) {
   useEffect(() => {
@@ -45,7 +45,7 @@ function Launcher(props: { keys: string; received: string[] }) {
       ref={focusOnMount}
       tabIndex={0}
       aria-label="Open a surface"
-      data-surface-launcher-keys={props.keys}
+      data-claimed-keys={props.keys.toLowerCase() + props.keys.toUpperCase()}
     />
   );
 }
@@ -232,5 +232,33 @@ it("types J into the composer once the guide's panel closes", async () => {
   await userEvent.keyboard("j");
 
   expect(composerKeys).toEqual(["j"]);
+  await expect.element(stop("First change")).toBeVisible();
+});
+
+it("steps the guide with J again once its panel reopens after a chat click", async () => {
+  setup(guide);
+  const composerKeys: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<ChatBesideGuide composerKeys={composerKeys} number={4} />);
+  await page.getByText("Transcript").click();
+
+  await screen.rerender(<ChatBesideGuide composerKeys={composerKeys} number={4} active={false} />);
+  await screen.rerender(<ChatBesideGuide composerKeys={composerKeys} number={4} />);
+  await userEvent.keyboard("j");
+
+  await expect.element(stop("Second change")).toBeVisible();
+  expect(composerKeys).toEqual([]);
+});
+
+it("types Shift+J into the composer while the guide holds J/K", async () => {
+  setup(guide);
+  const composerKeys: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(<ChatBesideGuide composerKeys={composerKeys} number={5} />);
+  await stop("First change").click();
+
+  await userEvent.keyboard("J");
+
+  expect(composerKeys).toEqual(["J"]);
   await expect.element(stop("First change")).toBeVisible();
 });

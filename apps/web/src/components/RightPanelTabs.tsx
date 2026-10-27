@@ -439,7 +439,9 @@ function RightPanelEmptyState(props: {
       tabIndex={0}
       onKeyDown={handleKeyDown}
       aria-label="Open a surface"
-      data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
+      data-claimed-keys={availableActions
+        .map((action) => action.shortcut.toLowerCase() + action.shortcut.toUpperCase())
+        .join("")}
       className={cn(
         "scrollbar-gutter-both flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 outline-none",
         "pb-(--workspace-topbar-height)",
