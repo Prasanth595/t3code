@@ -12,7 +12,7 @@ vi.mock("./appShortcuts", async () => {
 });
 
 import type { RecentThreadShortcut } from "../../persistence/imperative";
-import { createRecentThreadShortcuts } from "./useAppShortcuts";
+import { createRecentThreadShortcuts } from "./appShortcutsRuntime";
 
 const thread = (threadId: string, title = threadId): RecentThreadShortcut => ({
   environmentId: "env",
@@ -42,7 +42,7 @@ describe("createRecentThreadShortcuts", () => {
   });
 
   it("does not persist the empty fallback after a failed load", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    using _warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { save, publish, recents } = setup(() => Promise.reject(new Error("read failed")));
     await recents.loaded;
     await recents.saved();

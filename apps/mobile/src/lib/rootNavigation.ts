@@ -1,5 +1,6 @@
 import {
   createNavigationContainerRef,
+  type NavigationAction,
   type NavigationContainerRef,
 } from "@react-navigation/native";
 
@@ -44,4 +45,18 @@ export function flushRootNavigationQueue(): void {
       console.error("[navigation] queued navigation failed", error);
     }
   }
+}
+
+/**
+ * `useLinkTo` for app services that live outside the navigator: the same
+ * leading-'/' guard, then the href's action dispatched at the root once ready.
+ */
+export function linkToRootPath(href: string, toAction: (href: string) => NavigationAction): void {
+  if (!href.startsWith("/")) throw new Error(`The href must start with '/' (${href}).`);
+  whenRootNavigationReady(() => {
+    rootNavigationRef.dispatch({
+      target: rootNavigationRef.getRootState()?.key,
+      ...toAction(href),
+    });
+  });
 }

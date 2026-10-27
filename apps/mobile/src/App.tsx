@@ -14,6 +14,7 @@ import {
   createStaticNavigation,
   getActionFromState,
   getStateFromPath,
+  type NavigationAction,
   type NavigationState,
 } from "@react-navigation/native";
 
@@ -34,7 +35,7 @@ import {
 import {
   installAppShortcuts,
   recordAppShortcutNavigationState,
-} from "./features/shortcuts/useAppShortcuts";
+} from "./features/shortcuts/appShortcutsRuntime";
 import {
   AppearancePreferencesProvider,
   installAppearanceRuntime,
@@ -70,8 +71,8 @@ import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 import {
   attachRootNavigation,
   flushRootNavigationQueue,
+  linkToRootPath,
   rootNavigationRef,
-  whenRootNavigationReady,
 } from "./lib/rootNavigation";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 
@@ -113,15 +114,14 @@ const appLinking = {
   getStateFromPath: getAppStateFromPath,
 };
 
-/** `useLinkTo` for app services that live outside the navigator. */
+function appLinkAction(href: string): NavigationAction {
+  const state = getAppStateFromPath(href, linkingConfig);
+  if (!state) throw new Error(`Failed to parse the href to a navigation state (${href}).`);
+  return appLinking.getActionFromState(state, linkingConfig) ?? CommonActions.reset(state);
+}
+
 function linkToAppPath(href: string): void {
-  whenRootNavigationReady(() => {
-    const state = getAppStateFromPath(href, linkingConfig);
-    if (!state) throw new Error(`Failed to parse the href to a navigation state (${href}).`);
-    const action =
-      appLinking.getActionFromState(state, linkingConfig) ?? CommonActions.reset(state);
-    rootNavigationRef.dispatch({ target: rootNavigationRef.getRootState()?.key, ...action });
-  });
+  linkToRootPath(href, appLinkAction);
 }
 
 const Navigation = createStaticNavigation(RootStack);

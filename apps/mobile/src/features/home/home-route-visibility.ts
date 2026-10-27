@@ -21,6 +21,10 @@ function subscribeHomeVisibility(onChange: () => void) {
   visibilityListeners.add(onChange);
   return () => {
     visibilityListeners.delete(onChange);
+    // The value describes one Home instance. A later Home can mount under a
+    // Thread with no event of its own (Android activity replacement, a cold
+    // deep link), so it must fall back to `isFocused()` instead of this one.
+    if (visibilityListeners.size === 0) homeVisible = null;
   };
 }
 
