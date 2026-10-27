@@ -53,7 +53,9 @@ const session = {
 } as const;
 
 const deviceState = (input: {
-  readonly sessions?: ReadonlyArray<typeof session>;
+  readonly sessions?: ReadonlyArray<
+    Omit<typeof session, "openedAt"> & { readonly openedAt: string }
+  >;
   readonly devices?: ReadonlyArray<typeof device>;
 }) =>
   ({
@@ -139,6 +141,16 @@ describe("applyDeviceSnapshot", () => {
 
     applyDeviceSnapshot(ref.environmentId, deviceState({ sessions: [] }), floating);
     expect(miniPlayerSource()).toBeUndefined();
+  });
+
+  it("opens a session that ended and reopened between two snapshots", () => {
+    setup();
+    applyDeviceSnapshot(ref.environmentId, deviceState({ sessions: [session] }), floating);
+    expect(miniPlayerSource()).toBeUndefined();
+
+    const reopened = { ...session, openedAt: "2026-01-01T00:05:00.000Z" };
+    applyDeviceSnapshot(ref.environmentId, deviceState({ sessions: [reopened] }), floating);
+    expect(miniPlayerSource()).toMatchObject({ kind: "device", deviceId: "pixel" });
   });
 
   it("opens a device for a thread that had no sessions when the baseline was taken", () => {

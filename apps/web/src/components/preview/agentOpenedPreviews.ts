@@ -118,11 +118,10 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
   });
 }
 
-const sessionKey = (session: {
-  readonly threadId: string;
-  readonly hostId: string;
-  readonly deviceId: string;
-}) => `${session.threadId}:${session.hostId}:${session.deviceId}`;
+// `openedAt` tells a session apart from one that ended and reopened on the same device while
+// this client was disconnected.
+const sessionKey = (session: DeviceServiceState["sessions"][number]) =>
+  `${session.threadId}:${session.hostId}:${session.deviceId}:${session.openedAt}`;
 
 /**
  * Per environment: the device sessions seen in the last snapshot. The first
