@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
-import { getProviderClient } from "../../lib/providerClients";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";

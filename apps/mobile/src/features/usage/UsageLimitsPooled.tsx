@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { getProviderClient } from "../../lib/providerClients";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ServerProviderModel } from "@t3tools/contracts";
-import { glmClient } from "@t3tools/provider-glm/client";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 import {
   deriveProviderModelsForDisplay,
@@ -47,7 +47,9 @@ describe("provider environment helpers", () => {
   };
 
   it("saves GLM endpoints as visible values while retaining the sensitive API key", () => {
-    const field = glmClient.environmentFields?.find((field) => field.name === "ACP_GLM_BASE_URL");
+    const field = getProviderClient("glm")?.environmentFields?.find(
+      (field) => field.name === "ACP_GLM_BASE_URL",
+    );
     expect(field).toBeDefined();
     expect(
       nextProviderEnvironmentWithFieldValue(
