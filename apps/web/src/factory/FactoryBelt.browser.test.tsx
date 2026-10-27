@@ -1681,6 +1681,20 @@ describe("tile motion", () => {
       },
     );
 
+    it("flies from where the tile stood on the belt, though the belt moved before the bin knew", async () => {
+      using _state = await setup();
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      page.container.style.paddingTop = "20px";
+      const stood = tilesOf(lane(page, "pr"))[0]!.getBoundingClientRect();
+      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
+      // Something above the belt grows (or the page scrolls) while the bin's read is out.
+      page.container.style.paddingTop = "60px";
+      await page.rerender(createElement(FactoryBelt, world([], [settledRow("done")])));
+      const [flying] = ghostsOf(page);
+      near(startOf(flying!).left, stood.left);
+      near(startOf(flying!).top, stood.top + 40);
+    });
+
     it("does not cover the tile that closed up into the place of the one that went", async () => {
       using _state = await setup();
       const rows = [
