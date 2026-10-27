@@ -131,27 +131,26 @@ export const MuseDriver: ProviderDriver<
     // Reports and status checks take turns, so an older report cannot publish after a
     // newer one, and none publishes for a generation a check has just replaced.
     const usagePermit = yield* Semaphore.make(1);
-    const withUsageLimits = (provider: ServerProviderDraft) =>
-      usagePermit.withPermits(1)(
-        Effect.gen(function* () {
-          const { generation } = yield* Ref.updateAndGet(usageAccount, (account) =>
-            nextMuseUsageAccount(account, provider.auth),
-          );
-          const { retained, dropped } = yield* Ref.modify(latestUsage, (current) => {
-            const drop = current !== undefined && current.generation !== generation;
-            const kept = drop ? undefined : current;
-            return [{ retained: kept, dropped: drop }, kept] as const;
-          });
-          const usageLimits = museStatusUsageLimits({
-            auth: provider.auth,
-            enabled: provider.enabled,
-            observation: retained?.usage,
-            dropped,
-            nowMs: DateTime.toEpochMillis(yield* DateTime.now),
-          });
-          return usageLimits ? { ...provider, usageLimits } : provider;
-        }),
+    const withUsageLimits = Effect.fn("MuseDriver.withUsageLimits")(function* (
+      provider: ServerProviderDraft,
+    ) {
+      const { generation } = yield* Ref.updateAndGet(usageAccount, (account) =>
+        nextMuseUsageAccount(account, provider.auth),
       );
+      const { retained, dropped } = yield* Ref.modify(latestUsage, (current) => {
+        const drop = current !== undefined && current.generation !== generation;
+        const kept = drop ? undefined : current;
+        return [{ retained: kept, dropped: drop }, kept] as const;
+      });
+      const usageLimits = museStatusUsageLimits({
+        auth: provider.auth,
+        enabled: provider.enabled,
+        observation: retained?.usage,
+        dropped,
+        nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+      });
+      return usageLimits ? { ...provider, usageLimits } : provider;
+    }, usagePermit.withPermits(1));
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
         binaryPath: effectiveConfig.binaryPath,
@@ -233,33 +232,33 @@ export const MuseDriver: ProviderDriver<
       usageAccountGeneration: Ref.get(usageAccount).pipe(
         Effect.map((account) => account.generation),
       ),
-      onSubscriptionUsage: (usage, hostGeneration) =>
-        usagePermit.withPermits(1)(
-          Effect.gen(function* () {
-            const account = yield* Ref.get(usageAccount);
-            // A host from before a logout or another login reports for an account
-            // that is gone, and signed out there is no account to report for.
-            if (hostGeneration !== account.generation || account.identity === null) return;
-            // Every session's host reports; an older report arriving late must not win.
-            const newer = yield* Ref.modify(latestUsage, (previous) =>
-              previous && previous.usage.observedAtMs >= usage.observedAtMs
-                ? [false, previous]
-                : [true, { usage, generation: hostGeneration }],
-            );
-            const { auth } = yield* snapshot.getSnapshot;
-            // The probe may have advanced the generation before publishing its new account.
-            if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity)
-              return;
-            const now = yield* DateTime.now;
-            yield* snapshot.applyUsageLimits({
-              windows: museUsageWindows(usage, DateTime.toEpochMillis(now)),
-              checkedAt: DateTime.formatIso(DateTime.makeUnsafe(usage.observedAtMs)),
-              // A report is the account's whole state, so a window that has reset
-              // since loses its old reset time instead of keeping it.
-              replace: true,
-            });
-          }),
-        ),
+      // Per-notification work stays within the adapter's notification handling.
+      onSubscriptionUsage: Effect.fnUntraced(function* (
+        usage: MuseSubscriptionUsage,
+        hostGeneration: number,
+      ) {
+        const account = yield* Ref.get(usageAccount);
+        // A host from before a logout or another login reports for an account
+        // that is gone, and signed out there is no account to report for.
+        if (hostGeneration !== account.generation || account.identity === null) return;
+        // Every session's host reports; an older report arriving late must not win.
+        const newer = yield* Ref.modify(latestUsage, (previous) =>
+          previous && previous.usage.observedAtMs >= usage.observedAtMs
+            ? [false, previous]
+            : [true, { usage, generation: hostGeneration }],
+        );
+        const { auth } = yield* snapshot.getSnapshot;
+        // The probe may have advanced the generation before publishing its new account.
+        if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity) return;
+        const now = yield* DateTime.now;
+        yield* snapshot.applyUsageLimits({
+          windows: museUsageWindows(usage, DateTime.toEpochMillis(now)),
+          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(usage.observedAtMs)),
+          // A report is the account's whole state, so a window that has reset
+          // since loses its old reset time instead of keeping it.
+          replace: true,
+        });
+      }, usagePermit.withPermits(1)),
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       continuationRequests,
     });
