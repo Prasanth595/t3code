@@ -234,7 +234,7 @@ export function start(configuration: PreviewStreamConfiguration) {
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
           else {
-            input.disabled = !interactive;
+            input.disabled = !interactive || accessible;
             if (interactive && size && previous?.controller !== "you")
               next.send({ type: "resize", ...size });
           }
@@ -707,6 +707,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     // Passive previews never subscribe, even if asked.
     if (!interactive || enabled === accessible) return;
     accessible = enabled;
+    input.disabled = enabled || control?.controller !== "you";
     client?.accessibility(enabled);
     accessibleContainer.hidden = !enabled;
     container.setAttribute("aria-hidden", String(enabled));

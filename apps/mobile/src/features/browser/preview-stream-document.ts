@@ -48,6 +48,7 @@ export function previewStreamDocument(configuration: string, script: string) {
   canvas { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   video { pointer-events: none; }
   .accessible-view {
+    box-sizing: border-box;
     position: fixed; inset: 0; z-index: 2; overflow: auto; -webkit-overflow-scrolling: touch;
     background: inherit; font: -apple-system-body; font-family: system-ui, sans-serif;
   }
