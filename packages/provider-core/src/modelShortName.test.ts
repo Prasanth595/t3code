@@ -6,6 +6,7 @@ describe("modelShortName", () => {
   it.each([
     ["Claude Opus 5.5", ["Claude "], "Opus 5.5"],
     ["GPT-6.1-Sol", ["GPT-"], "6.1 Sol"],
+    ["GPT 6.0 Astra", ["GPT-", "GPT "], "6.0 Astra"],
     ["Grok 4 Pro", [], undefined],
     ["Claude Opus 5.5", [], "Opus 5.5"],
     ["NVIDIA: Nemotron 3 Super", [], "Nemotron 3 Super"],

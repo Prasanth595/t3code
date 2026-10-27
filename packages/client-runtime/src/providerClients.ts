@@ -19,7 +19,7 @@ export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("codex"),
     label: "Codex",
-    modelFamilies: ["GPT-"],
+    modelFamilies: ["GPT-", "GPT "],
     acpRegistryAgentIds: ["codex-acp"],
     settingsSchema: CodexSettings,
   },
