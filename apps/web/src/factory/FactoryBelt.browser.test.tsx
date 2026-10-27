@@ -1492,6 +1492,11 @@ describe("tile motion", () => {
     expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
     const flash = flashOf(post(page, "gate"))!;
     expect(flash.effect!.getTiming().duration).toBe(300);
+    // It presses the post in a little, and back.
+    const pressed = new DOMMatrixReadOnly(
+      String((flash.effect as KeyframeEffect).getKeyframes()[0]!.transform),
+    );
+    expect(pressed.d).toBeCloseTo(0.96, 2);
 
     // The animations end on the elements that play them, and a child's ending is not theirs.
     await endFlash(tile.firstElementChild!, "x");
@@ -1631,7 +1636,7 @@ describe("tile motion", () => {
       bin === "done" ? countOf(station(page, "done")) : binCount(page, "stuck");
 
     it.each(["done", "stuck"] as const)(
-      "parks the tile where it stood, reads the recent list now, then flies it to %s",
+      "draws nothing where it stood, then flies it from there to %s when a bin lists it",
       async (bin) => {
         using _state = await setup();
         await using page = await render(createElement(FactoryBelt, onRail()));
@@ -1639,30 +1644,30 @@ describe("tile motion", () => {
 
         const dropped = world([], [openRow]);
         await page.rerender(createElement(FactoryBelt, dropped));
-        const [parked] = ghostsOf(page);
-        expect(ghostsOf(page)).toHaveLength(1);
+        expect(ghostsOf(page)).toEqual([]);
         expect(tilesOf(lane(page, "pr"))).toEqual([]);
-        const box = boxOf(parked!);
-        near(box.left, stood.left);
-        near(box.top, stood.top);
-        near(box.width, stood.width);
-        near(box.height, stood.height);
-        // It stands still, and the bin has not heard of the run.
-        expect(parked!.getAnimations()).toEqual([]);
         expect(countIn(page, bin)).toBe("0");
-        expect(dropped.recent.get(DESKTOP)!.refresh).toHaveBeenCalledTimes(1);
 
         const settled = world([], [settledRow(bin)]);
         await page.rerender(createElement(FactoryBelt, settled));
         const [flying] = ghostsOf(page);
         expect(ghostsOf(page)).toHaveLength(1);
-        expect(flying).not.toBe(parked);
-        expect(parked!.isConnected).toBe(false);
-        // It flies on from the place the parked one stood, and the count holds until it lands.
+        // It flies from the place the tile stood, and the count holds until it lands.
         near(startOf(flying!).left, stood.left);
         near(startOf(flying!).top, stood.top);
         expect(countIn(page, bin)).toBe("0");
-        // Neither read asks for the list again: the first did.
+        // It ends centred on the bin, shrunk and faded out.
+        const target = page.all(`[data-bin="${bin}"]`)[0]!.getBoundingClientRect();
+        const box = boxOf(flying!);
+        near(box.left + box.width / 2, target.left + target.width / 2);
+        near(box.top + box.height / 2, target.top + target.height / 2);
+        const end = new DOMMatrixReadOnly(
+          String(keyframesOf(flying!, "transform").at(-1)!.transform),
+        );
+        expect([end.a, end.d].map((scale) => Math.round(scale * 100) / 100)).toEqual([0.55, 0.55]);
+        expect(String(keyframesOf(flying!, "opacity").at(-1)!.opacity)).toBe("0");
+        // The belt reads no list itself: the data store does.
+        expect(dropped.recent.get(DESKTOP)!.refresh).not.toHaveBeenCalled();
         expect(settled.recent.get(DESKTOP)!.refresh).not.toHaveBeenCalled();
 
         await land(flying!);
@@ -1676,54 +1681,55 @@ describe("tile motion", () => {
       },
     );
 
-    it("fades a parked tile out in place once nothing has listed it for five seconds", async () => {
+    it("does not cover the tile that closed up into the place of the one that went", async () => {
       using _state = await setup();
-      using _timers = fakeTimers();
-      vi.setSystemTime(NOW);
-      await using page = await render(createElement(FactoryBelt, onRail()));
-      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
-      const [parked] = ghostsOf(page);
-      expect(ghostsOf(page)).toHaveLength(1);
-      await act(async () => void (await vi.advanceTimersByTimeAsync(4_999)));
-      expect(parked!.isConnected).toBe(true);
-      expect(parked!.style.opacity).toBe("");
-      await act(async () => void (await vi.advanceTimersByTimeAsync(1)));
-      expect(parked!.isConnected).toBe(true);
-      expect(parked!.style.opacity).toBe("0");
-      await act(async () => {
-        parked!.dispatchEvent(
-          new TransitionEvent("transitionend", { propertyName: "opacity", bubbles: true }),
-        );
-      });
+      const rows = [
+        recentRow(4, { state: "pr-open", started_ts: iso(at(12)) }),
+        recentRow(5, { state: "pr-open", started_ts: iso(at(9)) }),
+      ];
+      await using page = await render(
+        createElement(
+          FactoryBelt,
+          world([statusRun(4, { state: "pr-open" }), statusRun(5, { state: "pr-open" })], rows),
+        ),
+      );
+      const [first, second] = tilesOf(lane(page, "pr"));
+      const stood = first!.getBoundingClientRect();
+      expect(second!.getBoundingClientRect().left).toBeGreaterThan(stood.left);
+
+      await page.rerender(
+        createElement(FactoryBelt, world([statusRun(5, { state: "pr-open" })], rows)),
+      );
       expect(ghostsOf(page)).toEqual([]);
+      const [closedUp] = tilesOf(lane(page, "pr"));
+      expect(closedUp!.textContent).toBe(second!.textContent);
+      expect(closedUp!.style.visibility).toBe("");
+      // What a click at the place of the departed tile reaches is the tile that took its place.
+      const hit = document.elementFromPoint(stood.left + stood.width / 2, stood.top + 8);
+      expect(hit?.closest("a")).toBe(closedUp);
     });
 
-    it("removes a faded ghost whose transition never ends", async () => {
+    it("lands at once a run that a bin lists after its place has been forgotten for five seconds", async () => {
       using _state = await setup();
-      using _timers = fakeTimers();
-      vi.setSystemTime(NOW);
       await using page = await render(createElement(FactoryBelt, onRail()));
       await page.rerender(createElement(FactoryBelt, world([], [openRow])));
-      await act(async () => void (await vi.advanceTimersByTimeAsync(5_000)));
-      expect(ghostsOf(page)).toHaveLength(1);
-      await act(async () => void (await vi.advanceTimersByTimeAsync(1_000)));
-      expect(ghostsOf(page)).toEqual([]);
-    });
-
-    it("lands at once a run that a bin lists after its parked tile has faded", async () => {
-      using _state = await setup();
-      using _timers = fakeTimers();
-      vi.setSystemTime(NOW);
-      await using page = await render(createElement(FactoryBelt, onRail()));
-      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
-      await act(async () => void (await vi.advanceTimersByTimeAsync(6_000)));
-      expect(ghostsOf(page)).toEqual([]);
+      vi.setSystemTime(NOW + 5_001);
       await page.rerender(createElement(FactoryBelt, world([], [settledRow("done")])));
       expect(ghostsOf(page)).toEqual([]);
       expect(countOf(station(page, "done"))).toBe("1");
     });
 
-    it("lands at once a run that a bin lists with no tile ever parked", async () => {
+    it("still flies a run that a bin lists just inside the five seconds", async () => {
+      using _state = await setup();
+      await using page = await render(createElement(FactoryBelt, onRail()));
+      await page.rerender(createElement(FactoryBelt, world([], [openRow])));
+      vi.setSystemTime(NOW + 5_000);
+      await page.rerender(createElement(FactoryBelt, world([], [settledRow("done")])));
+      expect(ghostsOf(page)).toHaveLength(1);
+      expect(countOf(station(page, "done"))).toBe("0");
+    });
+
+    it("lands at once a run that a bin lists with no place ever remembered", async () => {
       using _state = await setup();
       await using page = await render(createElement(FactoryBelt, world([], [])));
       await page.rerender(createElement(FactoryBelt, world([], [doneRow(9, "merged", at(14))])));
@@ -1731,21 +1737,18 @@ describe("tile motion", () => {
       expect(countOf(station(page, "done"))).toBe("1");
     });
 
-    it("slides a parked tile from where it stands to its tile when the run is back on the rail", async () => {
+    it("slides a run that dropped off and came back from where it stood to its tile", async () => {
       using _state = await setup();
       await using page = await render(
         createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
       );
+      const stood = tilesOf(lane(page, "building"))[0]!.getBoundingClientRect();
       await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
-      const [parked] = ghostsOf(page);
-      expect(ghostsOf(page)).toHaveLength(1);
-      const stood = parked!.getBoundingClientRect();
+      expect(ghostsOf(page)).toEqual([]);
 
       await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
       const [sliding] = ghostsOf(page);
       expect(ghostsOf(page)).toHaveLength(1);
-      expect(sliding).not.toBe(parked);
-      expect(parked!.isConnected).toBe(false);
       const tile = tilesOf(lane(page, "gate"))[0]!;
       expect(tile.style.visibility).toBe("hidden");
       near(startOf(sliding!).left, stood.left);
@@ -1761,20 +1764,18 @@ describe("tile motion", () => {
       expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
     });
 
-    it("does not time out a parked tile that came back", async () => {
+    it("fades in a run that comes back after its place has been forgotten", async () => {
       using _state = await setup();
-      using _timers = fakeTimers();
-      vi.setSystemTime(NOW);
       await using page = await render(
         createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
       );
       await page.rerender(createElement(FactoryBelt, world([], [recentRow(2)])));
-      await page.rerender(createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])));
-      await land(ghostsOf(page)[0]!);
+      vi.setSystemTime(NOW + 5_001);
+      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
       expect(ghostsOf(page)).toEqual([]);
-      await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
-      expect(ghostsOf(page)).toEqual([]);
-      expect(tilesOf(lane(page, "building"))).toHaveLength(1);
+      const tile = tilesOf(lane(page, "gate"))[0]!;
+      expect(tile.style.visibility).toBe("");
+      expect(tile.classList.contains("factory-tile-enter")).toBe(true);
     });
 
     it("keeps a run whose bin is known first on its lane, then flies it when the status drops it", async () => {

@@ -771,13 +771,13 @@ describe("holdBins", () => {
   const key = (issue: number) => `${ENV_A} ${id(issue)}`;
 
   it("is the same belt when nothing is landing", () => {
-    expect(holdBins(belt, new Set())).toBe(belt);
+    expect(holdBins(belt, placesOf(belt), new Set())).toBe(belt);
   });
 
   it("leaves out the runs still sliding into a bin, and recounts Done", () => {
     // Done holds newest finish first: 4 (closed), 3, 2.
     expect(belt.runs.done.map((run) => run.id)).toEqual([id(4), id(3), id(2)]);
-    const held = holdBins(belt, new Set([key(3), key(5)]));
+    const held = holdBins(belt, placesOf(belt), new Set([key(3), key(5)]));
     expect(held.runs.done.map((run) => run.id)).toEqual([id(4), id(2)]);
     expect(held.done).toEqual({ merged: 1, closed: 1, latest: ["#4", "#2"] });
     expect(held.stuck).toEqual([]);
@@ -799,7 +799,7 @@ describe("holdBins", () => {
       ],
       NOW,
     );
-    const held = holdBins(onLane, new Set());
+    const held = holdBins(onLane, placesOf(onLane), new Set());
     expect(held.runs.done.map((run) => run.id)).toEqual([id(2)]);
     expect(held.done).toEqual({ merged: 0, closed: 1, latest: ["#2"] });
     expect(held.stuck).toEqual([]);
@@ -808,11 +808,13 @@ describe("holdBins", () => {
   });
 
   it("is the same belt when what is landing is in no bin", () => {
-    expect(holdBins(belt, new Set([`${ENV_A} ${id(99)}`, `${ENV_A} ${id(1)}`]))).toBe(belt);
+    expect(
+      holdBins(belt, placesOf(belt), new Set([`${ENV_A} ${id(99)}`, `${ENV_A} ${id(1)}`])),
+    ).toBe(belt);
   });
 
   it("keeps the lanes, the counters and the newest post", () => {
-    const held = holdBins(belt, new Set([key(2), key(4), key(6)]));
+    const held = holdBins(belt, placesOf(belt), new Set([key(2), key(4), key(6)]));
     expect(held.runs.pr).toBe(belt.runs.pr);
     expect(held.counters).toBe(belt.counters);
     expect(held.newest).toBe(belt.newest);
