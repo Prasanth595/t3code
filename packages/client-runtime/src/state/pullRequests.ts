@@ -858,7 +858,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           const epoch =
             action?.environmentId === environmentId &&
             action.refreshStats &&
-            input.refs.some((reference) => sameActionReference(reference, action.reference))
+            input.refs.some((reference) =>
+              sameActionReference(
+                { ...reference, expectedAccountId: undefined },
+                { ...action.reference, expectedAccountId: undefined },
+              ),
+            )
               ? action.epoch
               : previous?.epoch;
           return previous?.revision === revision && previous?.epoch === epoch

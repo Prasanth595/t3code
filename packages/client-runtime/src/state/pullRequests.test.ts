@@ -1221,11 +1221,16 @@ it.effect(
     ),
 );
 
-it.effect.each([false, true])(
-  "refreshes head-dependent detail and stats after an action, pending=%s",
-  (pending) =>
+it.effect.each(["loaded", "pending", "account-pinned"])(
+  "refreshes head-dependent detail and stats after an action, mode=%s",
+  (mode) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const pending = mode === "pending";
+        const reference = {
+          ...actionReference,
+          ...(mode === "account-pinned" ? { expectedAccountId: "account-1" } : {}),
+        };
         let headSha = "old-head";
         let reads = 0;
         const statsReads = new Map<number, number>();
@@ -1278,7 +1283,7 @@ it.effect.each([false, true])(
             }),
         });
         const { atoms, registry } = yield* makeTestRuntime(client);
-        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const target = { environmentId: TARGET.environmentId, input: reference };
         const detail = atoms.detail(target);
         registry.mount(detail);
         if (pending) yield* Deferred.await(started);
@@ -1295,7 +1300,7 @@ it.effect.each([false, true])(
         yield* Effect.promise(() =>
           atoms.runAction.run(registry, {
             ...target,
-            input: { ...actionReference, action: "update-branch" },
+            input: { ...reference, action: "update-branch" },
           }),
         );
         if (pending) yield* Deferred.succeed(release, undefined);
@@ -1316,7 +1321,7 @@ it.effect.each([false, true])(
         yield* Effect.promise(() =>
           atoms.runAction.run(registry, {
             ...target,
-            input: { ...actionReference, action: "ready" },
+            input: { ...reference, action: "ready" },
           }),
         );
         yield* AtomRegistry.getResult(registry, stats, { suspendOnWaiting: true });
