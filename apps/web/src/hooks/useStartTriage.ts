@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, TRIAGE_PROMPT_FILE_NAME } from "@t3tools/contracts";
+import { useRouter } from "@tanstack/react-router";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -30,6 +31,7 @@ export const isTriagePrompt = (prompt: string) => prompt.includes(`[${TRIAGE_PRO
  * the problem.
  */
 export function useStartTriage() {
+  const router = useRouter();
   const { scratchWorkspaceRootFor } = useScratchProject();
   const handleNewThread = useNewThreadHandler();
   const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
@@ -54,11 +56,37 @@ export function useStartTriage() {
     fail(error instanceof Error ? error.message : "An error occurred.");
   };
 
+  // `routeChanged` tells the steps the user went elsewhere while they waited;
+  // the draft then stays closed instead of pulling them away.
+  const openTriageDraft = async (environmentId: EnvironmentId, routeChanged: () => boolean) => {
+    const prepared = await prepare({
+      environmentId,
+      input: { client: currentClientMetadata() },
+    });
+    if (prepared._tag === "Failure") return failWith(prepared);
+    const project = await openScratch({ environmentId, input: {} });
+    if (project._tag === "Failure") return failWith(project);
+    if (routeChanged()) return;
+    const opened = await handleNewThread(
+      scopeProjectRef(project.value.environmentId, project.value.id),
+    ).then(
+      (draft) => ({ draft }),
+      () => null,
+    );
+    if (opened === null) {
+      fail("T3 Code could not open a new thread.");
+      return;
+    }
+    if (opened.draft === null) return;
+    useComposerDraftStore.getState().setPrompt(opened.draft.draftId, prepared.value.prompt);
+  };
+
   return async (environmentId: EnvironmentId) => {
     if (scratchWorkspaceRootFor(environmentId) === null) {
       fail("This environment cannot start threads without a project.");
       return;
     }
+    const requestingRouteHref = router.state.location.href;
     // The palette is already closed, and a slow network can hold up the source
     // lookup, so say something when the draft does not open at once.
     let pendingToastId: ReturnType<typeof toastManager.add> | undefined;
@@ -70,30 +98,12 @@ export function useStartTriage() {
         data: { hideCopyButton: true },
       });
     }, 400);
-    try {
-      const prepared = await prepare({
-        environmentId,
-        input: { client: currentClientMetadata() },
-      });
-      if (prepared._tag === "Failure") return failWith(prepared);
-      const project = await openScratch({ environmentId, input: {} });
-      if (project._tag === "Failure") return failWith(project);
-      const opened = await handleNewThread(
-        scopeProjectRef(project.value.environmentId, project.value.id),
-      ).then(
-        (draft) => ({ draft }),
-        () => null,
-      );
-      if (opened === null) {
-        fail("T3 Code could not open a new thread.");
-        return;
-      }
-      // No draft: the user went somewhere else meanwhile.
-      if (opened.draft === null) return;
-      useComposerDraftStore.getState().setPrompt(opened.draft.draftId, prepared.value.prompt);
-    } finally {
+    await openTriageDraft(
+      environmentId,
+      () => router.state.location.href !== requestingRouteHref,
+    ).finally(() => {
       clearTimeout(pendingTimer);
       if (pendingToastId !== undefined) toastManager.close(pendingToastId);
-    }
+    });
   };
 }
