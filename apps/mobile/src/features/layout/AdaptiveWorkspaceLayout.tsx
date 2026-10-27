@@ -58,6 +58,7 @@ import {
   ANDROID_WORKSPACE_RAIL_WIDTH,
 } from "../workspace/AndroidWorkspaceNavigation";
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
+import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import {
   selectWorkspaceDetail,
   type WorkspaceDetail,
@@ -69,6 +70,11 @@ import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
+import {
+  ThreadListDrawerHost,
+  ThreadListDrawerProvider,
+  threadListDrawerWidth,
+} from "../threads/thread-list-drawer";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -291,6 +297,7 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabsEnabled,
   ]);
   const width = viewportWidth - navigationRailWidth;
+  const threadListDrawerPanelWidth = threadListDrawerWidth(layout.listPaneWidth, viewportWidth);
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const fileInspector = useMemo(
@@ -594,6 +601,8 @@ function AdaptiveWorkspaceLayoutContent(
   const { openPendingTask: handleOpenPendingTask } =
     usePendingTaskListActions(handleSelectThreadRoute);
 
+  // Back to the threads home list (the page the drawer replaced), drawer or not.
+  const handleOpenHome = useWorkspaceListNavigation("threads");
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
     handleSelectThreadRoute({
       draft: {
@@ -825,197 +834,242 @@ function AdaptiveWorkspaceLayoutContent(
 
   if (nativeWorkspace) {
     return (
+      <ThreadListDrawerProvider>
+        <HomeListOptionsProvider
+          projectGroupingMode={projectGroupingMode}
+          savedFilters={props.savedThreadListFilters}
+        >
+          <AdaptiveWorkspaceContext value={contextValue}>
+            <NativeWorkspaceInspectorContext
+              value={{
+                render: workspaceInspector?.render,
+                visible: inspectorColumnTargetWidth > 0,
+              }}
+            >
+              {props.children}
+            </NativeWorkspaceInspectorContext>
+          </AdaptiveWorkspaceContext>
+        </HomeListOptionsProvider>
+      </ThreadListDrawerProvider>
+    );
+  }
+  return (
+    <ThreadListDrawerProvider>
       <HomeListOptionsProvider
         projectGroupingMode={projectGroupingMode}
         savedFilters={props.savedThreadListFilters}
       >
-        <AdaptiveWorkspaceContext value={contextValue}>
-          <NativeWorkspaceInspectorContext
-            value={{ render: workspaceInspector?.render, visible: inspectorColumnTargetWidth > 0 }}
-          >
-            {props.children}
-          </NativeWorkspaceInspectorContext>
-        </AdaptiveWorkspaceContext>
-      </HomeListOptionsProvider>
-    );
-  }
-  return (
-    <HomeListOptionsProvider
-      projectGroupingMode={projectGroupingMode}
-      savedFilters={props.savedThreadListFilters}
-    >
-      <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <WindowHingeContext value={windowHinge}>
-          <View
-            testID="adaptive-workspace-layout"
-            className={Platform.OS === "android" ? "flex-1 flex-row bg-header" : "flex-1 flex-row"}
-          >
-            <AndroidHingeObserver onChange={handleHingeChange} />
-            {shouldRenderNavigationRail ? (
-              <Animated.View className="self-stretch" style={railAnimatedStyle} />
-            ) : null}
-            {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
-              <Animated.View
-                className="self-stretch overflow-hidden"
-                accessibilityElementsHidden={workspacePage || !panes.primarySidebarVisible}
-                collapsable={false}
-                importantForAccessibility={
-                  !workspacePage && panes.primarySidebarVisible ? "auto" : "no-hide-descendants"
-                }
-                pointerEvents={!workspacePage && panes.primarySidebarVisible ? "auto" : "none"}
-                // Under a workspace page the sidebar leaves the row but keeps its size, so its
-                // lists never lay out at zero size and are ready, unchanged, on the way back. The
-                // content pane, laid out after it, covers it, in the same mount as the page.
-                style={[
-                  workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
-                  sidebarAnimatedStyle,
-                ]}
-              >
-                <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
-                  <RenderErrorBoundary
-                    renderFallback={(fallback) => (
-                      <RenderFailureView
-                        {...fallback}
-                        title="The sidebar couldn't be displayed"
-                        exit={{ label: "Open settings", onPress: handleOpenSettings }}
-                      />
-                    )}
-                  >
-                    <AndroidWorkspaceSidebar
-                      onRequestVisibility={revealPrimarySidebar}
-                      selectedPullRequestKey={props.selectedPullRequestKey ?? null}
-                    >
-                      <AndroidHomeFabLayout
-                        sidebar
-                        disabled={workspacePage}
-                        paneWidth={layout.listPaneWidth}
-                        onStartNewTask={handleStartNewTask}
-                      >
-                        <ThreadNavigationSidebar
-                          width={layout.listPaneWidth}
-                          visible={panes.primarySidebarVisible}
-                          onRequestVisibility={revealPrimarySidebar}
-                          selectedThreadKey={selectedThreadKey}
-                          onOpenSettings={handleOpenSettings}
-                          onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                          onNewThreadInProject={handleNewThreadInProject}
-                          onNewThreadOnBranch={handleNewThreadOnBranch}
-                          onOpenPendingTask={handleOpenPendingTask}
-                          onSelectThread={handleSelectThread}
-                          onOpenThreadPullRequests={handleOpenThreadPullRequests}
-                          onSearchQueryChange={setPrimarySidebarSearchQuery}
-                          searchQuery={primarySidebarSearchQuery}
-                        />
-                      </AndroidHomeFabLayout>
-                    </AndroidWorkspaceSidebar>
-                  </RenderErrorBoundary>
-                  {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
-                  {floatingTabsEnabled && !workspacePage ? (
-                    <FloatingWorkspaceTabs
-                      paneWidth={layout.listPaneWidth}
-                      onNewThread={handleStartNewTask}
-                      onSelect={revealPrimarySidebar}
-                    />
-                  ) : null}
-                </Animated.View>
-              </Animated.View>
-            ) : null}
+        <AdaptiveWorkspaceContext.Provider value={contextValue}>
+          <WindowHingeContext value={windowHinge}>
             <View
+              testID="adaptive-workspace-layout"
               className={
-                Platform.OS === "android"
-                  ? "flex-1 overflow-hidden bg-header"
-                  : "flex-1 overflow-hidden bg-screen"
+                Platform.OS === "android" ? "flex-1 flex-row bg-header" : "flex-1 flex-row"
               }
-              collapsable={false}
             >
+              <AndroidHingeObserver onChange={handleHingeChange} />
+              {shouldRenderNavigationRail ? (
+                <Animated.View className="self-stretch" style={railAnimatedStyle} />
+              ) : null}
+              {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
+                <Animated.View
+                  className="self-stretch overflow-hidden"
+                  accessibilityElementsHidden={workspacePage || !panes.primarySidebarVisible}
+                  collapsable={false}
+                  importantForAccessibility={
+                    !workspacePage && panes.primarySidebarVisible ? "auto" : "no-hide-descendants"
+                  }
+                  pointerEvents={!workspacePage && panes.primarySidebarVisible ? "auto" : "none"}
+                  // Under a workspace page the sidebar leaves the row but keeps its size, so its
+                  // lists never lay out at zero size and are ready, unchanged, on the way back. The
+                  // content pane, laid out after it, covers it, in the same mount as the page.
+                  style={[
+                    workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
+                    sidebarAnimatedStyle,
+                  ]}
+                >
+                  <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
+                    <RenderErrorBoundary
+                      renderFallback={(fallback) => (
+                        <RenderFailureView
+                          {...fallback}
+                          title="The sidebar couldn't be displayed"
+                          exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                        />
+                      )}
+                    >
+                      <AndroidWorkspaceSidebar
+                        onRequestVisibility={revealPrimarySidebar}
+                        selectedPullRequestKey={props.selectedPullRequestKey ?? null}
+                      >
+                        <AndroidHomeFabLayout
+                          sidebar
+                          disabled={workspacePage}
+                          paneWidth={layout.listPaneWidth}
+                          onStartNewTask={handleStartNewTask}
+                        >
+                          <ThreadNavigationSidebar
+                            width={layout.listPaneWidth}
+                            visible={panes.primarySidebarVisible}
+                            onRequestVisibility={revealPrimarySidebar}
+                            selectedThreadKey={selectedThreadKey}
+                            onOpenSettings={handleOpenSettings}
+                            onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                            onNewThreadInProject={handleNewThreadInProject}
+                            onNewThreadOnBranch={handleNewThreadOnBranch}
+                            onOpenPendingTask={handleOpenPendingTask}
+                            onSelectThread={handleSelectThread}
+                            onOpenThreadPullRequests={handleOpenThreadPullRequests}
+                            onSearchQueryChange={setPrimarySidebarSearchQuery}
+                            searchQuery={primarySidebarSearchQuery}
+                          />
+                        </AndroidHomeFabLayout>
+                      </AndroidWorkspaceSidebar>
+                    </RenderErrorBoundary>
+                    {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
+                    {floatingTabsEnabled && !workspacePage ? (
+                      <FloatingWorkspaceTabs
+                        paneWidth={layout.listPaneWidth}
+                        onNewThread={handleStartNewTask}
+                        onSelect={revealPrimarySidebar}
+                      />
+                    ) : null}
+                  </Animated.View>
+                </Animated.View>
+              ) : null}
               <View
-                collapsable={false}
-                style={
-                  contentTargetWidth !== null
-                    ? {
-                        flex: 1,
-                        width: contentTargetWidth,
-                        alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
-                      }
-                    : { flex: 1 }
+                className={
+                  Platform.OS === "android"
+                    ? "flex-1 overflow-hidden bg-header"
+                    : "flex-1 overflow-hidden bg-screen"
                 }
+                collapsable={false}
               >
-                {/* Android holds the content still, so its floating controls keep its width. */}
-                <WorkspaceContentWidthContext
-                  value={
-                    layout.usesSplitView && Platform.OS !== "android" ? renderedContentWidth : null
+                <View
+                  collapsable={false}
+                  style={
+                    contentTargetWidth !== null
+                      ? {
+                          flex: 1,
+                          width: contentTargetWidth,
+                          alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
+                        }
+                      : { flex: 1 }
                   }
                 >
-                  <WorkspaceSettledContentWidthContext
+                  {/* Android holds the content still, so its floating controls keep its width. */}
+                  <WorkspaceContentWidthContext
                     value={
-                      Platform.OS === "android" && layout.usesSplitView ? contentTargetWidth : null
+                      layout.usesSplitView && Platform.OS !== "android"
+                        ? renderedContentWidth
+                        : null
                     }
                   >
-                    {/* Compact Settings keeps the bottom navigation under all of its pages. */}
-                    <SafeAreaInsetsContext
+                    <WorkspaceSettledContentWidthContext
                       value={
-                        floatingTabsEnabled &&
-                        (compactAndroidSettings || (layout.usesSplitView && workspacePage))
-                          ? {
-                              ...safeAreaInsets,
-                              bottom:
-                                safeAreaInsets.bottom +
-                                FLOATING_TABS.bottom +
-                                FLOATING_TABS.edge +
-                                floatingTabs.height,
-                            }
-                          : compactAndroidSettings
-                            ? { ...safeAreaInsets, bottom: 0 }
-                            : safeAreaInsets
+                        Platform.OS === "android" && layout.usesSplitView
+                          ? contentTargetWidth
+                          : null
                       }
                     >
-                      <View className="flex-1">
-                        <SettingsWorkspaceLayout>{props.children}</SettingsWorkspaceLayout>
-                      </View>
-                    </SafeAreaInsetsContext>
-                    {floatingTabsEnabled &&
-                    (compactAndroidSettings || (layout.usesSplitView && workspacePage)) ? (
-                      <FloatingWorkspaceTabs
-                        paneWidth={
-                          layout.usesSplitView ? (layout.listPaneWidth ?? undefined) : undefined
+                      {/* Compact Settings keeps the bottom navigation under all of its pages. */}
+                      <SafeAreaInsetsContext
+                        value={
+                          floatingTabsEnabled &&
+                          (compactAndroidSettings || (layout.usesSplitView && workspacePage))
+                            ? {
+                                ...safeAreaInsets,
+                                bottom:
+                                  safeAreaInsets.bottom +
+                                  FLOATING_TABS.bottom +
+                                  FLOATING_TABS.edge +
+                                  floatingTabs.height,
+                              }
+                            : compactAndroidSettings
+                              ? { ...safeAreaInsets, bottom: 0 }
+                              : safeAreaInsets
                         }
-                        fillWidth={compactAndroidSettings}
-                        onNewThread={handleStartNewTask}
-                      />
-                    ) : compactAndroidSettings ? (
-                      <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
-                    ) : null}
-                  </WorkspaceSettledContentWidthContext>
-                </WorkspaceContentWidthContext>
+                      >
+                        <View className="flex-1">
+                          <SettingsWorkspaceLayout>{props.children}</SettingsWorkspaceLayout>
+                        </View>
+                      </SafeAreaInsetsContext>
+                      {floatingTabsEnabled &&
+                      (compactAndroidSettings || (layout.usesSplitView && workspacePage)) ? (
+                        <FloatingWorkspaceTabs
+                          paneWidth={
+                            layout.usesSplitView ? (layout.listPaneWidth ?? undefined) : undefined
+                          }
+                          fillWidth={compactAndroidSettings}
+                          onNewThread={handleStartNewTask}
+                        />
+                      ) : compactAndroidSettings ? (
+                        <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
+                      ) : null}
+                    </WorkspaceSettledContentWidthContext>
+                  </WorkspaceContentWidthContext>
+                </View>
               </View>
+              <WorkspaceInspectorPane
+                pathname={props.pathname}
+                renderedInspectorWidth={renderedInspectorWidth}
+                active={workspaceInspector?.active ?? false}
+                panes={panes}
+                renderInspector={workspaceInspector?.render}
+                setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
+                onClosed={handleWorkspaceInspectorClosed}
+              />
+              {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
+                // The rail reserves its slot above and draws over the panes, so it can widen over
+                // the list in place. It takes the whole workspace only while it is open.
+                <View
+                  className="absolute inset-y-0 left-0"
+                  style={railOverlay ? { right: 0 } : { width: navigationRailWidth }}
+                >
+                  <AndroidWorkspaceNavigation
+                    onNewThread={handleStartNewTask}
+                    rail
+                    onSelect={revealPrimarySidebar}
+                    onOverlayChange={setRailOverlay}
+                  />
+                </View>
+              ) : null}
             </View>
-            <WorkspaceInspectorPane
-              pathname={props.pathname}
-              renderedInspectorWidth={renderedInspectorWidth}
-              active={workspaceInspector?.active ?? false}
-              panes={panes}
-              renderInspector={workspaceInspector?.render}
-              setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
-              onClosed={handleWorkspaceInspectorClosed}
-            />
-            {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
-              // The rail reserves its slot above and draws over the panes, so it can widen over
-              // the list in place. It takes the whole workspace only while it is open.
-              <View
-                className="absolute inset-y-0 left-0"
-                style={railOverlay ? { right: 0 } : { width: navigationRailWidth }}
-              >
-                <AndroidWorkspaceNavigation
-                  onNewThread={handleStartNewTask}
-                  rail
-                  onSelect={revealPrimarySidebar}
-                  onOverlayChange={setRailOverlay}
-                />
-              </View>
-            ) : null}
-          </View>
-        </WindowHingeContext>
-      </AdaptiveWorkspaceContext.Provider>
-    </HomeListOptionsProvider>
+            <ThreadListDrawerHost width={threadListDrawerPanelWidth}>
+              {(drawer) => (
+                <AndroidHomeFabLayout
+                  sidebar
+                  onStartNewTask={() => {
+                    drawer.closeDrawer();
+                    handleStartNewTask();
+                  }}
+                >
+                  <ThreadNavigationSidebar
+                    width={threadListDrawerPanelWidth}
+                    visible={drawer.open}
+                    onRequestVisibility={revealPrimarySidebar}
+                    selectedThreadKey={selectedThreadKey}
+                    onOpenSettings={handleOpenSettings}
+                    onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                    onOpenHome={handleOpenHome}
+                    onNewThreadInProject={handleNewThreadInProject}
+                    onNewThreadOnBranch={handleNewThreadOnBranch}
+                    onOpenPendingTask={handleOpenPendingTask}
+                    // Close first, so the thread opens with the chat already behind it.
+                    onSelectThread={(thread) => {
+                      drawer.closeDrawer();
+                      handleSelectThread(thread);
+                    }}
+                    onOpenThreadPullRequests={handleOpenThreadPullRequests}
+                    onSearchQueryChange={setPrimarySidebarSearchQuery}
+                    searchQuery={primarySidebarSearchQuery}
+                  />
+                </AndroidHomeFabLayout>
+              )}
+            </ThreadListDrawerHost>
+          </WindowHingeContext>
+        </AdaptiveWorkspaceContext.Provider>
+      </HomeListOptionsProvider>
+    </ThreadListDrawerProvider>
   );
 }

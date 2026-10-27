@@ -7,6 +7,8 @@ import { useComposerAttachmentActions } from "../../state/use-composer-attachmen
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
+import { usesFloatingThreadControls } from "./ThreadFloatingControls";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -153,6 +155,7 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
+  const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -927,6 +930,7 @@ export function NewTaskDraftScreen(props: {
           interactionLocked: isComposerInteractionLocked,
         }}
         canOperateThread={canOperate}
+        usesFloatingThreadControls={usesFloatingThreadControls(layout)}
         selectedThread={thread}
         selectedThreadDetailRef={null}
         contentPresentation={{ kind: "ready" }}

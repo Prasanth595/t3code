@@ -188,6 +188,7 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { THREAD_FLOATING_CONTROL_ROW_OFFSET } from "./ThreadFloatingControls";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
@@ -265,6 +266,11 @@ export interface ThreadDetailScreenProps {
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
+  /**
+   * Android phones float the thread controls over the feed instead of rendering
+   * a header, so the body pads the status bar itself.
+   */
+  readonly usesFloatingThreadControls?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -434,6 +440,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   };
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + 44;
+  // With no header to measure, the floating controls make the feed and overlays
+  // account for the status bar (and the pills) from the safe-area insets.
+  const floatingHeaderInset = props.usesFloatingThreadControls === true ? insets.top : 0;
+  // Overlays that used to sit below the Material header measure from the status bar instead.
+  const overlayHeaderInset = floatingHeaderInset > 0 ? floatingHeaderInset : navigationHeaderHeight;
   const [screenMetrics, setScreenMetrics] = useState<NativeLayoutMetrics | null>(null);
   const columnMetrics = useNativeColumnLayoutMetrics();
   const windowMetrics = useNativeLayoutMetrics();
@@ -870,7 +881,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     derivePendingUserInputMaxHeight({
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
-      navigationHeaderHeight,
+      navigationHeaderHeight: overlayHeaderInset,
       composerOverlapHeight: composerBottomInset,
     }),
   );
@@ -904,7 +915,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     Math.min(
       Math.round(screenAreaHeight * 0.4),
       screenAreaHeight -
-        navigationHeaderHeight -
+        overlayHeaderInset -
         reservedKeyboardHeight -
         overlayBesideUsageLimits -
         USAGE_LIMITS_PANEL_GAP * 2,
@@ -1258,13 +1269,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
         props.draftMode.content(
-          navigationHeaderHeight,
+          overlayHeaderInset,
           liveKeyboardHeight + estimatedOverlayHeight + 24,
-          screenAreaHeight -
-            navigationHeaderHeight -
-            liveKeyboardHeight -
-            estimatedOverlayHeight -
-            24,
+          screenAreaHeight - overlayHeaderInset - liveKeyboardHeight - estimatedOverlayHeight - 24,
         )
       ) : showContent ? (
         <View
@@ -1323,7 +1330,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               ref={feedRef}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               keyboardOffset={composerKeyboardOffset}
-              contentTopInset={0}
+              contentTopInset={floatingHeaderInset}
               contentBottomInset={
                 estimatedOverlayHeight +
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
@@ -1351,7 +1358,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
           threadId={props.selectedThread.id}
           tabs={browserTabs.tabs}
           loaded={browserTabs.loaded}
-          top={navigationHeaderHeight + 8}
+          top={
+            (props.usesFloatingThreadControls === true
+              ? insets.top + THREAD_FLOATING_CONTROL_ROW_OFFSET
+              : navigationHeaderHeight) + 8
+          }
           onOpen={openBrowserPreview}
         />
       ) : null}

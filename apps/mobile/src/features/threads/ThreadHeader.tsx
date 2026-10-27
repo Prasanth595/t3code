@@ -7,6 +7,11 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import {
+  ThreadFloatingHeader,
+  ThreadFloatingTopScrim,
+  usesFloatingThreadControls,
+} from "./ThreadFloatingControls";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -78,31 +83,42 @@ export function ThreadHeader(
 
   return (
     <>
-      <AppBar
-        title={props.title}
-        subtitle={props.subtitle}
-        sidebar={native.sidebar}
-        options={native.options}
-        optionsVersion={native.optionsVersion}
-        trailing={
-          props.fileInspectorSupported && props.hasThreadCwd ? (
-            <ScreenHeaderButton
-              accessibilityLabel={
-                props.inspectorMode !== null && panes.auxiliaryPaneVisible
-                  ? "Hide inspector"
-                  : "Show inspector"
-              }
-              icon="sidebar.right"
-              selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
-              onPress={props.onToggleInspector}
-            />
-          ) : null
-        }
-        onBack={layout.usesSplitView ? undefined : goBack}
-        actions={androidHeaderActions}
-        hideBottomBorder
-        compact={composerKeyboardActive}
-      />
+      {usesFloatingThreadControls(layout) ? (
+        <>
+          <ThreadFloatingTopScrim />
+          <ThreadFloatingHeader
+            actions={androidHeaderActions}
+            onCloseThread={goBack}
+            hidden={composerKeyboardActive}
+          />
+        </>
+      ) : (
+        <AppBar
+          title={props.title}
+          subtitle={props.subtitle}
+          sidebar={native.sidebar}
+          options={native.options}
+          optionsVersion={native.optionsVersion}
+          trailing={
+            props.fileInspectorSupported && props.hasThreadCwd ? (
+              <ScreenHeaderButton
+                accessibilityLabel={
+                  props.inspectorMode !== null && panes.auxiliaryPaneVisible
+                    ? "Hide inspector"
+                    : "Show inspector"
+                }
+                icon="sidebar.right"
+                selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
+                onPress={props.onToggleInspector}
+              />
+            ) : null
+          }
+          onBack={layout.usesSplitView ? undefined : goBack}
+          actions={androidHeaderActions}
+          hideBottomBorder
+          compact={composerKeyboardActive}
+        />
+      )}
       {native.fallback}
     </>
   );
