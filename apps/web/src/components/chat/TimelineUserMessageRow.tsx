@@ -486,7 +486,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
           >
             {(regularImages.length > 0 || userVideos.length > 0) && (
-              <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
+              <div
+                className={cn(
+                  "mb-2 grid gap-2 last:mb-0",
+                  // One tile keeps its size without leaving an empty second column in the bubble.
+                  regularImages.length + userVideos.length === 1 &&
+                    regularImages[0]?.source?.kind !== "snap-shot"
+                    ? "w-[101px] grid-cols-1"
+                    : "max-w-[210px] grid-cols-2",
+                )}
+              >
                 {regularImages.map((image) => (
                   <div
                     key={image.id}
@@ -534,7 +543,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             )}
             {userAudio.length > 0 ? (
-              <div className="mb-2 flex max-w-full flex-col gap-1">
+              <div className="mb-2 flex max-w-full flex-col gap-1 last:mb-0">
                 {userAudio.map((file) => (
                   <InlineAudioPreview
                     key={file.id}
@@ -553,7 +562,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             ) : null}
             {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-              <div className="mb-2 flex flex-col gap-1">
+              <div className="mb-2 flex flex-col gap-1 last:mb-0">
                 {unchippedFiles.map((file) => {
                   const fileIdentity = (
                     <>
@@ -614,15 +623,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ))}
               </div>
             ) : null}
-            <div onCopyCapture={onBodyCopyCapture}>
-              <CollapsibleUserMessageBody
-                text={resolvedContext.text}
-                renderContextReference={renderContextReference}
-                skills={ctx.skills}
-                markdownCwd={ctx.markdownCwd}
-                collapsible={!folded}
-              />
-            </div>
+            {resolvedContext.text.trim().length > 0 ? (
+              <div onCopyCapture={onBodyCopyCapture}>
+                <CollapsibleUserMessageBody
+                  text={resolvedContext.text}
+                  renderContextReference={renderContextReference}
+                  skills={ctx.skills}
+                  markdownCwd={ctx.markdownCwd}
+                  collapsible={!folded}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
