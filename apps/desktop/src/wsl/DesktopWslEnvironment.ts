@@ -14,6 +14,11 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
+import {
+  buildWslServerStopScript,
+  WSL_SERVER_STOP_EXIT_CODE,
+  type WslServerProcess,
+} from "./wslServerProcess.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
@@ -27,6 +32,9 @@ const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
 const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+// Leave room for the wsl.exe round trip within the seven-second quit budget.
+const SERVER_STOP_GRACE = Duration.seconds(3);
+const SERVER_STOP_TIMEOUT = Duration.sum(SERVER_STOP_GRACE, Duration.millis(1500));
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -74,6 +82,8 @@ export type ProbeWslRuntimeResult =
       readonly reason: string;
     };
 
+export type WslServerStopResult = "exited" | "not-running" | "timed-out" | "failed";
+
 export class DesktopWslDistroListError extends Schema.TaggedError<DesktopWslDistroListError>()(
   "DesktopWslDistroListError",
   { reason: Schema.String },
@@ -106,6 +116,12 @@ export class DesktopWslEnvironment extends Context.Service<
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    // Sends SIGTERM to a server the desktop launched and waits, bounded, for it
+    // to exit. Never signals a process whose start time does not match.
+    readonly stopServer: (
+      distro: string,
+      process: WslServerProcess,
+    ) => Effect.Effect<WslServerStopResult>;
     readonly probeRuntime: (
       distro: string | null,
       linuxAppRoot: string,
@@ -863,6 +879,35 @@ const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(
   });
 });
 
+const stopWslServerImpl = Effect.fn("desktop.wsl.stopServerImpl")(function* (
+  distro: string,
+  process: WslServerProcess,
+): Effect.fn.Return<WslServerStopResult, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const result = yield* runWslShell(
+    distro,
+    buildWslServerStopScript(process, Duration.toMillis(SERVER_STOP_GRACE)),
+    SERVER_STOP_TIMEOUT,
+    { resolveNode: false },
+  );
+  if (result.transportFailure === null) {
+    switch (result.exitCode) {
+      case WSL_SERVER_STOP_EXIT_CODE.exited:
+        return "exited";
+      case WSL_SERVER_STOP_EXIT_CODE.notRunning:
+        return "not-running";
+      case WSL_SERVER_STOP_EXIT_CODE.timedOut:
+        return "timed-out";
+    }
+  }
+  yield* Effect.logWarning("Could not stop the WSL server process.", {
+    distro,
+    pid: process.pid,
+    exitCode: result.exitCode,
+    transportFailure: result.transportFailure ?? "none",
+  });
+  return "failed";
+});
+
 const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
   DesktopWslDistroListError,
@@ -1053,6 +1098,10 @@ export interface DesktopWslEnvironmentTestStub {
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly stopServer?: (
+    distro: string,
+    process: WslServerProcess,
+  ) => Effect.Effect<WslServerStopResult>;
   readonly probeRuntime?: (distro: string | null, linuxAppRoot: string) => ProbeWslRuntimeResult;
   readonly ensureNodePty?: (
     distro: string | null,
@@ -1100,6 +1149,9 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
           return stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void;
         },
       ),
+      stopServer: Effect.fn("DesktopWslEnvironment.stopServer")(function (distro, process) {
+        return stub.stopServer?.(distro, process) ?? Effect.succeed("not-running");
+      }),
       probeRuntime: Effect.fn("DesktopWslEnvironment.probeRuntime")(
         function (distro, linuxAppRoot) {
           return Effect.succeed(
@@ -1189,6 +1241,9 @@ export const layer = Layer.effect(
       }),
       invalidateRuntime: Effect.fn("desktop.wsl.invalidateRuntime")(function (distro, runtimeId) {
         return provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId));
+      }),
+      stopServer: Effect.fn("desktop.wsl.stopServer")(function (distro, process) {
+        return provideSpawner(stopWslServerImpl(distro, process));
       }),
       probeRuntime: Effect.fn("desktop.wsl.probeRuntime")(function (distro, linuxAppRoot) {
         return provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot));
