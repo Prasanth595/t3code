@@ -83,12 +83,6 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
-const WORKING_STATUS_LABEL: StatusLabel = {
-  label: "Working",
-  icon: "circle.dashed",
-  className: "text-adaptive-sky-600-400",
-  iconTintClassName: "accent-adaptive-sky-600-400",
-};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -108,7 +102,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-fuchsia-600-300",
     iconTintClassName: "accent-adaptive-fuchsia-600-300",
   },
-  working: WORKING_STATUS_LABEL,
+  working: {
+    label: "Working",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
   waiting: {
     label: "Waiting",
     icon: "circle.dashed.inset.filled",
@@ -1122,12 +1121,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               {worksPastQuestion ? (
                 <>
                   <SymbolView
-                    name={WORKING_STATUS_LABEL.icon}
+                    name="circle.dashed"
                     size={13}
                     tintColorClassName={
                       selected
                         ? selectedThreadRowColors.iconTintClassName
-                        : WORKING_STATUS_LABEL.iconTintClassName
+                        : "accent-adaptive-sky-600-400"
                     }
                     type="monochrome"
                     weight="semibold"
@@ -1137,7 +1136,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                       "text-xs font-t3-bold tabular-nums",
                       selected
                         ? selectedThreadRowColors.foregroundClassName
-                        : WORKING_STATUS_LABEL.className,
+                        : "text-adaptive-sky-600-400",
                     )}
                   >
                     <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
