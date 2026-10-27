@@ -159,11 +159,9 @@ function fadeAway(ghost: HTMLElement) {
 }
 
 /**
- * What the motion keeps between renders, outside React's state. A tile that changes post changes
- * lane, so React removes its element and mounts another: `tileRef` sees the one go and the other
- * come, and `play` flies a copy between them, since the lanes clip what they hold. A tile that
- * leaves its lane for no place waits as a copy where it stood (parked), to fly on to the bin that
- * lists it, or back to a lane.
+ * What the motion keeps between renders, outside React's state. A tile that changes post is
+ * removed and mounted again: `tileRef` sees it go and `play` flies a copy to where it lands, since
+ * the lanes clip what they hold. A tile that leaves for no place waits as a copy (parked).
  */
 function createMotion() {
   const tiles = new Map<string, HTMLElement>();
@@ -282,8 +280,7 @@ function createMotion() {
  * Motion for the belt's tiles, from the belt as each poll derives it. Draw `shown`, put `tileRef` on
  * every tile (the run's key in `data-tile`) and `layerRef` on an empty last child of the element
  * holding the tiles and bins. `live` is false until the belt has a first read; that one, and
- * `prefers-reduced-motion`, move nothing. A run the status read drops before any bin lists it
- * waits where it stood while `refreshRecent` reads its environment's recent runs list at once.
+ * `prefers-reduced-motion`, move nothing. `refreshRecent` reads a recent runs list at once.
  */
 export function useBeltMotion(
   belt: Belt,
