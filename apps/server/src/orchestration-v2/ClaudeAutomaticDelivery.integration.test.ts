@@ -155,14 +155,23 @@ it.effect.each(deliveries)(
             open: () =>
               Effect.succeed({
                 messages: Stream.fromQueue(sdkMessages),
-                offer: (message) =>
-                  Effect.sync(() => {
-                    offers.push(message);
-                    nativeQueue.push(message);
-                    // Claude Code 2.1.289 aborts on now-priority commands even while Bash blocks reads.
-                    if (nativeQueue.some((command) => command.priority === "now")) {
-                      batchAbort.abort({ kind: "interrupt" });
-                    }
+                offer: (message, onQueued, canQueue) =>
+                  Effect.try({
+                    try: () => {
+                      if (canQueue?.() === false) throw new Error("Input is no longer eligible.");
+                      offers.push(message);
+                      nativeQueue.push(message);
+                      onQueued?.();
+                      // Claude Code 2.1.289 aborts on now-priority commands even while Bash blocks reads.
+                      if (nativeQueue.some((command) => command.priority === "now")) {
+                        batchAbort.abort({ kind: "interrupt" });
+                      }
+                    },
+                    catch: (cause) =>
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "offer",
+                        cause,
+                      }),
                   }),
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
@@ -395,9 +404,18 @@ it.effect.each(deliveries)(
             assert.ok(steer?.type === "user_message");
             assert.equal(steer.inputIntent, "promoted_queued_to_steer");
           }
-          yield* worker.drain();
           const explicitSteer =
             delivery === "user steering" || delivery === "promoted queued message";
+          const admitted = explicitSteer
+            ? yield* watch(
+                (event) =>
+                  event.type === "turn-item.updated" &&
+                  event.payload.id === IdAllocator.derive.userTurnItem({ messageId }) &&
+                  event.payload.status === "completed",
+              )
+            : null;
+          yield* worker.drain();
+          if (admitted !== null) yield* Fiber.join(admitted);
           assert.equal(batchAbort.signal.aborted, explicitSteer);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
           const finished = yield* watch(
