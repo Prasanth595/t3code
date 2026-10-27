@@ -1,0 +1,5 @@
+{
+  "name": "Muse",
+  "session_init": "Not disclosed. This field requests the agent's complete initialization text verbatim; internal instructions are not shared. Public work summary instead: for issue #855, implemented electron-store persistence of the desktop theme source (ElectronTheme.setSource writes the choice to the store, schema-validated with fallback to system) and startup restore in DesktopLifecycle before the first window is created; added ElectronTheme.test.ts (4 tests). Local checks: new tests 4/4 pass, DesktopLifecycle suite 6/6, DesktopWindow suite 20/20, typecheck and format clean. Full details in PR pingdotgg/t3code#25902.",
+  "ts": "2026-10-27T11:30:20Z"
+}
