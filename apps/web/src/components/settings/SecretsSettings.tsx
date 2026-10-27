@@ -37,11 +37,15 @@ const SECRET_PROVIDER_KINDS: Readonly<
 };
 
 export function SecretsSettingsPanel() {
-  const { environment } = useSettingsScope();
+  const { scope, environment } = useSettingsScope();
   return (
     <SettingsPageContainer>
       {environment?.connection.phase === "connected" ? (
-        <EnvironmentSecretProviders key={environment.environmentId} environment={environment} />
+        <EnvironmentSecretProviders
+          key={environment.environmentId}
+          environment={environment}
+          projectScoped={scope.kind === "project" || scope.kind === "checkout"}
+        />
       ) : (
         <SettingsSection {...searchableSetting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
@@ -55,8 +59,10 @@ export function SecretsSettingsPanel() {
 
 function EnvironmentSecretProviders({
   environment,
+  projectScoped,
 }: {
   readonly environment: EnvironmentPresentation;
+  readonly projectScoped: boolean;
 }) {
   const environmentId = environment.environmentId;
   const sessionState = useEnvironmentSessionState(environmentId);
@@ -70,7 +76,7 @@ function EnvironmentSecretProviders({
       hasError: sessionState.hasError,
     }),
   });
-  const readOnly = access.kind !== "editable";
+  const readOnly = access.kind !== "editable" || projectScoped;
   const providers = useEnvironmentSettings(environmentId, (settings) => settings.secretProviders);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [dialog, setDialog] = useState<
@@ -95,6 +101,11 @@ function EnvironmentSecretProviders({
           ) : null
         }
       >
+        {projectScoped ? (
+          <p className="px-4 pt-3 text-xs text-muted-foreground">
+            Environment-wide setting. Select an environment to change it.
+          </p>
+        ) : null}
         {entries.length === 0 ? (
           <SettingsRow
             title="No secret providers configured."
