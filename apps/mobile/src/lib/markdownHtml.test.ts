@@ -309,6 +309,9 @@ describe("Windows paths in native Markdown", () => {
       String.raw`![paren](C:\a\)b.png)`,
       `[notes](<${link}>)`,
       `<img src="${image}">`,
+      String.raw`![amp](C:\R&D\.t3\a&amp;b.png)`,
+      String.raw`<img src="C:\R&amp;D\.t3\b.png">`,
+      "> ![quoted](\n> " + image + ")",
     ].join("\n\n");
 
     const native = await parseMarkdown(
@@ -320,7 +323,10 @@ describe("Windows paths in native Markdown", () => {
       node.children?.forEach((child) => collect(child as typeof node));
     };
     collect(native);
-    expect(urls).toEqual([image, String.raw`C:\a\)b.png`, link, image]);
-    expect(markdownImageSources(markdown)).toEqual([image, String.raw`C:\a\)b.png`]);
+    const paren = String.raw`C:\a\)b.png`;
+    const amp = String.raw`C:\R&D\.t3\a&b.png`;
+    const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
+    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
+    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
   });
 });
