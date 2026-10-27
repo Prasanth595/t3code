@@ -1775,7 +1775,11 @@ describe("gate: a failed attempt goes back into the session", () => {
       // A newer run that has ended with FACTORY-DONE is ready for the gate again.
       setRun(rig, "completed", 2);
       assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
-      assert.strictEqual(bytesOf(rig), bytes, "the PR is not recorded twice");
+      assert.deepStrictEqual(
+        rawLines(rig).at(-1),
+        PR_OPENED,
+        "the PR is reported again for the gate",
+      );
       clearCalls(rig);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
       assert.deepStrictEqual(rig.gh.calls, [
@@ -1793,6 +1797,7 @@ describe("gate: a failed attempt goes back into the session", () => {
         ...failingAttempt(1),
         sending(1, 1),
         sentBack(1, 1),
+        PR_OPENED,
         ...passingAttempt(2),
         ...PASS_TAIL,
       ]);
@@ -2029,6 +2034,8 @@ const sendBackAttempts = (rig: Rig, retries: number) =>
         ...failingAttempt(attempt),
         sending(attempt, attempt),
         sentBack(attempt, attempt),
+        // The session's next report hands the same pull request to the gate again.
+        PR_OPENED,
       );
     }
     setRun(rig, "completed", retries + 1);
@@ -3122,6 +3129,7 @@ describe("gate: required CI checks", () => {
           checksRead([["gate", "failed"]]),
           sending(1, 1),
           sentBack(1, 1),
+          PR_OPENED,
           ...passingAttempt(2),
           PASSED_STEP,
           checksRead([["gate", "passed"]]),

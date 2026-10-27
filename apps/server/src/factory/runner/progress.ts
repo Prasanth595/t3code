@@ -171,7 +171,7 @@ export interface Seen {
   /** A `stop_requested` line: an operator asked for this run to be stopped by hand. */
   readonly stopRequested: boolean;
   readonly finished: boolean;
-  /** Every pull request a `pr_opened` line names, in order. */
+  /** Every pull request a `pr_opened` line names, once each, in the order first named. */
   readonly opened: ReadonlyArray<number>;
   /** The newest `pr_opened`: the number and the URL as the session wrote it. */
   readonly lastPr: { readonly pr: number; readonly url: string } | null;
@@ -754,7 +754,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const pr = dataField(entry.data, "pr");
         const url = dataField(entry.data, "url");
         if (typeof pr === "number" && typeof url === "string") {
-          opened.push(pr);
+          if (!opened.includes(pr)) opened.push(pr);
           lastPr = { pr, url };
           prReported = true;
           // The run is the factory's until its gate sends it back: that wait is not charged.
