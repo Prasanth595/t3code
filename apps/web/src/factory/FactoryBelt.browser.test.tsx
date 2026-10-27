@@ -526,7 +526,7 @@ describe("stopping a run from the readout", () => {
       Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
     );
     expect(stopRun).toHaveBeenCalledWith(STUDIO, runId(7));
-    const note = page.all('[role="status"]').find((p) => p.textContent === "stopping #7");
+    const note = page.all('[role="status"]').find((p) => p.textContent === "#7: stopping #7");
     expect(note).toBeDefined();
     expect(belt.environments[1]!.status.refresh).toHaveBeenCalled();
     expect(belt.environments[0]!.status.refresh).not.toHaveBeenCalled();
@@ -552,7 +552,7 @@ describe("stopping a run from the readout", () => {
     expect(stops()).toEqual([true, false]);
   });
 
-  it("shows the message of a stop that fails", async () => {
+  it("shows the message of a stop that fails, naming the run", async () => {
     using _state = await setup();
     __setFactoryApiForTests(
       api({
@@ -563,12 +563,41 @@ describe("stopping a run from the readout", () => {
     );
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     await page.click(station(page, "building"));
+    const row = rowsOf(page).find((r) => r.textContent?.includes("Title of 2"))!;
     await page.click(
-      Array.from(rowsOf(page)[0]!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Stop",
-      )!,
+      Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
     );
-    expect(page.text()).toContain("Missing permission orchestration:operate");
+    const note = page.all('[role="status"]').find((p) => p.textContent?.includes("Missing"));
+    expect(note?.textContent).toBe("#2: Missing permission orchestration:operate");
+  });
+
+  it("names the run in the note of every stop, so a later answer does not leave an earlier failure unattributed", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({
+        stopRun: async (_environmentId, id) => {
+          if (id === runId(2)) throw new Error("timed out");
+          return { stopped: id, already: false, message: "stop requested" };
+        },
+      }),
+    );
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    await page.click(station(page, "building"));
+    const stopOf = async (title: string) => {
+      const row = rowsOf(page).find((r) => r.textContent?.includes(title))!;
+      await page.click(
+        Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
+      );
+    };
+    const notes = () =>
+      page
+        .all('[role="status"]')
+        .map((p) => p.textContent)
+        .filter((text) => text?.startsWith("#"));
+    await stopOf("Title of 2");
+    expect(notes()).toEqual(["#2: timed out"]);
+    await stopOf("Title of 7");
+    expect(notes()).toEqual(["#7: stop requested"]);
   });
 });
 
@@ -841,7 +870,7 @@ describe("what the belt does not know yet", () => {
     },
   );
 
-  it.each(["loading", "error"] as const)(
+  it.each(["loading"] as const)(
     "shows no counts, and no empty bins, while an answered environment's recent runs are %s",
     async (status) => {
       using _state = await setup();
@@ -862,11 +891,12 @@ describe("what the belt does not know yet", () => {
           STUDIO,
           resource<{ runs: ReadonlyArray<FactoryRunRow> }>({
             status,
-            error: status === "error" ? new Error("down") : null,
           }),
         ],
       ]);
-      await using page = await render(createElement(FactoryBelt, belt));
+      // The rail opens once everything has answered and stays; Studio's list then reads again.
+      await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+      await page.rerender(createElement(FactoryBelt, belt));
       for (const label of ["Runs today", "Merged today", "Stuck"]) {
         expect(stat(page, label)).toBe("-");
       }
@@ -883,12 +913,44 @@ describe("what the belt does not know yet", () => {
           .querySelector("h2")!.nextElementSibling!;
         expect(header.textContent).toBe("-");
       }
-      if (status === "error") {
-        expect(countOf(station(page, "done"))).toBe("-");
-        expect(lane(page, "done").textContent).not.toContain("merged");
-      }
+      expect(countOf(station(page, "done"))).toBe("-");
+      expect(lane(page, "done").textContent).not.toContain("merged");
     },
   );
+});
+
+describe("a recent runs list that failed before its first answer", () => {
+  it("adds nothing, and does not hold the other environment's bins and counters back", async () => {
+    using _state = await setup();
+    const belt = twoEnvironments();
+    belt.recent = new Map([
+      [
+        DESKTOP,
+        resource({
+          data: {
+            runs: [recentRow(30, { state: "stuck", finished: true, reason: "gate failed" })],
+          },
+        }),
+      ],
+      [
+        STUDIO,
+        resource<{ runs: ReadonlyArray<FactoryRunRow> }>({
+          status: "error",
+          error: new Error("down"),
+        }),
+      ],
+    ]);
+    await using page = await render(createElement(FactoryBelt, belt));
+    expect(stat(page, "Stuck")).toBe("1");
+    expect(stat(page, "Runs today")).toMatch(/^\d+$/);
+    expect(countOf(station(page, "done"))).toBe("0");
+    expect(page.all('[role="status"]').filter((n) => n.getAttribute("aria-label"))).toEqual([]);
+    const stuck = page
+      .all("section")
+      .find((section) => section.getAttribute("aria-label") === "Stuck")!;
+    expect(stuck.textContent).toContain("#30");
+    expect(stuck.textContent).toContain("gate failed");
+  });
 });
 
 describe("a recent runs list that failed on refresh", () => {
@@ -972,7 +1034,7 @@ describe("the rail keeps its pick", () => {
     await page.click(station(page, "building"));
     expect(readout(page)).toBeUndefined();
     await act(async () => resolve({ stopped: runId(2), already: false, message: "stopping #2" }));
-    expect(page.all('[role="status"]').some((p) => p.textContent === "stopping #2")).toBe(true);
+    expect(page.all('[role="status"]').some((p) => p.textContent === "#2: stopping #2")).toBe(true);
   });
 });
 

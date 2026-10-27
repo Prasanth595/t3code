@@ -1166,6 +1166,69 @@ describe("FactoryPage filters", () => {
     expect(page.text()).not.toContain("Could not refresh Mac Studio");
   });
 
+  describe("when an environment's recent runs failed before their first answer", () => {
+    const stuckRow = runRow({
+      id: LAPTOP_RUN,
+      state: "stuck",
+      finished: true,
+      reason: "gate failed",
+    });
+    const stat = (page: Awaited<ReturnType<typeof render>>, label: string) =>
+      page.all("dt").find((dt) => dt.textContent === label)?.nextElementSibling?.textContent;
+    const failing = () => {
+      twoEnvironments();
+      state.runs = resource({ status: "error", error: new Error("timed out") });
+      state.others[0]!.runs = resource({ data: { runs: [stuckRow] } });
+    };
+    const expectBelt = (page: Awaited<ReturnType<typeof render>>) => {
+      const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
+      expect(stuck.textContent).toContain("gate failed");
+      expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
+      expect(stat(page, "Stuck")).toBe("1");
+      expect(page.text()).toContain("Could not refresh Mac Studio: timed out");
+      expect(page.all('[aria-label="Retry Mac Studio"]')).toHaveLength(1);
+    };
+
+    it("names the failure and shows the other environment's stuck run", async () => {
+      using _state = setup();
+      failing();
+      await using page = await render(createElement(FactoryPage));
+      expectBelt(page);
+    });
+
+    it("names it with the environment filter on the healthy environment", async () => {
+      using _state = setup();
+      failing();
+      state.search = { environment: "env-3" };
+      await using page = await render(createElement(FactoryPage));
+      expectBelt(page);
+    });
+
+    it("names it with every run picked", async () => {
+      using _state = setup();
+      failing();
+      state.allRuns = resource({ data: { runs: [runRow()] } });
+      await using page = await render(createElement(FactoryPage));
+      await page.click(page.button("Show all runs")!);
+      expectBelt(page);
+    });
+
+    it("retries that recent read, once", async () => {
+      using _state = setup();
+      failing();
+      const refreshRecent = vi.fn();
+      state.runs = resource({
+        status: "error",
+        error: new Error("timed out"),
+        refresh: refreshRecent,
+      });
+      state.search = { environment: "env-3" };
+      await using page = await render(createElement(FactoryPage));
+      await page.click(page.button("Retry")!);
+      expect(refreshRecent).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("says the runs are loading, not that none match, while the chosen environment's runs are read", async () => {
     using _state = setup();
     twoEnvironments();
