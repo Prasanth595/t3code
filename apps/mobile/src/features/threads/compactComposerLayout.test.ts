@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compactSlotAfterRowLayout, resolveCompactComposerLayout } from "./compactComposerLayout";
+import {
+  EMPTY_COMPACT_COMPOSER_SLOT,
+  compactSlotAfterLabelLayout,
+  compactSlotAfterRowLayout,
+  resolveCompactComposerLayout,
+} from "./compactComposerLayout";
 
 const LINE_HEIGHT = 22;
 const FONT_SIZE = 16;
@@ -20,8 +25,12 @@ function composer(
     readonly attachmentCount?: number;
   } = {},
 ) {
-  return resolveCompactComposerLayout({
-    slot: { rowWidth: input.rowWidth ?? NARROW, compactWidth: input.compactWidth ?? 200 },
+  const { isExpanded, modelIconOnly } = resolveCompactComposerLayout({
+    slot: {
+      ...EMPTY_COMPACT_COMPOSER_SLOT,
+      rowWidth: input.rowWidth ?? NARROW,
+      compactWidth: input.compactWidth ?? 200,
+    },
     isFocused: input.isFocused ?? false,
     isAndroid: input.isAndroid ?? false,
     keyboardShowing: input.keyboardVisible ?? false,
@@ -32,6 +41,7 @@ function composer(
     fontSize: FONT_SIZE,
     rowAttachmentCount: input.attachmentCount ?? 0,
   });
+  return { isExpanded, modelIconOnly };
 }
 
 describe("compact composer layout", () => {
@@ -71,7 +81,7 @@ describe("compact composer layout", () => {
   });
 
   it("re-measures the compact slot when the row widens so the card can close", () => {
-    const narrowSlot = { rowWidth: NARROW, compactWidth: 200 };
+    const narrowSlot = { ...EMPTY_COMPACT_COMPOSER_SLOT, rowWidth: NARROW, compactWidth: 200 };
     const line = { value: "a single line draft", contentSize: { width: 300, height: LINE_HEIGHT } };
     expect(composer({ ...line, rowWidth: NARROW, compactWidth: narrowSlot.compactWidth })).toEqual({
       isExpanded: true,
@@ -84,5 +94,26 @@ describe("compact composer layout", () => {
       isExpanded: false,
       modelIconOnly: false,
     });
+  });
+
+  it("re-measures a wide row's slot when the label shrinks while the card is open", () => {
+    const line = {
+      rowWidth: WIDE,
+      value: "a long draft",
+      contentSize: { width: 330, height: LINE_HEIGHT },
+    };
+    const label = { isExpanded: true, shownAtRest: true };
+    let slot = { ...EMPTY_COMPACT_COMPOSER_SLOT, rowWidth: WIDE, compactWidth: 320 };
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 200, isExpanded: false });
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 200 });
+    expect(composer({ ...line, compactWidth: slot.compactWidth }).isExpanded).toBe(true);
+
+    // Opening and closing the card resizes a truncated label without resetting the slot.
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 240, isExpanded: false });
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 200 });
+    expect(slot.compactWidth).toBe(320);
+
+    slot = compactSlotAfterLabelLayout(slot, { ...label, width: 160 });
+    expect(composer({ ...line, compactWidth: slot.compactWidth }).isExpanded).toBe(false);
   });
 });

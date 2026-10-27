@@ -107,6 +107,8 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import {
+  EMPTY_COMPACT_COMPOSER_SLOT,
+  compactSlotAfterLabelLayout,
   compactSlotAfterRowLayout,
   isWideComposerRow,
   resolveCompactComposerLayout,
@@ -147,7 +149,7 @@ export function useCompactComposerEditor(
   },
 ) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [slot, setSlot] = useState({ rowWidth: 0, compactWidth: 0 });
+  const [slot, setSlot] = useState(EMPTY_COMPACT_COMPOSER_SLOT);
   const keyboardShowing = useAndroidKeyboardShowing();
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
@@ -156,7 +158,7 @@ export function useCompactComposerEditor(
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const { isExpanded, modelIconOnly } = resolveCompactComposerLayout({
+  const { isExpanded, modelIconOnly, labelShownAtRest } = resolveCompactComposerLayout({
     ...state,
     slot,
     isAndroid: Platform.OS === "android",
@@ -203,6 +205,16 @@ export function useCompactComposerEditor(
           current.compactWidth === compactWidth ? current : { ...current, compactWidth },
         );
       }
+    },
+    onModelControlLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
+      const { width } = event.nativeEvent.layout;
+      setSlot((current) =>
+        compactSlotAfterLabelLayout(current, {
+          width,
+          isExpanded,
+          shownAtRest: labelShownAtRest,
+        }),
+      );
     },
     editorProps: {
       singleLineCentered: !isExpanded,
@@ -800,7 +812,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <View className="min-w-0 shrink" onLayout={compactEditor.onModelControlLayout}>
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
