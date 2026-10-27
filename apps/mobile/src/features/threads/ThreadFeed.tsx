@@ -2937,6 +2937,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         inFlight: true,
         pagesRequested: (ownLoad?.pagesRequested ?? 0) + 1,
       };
+      // oxlint-disable-next-line react/set-state-in-effect -- Track the remote request so navigation waits for its projection.
       setLinkedMessageLoad(load);
       void Promise.resolve(props.historyControls?.onLoadThrough(linkedMessageId)).finally(() =>
         setLinkedMessageLoad((current) =>

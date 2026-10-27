@@ -156,8 +156,6 @@ function AssistantMessageMeta({
   copyStreaming: boolean;
   alwaysVisible?: boolean;
 }) {
-  const ctx = use(TimelineRowCtx);
-
   return (
     <div
       className={cn(

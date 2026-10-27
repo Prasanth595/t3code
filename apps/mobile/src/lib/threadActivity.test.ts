@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  ContextHandoffId,
   MessageId,
   CheckpointId,
   CheckpointRef,
@@ -31,9 +30,6 @@ import {
   createThreadFeedCache,
   deriveThreadFeedPresentation,
   threadFeedFoldRunIdHiding,
-  threadFeedActivityIsVisible,
-  threadFeedRunIsUnsettled,
-  type ThreadFeedActivity,
   messageFoldRunId,
   type ThreadFeedCache,
   type ThreadFeedEntry,
