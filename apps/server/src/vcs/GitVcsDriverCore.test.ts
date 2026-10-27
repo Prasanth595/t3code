@@ -2912,6 +2912,54 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("renames to the desired name, else its first free numeric suffix", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const free = yield* driver.renameBranch({
+          cwd,
+          oldBranch: initialBranch,
+          newBranch: "t3/feature",
+        });
+        assert.equal(free.branch, "t3/feature");
+
+        yield* git(cwd, ["branch", "t3/taken"]);
+        yield* git(cwd, ["branch", "t3/taken-1"]);
+        const suffixed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: "t3/feature",
+          newBranch: "t3/taken",
+        });
+        assert.equal(suffixed.branch, "t3/taken-2");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3/taken-2");
+      }),
+    );
+
+    it.effect("renames to a unique name once every numeric suffix is taken", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const taken = [
+          "t3/placeholder",
+          ...Array.from({ length: 100 }, (_, index) => `t3/placeholder-${index + 1}`),
+        ];
+        yield* Effect.forEach(taken, (name) => git(cwd, ["branch", name]), { concurrency: 8 });
+
+        const renamed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: initialBranch,
+          newBranch: "t3/placeholder",
+        });
+
+        assert.match(renamed.branch, /^t3\/placeholder-[0-9a-f]{8}$/);
+        assert.equal(taken.includes(renamed.branch), false);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), renamed.branch);
+      }),
+    );
+
     it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
