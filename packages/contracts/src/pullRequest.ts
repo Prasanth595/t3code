@@ -605,6 +605,19 @@ export const PullRequestActionResult = Schema.Struct({
 });
 export type PullRequestActionResult = typeof PullRequestActionResult.Type;
 
+export function comparePullRequestFreshness(
+  current: { readonly updatedAt?: string | undefined; readonly observedAt?: number | undefined },
+  incoming: { readonly updatedAt?: string | undefined; readonly observedAt?: number | undefined },
+): number {
+  if (current.updatedAt !== undefined && incoming.updatedAt !== undefined) {
+    const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+    if (Number.isFinite(updated) && updated !== 0) return updated;
+  }
+  const before = current.observedAt ?? -Infinity;
+  const after = incoming.observedAt ?? -Infinity;
+  return before === after ? 0 : after - before;
+}
+
 export const PullRequestRefreshEvent = Schema.Struct({
   revision: NonNegativeInt,
   reference: Schema.optional(PullRequestRef),

@@ -253,6 +253,20 @@ describe("mobile PR list pagination", () => {
     expect(patchPullRequestListEntry(pages, head, row, { state: "open" }, 10)).toBe(pages);
     expect(patchPullRequestListEntry(pages, head, row, { state: "open" }, 30)).toBe(pages);
   });
+  it("applies a later provider update from a server with an earlier clock", () => {
+    const row = entry(1, { state: "closed", updatedAt: "2026-10-01T00:00:00Z", observedAt: 900 });
+    const head = page([row]);
+    expect(
+      patchPullRequestListEntry(
+        null,
+        head,
+        row,
+        { state: "open", updatedAt: "2026-10-02T00:00:00Z" },
+        100,
+      )?.entries[0]?.state,
+    ).toBe("open");
+  });
+
   it("patches loaded rows without losing metadata, filters, or the next page", () => {
     const row = entry(1, { isDraft: true, additions: 42 });
     const head = page([entry(3)], { repo: "first" });

@@ -871,11 +871,28 @@ describe("confirmed pull request actions", () => {
     );
   });
 
-  it("keeps a newer host read when an older action result arrives", () => {
-    const row = entry({ number: 1, state: "closed", observedAt: 400 });
+  it("keeps a newer host read when an older action has the same provider date", () => {
+    const row = entry({ number: 1, state: "closed", updatedAt: result.updatedAt, observedAt: 400 });
     const override = pullRequestOverrideAfterAction(row, "reopen", new Date(900), 1, result)!;
     expect(
       applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "closed"),
     ).toEqual([row]);
+  });
+
+  it("applies a later provider update from a server with an earlier clock", () => {
+    const row = entry({
+      number: 1,
+      state: "closed",
+      updatedAt: "2026-07-02T00:00:00Z",
+      observedAt: 900,
+    });
+    const override = pullRequestOverrideAfterAction(row, "reopen", new Date(1000), 1, {
+      ...result,
+      state: "open",
+      observedAt: 100,
+    })!;
+    expect(
+      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "all")[0]?.state,
+    ).toBe("open");
   });
 });

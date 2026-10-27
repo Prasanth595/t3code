@@ -1636,6 +1636,67 @@ it.effect("keeps the newest action across hosted and hostless references", () =>
   ),
 );
 
+it.effect("keeps a later provider update when a routed server clock moves backwards", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const firstDate = "2026-10-27T10:00:00Z";
+      const nextDate = "2026-10-27T10:01:00Z";
+      const client = actionResultClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.succeed({
+            ...actionReference,
+            state: "open",
+            updatedAt: firstDate,
+            observedAt: 1,
+          }),
+        [WS_METHODS.pullRequestsPreview]: () => Effect.succeed({ state: "open", isDraft: false }),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.succeed({
+            entries: [{ ...actionReference, state: "open", updatedAt: firstDate, observedAt: 1 }],
+            viewers: {},
+            providers: [],
+            errors: [],
+            truncated: false,
+            nextCursors: {},
+          }),
+        [WS_METHODS.pullRequestsRunActionWithResult]: (input: { action: string }) =>
+          Effect.succeed({
+            ...confirmedActionResult,
+            state: input.action === "close" ? "closed" : "open",
+            mergedAt: null,
+            closedAt: null,
+            updatedAt: input.action === "close" ? firstDate : nextDate,
+            observedAt: input.action === "close" ? 900 : 100,
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      const preview = atoms.preview(target);
+      const list = atoms.list({ ...target, input: { state: "all" } });
+      registry.mount(detail);
+      registry.mount(preview);
+      registry.mount(list);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true });
+      yield* AtomRegistry.getResult(registry, list, { suspendOnWaiting: true });
+      for (const action of ["close", "reopen"] as const)
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, { ...target, input: { ...actionReference, action } }),
+        );
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject({
+        state: "open",
+        updatedAt: nextDate,
+      });
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).state).toBe("open");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries[0]).toMatchObject({
+        state: "open",
+        updatedAt: nextDate,
+      });
+    }),
+  ),
+);
+
 it.effect("keeps action results within their environment, project, host, and account", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -1,6 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
-import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
+import { comparePullRequestFreshness, resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   PullRequestListEntry,
@@ -841,7 +841,7 @@ export function applyPullRequestOverrides<Entry extends PullRequestListEntry>(
     const incoming = overrides.get(keyOf(entry));
     const override =
       incoming?.observedAt !== undefined &&
-      ((entry.observedAt !== undefined && entry.observedAt > incoming.observedAt) ||
+      (comparePullRequestFreshness(entry, incoming) < 0 ||
         (entry.state === "merged" && incoming.state !== "merged"))
         ? undefined
         : incoming;

@@ -1,6 +1,7 @@
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
+  comparePullRequestFreshness,
   resolvePullRequestAuthorFilter,
   type EnvironmentId,
   type PullRequestDiffStat,
@@ -212,7 +213,7 @@ export function mergePullRequestListEntries(
   for (const entry of incoming) {
     const key = pullRequestListKey(entry);
     const held = entries.get(key);
-    if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
+    if (!held || comparePullRequestFreshness(held, entry) >= 0) entries.set(key, entry);
   }
   return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -268,7 +269,7 @@ export function patchPullRequestListEntry(
       row.number !== entry.number ||
       (entry.host !== undefined && row.host.toLowerCase() !== entry.host.toLowerCase()) ||
       (row.state === "merged" && patch.state !== undefined && patch.state !== "merged") ||
-      (row.observedAt ?? 0) > observedAt
+      comparePullRequestFreshness(row, { ...patch, observedAt }) < 0
     )
       return row;
     changed = true;

@@ -1,5 +1,6 @@
 import {
   WS_METHODS,
+  comparePullRequestFreshness,
   PullRequestActivity,
   PullRequestDetail as PullRequestDetailSchema,
   PullRequestPreview,
@@ -319,7 +320,7 @@ function patchActionList(
     if (
       !sameActionReference(entry, reference) ||
       (entry.state === "merged" && result.state !== "merged") ||
-      (entry.observedAt ?? -Infinity) > result.observedAt
+      comparePullRequestFreshness(entry, result) < 0
     )
       return [entry];
     changed = true;
@@ -439,7 +440,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     );
     const previous = matches.reduce<ConfirmedAction | undefined>(
       (latest, [, action]) =>
-        latest === undefined || action.result.observedAt > latest.result.observedAt
+        latest === undefined || comparePullRequestFreshness(latest.result, action.result) > 0
           ? action
           : latest,
       undefined,
@@ -447,7 +448,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     if (
       previous !== undefined &&
       ((previous.result.state === "merged" && result.state !== "merged") ||
-        previous.result.observedAt > result.observedAt ||
+        comparePullRequestFreshness(previous.result, result) < 0 ||
         reuseUnchanged(previous.result, result) === previous.result)
     )
       return;
@@ -603,6 +604,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         (typeof value === "object" &&
           value !== null &&
           ("entries" in value ||
+            ("updatedAt" in value &&
+              typeof value.updatedAt === "string" &&
+              comparePullRequestFreshness(
+                { updatedAt: value.updatedAt },
+                { updatedAt: confirmed.result.updatedAt },
+              ) > 0) ||
             ("observedAt" in value &&
               (typeof value.observedAt !== "number" ||
                 value.observedAt < confirmed.result.observedAt))))
@@ -652,7 +659,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           (value, reference, result) =>
             sameActionReference(input, reference) &&
             (value.state !== "merged" || result.state === "merged") &&
-            (value.observedAt ?? -Infinity) <= result.observedAt
+            comparePullRequestFreshness(value, result) >= 0
               ? { ...value, ...result, autoMergeMethod: result.autoMergeMethod }
               : value,
           (value, reference, result) =>

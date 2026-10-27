@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
+  comparePullRequestFreshness,
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
@@ -56,10 +57,7 @@ export interface ObservedPullRequestSummary {
 function compareSummaries(current: PullRequestSummary, incoming: PullRequestSummary): number {
   const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
   if (merged !== 0) return merged;
-  const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
-  if (updated !== 0) return updated;
-  if (current.observedAt === undefined && incoming.observedAt === undefined) return 0;
-  return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+  return comparePullRequestFreshness(current, incoming);
 }
 
 export function newestPullRequestSummary(
@@ -432,7 +430,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       if (input.expectedAccountId !== undefined) return;
       const key = pullRequestSummaryKey(environmentId, input);
       const previous = registry.get(pullRequestActionOverridesAtom).get(key);
-      if (previous?.observedAt !== undefined && previous.observedAt >= result.observedAt) return;
+      if (previous !== undefined && comparePullRequestFreshness(previous, result) <= 0) return;
       registry.update(pullRequestActionOverridesAtom, (current) => {
         const next = new Map(current).set(key, pullRequestResultOverride(result, 0, at));
         if (next.size > 256) next.delete(next.keys().next().value!);
@@ -441,7 +439,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       recordObservation(registry, key, (current) => {
         if (
           current.metadata === null ||
-          (current.metadata.summary.observedAt ?? -Infinity) > result.observedAt
+          comparePullRequestFreshness(current.metadata.summary, result) < 0
         )
           return current;
         return observePullRequestMetadata(
@@ -475,7 +473,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
         const detail = readPullRequestDetailSnapshot(storage, environmentId, input);
         if (
           detail !== null &&
-          (detail.observedAt ?? -Infinity) <= result.observedAt &&
+          comparePullRequestFreshness(detail, result) >= 0 &&
           (detail.state !== "merged" || result.state === "merged")
         ) {
           writePullRequestDetailSnapshot(storage, environmentId, input, {
