@@ -2456,26 +2456,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     turnId: turn.nativeTurnId,
                   })
                   .pipe(
-                    Effect.as(true),
                     Effect.catch((cause) =>
                       Effect.logWarning("orchestration-v2.codex-late-subagent-interrupt-failed", {
                         nativeThreadId,
                         nativeTurnId: turn.nativeTurnId,
                         cause,
-                      }).pipe(Effect.as(false)),
+                      }),
                     ),
-                    Effect.timeoutOption("10 seconds"),
-                    Effect.flatMap((interrupted) =>
-                      Option.isNone(interrupted)
-                        ? Effect.logWarning(
-                            "orchestration-v2.codex-late-subagent-interrupt-timeout",
-                            {
-                              nativeThreadId,
-                              nativeTurnId: turn.nativeTurnId,
-                            },
-                          )
-                        : Effect.void,
-                    ),
+                    Effect.timeoutOrElse({
+                      duration: "10 seconds",
+                      orElse: () =>
+                        Effect.logWarning(
+                          "orchestration-v2.codex-late-subagent-interrupt-timeout",
+                          {
+                            nativeThreadId,
+                            nativeTurnId: turn.nativeTurnId,
+                          },
+                        ),
+                    }),
                     Effect.forkIn(scope),
                   );
                 return;
