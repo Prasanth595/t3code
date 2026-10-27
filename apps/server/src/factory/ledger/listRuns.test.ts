@@ -877,6 +877,26 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(short).toBe("short?");
   });
 
+  it("leaves a reason of exactly 300 characters whole, and cuts one of 301 to 299 and an ellipsis", () => {
+    const dataDir = tempDir();
+    // 300 astral characters are 600 code units, so only a count by character keeps them whole.
+    const exact = "\u{1F600}".repeat(300);
+    finishedRun(dataDir, rid(1), [stuckLine(exact), moved("building", "stuck")], "stuck", null);
+    finishedRun(
+      dataDir,
+      rid(2),
+      [stuckLine(`${exact}\u{1F600}`), moved("building", "stuck")],
+      "stuck",
+      null,
+    );
+    const listed = listRuns(dataDir);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
+    const reasonOf = (issue: number) =>
+      listed.find((run) => run.id.issue === String(issue))?.reason ?? "";
+    expect(reasonOf(1)).toBe(exact);
+    expect(reasonOf(2)).toBe(`${"\u{1F600}".repeat(299)}\u2026`);
+  });
+
   it("stops the title read at the first launch when it has no title, so a large untitled run is read from its ends", () => {
     const dataDir = tempDir();
     const path = finishedRun(

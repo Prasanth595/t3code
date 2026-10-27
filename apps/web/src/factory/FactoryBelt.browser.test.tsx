@@ -847,7 +847,17 @@ describe("what the belt does not know yet", () => {
       using _state = await setup();
       const belt = twoEnvironments();
       belt.recent = new Map([
-        [DESKTOP, belt.recent.get(DESKTOP)!],
+        [
+          DESKTOP,
+          resource({
+            data: {
+              runs: [
+                recentRow(30, { state: "stuck", finished: true, reason: "gate failed" }),
+                recentRow(31, { state: "needs-info", finished: true, reason: "which branch?" }),
+              ],
+            },
+          }),
+        ],
         [
           STUDIO,
           resource<{ runs: ReadonlyArray<FactoryRunRow> }>({
@@ -865,12 +875,48 @@ describe("what the belt does not know yet", () => {
           .textContent;
       expect(text("Needs info")).not.toContain("Nothing needs info");
       expect(text("Stuck")).not.toContain("Nothing is stuck");
+      // Desktop's list has answered with two stuck runs, but a partial count is not the count.
+      for (const name of ["Needs info", "Stuck"]) {
+        const header = page
+          .all("section")
+          .find((section) => section.getAttribute("aria-label") === name)!
+          .querySelector("h2")!.nextElementSibling!;
+        expect(header.textContent).toBe("-");
+      }
       if (status === "error") {
         expect(countOf(station(page, "done"))).toBe("-");
         expect(lane(page, "done").textContent).not.toContain("merged");
       }
     },
   );
+});
+
+describe("a recent runs list that failed on refresh", () => {
+  it("still counts: numbers, the bins' runs and no skeleton, since it keeps its data", async () => {
+    using _state = await setup();
+    const belt = twoEnvironments();
+    belt.recent = new Map([
+      [DESKTOP, resource({ data: { runs: [recentRow(30, { state: "stuck", finished: true })] } })],
+      [
+        STUDIO,
+        resource({
+          status: "error",
+          error: new Error("timed out"),
+          data: { runs: [recentRow(33, { state: "stuck", finished: true })] },
+        }),
+      ],
+    ]);
+    await using page = await render(createElement(FactoryBelt, belt));
+    expect(stat(page, "Stuck")).toBe("2");
+    expect(stat(page, "Runs today")).toMatch(/^\d+$/);
+    expect(countOf(station(page, "done"))).toBe("0");
+    expect(page.all('[role="status"]').filter((n) => n.getAttribute("aria-label"))).toEqual([]);
+    const stuck = page
+      .all("section")
+      .find((section) => section.getAttribute("aria-label") === "Stuck")!;
+    expect(stuck.textContent).toContain("#30");
+    expect(stuck.textContent).toContain("#33");
+  });
 });
 
 describe("the rail keeps its pick", () => {
@@ -1067,6 +1113,12 @@ describe("the belt's layout", () => {
       );
     expect(visibleText("Desktop")).toBe(true);
     expect(visibleText("pr-open")).toBe(true);
+    // The row's run link stretches over the row; the pull request link sits above it, so a tap on it
+    // opens the pull request.
+    link!.scrollIntoView();
+    const box = link!.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    expect(hit === link || link!.contains(hit)).toBe(true);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     );
