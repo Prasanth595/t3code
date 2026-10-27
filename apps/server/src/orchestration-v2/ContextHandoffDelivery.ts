@@ -19,6 +19,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
+    readonly deferIfOverBudget?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly inject?: (
       history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
@@ -72,6 +73,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
+      // Keep the handoff pending when the native transcript has too little room for recovery context.
+      if (input.deferIfOverBudget)
+        return { context: "", delivered: Effect.void, unsent: Effect.void };
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);

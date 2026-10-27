@@ -1457,6 +1457,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [runId]), history);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, []), []);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [RunId.make("run:other")]), []);
+      const selectedItem = history[0]!;
+      assert.deepEqual(yield* store.getTurnStartHistory(threadId, undefined, [selectedItem.id]), [
+        selectedItem,
+      ]);
+      assert.deepEqual(yield* store.getTurnStartHistory(threadId, undefined, []), []);
     }),
   );
   it.effect("preserves stored provider usage when a terminal update omits it", () =>

@@ -1085,6 +1085,7 @@ export const OrchestrationV2HistoricalMessage = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
   itemId: TurnItemId,
+  nativeItemRef: Schema.optional(Schema.NullOr(OrchestrationV2ProviderRef)),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   status: Schema.String,
   kind: Schema.String,

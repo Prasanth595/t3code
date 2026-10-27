@@ -49,6 +49,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
+  itemIsInNativeThread as isItemInNativeThread,
+  latestNativeCompactionRunOrdinal,
+} from "./nativeThreadHistory.ts";
+import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
   makeProviderFailure,
@@ -921,6 +925,48 @@ export const layer: Layer.Layer<
             !deliveredAttemptIds.has(source.activeAttemptId),
         );
         const missedRunIds = new Set(missedRuns.map((source) => source.id));
+        const compactionMessageIds = new Set(
+          projection.messages.filter(isCompactionCommandMessage).map((candidate) => candidate.id),
+        );
+        const runOrdinals = new Map(projection.runs.map((source) => [source.id, source.ordinal]));
+        const latestCompactionOrdinal = latestNativeCompactionRunOrdinal({
+          runs: projection.runs,
+          turnItems: projection.turnItems,
+          providerThreadId: providerThread.id,
+          compactionMessageIds,
+        });
+        const itemIsInNativeThread = (item: Parameters<typeof isItemInNativeThread>[0]["item"]) =>
+          isItemInNativeThread({
+            item,
+            threadId: projection.thread.id,
+            providerThreadId: providerThread.id,
+            acceptedRunIds: nativeInputRunIds,
+            runOrdinals,
+            latestCompactionRunOrdinal: latestCompactionOrdinal,
+          });
+        const handoffIsAlreadyInNativeThread = (
+          handoff: OrchestrationV2ContextHandoff,
+          sourceItemsById: ReadonlyMap<string, OrchestrationV2TurnItem>,
+        ) => {
+          const history = handoff.history;
+          if (!handoff.fromProviderThreadIds.includes(providerThread.id) || history === undefined)
+            return false;
+          const omittedItemIds = history.omittedItemIds ?? [];
+          return (
+            (history.messages.length > 0 || omittedItemIds.length > 0) &&
+            history.omittedItems === omittedItemIds.length &&
+            history.messages.every(itemIsInNativeThread) &&
+            omittedItemIds.every((itemId) => {
+              const item = sourceItemsById.get(itemId);
+              return item !== undefined && itemIsInNativeThread(item);
+            })
+          );
+        };
+        const nativeThreadHasTurns =
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
         return {
           sameNativeThread,
           handoffUsage,
@@ -929,6 +975,8 @@ export const layer: Layer.Layer<
           acceptedAttempts,
           nativeInputRunIds,
           legacyInputRunIds,
+          nativeThreadHasTurns,
+          handoffIsAlreadyInNativeThread,
           missedRuns,
           missedRunIds,
           budget: Effect.gen(function* () {
@@ -1375,9 +1423,37 @@ export const layer: Layer.Layer<
       );
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
+          const handoffsToDeliver = [...effectiveHandoffs, ...retryHandoff];
+          const canDeferHandoff =
+            handoffContext.sameNativeThread &&
+            handoffContext.nativeThreadHasTurns &&
+            retryHandoff.length === 0 &&
+            handoffsToDeliver.length > 0;
+          const omittedItemIds = canDeferHandoff
+            ? Array.from(
+                new Set(
+                  handoffsToDeliver.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
+                ),
+              )
+            : [];
+          const sourceItemsById =
+            omittedItemIds.length === 0
+              ? new Map<string, OrchestrationV2TurnItem>()
+              : new Map(
+                  (yield* projectionStore.getTurnStartHistory(
+                    input.threadId,
+                    undefined,
+                    omittedItemIds,
+                  )).map((item) => [item.id, item] as const),
+                );
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: handoffsToDeliver,
             deferInline: compact || goalCommand,
+            deferIfOverBudget:
+              canDeferHandoff &&
+              handoffsToDeliver.every((handoff) =>
+                handoffContext.handoffIsAlreadyInNativeThread(handoff, sourceItemsById),
+              ),
             providerThread: runningProviderThread,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,

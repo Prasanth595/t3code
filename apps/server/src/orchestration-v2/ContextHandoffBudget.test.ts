@@ -135,6 +135,7 @@ describe("handoff budget", () => {
     });
     assert.equal(command?.role, "assistant");
     assert.equal(command?.kind, "command_execution");
+    assert.isNull(command?.nativeItemRef);
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
     assert.isNull(
@@ -146,6 +147,17 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
+    const nativeCommand = historicalMessage({
+      ...base,
+      type: "command_execution",
+      input: "vp test",
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("codex"),
+        nativeId: "command-1",
+        strength: "strong",
+      },
+    });
+    assert.equal(nativeCommand?.nativeItemRef?.nativeId, "command-1");
   });
 
   it("omits oversized multilingual items whole, preserves original constraints and recent work", () => {

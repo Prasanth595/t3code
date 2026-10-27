@@ -161,6 +161,7 @@ export function historicalMessage(
     threadId: item.threadId,
     runId: item.runId,
     itemId: item.id,
+    nativeItemRef: item.nativeItemRef,
     providerThreadId: item.providerThreadId,
     status: item.status,
     kind: item.type,
