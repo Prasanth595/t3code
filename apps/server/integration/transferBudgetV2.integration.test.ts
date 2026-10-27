@@ -409,9 +409,9 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
               return { http, rows: (yield* decodeShellSnapshot(decoded(http))).threads.length };
             });
 
-          const longTurnColdOpenLegacy = yield* readColdOpen("compactTurnItems=1");
-          const longTurnColdOpen = yield* readColdOpen(CLIENT_BOUNDED_QUERY);
-          const { cursor } = longTurnColdOpen;
+          const { cursor: _, ...longTurnColdOpenLegacy } =
+            yield* readColdOpen("compactTurnItems=1");
+          const { cursor, ...longTurnColdOpen } = yield* readColdOpen(CLIENT_BOUNDED_QUERY);
           if (cursor === null) return yield* Effect.die("Expected older long-turn history");
           const longTurnHistoryPageLegacy = yield* readHistoryPage(cursor, "");
           const longTurnHistoryPage = yield* readHistoryPage(cursor, CLIENT_HISTORY_QUERY);

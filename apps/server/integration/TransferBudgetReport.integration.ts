@@ -40,7 +40,7 @@ export interface TransferBudgetRun {
   /** The compact bounded snapshot web and mobile load when the long-turn thread opens. */
   readonly longTurnColdOpen: TimelineHttpMeasurement;
   readonly longTurnHistoryPage: TimelineHttpMeasurement;
-  /** The same reads without the opt-ins current clients send, to show what they save. */
+  /** The same reads as an older client that only sends `compactTurnItems`, to show the savings. */
   readonly longTurnColdOpenLegacy: TimelineHttpMeasurement;
   readonly longTurnHistoryPageLegacy: TimelineHttpMeasurement;
   /** The cold-connect shell snapshot after the settled-thread fleet is written. */

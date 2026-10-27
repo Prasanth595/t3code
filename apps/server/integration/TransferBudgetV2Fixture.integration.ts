@@ -250,6 +250,10 @@ export function longTurnThreadBatches(
       providerInstanceId,
       occurredAt: now,
     };
+    const messageId = (role: "user" | "assistant", row: string) =>
+      MessageId.make(
+        `message:provider:${provider}:native-item:msg_01LongTurn${role}${index}x${row}`,
+      );
     const run = {
       id: runId,
       threadId,
@@ -257,7 +261,7 @@ export function longTurnThreadBatches(
       providerInstanceId,
       modelSelection,
       providerThreadId: null,
-      userMessageId: MessageId.make(`long-turn-user-${index}`),
+      userMessageId: messageId("user", "prompt"),
       rootNodeId: nodeId,
       activeAttemptId: null,
       status: "running" as const,
@@ -291,9 +295,7 @@ export function longTurnThreadBatches(
       { ...common, id: EventId.make(`long-turn-run-${index}`), type: "run.created", payload: run },
     ];
     const message = (role: "user" | "assistant", row: string, messageText: string) => {
-      const messageId = MessageId.make(
-        `message:provider:${provider}:native-item:msg_01LongTurn${index}x${row}`,
-      );
+      const id = messageId(role, row);
       const createdBy = role === "user" ? ("user" as const) : ("agent" as const);
       events.push(
         {
@@ -301,7 +303,7 @@ export function longTurnThreadBatches(
           id: EventId.make(`long-turn-message-${index}-${row}`),
           type: "message.updated",
           payload: {
-            id: messageId,
+            id,
             threadId,
             runId,
             nodeId,
@@ -326,7 +328,7 @@ export function longTurnThreadBatches(
                   type: "user_message",
                   createdBy,
                   creationSource: "web",
-                  messageId,
+                  messageId: id,
                   inputIntent: "turn_start",
                   text: messageText,
                   attachments: [],
@@ -334,7 +336,7 @@ export function longTurnThreadBatches(
               : {
                   ...base(row, null),
                   type: "assistant_message",
-                  messageId,
+                  messageId: id,
                   text: messageText,
                   streaming: false,
                 },
