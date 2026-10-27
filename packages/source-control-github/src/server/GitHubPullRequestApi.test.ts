@@ -3210,7 +3210,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 checkSuite: { workflowRun: { workflow: { name: "windows" } } },
                               }),
                             ],
-                            pageInfo: { hasNextPage: false },
+                            pageInfo: { hasNextPage: false, endCursor: null },
                           },
                         },
                       },
@@ -3246,11 +3246,20 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "reads every check when the combined response has another page (reviewer refusal: %s)",
-    (refused) =>
+  it.effect.each([
+    { refused: false, mode: "complete" },
+    { refused: true, mode: "complete" },
+    { refused: false, mode: "limit" },
+    { refused: false, mode: "repeated cursor" },
+    { refused: false, mode: "missing cursor" },
+  ] as const)(
+    "continues after the core check page without reading it twice (reviewer refusal: $refused, $mode)",
+    ({ refused, mode }) =>
       Effect.gen(function* () {
         if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        const first = Array.from({ length: 100 }, (_, index) =>
+          checkRun({ name: `check-${index}`, conclusion: "SUCCESS" }),
+        );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -3262,14 +3271,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         commit: {
                           statusCheckRollup: {
                             contexts: {
-                              nodes: [
-                                checkRun({
-                                  name: "first",
-                                  status: "COMPLETED",
-                                  conclusion: "SUCCESS",
-                                }),
-                              ],
-                              pageInfo: { hasNextPage: true, endCursor: "c1" },
+                              nodes: first,
+                              pageInfo: {
+                                hasNextPage: true,
+                                endCursor: mode === "missing cursor" ? null : "c1",
+                              },
                             },
                           },
                         },
@@ -3281,19 +3287,26 @@ layer("GitHubPullRequestApi.layer", (it) => {
             ),
           ),
         );
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(
+        mockedExecute.mockImplementation((call) => {
+          const page =
+            call.kind === "graphql"
+              ? Number(String(call.variables?.["after"] ?? "c0").slice(1))
+              : 0;
+          const last = mode === "complete" && page === 1;
+          return Effect.succeed(
             output(
               checkContextsPage(
-                [
-                  checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
-                ],
-                null,
+                last
+                  ? [checkRun({ name: "last", conclusion: "FAILURE" })]
+                  : first.map((check, index) => ({
+                      ...check,
+                      name: `check-${page * 100 + index}`,
+                    })),
+                last ? null : mode === "repeated cursor" ? "c1" : `c${page + 1}`,
               ),
             ),
-          ),
-        );
+          );
+        });
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         const read = cli.getPullRequestDetail(pullRequestInput);
         const detail = yield* read;
@@ -3304,13 +3317,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
-        expect(detail.checksState).toBe("failing");
-        expect(detail.checksTruncated).toBe(false);
-        // The whole rollup is walked from its start, so no check is counted twice or skipped.
-        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
-        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
-        expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
+        expect(detail.checks).toHaveLength(
+          mode === "complete" ? 101 : mode === "limit" ? 1_000 : 100,
+        );
+        expect(detail.checksState).toBe(mode === "complete" ? "failing" : "passing");
+        expect(detail.checksTruncated).toBe(mode !== "complete");
+        const reads = mode === "limit" ? 9 : mode === "missing cursor" ? 0 : 1;
+        expect(variablesOf("CheckContexts")).toEqual(
+          Array.from({ length: reads }, (_, index) =>
+            expect.objectContaining({ number: 7, after: `c${index + 1}` }),
+          ),
+        );
+        expect(mockedExecute).toHaveBeenCalledTimes(1 + reads + Number(refused));
 
         if (refused) {
           mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
@@ -3333,7 +3351,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   statusCheckRollup: {
                     contexts: {
                       nodes: [],
-                      pageInfo: { hasNextPage: true },
+                      pageInfo: { hasNextPage: true, endCursor: "c1" },
                     },
                   },
                 },
