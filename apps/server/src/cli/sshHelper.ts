@@ -5,13 +5,11 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
-import { DESKTOP_UPDATE_IN_PROGRESS_TTL_MS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Clock from "effect/Clock";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { Argument, Command } from "effect/cli";
+
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -129,51 +127,22 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
-const UpdateMarker = Schema.fromJsonString(
-  Schema.Struct({ startedAt: Schema.optional(Schema.Unknown), expiresAt: Schema.Number }),
-);
-
-export const updateRemaining = Effect.fn("sshHelper.updateRemaining")(function* (
-  markerFile: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const now = yield* Clock.currentTimeMillis;
-  const marker = yield* fs
-    .readFileString(markerFile)
-    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(UpdateMarker)), Effect.option);
-  if (Option.isSome(marker)) {
-    const { startedAt, expiresAt } = marker.value;
-    if (Number.isFinite(expiresAt) && expiresAt <= now) {
-      yield* fs.remove(markerFile, { force: true }).pipe(Effect.ignore);
-    } else if (
-      typeof startedAt === "number" &&
-      Number.isFinite(startedAt) &&
-      Number.isFinite(expiresAt) &&
-      startedAt <= now &&
-      expiresAt > now &&
-      expiresAt > startedAt
-    ) {
-      return String(Math.min(expiresAt - now, DESKTOP_UPDATE_IN_PROGRESS_TTL_MS));
-    }
-  }
-  return "";
-});
-
-const updateRemainingCommand = Command.make("update-remaining", {
+const updateRemaining = Command.make("update-remaining", {
   markerFile: Argument.String("marker-file"),
 }).pipe(
   Command.withHandler(({ markerFile }) =>
-    updateRemaining(markerFile).pipe(
+    DesktopUpdateMarker.DesktopUpdateMarker.use((marker) => marker.remainingWait(markerFile)).pipe(
       Effect.flatMap((remaining) =>
         Effect.sync(() => {
-          process.stdout.write(remaining);
+          process.stdout.write(Option.match(remaining, { onNone: () => "", onSome: String }));
         }),
       ),
     ),
   ),
+  Command.provide(DesktopUpdateMarker.layer),
 );
 
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemainingCommand]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemaining]),
 );

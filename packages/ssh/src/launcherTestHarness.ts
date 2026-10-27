@@ -150,8 +150,9 @@ fi`,
         `
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { updateRemaining } from ${JSON.stringify(NodePath.join(root, "apps/server/src/cli/sshHelper.ts"))};
-process.stdout.write(await Effect.runPromise(updateRemaining(process.argv[2]).pipe(Effect.provide(NodeServices.layer))));
+import { Command } from "effect/cli";
+import { sshHelperCommand } from ${JSON.stringify(NodePath.join(root, "apps/server/src/cli/sshHelper.ts"))};
+await Effect.runPromise(Command.runWith(sshHelperCommand, { version: "1.2.3" })(process.argv.slice(2)).pipe(Effect.provide(NodeServices.layer)));
 `,
       );
       NodeFS.writeFileSync(
@@ -161,7 +162,7 @@ set -eu
 if [ "$1" = --version ]; then printf 1.2.3; exit; fi
 [ "$1" = __ssh-helper ]
 case "$2" in
-  update-remaining) printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"; exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$HOME/helper.ts" "$3" ;;
+  update-remaining) printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"; exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$HOME/helper.ts" "$2" "$3" ;;
   runtime-port | pick-port | wait-ready) exec "$HOME/bin/test-node" - "$3" ;;
   *) exit 1 ;;
 esac
