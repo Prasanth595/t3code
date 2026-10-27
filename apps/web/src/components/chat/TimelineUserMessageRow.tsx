@@ -1,3 +1,4 @@
+import { MessageTimestamp } from "./TimelineRowParts";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -64,7 +65,6 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
@@ -74,6 +74,19 @@ import {
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
+import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
+
+function useLinkedMessageExpansion(messageId: MessageId, request: LinkedMessageRequest | null) {
+  const revealKey = request?.messageId === messageId ? request.key : null;
+  const [lastRevealKey, setLastRevealKey] = useState(revealKey);
+  const [expanded, setExpanded] = useState(revealKey !== null);
+  // Reveal before the timeline positions the row, and retain it after URL consumption.
+  if (revealKey !== null && revealKey !== lastRevealKey) {
+    setLastRevealKey(revealKey);
+    setExpanded(true);
+  }
+  return [expanded, setExpanded] as const;
+}
 
 function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   const ctx = use(TimelineRowCtx);
@@ -137,7 +150,7 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
 /** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useLinkedMessageExpansion(row.message.id, ctx.linkedMessage);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
   const tasksQuery = useEnvironmentQuery(
@@ -305,7 +318,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userMessage = resolveUserMessagePresentation(row.message);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useLinkedMessageExpansion(row.message.id, ctx.linkedMessage);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
     folded && senderThreadId
@@ -636,14 +649,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 Open thread
               </InlineButton>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-                {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipTrigger>
-              <TooltipPopup>
-                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipPopup>
-            </Tooltip>
+            <MessageTimestamp
+              messageId={row.message.id}
+              time={row.message.createdAt}
+              linkable={row.projectedItem !== undefined}
+            />
             <div className="flex items-center gap-0.5">
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />

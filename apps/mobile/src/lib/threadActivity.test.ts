@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   MessageId,
   CheckpointId,
   CheckpointRef,
@@ -22,11 +23,13 @@ import { getReviewSectionIdForCheckpoint } from "../features/review/reviewModel"
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { persistedMessageLink } from "../features/threads/thread-feed-message-link";
 import {
   buildThreadFeed,
   threadFeedCompactionLabels,
   createThreadFeedCache,
   deriveThreadFeedPresentation,
+  threadFeedFoldRunIdHiding,
   messageFoldRunId,
   type ThreadFeedCache,
   type ThreadFeedEntry,
@@ -510,6 +513,30 @@ describe("buildThreadFeed", () => {
     expect(items[0]).toMatchObject({ output: rawOutput });
   });
 
+  it("enables a message permalink only after an anchored creation prompt is persisted", () => {
+    const threadRef = { environmentId: EnvironmentId.make("env"), threadId };
+    const item = userMessage("2026-08-29T00:00:01.000Z");
+    const local = {
+      id: item.messageId,
+      role: "user",
+      text: item.text,
+      streaming: false,
+      createdAt: "2026-08-29T00:00:01.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    };
+    const pending = buildThreadFeed([], { anchoredMessages: [local] });
+    expect(pending[0]?.type).toBe("message");
+    if (pending[0]?.type !== "message") throw new Error("Missing local creation prompt");
+    expect(persistedMessageLink(threadRef, pending[0].message)).toBeNull();
+    const delivered = buildThreadFeed([projected(item, 0)], { anchoredMessages: [local] });
+    expect(delivered).toHaveLength(1);
+    if (delivered[0]?.type !== "message") throw new Error("Missing persisted message");
+    expect(persistedMessageLink(threadRef, delivered[0].message)).toEqual({
+      ...threadRef,
+      messageId: item.messageId,
+    });
+  });
+
   it("anchors feedback before later committed turns", () => {
     const laterUser = {
       ...userMessage("2026-08-29T00:00:05.000Z"),
@@ -973,6 +1000,14 @@ describe("buildThreadFeed", () => {
     ]);
     const launchFold = settled.find((entry) => entry.type === "run-fold");
     if (launchFold?.type !== "run-fold") throw new Error("Expected the launch fold");
+    // A link to a hidden entry opens the fold by its synthetic key, not the entry's run id.
+    const presentedIds = new Set(settled.map((entry) => entry.id));
+    const hidden = feed(false).find((entry) => !presentedIds.has(entry.id));
+    if (!hidden) throw new Error("Expected a hidden entry");
+    expect(threadFeedFoldRunIdHiding(feed(false), null, null, false, hidden.id)).toBe(
+      launchFold.runId,
+    );
+    expect(threadFeedFoldRunIdHiding(feed(false), null, null, false, "launch-answer")).toBeNull();
     expect(
       shape(deriveThreadFeedPresentation(feed(false), null, new Set([launchFold.runId]))),
     ).toEqual([

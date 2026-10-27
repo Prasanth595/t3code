@@ -60,7 +60,7 @@ import {
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
@@ -110,7 +110,7 @@ import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useStore } from "zustand";
@@ -524,6 +524,7 @@ export default function ChatView(props: ChatViewProps) {
       return undefined;
     }
     return {
+      historyCursor: serverThreadHistory.historyCursor,
       hasMoreHistory: serverThreadHistory.hasMoreHistory,
       loading: serverThreadHistory.loading,
       error: serverThreadHistory.error,
@@ -557,6 +558,28 @@ export default function ChatView(props: ChatViewProps) {
   const citationHref = useLocation({ select: (location) => location.href });
   const citationKey = useLocation({
     select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
+  });
+  const router = useRouter();
+  const linkedMessageState = useLocation({ select: (location) => location.state.linkedMessage });
+  const linkedMessageRequest = linkedMessageState
+    ? {
+        messageId: MessageId.make(linkedMessageState.messageId),
+        key: linkedMessageState.activation,
+      }
+    : null;
+  const onLinkedMessageHandled = useStableCallback((activation: string) => {
+    const location = router.state.location;
+    if (location.state.linkedMessage?.activation !== activation) return;
+    void navigate({
+      href: location.href,
+      replace: true,
+      state: (current) => {
+        if (current.linkedMessage?.activation !== activation) return current;
+        const next = { ...current };
+        delete next.linkedMessage;
+        return next;
+      },
+    });
   });
   const citationLocation = { href: citationHref, key: citationKey };
   const citationRequest = (() => {
@@ -3222,6 +3245,10 @@ export default function ChatView(props: ChatViewProps) {
                 syncing={threadSyncPhase !== null}
                 detailLoading={threadDetailLoading}
                 citationRequest={citationRequest}
+                linkedMessage={linkedMessageRequest}
+                linkedMessageSynced={threadStatus === "live"}
+                onLinkedMessageHandled={onLinkedMessageHandled}
+                linkedMessageHistoryLoading={threadDetailLoading}
                 citationHistory={citationHistory}
                 onCiteAssistantText={citeAssistantTextStable}
                 {...(activeProject ? { onRunShellCommand: runShellCommandStable } : {})}
