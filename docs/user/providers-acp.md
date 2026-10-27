@@ -20,8 +20,8 @@ provider instance's environment overrides to use ACP v1.
 ## Add an agent
 
 1. Open **Settings → Providers**.
-2. Select **Add provider** and search the ACP Registry.
-3. Search for the agent and select **Add** on its result.
+2. Select **Add provider**, then **Show more**.
+3. Search the ACP Registry for the agent and select **Add** on its result.
 4. Confirm the name and instance ID, then complete the agent's sign-in step.
 
 Search only shows agents that can run on the connected server. Registry agents are third-party
@@ -29,7 +29,7 @@ code; review an agent's source and license before adding it.
 
 ## Add a local command
 
-In **Settings → Providers → Add provider**, select **Local ACP command**. Enter the executable
+In **Settings → Providers → Add provider**, select **Show more**, then **Local ACP command**. Enter the executable
 name or path on the selected environment, add one literal argument per row, and choose a display
 name. For DeepSeek Harness, use `dsh` with arguments `--profile` and `acp`.
 

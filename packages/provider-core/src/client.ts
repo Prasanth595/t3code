@@ -40,6 +40,8 @@ export interface ProviderClientDefinition {
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
   readonly hasDefaultInstance?: boolean;
   readonly badgeLabel?: string;
+  /** `false` lists the provider under Add provider's "Show more" instead of up front. */
+  readonly featured?: boolean;
 }
 
 export function defineProviderClient<const Definition extends ProviderClientDefinition>(
