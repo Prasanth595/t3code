@@ -98,7 +98,11 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
+import {
+  resolveSnoozePresetSelection,
+  resolveSnoozePresets,
+  type SnoozePreset,
+} from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
@@ -401,8 +405,11 @@ function SnoozeMenuButton(props: {
             key={preset.id}
             onClick={(event) => {
               event.stopPropagation();
-              const selectedPreset = resolveSnoozePresets(new Date(), timestampFormat).find(
-                (candidate) => candidate.id === preset.id,
+              const selectedPreset = resolveSnoozePresetSelection(
+                `snooze:${preset.id}`,
+                presets,
+                new Date(),
+                timestampFormat,
               );
               if (selectedPreset) onSnooze(selectedPreset);
             }}

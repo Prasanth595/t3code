@@ -196,7 +196,12 @@ import {
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
-import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
+import {
+  resolveSnoozePresetSelection,
+  resolveSnoozePresets,
+  snoozeWakeLabel,
+  type SnoozePreset,
+} from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -2148,8 +2153,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const preset =
           clicked.value === "snooze:custom"
             ? await requestCustomSnooze()
-            : resolveSnoozePresets(new Date(), timestampFormat).find(
-                (candidate) => `snooze:${candidate.id}` === clicked.value,
+            : resolveSnoozePresetSelection(
+                clicked.value,
+                snoozePresets,
+                new Date(),
+                timestampFormat,
               );
         if (preset) {
           const coSnoozingKeys = new Set(threadKeys);
@@ -2418,8 +2426,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           const preset =
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
-              : resolveSnoozePresets(new Date(), timestampFormat).find(
-                  (candidate) => `snooze:${candidate.id}` === clicked.value,
+              : resolveSnoozePresetSelection(
+                  clicked.value,
+                  snoozePresets,
+                  new Date(),
+                  timestampFormat,
                 );
           if (preset) attemptSnooze(threadRef, preset);
           return;

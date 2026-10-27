@@ -32,3 +32,19 @@ export function resolveSnoozePresets(
     };
   });
 }
+
+export function resolveSnoozePresetSelection(
+  action: string,
+  displayedPresets: ReadonlyArray<SnoozePreset>,
+  now: Date,
+  timestampFormat: TimestampFormat,
+) {
+  const currentPreset = resolveSnoozePresets(now, timestampFormat).find(
+    (candidate) => `snooze:${candidate.id}` === action,
+  );
+  if (currentPreset) return currentPreset;
+  return displayedPresets.find(
+    (candidate) =>
+      `snooze:${candidate.id}` === action && Date.parse(candidate.snoozedUntil) > now.getTime(),
+  );
+}
