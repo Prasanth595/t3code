@@ -354,6 +354,7 @@ export interface ThreadFeedProps {
   readonly keyboardOffset: number;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
+  readonly placeholderBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly contentMaxWidth?: number;
   readonly contentSideInsets?: { readonly left: number; readonly right: number };
@@ -2244,6 +2245,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + IOS_NAV_BAR_HEIGHT;
   const bottomContentInset = props.contentBottomInset ?? 18;
+  const placeholderBottomInset = props.placeholderBottomInset ?? bottomContentInset;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
   const initialContentInset = deriveThreadFeedInitialContentInset({
@@ -3130,7 +3132,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         title={props.contentPresentation.title}
         detail={props.contentPresentation.detail}
         topInset={topContentInset}
-        bottomInset={bottomContentInset}
+        bottomInset={placeholderBottomInset}
         horizontalPadding={horizontalPadding}
       />
     );
@@ -3280,7 +3282,7 @@ export const ThreadFeed = memo(function ThreadFeed({
               title="No conversation yet"
               detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
               topInset={topContentInset}
-              bottomInset={bottomContentInset}
+              bottomInset={placeholderBottomInset}
               horizontalPadding={horizontalPadding}
             />
           </View>
