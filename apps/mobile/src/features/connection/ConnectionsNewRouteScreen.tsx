@@ -11,6 +11,7 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { pairAgainAddress } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
@@ -28,6 +29,7 @@ import {
   setPendingConnectionError,
   useRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
@@ -40,6 +42,8 @@ type ConnectionsNewRouteParams = {
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
   readonly routeFor?: EnvironmentId;
+  /** With `routeFor`: replace the pairing that machine refused at its saved address. */
+  readonly pairAgain?: boolean;
 };
 
 export function ConnectionsNewRouteScreen({
@@ -60,6 +64,14 @@ export function ConnectionsNewRouteScreen({
     __DEV__ &&
     routePairingUrl.length > 0 &&
     (params.autoConnect === "1" || params.autoConnect === "true");
+  // Prefilled from this device's saved pairing. `routeFor` still refuses a different machine.
+  const { presentation: routeForPresentation } = useEnvironmentPresentation(
+    params.pairAgain ? (params.routeFor ?? null) : null,
+  );
+  // Held once seen: a successful pairing clears the refusal while the screen closes.
+  const [pairAgainHost, setPairAgainHost] = useState<string | null>(null);
+  const refusedHost = routeForPresentation === null ? null : pairAgainAddress(routeForPresentation);
+  if (pairAgainHost === null && refusedHost !== null) setPairAgainHost(refusedHost);
   const insets = useSafeAreaInsets();
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
@@ -83,15 +95,16 @@ export function ConnectionsNewRouteScreen({
   }, [connectionPairingUrl]);
 
   useEffect(() => {
-    if (routePairingUrl.length === 0) {
+    if (routePairingUrl.length === 0 && pairAgainHost === null) {
       return;
     }
 
-    const { host, code } = parsePairingUrl(routePairingUrl);
+    const { host, code } =
+      pairAgainHost === null ? parsePairingUrl(routePairingUrl) : { host: pairAgainHost, code: "" };
     // oxlint-disable-next-line react/set-state-in-effect -- A pairing URL from the route reseeds the editable host and code fields.
     setHostInput(host);
     setCodeInput(code);
-  }, [routePairingUrl]);
+  }, [routePairingUrl, pairAgainHost]);
 
   useEffect(() => {
     if (pairingConnectionError) {
@@ -193,10 +206,14 @@ export function ConnectionsNewRouteScreen({
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title="Add environment"
+      title={pairAgainHost !== null ? "Pair again" : "Add environment"}
       actions={[
         {
-          accessibilityLabel: isSubmitting ? "Connecting" : "Add environment",
+          accessibilityLabel: isSubmitting
+            ? "Connecting"
+            : pairAgainHost !== null
+              ? "Pair again"
+              : "Add environment",
           loading: isSubmitting,
           icon: "checkmark",
           tintColor: headerIconColor,
@@ -264,11 +281,13 @@ export function ConnectionsNewRouteScreen({
               )}
             >
               {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+                (pairAgainHost !== null
+                  ? "This machine no longer accepts this device's pairing. Get a new code from t3 pair or desktop Connections settings."
+                  : "For machines on your local network or tailnet. The machine keeps its own provider credentials.")}
             </Text>
           </View>
 
-          {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
+          {hasCloudPublicConfig() && pairAgainHost === null ? <T3ConnectSection /> : null}
         </View>
       </ScrollView>
     </SettingsScreen>
