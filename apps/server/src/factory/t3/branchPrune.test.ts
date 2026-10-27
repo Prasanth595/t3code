@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 
 import * as Process from "../process.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "../ledger/runId.ts";
@@ -484,6 +485,34 @@ describe("pruneBranches", () => {
       assert.strictEqual(asked.removed.length, REMOTE_PRUNES_PER_RUN);
       assert.strictEqual(report.pruned.length, REMOTE_PRUNES_PER_RUN);
       assert.strictEqual(report.waiting, 2);
+    }),
+  );
+
+  it.effect("gives every remote branch a turn when GitHub keeps refusing some", () =>
+    Effect.gen(function* () {
+      const r = repo();
+      r.unmerged("t3/work");
+      r.push("t3/work");
+      const sha = r.sha("t3/work");
+      git(r.work, ["update-ref", "-d", "refs/heads/t3/work"]);
+      git(r.work, ["update-ref", "-d", "refs/remotes/origin/t3/work"]);
+      const names = Array.from({ length: REMOTE_PRUNES_PER_RUN + 2 }, (_, i) => `t3/b${i}`);
+      for (const name of names) {
+        git(r.origin, ["update-ref", `refs/heads/${name}`, sha]);
+        git(r.work, ["update-ref", `refs/remotes/origin/${name}`, sha]);
+      }
+      const closed = { open: 0, ended: [{ merged: false, headSha: sha }] };
+      const tried = new Set<string>();
+      for (const seed of ["one", "two", "three", "four", "five"]) {
+        const { input: pruneInput, asked } = input(r, {
+          remove: "fail",
+          pulls: Object.fromEntries(names.map((name) => [name, closed])),
+        });
+        const report = yield* prune(pruneInput).pipe(Random.withSeed(seed));
+        assert.strictEqual(report.failed.length, REMOTE_PRUNES_PER_RUN);
+        for (const name of asked.removed) tried.add(name);
+      }
+      assert.deepStrictEqual([...tried].toSorted(), names.toSorted());
     }),
   );
 

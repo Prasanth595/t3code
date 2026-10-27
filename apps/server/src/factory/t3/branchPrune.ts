@@ -6,6 +6,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import { ledgerCall } from "../ledger/errors.ts";
@@ -26,7 +27,10 @@ const BRANCH_PREFIX = "t3/";
  * so `git gc` never takes the commits and the logged sha always restores the branch.
  */
 export const ARCHIVE_PREFIX = "refs/factory-pruned/";
-/** How many branches one prune deletes on GitHub, so a backlog never holds a pass up for long. */
+/**
+ * How many remote branches one prune tries, so a backlog never holds a pass up for long. They are
+ * drawn at random, so branches GitHub keeps refusing cannot take every turn.
+ */
 export const REMOTE_PRUNES_PER_RUN = 20;
 
 /** A `t3/*` branch as git lists it in the watched checkout. */
@@ -347,31 +351,37 @@ export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (i
     pulls,
   };
 
-  const pruned: Array<Pruned> = [];
-  const left: Array<PruneReport["left"][number]> = [];
-  const failed: Array<PruneReport["failed"][number]> = [];
-  let waiting = 0;
-  let remoteTries = 0;
-  for (const branch of branches) {
+  const judged = branches.flatMap((branch) => {
     const verdict = decide(branch, facts);
-    if (!verdict.prune) continue;
+    if (!verdict.prune) return [];
     const entry: Pruned = {
       ref: branch.ref,
       sha: branch.sha,
       scope: branch.scope,
       reason: verdict.reason,
     };
-    if (input.dryRun) {
-      pruned.push(entry);
-      continue;
-    }
+    return [{ branch, entry }];
+  });
+  if (input.dryRun) {
+    return {
+      pruned: judged.map(({ entry }) => entry),
+      left: [],
+      failed: [],
+      waiting: 0,
+    } satisfies PruneReport;
+  }
+  const remote = yield* Random.shuffle(judged.filter(({ branch }) => branch.scope === "remote"));
+  const tried = [
+    ...judged.filter(({ branch }) => branch.scope === "local"),
+    ...remote.slice(0, REMOTE_PRUNES_PER_RUN),
+  ];
+
+  const pruned: Array<Pruned> = [];
+  const left: Array<PruneReport["left"][number]> = [];
+  const failed: Array<PruneReport["failed"][number]> = [];
+  for (const { branch, entry } of tried) {
     let onGitHub = false;
     if (branch.scope === "remote") {
-      if (remoteTries >= REMOTE_PRUNES_PER_RUN) {
-        waiting += 1;
-        continue;
-      }
-      remoteTries += 1;
       const tip = yield* Effect.result(input.github.tip(branch.name));
       if (tip._tag === "Failure") {
         const why = `cannot read it on GitHub: ${tip.failure.message}`;
@@ -393,6 +403,7 @@ export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (i
         continue;
       }
     }
+    // First, as the issue asks: a refused deletion leaves a line, a deletion never lacks one.
     yield* logDeletion(input, entry);
     if (onGitHub) {
       const removed = yield* Effect.result(input.github.remove(branch.name));
@@ -418,5 +429,6 @@ export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (i
     }
     pruned.push(entry);
   }
+  const waiting = Math.max(0, remote.length - REMOTE_PRUNES_PER_RUN);
   return { pruned, left, failed, waiting } satisfies PruneReport;
 });
