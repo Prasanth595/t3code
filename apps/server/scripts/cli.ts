@@ -13,7 +13,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
-import { assertLinuxArm64PageCompatibility } from "../../../scripts/lib/cli-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -23,6 +22,7 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliNodeVersionError,
 } from "./cliErrors.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -53,6 +53,13 @@ const injectLinuxArm64Sea = Effect.fn("injectLinuxArm64Sea")(function* (
   outputPath: string,
   verbose: boolean,
 ) {
+  // The copied execPath is the shipped runtime; vp pack only checks its own Node.
+  if (process.versions.node !== rootPackageJson.engines.node) {
+    return yield* new ServerCliNodeVersionError({
+      expected: rootPackageJson.engines.node,
+      actual: process.versions.node,
+    });
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sea-" });
@@ -93,8 +100,6 @@ const injectLinuxArm64Sea = Effect.fn("injectLinuxArm64Sea")(function* (
       { stdout, stderr: "inherit" },
     ),
   );
-  const bytes = yield* fs.readFile(outputPath);
-  yield* Effect.try(() => assertLinuxArm64PageCompatibility(bytes));
 }, Effect.scoped);
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (

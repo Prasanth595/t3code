@@ -442,7 +442,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
 
   yield* requireInput(
     builtExecutable,
-    `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
+    `Run \`node apps/server/scripts/cli.ts build-exe${targetKey === hostKey ? "" : ` --target ${targetKey}`}\` first.`,
   );
   if (input.platform === "linux" && input.arch === "arm64") {
     const bytes = yield* fs.readFile(builtExecutable);

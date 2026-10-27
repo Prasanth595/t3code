@@ -58,3 +58,15 @@ export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCli
     return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
   }
 }
+
+export class ServerCliNodeVersionError extends Schema.TaggedError<ServerCliNodeVersionError>()(
+  "ServerCliNodeVersionError",
+  {
+    expected: Schema.String,
+    actual: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Linux ARM64 executables must be built with Node ${this.expected}; running ${this.actual}.`;
+  }
+}
