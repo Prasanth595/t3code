@@ -10,7 +10,7 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
-  updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
+  updateSettings: vi.fn<(patch: ScopedSettingsPatch) => Promise<boolean>>(),
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -87,6 +87,7 @@ async function setup() {
   state.updateSettings.mockReset().mockImplementation((patch) => {
     state.styles = state.styles.map((style) => ({ ...style, ...patch.sourceControlWritingStyle }));
     void screen.rerender(content());
+    return Promise.resolve(true);
   });
   return screen;
 }

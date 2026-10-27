@@ -1,12 +1,16 @@
-import { act, render } from "../../../test/render";
+import { act, render, type Screen } from "../../../test/render";
 import { RegistryProvider } from "@effect/atom-react";
 import { DEFAULT_SERVER_SETTINGS, type StorageCleanupReport } from "@t3tools/contracts";
 import { type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 const state = vi.hoisted(() => ({
   settings: {} as typeof DEFAULT_SERVER_SETTINGS,
   run: vi.fn(),
+  update: vi.fn(),
   report: null as StorageCleanupReport | null,
 }));
 
@@ -61,7 +65,7 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
   ...(await original()),
   useScopedSettings: (() => state.settings) as never,
   useScopedSettingsMixed: () => false,
-  useUpdateScopedSettings: () => vi.fn(),
+  useUpdateScopedSettings: () => state.update,
   useClearScopedSettings: () => vi.fn(),
 }));
 vi.mock(import("./settingsLayout"), async (original) => ({
@@ -101,6 +105,7 @@ function setup() {
   };
   state.report = null;
   state.run.mockReset();
+  state.update.mockReset();
 }
 
 const panel = () => (
@@ -121,4 +126,230 @@ it("keeps cleanup disabled when settled retention and all other rules are off", 
   expect(button.disabled).toBe(true);
   await act(async () => button.click());
   expect(state.run).not.toHaveBeenCalled();
+});
+
+const rule = "Delete old browser artifacts";
+const ruleSwitch = (screen: Screen) => screen.getByRole("switch", { name: rule });
+const daysInput = (screen: Screen) => screen.getByLabelText(`${rule} in days`);
+
+it("saves a newly enabled retention rule only once its age is committed", async () => {
+  setup();
+  state.update.mockResolvedValue(true);
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  expect(state.update).not.toHaveBeenCalled();
+  await expect.element(ruleSwitch(screen)).toBeChecked();
+  await expect.element(daysInput(screen)).toHaveFocus();
+
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.keyboard("{Enter}");
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 30 },
+  });
+  await expect.element(ruleSwitch(screen)).toBeChecked();
+  await expect.element(daysInput(screen)).toHaveValue("30");
+});
+
+it("discards a retention draft on Escape or when switched back off", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(daysInput(screen)).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(daysInput(screen)).not.toBeInTheDocument();
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(daysInput(screen)).not.toBeInTheDocument();
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("discards an untouched retention draft when focus leaves it", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(daysInput(screen)).toHaveFocus();
+  await userEvent.click(screen.getByRole("heading", { name: rule }));
+  await expect.element(daysInput(screen)).not.toBeInTheDocument();
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("saves an edited draft when focus leaves its row", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.tab();
+  await expect.element(ruleSwitch(screen)).toHaveFocus();
+  expect(state.update).not.toHaveBeenCalled();
+  await userEvent.tab();
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 30 },
+  });
+});
+
+it("saves an age pasted over a held age once", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.tab();
+  await userEvent.tab({ shift: true });
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "60");
+  await act(async () => {
+    daysInput(screen)
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+  });
+  await userEvent.click(screen.getByRole("heading", { name: rule }));
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 60 },
+  });
+});
+
+it("saves a stepped first age only once it is committed", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.click(screen.getByRole("button", { name: `Increase ${rule}` }));
+  await userEvent.keyboard("{ArrowUp}");
+  await expect.element(daysInput(screen)).toHaveValue("10");
+  expect(state.update).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Enter}");
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 10 },
+  });
+});
+
+it("saves a re-entered age that matches the shown value", async () => {
+  setup();
+  state.settings = {
+    ...state.settings,
+    storageCleanup: { ...state.settings.storageCleanup, browserArtifactsAfterDays: 30 },
+  };
+  await using screen = await render(panel());
+  await userEvent.click(daysInput(screen));
+  await userEvent.keyboard("{Control>}a{/Control}30");
+  await userEvent.tab();
+  await userEvent.tab();
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 30 },
+  });
+});
+
+it("switching an edited draft off from the keyboard saves nothing", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.tab();
+  await userEvent.keyboard(" ");
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+  await userEvent.tab();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("turns a saved retention rule off immediately", async () => {
+  setup();
+  state.settings = {
+    ...state.settings,
+    storageCleanup: { ...state.settings.storageCleanup, browserArtifactsAfterDays: 30 },
+  };
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: null },
+  });
+});
+
+it("switching an edited saved rule off never saves its age afterwards", async () => {
+  setup();
+  state.settings = {
+    ...state.settings,
+    storageCleanup: { ...state.settings.storageCleanup, browserArtifactsAfterDays: 30 },
+  };
+  state.update.mockReturnValue(new Promise(() => {}));
+  await using screen = await render(panel());
+  await userEvent.click(daysInput(screen));
+  await userEvent.keyboard("{Control>}a{/Control}40");
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+  await userEvent.click(screen.getByRole("heading", { name: rule }));
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: null },
+  });
+});
+
+it("returns a newly enabled retention rule to off when its first save fails", async () => {
+  setup();
+  state.update.mockResolvedValue(false);
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(daysInput(screen)).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: 8 },
+  });
+  await expect.element(daysInput(screen)).not.toBeInTheDocument();
+  await expect.element(ruleSwitch(screen)).not.toBeChecked();
+});
+
+it("does not save a stale age when Enter is pressed on invalid text", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "+");
+  await userEvent.keyboard("{Enter}");
+  expect(state.update).not.toHaveBeenCalled();
+
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.tab();
+  await userEvent.tab({ shift: true });
+  await userEvent.fill(daysInput(screen), "+");
+  await userEvent.keyboard("{Enter}");
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("keeps a newer pending age open when an older first save fails", async () => {
+  setup();
+  let failFirst = () => {};
+  const first = new Promise<boolean>((resolve) => (failFirst = () => resolve(false)));
+  state.update.mockReturnValueOnce(first).mockReturnValue(new Promise(() => {}));
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  for (const age of ["30", "60", "30"]) {
+    await userEvent.fill(daysInput(screen), age);
+    await userEvent.keyboard("{Enter}");
+  }
+  expect(state.update).toHaveBeenCalledTimes(3);
+
+  await act(async () => failFirst());
+  await expect.element(daysInput(screen)).toHaveValue("30");
+  await expect.element(ruleSwitch(screen)).toBeChecked();
+});
+
+it("switching off during a pending first save does not save an edited age", async () => {
+  setup();
+  state.update.mockReturnValue(new Promise(() => {}));
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await userEvent.fill(daysInput(screen), "30");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.fill(daysInput(screen), "1");
+  await userEvent.tab();
+  await userEvent.keyboard(" ");
+  await userEvent.tab();
+  expect(state.update.mock.calls).toEqual([
+    [{ storageCleanup: { browserArtifactsAfterDays: 30 } }],
+    [{ storageCleanup: { browserArtifactsAfterDays: null } }],
+  ]);
 });
