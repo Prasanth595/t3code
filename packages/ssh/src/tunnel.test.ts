@@ -512,7 +512,7 @@ describe("SSH launch during desktop update", () => {
       assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
       assert.isAtLeast(result.now, 60_000);
       assert.isAtMost(result.now, 61_000);
-      assert.isFalse(result.markerExists, "an expired marker must be removed");
+      assert.isTrue(result.markerExists, "an expired marker is ignored, not deleted");
       assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
     }),
   );
@@ -525,18 +525,18 @@ describe("SSH launch during desktop update", () => {
       assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
       assert.isAtLeast(result.now, 1_000);
       assert.isAtMost(result.now, 2_000);
-      assert.isFalse(result.markerExists);
+      assert.isTrue(result.markerExists);
     }),
   );
 
-  it.effect("ignores and removes a stale marker without waiting", () =>
+  it.effect("ignores a stale marker without waiting or deleting it", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {
         marker: { startedAt: -60_000, expiresAt: 0 },
       });
       assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
       assert.equal(result.now, 0);
-      assert.isFalse(result.markerExists);
+      assert.isTrue(result.markerExists);
     }),
   );
 

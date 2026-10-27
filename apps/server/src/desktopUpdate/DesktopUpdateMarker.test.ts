@@ -38,7 +38,18 @@ describe("DesktopUpdateMarker", () => {
           }),
       });
       assert.deepStrictEqual(remaining, expected);
-      assert.equal(removed, ["expired", "reversed", "expired missing start"].includes(name));
+      assert.isFalse(removed, `${name}: the launcher must never delete the shared marker`);
+    }),
+  );
+
+  it.effect("honours a marker published while it is being read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const remaining = yield* remainingWait({
+        readFileString: () =>
+          TestClock.adjust(1000).pipe(Effect.as('{"startedAt":1000,"expiresAt":61000}')),
+      });
+      assert.deepStrictEqual(remaining, Option.some(60000));
     }),
   );
 

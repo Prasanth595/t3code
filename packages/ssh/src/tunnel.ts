@@ -647,8 +647,6 @@ try {
   if (Number.isFinite(startedAt) && Number.isFinite(expiresAt) &&
       startedAt <= now && expiresAt > now && expiresAt > startedAt) {
     process.stdout.write(String(Math.min(expiresAt - now, @@T3_UPDATE_TTL_MS@@)));
-  } else if (Number.isFinite(expiresAt) && expiresAt <= now) {
-    fs.rmSync(path, { force: true });
   }
 } catch {}
 NODE
