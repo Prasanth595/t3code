@@ -5,7 +5,8 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Spinner } from "../ui/spinner";
 
 const TITLE = "Visual";
-const PLACEHOLDER_HEIGHT = 80;
+// Near a small chart, so most visuals grow a little when they appear instead of jumping.
+const PLACEHOLDER_HEIGHT = 160;
 const MAX_REMEMBERED_HEIGHTS = 200;
 
 // Remounts (virtualized rows, reopened chats) start at the last measured height instead of jumping.
@@ -22,7 +23,7 @@ function rememberHeight(html: string, height: number) {
 
 function Placeholder() {
   return (
-    <div className="flex size-full items-center justify-center gap-2 rounded-lg border border-border text-muted-foreground text-xs">
+    <div className="flex size-full items-center justify-center gap-2 rounded-lg bg-muted/40 text-muted-foreground text-xs">
       <Spinner className="size-3.5" />
       Preparing visual…
     </div>
@@ -69,7 +70,11 @@ function ChatVisualFrame(props: { readonly html: string }) {
           src={src}
           title={TITLE}
           // The page measures its full height while hidden, so it appears once at its final size.
-          className={measured ? "block size-full" : "block size-full opacity-0"}
+          className={
+            measured
+              ? "block size-full transition-opacity duration-200"
+              : "block size-full opacity-0"
+          }
           onContentHeight={onContentHeight}
         />
       ) : null}

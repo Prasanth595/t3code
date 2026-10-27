@@ -5,6 +5,7 @@ import {
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
+import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -13,7 +14,8 @@ import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { postTheme, useHtmlRenderTheme } from "../threads/HtmlRenderWebView";
 
 const TITLE = "Visual";
-const PLACEHOLDER_HEIGHT = 80;
+// Near a small chart, so most visuals grow a little when they appear instead of jumping.
+const PLACEHOLDER_HEIGHT = 160;
 const MAX_REMEMBERED_SIZES = 200;
 const SIZE_MESSAGE_TYPE = "mira-visual-size";
 
@@ -55,7 +57,7 @@ function readSizeMessage(data: string): VisualSize | null {
 
 function Placeholder() {
   return (
-    <View className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border border-border">
+    <View className="flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-subtle">
       <AppActivityIndicator />
       <AppText className="text-xs text-foreground-muted">Preparing visual…</AppText>
     </View>
@@ -78,10 +80,12 @@ function ChatVisualFrame(props: { readonly html: string }) {
   const [size, setSize] = useState(() => measuredSizes.get(props.html));
   const height =
     size === undefined ? PLACEHOLDER_HEIGHT : Math.min(size.height, HTML_RENDER_MAX_FIT_HEIGHT);
+  const shown = size !== undefined;
+  const fade = useAnimatedStyle(() => ({ opacity: withTiming(shown ? 1 : 0, { duration: 200 }) }));
   return (
     <View className="my-3" style={{ height }}>
       {/* The page measures its full height while hidden, so it appears once at its final size. */}
-      <View style={{ flex: 1, opacity: size === undefined ? 0 : 1 }}>
+      <Animated.View style={[{ flex: 1 }, fade]}>
         <VisualWebView
           html={props.html}
           scrollEnabled={
@@ -92,7 +96,7 @@ function ChatVisualFrame(props: { readonly html: string }) {
             setSize(next);
           }}
         />
-      </View>
+      </Animated.View>
       {size === undefined ? (
         <View pointerEvents="none" className="absolute inset-0">
           <Placeholder />
