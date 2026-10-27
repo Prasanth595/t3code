@@ -20,10 +20,7 @@ const decodeError = Schema.decodeUnknownOption(
 );
 
 /** Whether a file can go into a chat, judged before uploading it. */
-export const chatAttachmentKind = (
-  name: string,
-  mimeType: string,
-): SaasChatAttachmentKind | undefined => {
+const chatAttachmentKind = (name: string, mimeType: string): SaasChatAttachmentKind | undefined => {
   if (SAAS_CHAT_IMAGE_TYPES.includes(mimeType)) return "image";
   const extension = name.toLowerCase().split(".").pop() ?? "";
   return SAAS_CHAT_DOCUMENT_EXTENSIONS.includes(extension) ? "document" : undefined;

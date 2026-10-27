@@ -134,7 +134,9 @@ function startsTurn(entry: ProviderReplayEntryType): boolean {
 }
 
 function processStartFrame(command: ChildProcess.Command) {
-  const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+  if (!ChildProcess.isStandardCommand(command)) return { type: "process_start", args: [] };
+  // The bundled Pi CLI runs as `node <cli> ...`; fixtures record only Pi's own arguments.
+  const args = command.command === process.execPath ? command.args.slice(1) : command.args;
   return { type: "process_start", args: [...args] };
 }
 

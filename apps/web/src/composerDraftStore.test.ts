@@ -1360,7 +1360,7 @@ describe("composerDraftStore modelSelection", () => {
     });
     expect(draftFor(threadId, OTHER_TEST_ENVIRONMENT_ID)).toEqual(remoteBefore);
 
-    const remoteModel = DEFAULT_MODEL_BY_PROVIDER[CLAUDE_AGENT_DRIVER]!;
+    const remoteModel = "claude-opus-5-5";
     h.update({ modelSelection: modelSelection(CLAUDE_AGENT_DRIVER, remoteModel) });
     const effective = deriveEffectiveComposerModelState({
       draft: draftFor(threadId, TEST_ENVIRONMENT_ID),

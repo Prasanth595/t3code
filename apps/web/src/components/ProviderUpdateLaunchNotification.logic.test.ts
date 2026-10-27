@@ -73,7 +73,7 @@ function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateC
 describe("provider update launch notification logic", () => {
   it("disables one-click updates when provider instances disagree on the update command", () => {
     const candidate = updateCandidate({
-      driver: driver("claudeAgent"),
+      driver: driver("pi"),
       instanceId: instanceId("claude_personal"),
       latestVersion: "2.1.123",
     });
@@ -82,7 +82,7 @@ describe("provider update launch notification logic", () => {
       canOneClickUpdateProviderCandidate(candidate, [
         candidate,
         provider({
-          driver: driver("claudeAgent"),
+          driver: driver("pi"),
           instanceId: instanceId("claude_work"),
           latestVersion: "2.1.123",
           canUpdate: true,
@@ -94,7 +94,7 @@ describe("provider update launch notification logic", () => {
 
   it("keeps one-click updates enabled when sibling instances are already current", () => {
     const candidate = updateCandidate({
-      driver: driver("claudeAgent"),
+      driver: driver("pi"),
       instanceId: instanceId("claude_personal"),
       latestVersion: "2.1.123",
       updateCommand: "npm install -g @anthropic-ai/claude-code@latest",
@@ -104,7 +104,7 @@ describe("provider update launch notification logic", () => {
       hasOneClickUpdateProviderCandidate(candidate, [
         candidate,
         provider({
-          driver: driver("claudeAgent"),
+          driver: driver("pi"),
           instanceId: instanceId("claude_work"),
           version: "2.1.123",
           latestVersion: "2.1.123",
@@ -118,7 +118,7 @@ describe("provider update launch notification logic", () => {
       canOneClickUpdateProviderCandidate(candidate, [
         candidate,
         provider({
-          driver: driver("claudeAgent"),
+          driver: driver("pi"),
           instanceId: instanceId("claude_work"),
           version: "2.1.123",
           latestVersion: "2.1.123",
@@ -148,9 +148,9 @@ describe("provider update launch notification logic", () => {
 
   it("shows the active sidebar pill for an update on a non-default instance", () => {
     const view = getProviderUpdateSidebarPillView([
-      provider({ driver: driver("claudeAgent") }),
+      provider({ driver: driver("pi") }),
       provider({
-        driver: driver("claudeAgent"),
+        driver: driver("pi"),
         instanceId: instanceId("claude_work"),
         updateState: {
           status: "running",
@@ -163,10 +163,10 @@ describe("provider update launch notification logic", () => {
     ]);
 
     expect(view).toMatchObject({
-      key: "loading:claudeAgent:running",
+      key: "loading:pi:running",
       tone: "loading",
-      title: "Updating Claude",
-      description: "Claude update in progress.",
+      title: "Updating Pi",
+      description: "Pi update in progress.",
     });
   });
 
@@ -174,7 +174,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateSidebarPillView(
       [
         provider({
-          driver: driver("claudeAgent"),
+          driver: driver("pi"),
           updateState: {
             status: "failed",
             startedAt: checkedAt,
@@ -184,7 +184,7 @@ describe("provider update launch notification logic", () => {
           },
         }),
         provider({
-          driver: driver("claudeAgent"),
+          driver: driver("pi"),
           instanceId: instanceId("claude_work"),
           version: "1.1.0",
           latestVersion: "1.1.0",
@@ -202,9 +202,9 @@ describe("provider update launch notification logic", () => {
     );
 
     expect(view).toMatchObject({
-      key: "succeeded:claudeAgent:2026-04-23T10:01:00.000Z:Provider updated.",
+      key: "succeeded:pi:2026-04-23T10:01:00.000Z:Provider updated.",
       tone: "success",
-      title: "Claude updated: v1.1.0",
+      title: "Pi updated: v1.1.0",
     });
   });
 
@@ -231,7 +231,7 @@ describe("provider update launch notification logic", () => {
   it("shows a newer success before falling back to an older failure", () => {
     const providers = [
       provider({
-        driver: driver("claudeAgent"),
+        driver: driver("pi"),
         updateState: {
           status: "failed",
           startedAt: checkedAt,
@@ -261,7 +261,7 @@ describe("provider update launch notification logic", () => {
     expect(successView).toMatchObject({
       key: "succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated.",
       tone: "success",
-      title: "Codex updated: v1.2.0",
+      title: "codex updated: v1.2.0",
     });
 
     const failureView = getProviderUpdateSidebarPillView(providers, {
@@ -269,9 +269,9 @@ describe("provider update launch notification logic", () => {
       dismissedKeys: new Set(["succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated."]),
     });
     expect(failureView).toMatchObject({
-      key: "failed:claudeAgent:2026-04-23T10:00:00.000Z:Update command exited with code 1.",
+      key: "failed:pi:2026-04-23T10:00:00.000Z:Update command exited with code 1.",
       tone: "error",
-      title: "Claude v1.1.0 update failed",
+      title: "Pi v1.1.0 update failed",
     });
   });
 });
@@ -334,11 +334,11 @@ describe("getProviderUpdateRunToastView", () => {
       ),
       run(
         "Mac Studio",
-        "claudeAgent",
+        "pi",
         AsyncResult.success({
           providers: [
             provider({
-              driver: driver("claudeAgent"),
+              driver: driver("pi"),
               updateState: updateState("failed", "npm exited with code 1."),
             }),
           ],
@@ -351,7 +351,7 @@ describe("getProviderUpdateRunToastView", () => {
     expect(view).toEqual({
       type: "error",
       title: "2 of 3 provider updates failed",
-      description: "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed",
+      description: "Mac Studio · Pi: npm exited with code 1.\nLaptop · codex: WebSocket closed",
     });
   });
 });

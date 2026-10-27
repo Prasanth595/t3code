@@ -1122,16 +1122,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const instanceId = ProviderInstanceId.make("codex_terminal");
+      const instanceId = ProviderInstanceId.make("pi_terminal");
 
       yield* serverSettings.updateSettings({
         providerInstances: {
           [instanceId]: {
-            driver: ProviderDriverKind.make("codex"),
+            driver: ProviderDriverKind.make("pi"),
             environment: [
               { name: "OPENROUTER_API_KEY", value: "sk-terminal-secret", sensitive: true },
             ],
-            config: { homePath: "~/.codex-terminal" },
           },
         },
       });
@@ -1145,7 +1144,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
 
       assert.equal(environment.OPENROUTER_API_KEY, "sk-terminal-secret");
-      assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
       assert.notInclude(persisted, "sk-terminal-secret");
       assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(layerServerSettings())),
