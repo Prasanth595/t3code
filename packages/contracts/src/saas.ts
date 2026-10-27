@@ -84,6 +84,23 @@ export const SaasAdminUserPlanRequest = Schema.Struct({
   planId: SaasPlanId,
 });
 
+/** One UTC day of chat mode: messages and tokens, split by signed-in accounts and devices. */
+export const SaasAdminChatDay = Schema.Struct({
+  day: Schema.String,
+  userMessages: NonNegativeInt,
+  anonymousMessages: NonNegativeInt,
+  activeUsers: NonNegativeInt,
+  activeDevices: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+});
+export type SaasAdminChatDay = typeof SaasAdminChatDay.Type;
+
+export const SaasAdminStatsResponse = Schema.Struct({
+  /** Oldest first, one entry per day including quiet ones. */
+  chatDays: Schema.Array(SaasAdminChatDay),
+});
+
 /** How much the model thinks before answering; `disabled` skips thinking entirely. */
 export const SaasReasoningEffort = Schema.Literals(["disabled", "low", "high", "max"]);
 export type SaasReasoningEffort = typeof SaasReasoningEffort.Type;

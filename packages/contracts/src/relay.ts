@@ -20,6 +20,7 @@ import {
   SaasAdminPlansResponse,
   SaasAdminSettingsRequest,
   SaasAdminSettingsResponse,
+  SaasAdminStatsResponse,
   SaasAdminUserPlanRequest,
   SaasAdminUsersResponse,
   SaasBillingUnavailableError,
@@ -1325,6 +1326,11 @@ const RelayAdminGroup = HttpApiGroup.make("admin")
       success: SaasPlan,
       error: [...RelayAdminErrors, SaasInvalidRequestError],
     }).annotate(OpenApi.Summary, "Create or update a plan"),
+    HttpApiEndpoint.get("getStats", "/v1/admin/stats", {
+      headers: RelayBearerRequestHeaders,
+      success: SaasAdminStatsResponse,
+      error: RelayAdminErrors,
+    }).annotate(OpenApi.Summary, "Chat activity for the last 30 days"),
     HttpApiEndpoint.get("getSettings", "/v1/admin/settings", {
       headers: RelayBearerRequestHeaders,
       success: SaasAdminSettingsResponse,
