@@ -27,6 +27,7 @@ import {
   DEEPSEEK_SEARCH_URL,
   MAX_SEARCH_ROUNDS,
   ModelTurnReader,
+  SHOW_VISUAL_TOOL,
   WEB_SEARCH_TOOL,
   contentEvent,
   doneEvent,
@@ -41,6 +42,8 @@ import * as SaasChat from "./SaasChat.ts";
 export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_CHAT_MESSAGES = 200;
+/** Model turns in one reply, counting the follow-ups after searches and visuals. */
+const MAX_MODEL_TURNS = 6;
 const CHAT_SYSTEM_PROMPT = `You are Mira, a friendly and helpful assistant. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.
 
 ${CHAT_VISUAL_GUIDE}`;
@@ -361,7 +364,6 @@ export const make = Effect.gen(function* () {
     readonly model: string;
     readonly effort: SaasReasoningEffort;
     readonly messages: ReadonlyArray<unknown>;
-    readonly search: boolean;
   }) =>
     httpClient.execute(
       HttpClientRequest.post(DEEPSEEK_CHAT_COMPLETIONS_URL).pipe(
@@ -372,9 +374,8 @@ export const make = Effect.gen(function* () {
           stream_options: { include_usage: true },
           ...reasoningFields(input.effort),
           messages: input.messages,
-          // Without the declaration after earlier tool results, DeepSeek writes its next call as text.
-          tools: [WEB_SEARCH_TOOL],
-          tool_choice: input.search ? "auto" : "none",
+          // Every turn declares every tool: DeepSeek writes calls to undeclared or forbidden tools as text.
+          tools: [WEB_SEARCH_TOOL, SHOW_VISUAL_TOOL],
         }),
       ),
     );
@@ -406,7 +407,7 @@ export const make = Effect.gen(function* () {
     readonly messages: ReadonlyArray<unknown>;
     readonly onUsage: (usage: TokenUsage | undefined) => Effect.Effect<void>;
   }) {
-    const first = yield* modelTurn({ ...input, search: true });
+    const first = yield* modelTurn(input);
     yield* Effect.annotateCurrentSpan({ "relay.llm.upstream_status": first.status });
     if (first.status !== 200) {
       yield* Effect.logWarning("Chat model refused the request", {
@@ -434,10 +435,18 @@ export const make = Effect.gen(function* () {
           usage.inputTokens += reader.inputTokens;
           usage.outputTokens += reader.outputTokens;
           const calls = reader.toolCalls;
-          if (calls.length === 0 || round >= MAX_SEARCH_ROUNDS) return Stream.empty;
+          if (calls.length === 0 || round + 1 >= MAX_MODEL_TURNS) return Stream.empty;
           const results = yield* Effect.forEach(
             calls,
             (call) => {
+              if (call.name === SHOW_VISUAL_TOOL.function.name) {
+                return Effect.succeed(
+                  "Shown to the user in the reply. Continue without repeating what it shows.",
+                );
+              }
+              if (round >= MAX_SEARCH_ROUNDS) {
+                return Effect.succeed("No more searches. Answer now with what you found.");
+              }
               const query = searchQuery(call);
               return query === undefined
                 ? Effect.succeed("The search needs a query.")
@@ -463,12 +472,7 @@ export const make = Effect.gen(function* () {
               content: results[index] ?? "",
             })),
           ];
-          const response = yield* modelTurn({
-            ...input,
-            messages: following,
-            // The last turn has to answer with what it found.
-            search: round + 1 < MAX_SEARCH_ROUNDS,
-          });
+          const response = yield* modelTurn({ ...input, messages: following });
           if (response.status !== 200) {
             yield* Effect.logWarning("Chat model refused a search follow-up", {
               status: response.status,
@@ -482,9 +486,10 @@ export const make = Effect.gen(function* () {
         text,
         Stream.unwrap(
           Effect.sync(() =>
-            reader.toolCalls.length === 0 || round >= MAX_SEARCH_ROUNDS
-              ? next
-              : Stream.concat(Stream.make(searchingEvent()), next),
+            round < MAX_SEARCH_ROUNDS &&
+            reader.toolCalls.some((call) => call.name === WEB_SEARCH_TOOL.function.name)
+              ? Stream.concat(Stream.make(searchingEvent()), next)
+              : next,
           ),
         ),
       );

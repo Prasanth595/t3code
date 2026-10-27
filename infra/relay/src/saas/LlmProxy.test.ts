@@ -367,39 +367,70 @@ describe("chat mode search and attachments", () => {
     }),
   );
 
-  it.effect("keeps the search tool declared but unusable on the last round", () =>
+  const toolCall = (id: string, name: string, args: string) => ({
+    choices: [{ delta: { tool_calls: [{ index: 0, id, function: { name, arguments: args } }] } }],
+  });
+  const lastMessage = (request: HttpClientRequest.HttpClientRequest) =>
+    (sentJson(request)?.messages as ReadonlyArray<{ content?: unknown }> | undefined)?.at(-1);
+  const streamedContent = (body: string) =>
+    body
+      .split("\n\n")
+      .flatMap((event) => {
+        const data = event.replace(/^data: /, "");
+        if (data === "" || data === "[DONE]") return [];
+        const content = JSON.parse(data).choices?.[0]?.delta?.content;
+        return typeof content === "string" ? [content] : [];
+      })
+      .join("");
+
+  it.effect("refuses searches past the limit while every turn keeps the tools declared", () =>
     Effect.gen(function* () {
-      // A model that saw tool results but no tool declaration writes its next call as plain text.
+      // DeepSeek writes a call to a tool it cannot use as plain text in the reply.
       const harness = makeHarness({
-        upstream: (request) =>
-          request.url.endsWith("/v1/tools/search")
-            ? Response.json({ results: [] })
-            : sentJson(request)?.tool_choice === "none"
-              ? stream({ choices: [{ delta: { content: "Done." } }] })
-              : stream({
-                  choices: [
-                    {
-                      delta: {
-                        tool_calls: [
-                          {
-                            index: 0,
-                            id: `call_${harness.sent.length}`,
-                            function: { name: "web_search", arguments: '{"query":"ai"}' },
-                          },
-                        ],
-                      },
-                    },
-                  ],
-                }),
+        upstream: (request) => {
+          if (request.url.endsWith("/v1/tools/search")) return Response.json({ results: [] });
+          return String(lastMessage(request)?.content).startsWith("No more searches")
+            ? stream({ choices: [{ delta: { content: "Done." } }] })
+            : stream(toolCall(`call_${harness.sent.length}`, "web_search", '{"query":"ai"}'));
+        },
       });
       expect(yield* readText(yield* harness.chatMode(device))).toContain("Done.");
-      const turns = harness.sent
-        .filter((request) => !request.url.endsWith("/v1/tools/search"))
-        .map((request) => sentJson(request));
-      expect(turns.slice(0, -1).every((turn) => turn?.tool_choice === "auto")).toBe(true);
-      const last = turns.at(-1);
-      expect(last?.tools).toHaveLength(1);
-      expect(last?.tool_choice).toBe("none");
+      const searches = harness.sent.filter((request) => request.url.endsWith("/v1/tools/search"));
+      expect(searches).toHaveLength(3);
+      const turns = harness.sent.filter((request) => !request.url.endsWith("/v1/tools/search"));
+      for (const turn of turns) {
+        expect(sentJson(turn)?.tools).toHaveLength(2);
+        expect(sentJson(turn)?.tool_choice).toBeUndefined();
+      }
+    }),
+  );
+
+  it.effect("streams a show_visual call as a visual block in the reply", () =>
+    Effect.gen(function* () {
+      let modelTurns = 0;
+      const harness = makeHarness({
+        upstream: () => {
+          modelTurns += 1;
+          return modelTurns === 1
+            ? stream(
+                { choices: [{ delta: { content: "Here:" } }] },
+                toolCall("call_1", "show_visual", '{"html":"<p>'),
+                {
+                  choices: [
+                    { delta: { tool_calls: [{ index: 0, function: { arguments: 'x</p>"}' } }] } },
+                  ],
+                },
+              )
+            : stream({ choices: [{ delta: { content: "Bye." } }] });
+        },
+      });
+      const body = yield* readText(yield* harness.chatMode(device));
+      expect(streamedContent(body)).toBe("Here:\n\n````visual\n<p>x</p>\n````\n\nBye.");
+      expect(body).not.toContain('"mira":{"status":"searching"}');
+      expect(lastMessage(harness.sent.at(-1)!)).toMatchObject({
+        role: "tool",
+        tool_call_id: "call_1",
+      });
     }),
   );
 

@@ -1,8 +1,9 @@
+import { CHAT_VISUAL_LANGUAGE } from "@t3tools/shared/htmlRender";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const DEEPSEEK_SEARCH_URL = "https://api.deepseek.com/v1/tools/search";
-/** Model turns that may search before the reply must be written without more searching. */
+/** Model turns that may search; later searches are refused so the model answers with what it found. */
 export const MAX_SEARCH_ROUNDS = 3;
 const SEARCH_RESULT_COUNT = 6;
 const MAX_QUERY_LENGTH = 128;
@@ -22,6 +23,26 @@ export const WEB_SEARCH_TOOL = {
     },
   },
 } as const;
+
+export const SHOW_VISUAL_TOOL = {
+  type: "function",
+  function: {
+    name: "show_visual",
+    description:
+      "Show the user a visual (chart, table, dashboard, timeline, diagram) inline in the reply. Pass one complete, self-contained HTML document.",
+    parameters: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "The complete HTML document to show." },
+      },
+      required: ["html"],
+    },
+  },
+} as const;
+
+// Longer than any fence the page itself is likely to contain, so its HTML cannot close the block.
+const VISUAL_FENCE = "````";
+const VISUAL_FALLBACK_HTML = "<p>The visual could not be shown.</p>";
 
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -54,6 +75,8 @@ export class ModelTurnReader {
   private buffer = "";
   private readonly decoder = new TextDecoder();
   private readonly calls = new Map<number, { id: string; name: string; arguments: string }>();
+  /** The show_visual call whose fence is open in the streamed text. */
+  private openVisual: { id: string; name: string; arguments: string } | undefined;
   content = "";
   reasoning = "";
   inputTokens = 0;
@@ -69,9 +92,17 @@ export class ModelTurnReader {
 
   finish(): string {
     this.buffer += this.decoder.decode();
-    const text = this.readLine(this.buffer);
+    const text = this.readLine(this.buffer) + this.closeVisual();
     this.buffer = "";
     return text;
+  }
+
+  /** Streams a show_visual call as a visual fence: clients show a placeholder until it closes. */
+  private closeVisual(): string {
+    const call = this.openVisual;
+    if (call === undefined) return "";
+    this.openVisual = undefined;
+    return `${visualHtml(call)}\n${VISUAL_FENCE}\n\n`;
   }
 
   get toolCalls(): ReadonlyArray<ToolCall> {
@@ -95,6 +126,7 @@ export class ModelTurnReader {
         typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0;
     }
     let text = "";
+    let fences = "";
     for (const choice of Array.isArray(chunk.choices) ? chunk.choices : []) {
       const delta = record(record(choice)?.delta);
       if (!delta) continue;
@@ -106,13 +138,18 @@ export class ModelTurnReader {
         const index = typeof call?.index === "number" ? call.index : 0;
         const current = this.calls.get(index) ?? { id: "", name: "", arguments: "" };
         if (typeof call?.id === "string") current.id = call.id;
+        const named = current.name !== "";
         if (typeof fn?.name === "string") current.name += fn.name;
         if (typeof fn?.arguments === "string") current.arguments += fn.arguments;
         this.calls.set(index, current);
+        if (!named && current.name === SHOW_VISUAL_TOOL.function.name) {
+          fences += `${this.closeVisual()}\n\n${VISUAL_FENCE}${CHAT_VISUAL_LANGUAGE}\n`;
+          this.openVisual = current;
+        }
       }
     }
     this.content += text;
-    return text;
+    return text + fences;
   }
 }
 
@@ -121,6 +158,12 @@ export const searchQuery = (call: ToolCall): string | undefined => {
   const args = record(Option.getOrUndefined(parseJson(call.arguments)));
   const query = typeof args?.query === "string" ? args.query.trim() : "";
   return query === "" ? undefined : query.slice(0, MAX_QUERY_LENGTH);
+};
+
+const visualHtml = (call: ToolCall): string => {
+  const args = record(Option.getOrUndefined(parseJson(call.arguments)));
+  const html = typeof args?.html === "string" ? args.html.trim() : "";
+  return html === "" ? VISUAL_FALLBACK_HTML : html;
 };
 
 export const searchRequestBody = (query: string) => ({ query, count: SEARCH_RESULT_COUNT });
