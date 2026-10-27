@@ -152,20 +152,30 @@ describe("editing scheduled task branch settings", () => {
 });
 
 describe("monthly scheduled tasks", () => {
+  it("refuses a monthly payload for an unsupported destination without changing the draft", () => {
+    const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
+    const draft = taskToDraft({ ...legacyTask, schedule });
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
+    expect(scheduleFromDraft(draft, false)).toBeNull();
+    expect(scheduleFromDraft(draft)).toBeNull();
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
+    expect(scheduleFromDraft(taskToDraft(legacyTask), false)).toEqual(legacyTask.schedule);
+  });
+
   it("round-trips the monthly day and time without weekday restrictions", () => {
     const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
     const draft = taskToDraft({ ...legacyTask, schedule });
     expect(draft.scheduleMode).toBe("monthly");
     expect(draft.dayOfMonth).toBe("31");
-    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
     expect(scheduleFromDraft({ ...draft, scheduleMode: "fixed" })).toEqual({
       type: "fixed_time",
       timeOfDay: "17:45",
     });
     for (const dayOfMonth of ["", "0", "32", "1.5", "abc"]) {
-      expect(scheduleFromDraft({ ...draft, dayOfMonth })).toBeNull();
+      expect(scheduleFromDraft({ ...draft, dayOfMonth }, true)).toBeNull();
     }
-    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" }, true)).toBeNull();
   });
 });
 

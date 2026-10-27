@@ -14,6 +14,18 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("preserves advertised monthly scheduling support and accepts older descriptors", () => {
+    expect(decodeDescriptor(descriptor).capabilities.monthlyScheduledTasks).toBeUndefined();
+    for (const monthlyScheduledTasks of [false, true]) {
+      expect(
+        decodeDescriptor({
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, monthlyScheduledTasks },
+        }).capabilities.monthlyScheduledTasks,
+      ).toBe(monthlyScheduledTasks);
+    }
+  });
+
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {

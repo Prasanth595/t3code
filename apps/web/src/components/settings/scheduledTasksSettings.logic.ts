@@ -144,7 +144,10 @@ export function webhookDeliveryLabel(delivery: {
   return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
 }
 
-export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
+export function scheduleFromDraft(
+  draft: DraftState,
+  supportsMonthly = false,
+): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
     if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
@@ -188,6 +191,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     return { type: "interval", everyMs };
   }
   if (draft.scheduleMode === "monthly") {
+    if (!supportsMonthly) return null;
     const dayOfMonth = Number(draft.dayOfMonth);
     if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) return null;
     if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay)) return null;

@@ -1123,6 +1123,8 @@ function ScheduledTaskEditorForm({
   const environment = useEnvironment(environmentId);
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
+  const supportsMonthly =
+    environment?.serverConfig?.environment.capabilities.monthlyScheduledTasks === true;
   const tasksQuery = useEnvironmentQuery(
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
@@ -1144,6 +1146,7 @@ function ScheduledTaskEditorForm({
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
+  const monthlyUnsupported = draft.scheduleMode === "monthly" && !supportsMonthly;
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1214,7 +1217,14 @@ function ScheduledTaskEditorForm({
       reportFailure("Invalid filter", parsedFilters.error);
       return;
     }
-    const schedule = scheduleFromDraft(draft);
+    if (monthlyUnsupported) {
+      reportFailure(
+        "Monthly scheduling unavailable",
+        "Update T3 Code on this environment to save monthly schedules.",
+      );
+      return;
+    }
+    const schedule = scheduleFromDraft(draft, supportsMonthly);
     if (schedule === null) {
       if (draft.scheduleMode === "monthly")
         reportFailure("Invalid monthly schedule", "Choose a day from 1 to 31 and a valid time.");
@@ -1517,7 +1527,7 @@ function ScheduledTaskEditorForm({
                   const mode = values[0] as ScheduleMode | undefined;
                   if (
                     mode === "fixed" ||
-                    mode === "monthly" ||
+                    (mode === "monthly" && supportsMonthly) ||
                     mode === "interval" ||
                     mode === "webhook"
                   )
@@ -1532,11 +1542,21 @@ function ScheduledTaskEditorForm({
                 }}
               >
                 <Toggle value="fixed">Weekly</Toggle>
-                <Toggle value="monthly">Monthly</Toggle>
+                {supportsMonthly || draft.scheduleMode === "monthly" ? (
+                  <Toggle value="monthly" disabled={!supportsMonthly}>
+                    Monthly
+                  </Toggle>
+                ) : null}
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>
             </div>
+
+            {monthlyUnsupported ? (
+              <p className="text-sm text-destructive" role="alert">
+                Update T3 Code on this environment to save monthly schedules.
+              </p>
+            ) : null}
 
             {draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
@@ -1821,7 +1841,14 @@ function ScheduledTaskEditorForm({
         </DialogClose>
         <Button
           size="sm"
-          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          disabled={
+            !canOperate ||
+            saving ||
+            editingTaskMissing ||
+            !connected ||
+            !tasksQuery.data ||
+            monthlyUnsupported
+          }
           onClick={() => void submit()}
         >
           {draft.editingId ? "Save task" : "Create task"}

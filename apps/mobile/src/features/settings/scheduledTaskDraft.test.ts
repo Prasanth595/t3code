@@ -16,15 +16,28 @@ import {
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
+  it("refuses a monthly payload for an unsupported destination without changing the draft", () => {
+    const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
+    const draft = scheduleDraftForTask({ schedule });
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
+    expect(scheduleFromDraft(draft, false)).toBeNull();
+    expect(scheduleFromDraft(draft)).toBeNull();
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
+    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval" }, false)).toEqual({
+      type: "interval",
+      everyMs: 900_000,
+    });
+  });
+
   it("round-trips monthly schedules and tracks edits to their day", () => {
     const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
     const draft = scheduleDraftForTask({ schedule });
     expect(draft.mode).toBe("monthly");
-    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    expect(scheduleFromDraft(draft, true)).toEqual(schedule);
     for (const dayOfMonth of ["", "0", "32", "1.5", "abc"]) {
-      expect(scheduleFromDraft({ ...draft, dayOfMonth })).toBeNull();
+      expect(scheduleFromDraft({ ...draft, dayOfMonth }, true)).toBeNull();
     }
-    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" }, true)).toBeNull();
     const initial = { ...createDraft(null, null), schedule: draft };
     expect(hasScheduledTaskDraftChanges(initial, initial)).toBe(false);
     expect(

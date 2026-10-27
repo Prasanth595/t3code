@@ -125,7 +125,10 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
   }
 }
 
-export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+export function scheduleFromDraft(
+  draft: ScheduleDraft,
+  supportsMonthly = false,
+): ScheduledTaskUpsertSchedule | null {
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
@@ -177,6 +180,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
   if (draft.mode === "monthly") {
+    if (!supportsMonthly) return null;
     const dayOfMonth = Number(draft.dayOfMonth);
     if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) return null;
     if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay)) return null;

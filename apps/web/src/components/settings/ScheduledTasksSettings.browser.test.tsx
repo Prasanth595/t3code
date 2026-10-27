@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import { createContext, useContext } from "react";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -39,13 +40,27 @@ const task: ScheduledTask = {
 };
 
 const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true }));
+const MonthlySchedulingContext = createContext<boolean | undefined>(undefined);
 
-function environment() {
+function setup() {
+  state.connected = true;
+  state.tasksLoaded = true;
+}
+
+function environment(monthlySupported?: boolean) {
   return {
     environmentId,
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
-    serverConfig: state.connected ? { environment: { platform: "linux" } } : null,
+    serverConfig: state.connected
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities:
+              monthlySupported === undefined ? {} : { monthlyScheduledTasks: monthlySupported },
+          },
+        }
+      : null,
   };
 }
 
@@ -93,7 +108,7 @@ vi.mock(import("../../state/query"), async (original) => ({
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironment: (() => environment()) as never,
+  useEnvironment: (() => environment(useContext(MonthlySchedulingContext))) as never,
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
@@ -106,8 +121,7 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 
 describe("ScheduledTasksSettings", () => {
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
-    state.connected = true;
-    state.tasksLoaded = true;
+    setup();
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
@@ -124,7 +138,7 @@ describe("ScheduledTasksSettings", () => {
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {
-    state.connected = true;
+    setup();
     state.tasksLoaded = false;
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     await userEvent.click(page.getByRole("button", { name: "New task" }));
@@ -137,5 +151,46 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("offers monthly scheduling only when supported and preserves a draft when support is lost", async () => {
+    setup();
+    await using screen = await render(
+      <MonthlySchedulingContext value={undefined}>
+        <ScheduledTasksSettings taskId={task.id} />
+      </MonthlySchedulingContext>,
+    );
+    const dialog = page.getByRole("dialog");
+    const monthly = dialog.getByRole("button", { name: "Monthly", exact: true });
+    await expect.element(monthly).not.toBeInTheDocument();
+
+    await screen.rerender(
+      <MonthlySchedulingContext value={true}>
+        <ScheduledTasksSettings taskId={task.id} />
+      </MonthlySchedulingContext>,
+    );
+    await userEvent.click(monthly);
+    const day = dialog.getByRole("combobox", { name: "Day of month" });
+    await userEvent.click(day);
+    await userEvent.click(page.getByRole("option", { name: "31", exact: true }));
+    const name = dialog.getByRole("textbox", { name: "Name" });
+    await userEvent.fill(name, "Monthly review");
+
+    await screen.rerender(
+      <MonthlySchedulingContext value={false}>
+        <ScheduledTasksSettings taskId={task.id} />
+      </MonthlySchedulingContext>,
+    );
+    await expect.element(monthly).toBeDisabled();
+    await expect.element(day).toHaveTextContent("31");
+    await expect.element(name).toHaveValue("Monthly review");
+    await expect
+      .element(dialog.getByText("Update T3 Code on this environment to save monthly schedules."))
+      .toBeVisible();
+    const save = dialog.getByRole("button", { name: "Save task" });
+    await expect.element(save).toBeDisabled();
+
+    await userEvent.click(dialog.getByRole("button", { name: "Weekly", exact: true }));
+    await expect.element(save).toBeEnabled();
   });
 });

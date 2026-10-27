@@ -653,6 +653,8 @@ function TaskForm({
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
+  const supportsMonthly = config?.environment.capabilities.monthlyScheduledTasks === true;
+  const monthlyUnsupported = draft.schedule.mode === "monthly" && !supportsMonthly;
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
@@ -687,12 +689,20 @@ function TaskForm({
       environmentUnavailable
     )
       return;
+    if (monthlyUnsupported) {
+      Dialog.alert(
+        "Monthly scheduling unavailable",
+        "Update T3 Code on this environment to save monthly schedules.",
+      );
+      return;
+    }
     // Preserve signatures edited on other clients by sending the task's current value.
     const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
     const schedule = scheduleFromDraft(
       draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
         ? { ...draft.schedule, signature: liveTask.schedule.signature }
         : draft.schedule,
+      supportsMonthly,
     );
     if (
       draft.schedule.mode === "webhook" &&
@@ -939,7 +949,7 @@ function TaskForm({
             <SegmentedControl
               options={[
                 { value: "fixed_time", label: "Weekly" },
-                { value: "monthly", label: "Monthly" },
+                ...(supportsMonthly ? [{ value: "monthly" as const, label: "Monthly" }] : []),
                 { value: "interval", label: "Interval" },
                 { value: "webhook", label: "On webhook" },
               ]}
@@ -957,6 +967,11 @@ function TaskForm({
               }}
             />
           </View>
+          {monthlyUnsupported ? (
+            <Text accessibilityRole="alert" className="px-4 pb-3 text-sm text-danger-foreground">
+              Update T3 Code on this environment to save monthly schedules.
+            </Text>
+          ) : null}
           {draft.schedule.mode === "fixed_time" || draft.schedule.mode === "monthly" ? (
             <>
               <Pressable
@@ -1161,7 +1176,13 @@ function TaskForm({
         tone="primary"
         fullWidth
         loading={saving}
-        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
+        disabled={
+          !canOperate ||
+          dictationPending ||
+          taskMissing ||
+          environmentUnavailable ||
+          monthlyUnsupported
+        }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
       />
