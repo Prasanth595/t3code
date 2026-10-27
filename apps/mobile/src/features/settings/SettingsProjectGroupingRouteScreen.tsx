@@ -12,7 +12,7 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
-import { WorkingSectionSettings } from "./ThreadSettingsSections";
+import { NewThreadSettingsSection, WorkingSectionSettings } from "./ThreadSettingsSections";
 import { SnoozeSettingsSection } from "./SnoozeSettingsSection";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
@@ -69,6 +69,7 @@ export function SettingsProjectGroupingRouteScreen() {
           ))}
         </SettingsSection>
         <WorkingSectionSettings />
+        <NewThreadSettingsSection />
         <SnoozeSettingsSection />
       </ScrollView>
     </SettingsScreen>

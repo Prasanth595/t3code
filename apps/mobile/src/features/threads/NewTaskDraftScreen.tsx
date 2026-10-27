@@ -8,6 +8,8 @@ import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavi
 import { submittedThreadParams } from "./thread-route-state";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
+import { useRememberThreadProject } from "./useRememberThreadProject";
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
@@ -20,6 +22,7 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import {
   CommonActions,
   StackActions,
+  useIsFocused,
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
@@ -88,7 +91,6 @@ import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
-  resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
@@ -157,6 +159,7 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const goBack = useWorkspaceBackNavigation("threads");
   const {
     consumeShare,
@@ -166,6 +169,13 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
+  // selectedProject falls back to the environment's first project; remember only a chosen one.
+  useRememberThreadProject(
+    selectedProject &&
+      selectedProjectKey === scopedProjectKey(selectedProject.environmentId, selectedProject.id)
+      ? selectedProject
+      : null,
+  );
   const selectedProjectLabel = (() => {
     if (!selectedProject) return null;
     const scope = projectScopes.find((candidate) =>
@@ -417,6 +427,7 @@ export function NewTaskDraftScreen(props: {
   }, [navigation, openDraft, projects, props.draftId]);
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
+  const initialPickerRef = useRef<"open" | "dismissed" | null>(null);
 
   useEffect(() => {
     if (props.draftId) {
@@ -478,22 +489,36 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes);
+    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes, {
+      incomingShareId: props.incomingShareId,
+      pickerClosed: initialPickerRef.current === "open" && isFocused,
+    });
     if (selection.kind === "preserve") {
+      initialPickerRef.current = null;
       return;
     }
     if (selection.kind === "select") {
       setProject(selection.project);
       return;
     }
-
+    if (selection.kind === "dismiss") {
+      initialPickerRef.current = "dismissed";
+      goBack();
+      return;
+    }
+    // Open the first picker once; catalog updates must not push it again over a cancelled draft.
+    if (initialPickerRef.current !== null) {
+      return;
+    }
+    initialPickerRef.current = "open";
     navigation.dispatch(CommonActions.navigate("NewTaskProject"));
   }, [
+    goBack,
+    isFocused,
     projectScopes,
     projects,
     flow.draftKey,
     props.initialProjectRef,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening a draft from a share or draft id re-resolves its project.
     props.incomingShareId,
     props.draftId,
     navigation,
@@ -808,15 +833,7 @@ export function NewTaskDraftScreen(props: {
         draft.modelSelection ?? null,
         selectedProject.id,
       ) ?? flow.selectedModel;
-    const workspaceSelection = resolveNewTaskWorkspaceSelection({
-      selection: draft.workspaceSelection,
-      fallback: {
-        mode: flow.workspaceMode,
-        branch: flow.selectedBranchName,
-        worktreePath: flow.selectedWorktreePath,
-      },
-      isGitRepo: flow.isGitRepo,
-    });
+    const workspaceSelection = flow.resolveWorkspaceSelection(draft.workspaceSelection);
     const workspaceMode = workspaceSelection.mode;
     const selectedBranchName = workspaceSelection.branch;
     const initialMessageText = draft.text.trim();
@@ -1076,18 +1093,21 @@ export function NewTaskDraftScreen(props: {
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback>
-        <AppBar
-          title="New thread"
-          sidebar={false}
-          onBack={goBack}
-          options={{
-            ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
-            unstable_headerSubtitle: undefined,
-            unstable_headerRightItems: () => [],
-            unstable_headerToolbarItems: () => [],
-          }}
-        />
+      <ThreadScreenFallback
+        header={
+          <AppBar
+            title="New thread"
+            sidebar={false}
+            onBack={goBack}
+            options={{
+              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
+              unstable_headerSubtitle: undefined,
+              unstable_headerRightItems: () => [],
+              unstable_headerToolbarItems: () => [],
+            }}
+          />
+        }
+      >
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
