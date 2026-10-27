@@ -178,6 +178,13 @@ describe("media on custom hosts", () => {
         text: expect.stringContaining("Before upgrading"),
       }),
     );
+    expect(segments).toContainEqual(
+      expect.objectContaining({
+        kind: "attachment",
+        url: "https://example.com/a.mp4",
+        media: "video",
+      }),
+    );
   });
 });
 
