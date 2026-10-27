@@ -1109,6 +1109,8 @@ function withCodexManagedFailure(
 }
 
 interface ActiveCodexTurnContext {
+  reportedContextWindow?: number;
+  modelRerouted?: boolean;
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -1606,6 +1608,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // Project config can override the window. Keep a bounded, instance-local
+  // history across sessions, with separate entries for each exact cwd.
+  const reportedContextWindows: Array<{
+    readonly selection: ModelSelection;
+    readonly cwd: string | null;
+    readonly window: number;
+  }> = [];
+  const reportedContextWindow = (selection: ModelSelection, cwd: string | null | undefined) =>
+    reportedContextWindows.find(
+      (report) =>
+        report.cwd === (cwd ?? null) && canReuseCodexContextUsage(report.selection, selection),
+    );
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -4300,6 +4314,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (context === undefined) {
               return;
             }
+            const window = payload.tokenUsage.modelContextWindow;
+            if (
+              context.subagent === null &&
+              window != null &&
+              Number.isFinite(window) &&
+              window > 0
+            ) {
+              context.reportedContextWindow = window;
+            }
             const now = yield* DateTime.now;
             yield* emitProviderEvent({
               type: "provider_turn.updated",
@@ -4337,7 +4360,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         );
         yield* client.handleServerNotification("model/rerouted", (payload) =>
-          updateSubagentSelection(payload.threadId, payload.toModel),
+          Effect.gen(function* () {
+            const context = yield* awaitActiveTurn(payload.turnId);
+            if (context !== undefined) context.modelRerouted = true;
+            yield* updateSubagentSelection(payload.threadId, payload.toModel);
+          }),
         );
 
         yield* client.handleServerNotification("turn/started", (payload) =>
@@ -6098,6 +6125,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (context === undefined) {
               return;
             }
+            // Wait for native completion so a reroute after usage cannot teach
+            // the selected model a different model's window.
+            const window = context.reportedContextWindow;
+            if (window !== undefined && !context.modelRerouted) {
+              const { modelSelection: selection, runtimePolicy } = context.input;
+              const known = reportedContextWindow(selection, runtimePolicy.cwd);
+              if (known !== undefined) {
+                reportedContextWindows.splice(reportedContextWindows.indexOf(known), 1);
+              }
+              reportedContextWindows.unshift({ selection, cwd: runtimePolicy.cwd, window });
+              reportedContextWindows.length = Math.min(reportedContextWindows.length, 128);
+            }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
             const status =
               nativeStatus === "completed" &&
@@ -6535,6 +6574,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
+          getModelContextWindow: (selection, cwd) => reportedContextWindow(selection, cwd)?.window,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
