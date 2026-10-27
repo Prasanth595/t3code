@@ -243,9 +243,11 @@ function ProviderAccount({
     );
   }
   function onMenuAction(id: string) {
-    if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
+    if (id === "signOut") signOut();
+    // iOS keeps a disabled submenu's children selectable, so sign-in guards here too.
+    else if (signInDisabled) return;
+    else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
     else if (id === "change") startSignIn();
-    else if (id === "signOut") signOut();
   }
   const accountActions: MenuAction[] = [
     ...(canSignIn
@@ -255,7 +257,14 @@ function ProviderAccount({
             title: "Change account",
             image: "person.crop.circle",
             attributes: { disabled: signInDisabled },
-            ...(methodActions.length > 1 ? { subactions: methodActions } : {}),
+            ...(methodActions.length > 1
+              ? {
+                  subactions: methodActions.map((action) => ({
+                    ...action,
+                    attributes: { disabled: signInDisabled },
+                  })),
+                }
+              : {}),
           },
         ]
       : []),
@@ -460,7 +469,8 @@ function ProviderAccountSummary({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+      accessibilityLabel={[name, status, revealed ? email : null].filter(Boolean).join(", ")}
+      accessibilityHint={revealed ? "Hides the account email" : "Reveals the account email"}
       onPress={() => setRevealed((value) => !value)}
       className="min-w-0 shrink grow gap-0.5"
     >
