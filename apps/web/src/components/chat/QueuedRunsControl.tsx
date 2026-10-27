@@ -56,6 +56,42 @@ function queuedImageResources(projection: ThreadQueueProjection | undefined) {
   );
 }
 
+function QueuedMessageText({
+  text,
+  guestName,
+  compact,
+  position,
+}: {
+  readonly text: string;
+  readonly guestName: string | undefined;
+  readonly compact: boolean;
+  readonly position: number;
+}) {
+  const content = (
+    <>
+      {guestName === undefined ? null : <span className="text-guest-foreground">{guestName} </span>}
+      {text}
+    </>
+  );
+  if (!compact) return <p className="whitespace-pre-wrap wrap-anywhere">{content}</p>;
+  return (
+    <details className="group min-w-0">
+      <summary
+        aria-label={`Read queued message ${position}`}
+        className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden"
+      >
+        <span className="shrink-0 text-xs tabular-nums">{position}.</span>
+        <span className="min-w-0 flex-1 line-clamp-2 whitespace-pre-wrap wrap-anywhere group-open:hidden">
+          {content}
+        </span>
+        <span className="hidden flex-1 group-open:inline">Hide full message</span>
+        <ChevronDownIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 group-open:rotate-180" />
+      </summary>
+      <p className="mt-2 whitespace-pre-wrap wrap-anywhere">{content}</p>
+    </details>
+  );
+}
+
 export function QueuedRunsControl({
   ref,
   ...props
@@ -207,6 +243,7 @@ export function QueuedRunsControl({
   };
 
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
+  const compact = collapsible && showAll;
   const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
 
   return (
@@ -218,7 +255,13 @@ export function QueuedRunsControl({
       <span className="sr-only" aria-live="polite">
         {items.length} queued
       </span>
-      <ol className="flex flex-col items-end gap-3" id={queueListId}>
+      <ol
+        className={cn(
+          "flex flex-col items-end gap-3",
+          compact && "max-h-[50dvh] overflow-y-auto overscroll-contain pe-2",
+        )}
+        id={queueListId}
+      >
         {visibleItems.map((item, position) => {
           const previewText = assistantCitationsToPlainText(
             replaceComposerContextReferences(item.text, (reference) =>
@@ -238,7 +281,8 @@ export function QueuedRunsControl({
               {/* Dashed and unfilled: a turn that has not been sent yet. */}
               <div
                 className={cn(
-                  "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl border border-dashed px-3 py-2 text-sm",
+                  "flex min-w-0 flex-col gap-2 rounded-2xl border border-dashed px-3 py-2 text-sm",
+                  compact ? "w-full" : "max-w-[80%]",
                   isEditing
                     ? "border-primary/60 text-foreground"
                     : "border-muted-foreground/40 text-muted-foreground",
@@ -267,14 +311,13 @@ export function QueuedRunsControl({
                     ))}
                   </span>
                 ) : null}
-                {/* In full, like a sent turn: a queued message is read before it is sent. */}
                 {previewText ? (
-                  <p className="whitespace-pre-wrap wrap-anywhere">
-                    {item.guestName === undefined ? null : (
-                      <span className="text-guest-foreground">{item.guestName} </span>
-                    )}
-                    {previewText}
-                  </p>
+                  <QueuedMessageText
+                    text={previewText}
+                    guestName={item.guestName}
+                    compact={compact}
+                    position={position + 1}
+                  />
                 ) : null}
               </div>
               <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
