@@ -97,7 +97,7 @@ const make = Effect.gen(function* () {
             Effect.provideService(Path.Path, path),
           );
           directory = path.join(
-            config.homePath.trim() || config.shadowHomePath.trim()
+            config.setupMode === "managed" || config.homePath.trim() || config.shadowHomePath.trim()
               ? layout.sharedHomePath
               : path.resolve(
                   expandHomePath(env.CODEX_HOME?.trim() || path.join(home, ".codex"), home),
