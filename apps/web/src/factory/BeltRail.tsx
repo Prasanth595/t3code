@@ -131,7 +131,7 @@ function Post({
           className={cn(
             "text-xs",
             paused
-              ? "rounded-sm bg-warning/16 px-1.5 py-0.5 font-semibold text-warning-foreground"
+              ? "rounded-sm bg-warning/8 px-1.5 py-0.5 font-semibold text-warning-foreground dark:bg-warning/16"
               : "text-muted-foreground",
           )}
         >
