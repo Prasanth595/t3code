@@ -534,20 +534,19 @@ export class Launcher {
 
   async #serviceStartDiskSpaceBlocker(): Promise<string | undefined> {
     try {
-      return serviceStartDiskSpaceBlocker(
-        await filesystemBackupSpaceProbe.readFreeBytes(this.#baseDir),
-      );
+      const databasePath = NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
+      const resolvedDatabasePath = await NodeFSP.realpath(databasePath).catch(() => databasePath);
+      const [baseFreeBytes, databaseFreeBytes] = await Promise.all([
+        filesystemBackupSpaceProbe.readFreeBytes(this.#baseDir),
+        filesystemBackupSpaceProbe.readFreeBytes(NodePath.dirname(resolvedDatabasePath)),
+      ]);
+      return serviceStartDiskSpaceBlocker(Math.min(baseFreeBytes, databaseFreeBytes));
     } catch {
       return undefined;
     }
   }
 
-  #waitForDiskSpace(
-    reason: string,
-    version: string,
-    role: ChildRole,
-    update?: ServiceUpdateRecord,
-  ): void {
+  #waitForDiskSpace(reason: string, retry: () => Promise<void>): void {
     if (this.#timer !== undefined || this.#stopping) return;
     process.stderr.write(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
     this.#timer = setInterval(
@@ -556,12 +555,7 @@ export class Launcher {
           if (this.#child !== null || this.#stopping) return;
           if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
           this.#clearTimer();
-          try {
-            await this.#startChild(version, role, update);
-          } catch (error) {
-            if (role !== "trial" || update?.status !== "pending") throw error;
-            await this.#returnToPrevious(update, "failed", "candidate-start-failed");
-          }
+          await retry();
         }),
       DISK_SPACE_RETRY_MS,
     );
@@ -612,7 +606,14 @@ export class Launcher {
     if (this.#stopping) return;
     const diskSpaceBlocker = await this.#serviceStartDiskSpaceBlocker();
     if (diskSpaceBlocker !== undefined) {
-      this.#waitForDiskSpace(diskSpaceBlocker, version, role, update);
+      this.#waitForDiskSpace(diskSpaceBlocker, async () => {
+        try {
+          await this.#startChild(version, role, update);
+        } catch (error) {
+          if (role !== "trial" || update?.status !== "pending") throw error;
+          await this.#returnToPrevious(update, "failed", "candidate-start-failed");
+        }
+      });
       return;
     }
     if (!(await runtimeExists(this.#baseDir, version))) {
@@ -801,13 +802,19 @@ export class Launcher {
     if (diskSpaceBlocker !== undefined) {
       this.#clearTimer();
       const pending = this.#state.update;
-      const retryingTrial = child.role === "trial" || pending?.status === "pending";
-      this.#waitForDiskSpace(
-        diskSpaceBlocker,
-        retryingTrial && pending?.status === "pending" ? pending.targetVersion : child.version,
-        retryingTrial ? "trial" : "active",
-        pending,
-      );
+      const exitReason = `candidate-exited:${String(code ?? signal ?? "unknown")}`;
+      this.#waitForDiskSpace(diskSpaceBlocker, async () => {
+        if (child.role === "trial") {
+          if (pending?.status !== "pending") {
+            throw new Error("Trial child exited without matching pending state.");
+          }
+          await this.#returnToPrevious(pending, "rolled-back", exitReason);
+        } else if (pending?.status === "pending") {
+          await this.#startTrial(pending);
+        } else {
+          await this.#startChild(child.version, "active");
+        }
+      });
       return;
     }
     if (child.role === "trial") {
