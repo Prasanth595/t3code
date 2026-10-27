@@ -3540,10 +3540,8 @@ export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMac
       const outputDir = path.join(input.stageDistDir, entry);
       const apps = yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []));
       for (const app of apps) {
-        if (!app.endsWith(".app")) continue;
-        const asarPath = path.join(outputDir, app, "Contents/Resources/app.asar");
-        if (yield* fs.exists(asarPath).pipe(Effect.orElseSucceed(() => false))) {
-          asarPaths.push(asarPath);
+        if (app.endsWith(".app")) {
+          asarPaths.push(path.join(outputDir, app, "Contents/Resources/app.asar"));
         }
       }
     }

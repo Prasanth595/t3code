@@ -1342,6 +1342,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("rejects a macOS app without app.asar", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-payload-test-" });
+        yield* fs.makeDirectory(`${stageDistDir}/mac-arm64/T3 Code.app/Contents/Resources`, {
+          recursive: true,
+        });
+        const error = yield* validateMacPackagedPayload({ stageDistDir }).pipe(Effect.flip);
+
+        assert.instanceOf(error, BundleNotSelfContainedError);
+      }),
+    ),
+  );
+
   it.effect("leaves the bundle self-check of a cross-built payload to the verify job", () =>
     Effect.scoped(
       Effect.gen(function* () {
