@@ -64,6 +64,14 @@ export function latestExecutedRun(
   return latest;
 }
 
+/** A failed or interrupted latest executed run can be continued where it left off. */
+export function resumableContinuationRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  const executed = latestExecutedRun(runs);
+  return executed?.status === "failed" || executed?.status === "interrupted" ? executed : null;
+}
+
 /** Held queues can execute out of ordinal order; unfinished runs count as latest. */
 export function runRanAfter(
   run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,

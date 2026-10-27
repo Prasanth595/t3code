@@ -1,7 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { makeQueuedMessageMetadata, makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
@@ -20,6 +20,7 @@ import {
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  MessageId,
   ThreadId,
   type ProjectScript,
 } from "@t3tools/contracts";
@@ -658,6 +659,30 @@ function ThreadRouteContent(
     });
   };
 
+  const resumeThreadTurn = useAtomCommand(threadEnvironment.startTurn, "resume thread");
+  const handleResumeThread = async () => {
+    if (!selectedThread || composer.resumableRunId === null) return;
+    const metadata = makeQueuedMessageMetadata();
+    const result = await resumeThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThread.id,
+        manualContinuationOfRunId: composer.resumableRunId,
+        ...(composer.modelSelection ? { modelSelection: composer.modelSelection } : {}),
+        message: {
+          messageId: MessageId.make(metadata.messageId),
+          role: "user",
+          text: "Continue where you left off.",
+          attachments: [],
+        },
+        runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
+        interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
+        dispatchMode: "start",
+      },
+    });
+    if (result._tag === "Success" && composer.queueHeld) await handleResumeQueue();
+  };
+
   const handleOpenTerminal = (nextTerminalId?: string | null) => {
     terminalDebugLog("terminal-menu:open-existing", {
       terminalId: nextTerminalId ?? null,
@@ -1073,7 +1098,13 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
-          onResumeQueue={composer.queueHeld ? handleResumeQueue : null}
+          onResume={
+            composer.resumableRunId !== null
+              ? handleResumeThread
+              : composer.queueHeld
+                ? handleResumeQueue
+                : null
+          }
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}

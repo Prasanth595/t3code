@@ -280,8 +280,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  /** Present while the thread's queue is held. */
-  readonly onResumeQueue: (() => Promise<void>) | null;
+  /** Present while the thread's queue is held or its last run can be continued. */
+  readonly onResume: (() => Promise<void>) | null;
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
     beforeDispatch?: (
@@ -1648,7 +1648,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         onNativePasteText={props.onNativePasteText}
                         onRemoveDraftImage={props.onRemoveDraftImage}
                         onStopThread={props.onStopThread}
-                        onResumeQueue={props.onResumeQueue}
+                        onResume={props.onResume}
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}

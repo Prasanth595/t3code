@@ -227,8 +227,8 @@ export interface ThreadComposerProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  /** Present while the thread's queue is held. */
-  readonly onResumeQueue: (() => Promise<void>) | null;
+  /** Present while the thread's queue is held or its last run can be continued. */
+  readonly onResume: (() => Promise<void>) | null;
   /** `stillSendable` reports whether the draft is unchanged after any wait before sending. */
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
@@ -444,14 +444,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
   const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
-  const onResumeQueue = props.onResumeQueue;
+  const onResume = props.onResume;
   const [resumingQueue, setResumingQueue] = useState(false);
   const showResumeAction =
-    !hasContent && !showStopAction && queuedEdit === null && onResumeQueue !== null;
-  const handleResumeQueue = async () => {
-    if (resumingQueue || onResumeQueue === null) return;
+    !hasContent && !showStopAction && queuedEdit === null && onResume !== null;
+  const handleResume = async () => {
+    if (resumingQueue || onResume === null) return;
     setResumingQueue(true);
-    await onResumeQueue();
+    await onResume();
     setResumingQueue(false);
   };
 
@@ -948,10 +948,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Resume queue"
+                    accessibilityLabel="Resume thread"
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
-                    onPress={() => void handleResumeQueue()}
+                    onPress={() => void handleResume()}
                   />
                 ) : (
                   <SendActionButton
@@ -1171,10 +1171,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
-                      accessibilityLabel="Resume queue"
+                      accessibilityLabel="Resume thread"
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
-                      onPress={() => void handleResumeQueue()}
+                      onPress={() => void handleResume()}
                     />
                   ) : voicePresentation.showsSend ? (
                     <SendActionButton

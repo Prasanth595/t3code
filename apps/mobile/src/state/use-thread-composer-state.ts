@@ -36,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { resumableContinuationRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -333,6 +334,9 @@ export function useThreadComposerState() {
   const selectedThreadActivityRun = selectedThreadProjection
     ? deriveThreadActivityRun(selectedThreadProjection.projection)
     : (selectedThreadShell?.latestRun ?? null);
+  const resumableRunId = selectedThreadProjection
+    ? (resumableContinuationRun(selectedThreadProjection.projection.runs)?.id ?? null)
+    : null;
 
   const isCompacting = (() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
@@ -848,6 +852,7 @@ export function useThreadComposerState() {
     followUpBehavior,
     canSteerActiveTurn,
     queueHeld,
+    resumableRunId,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,
