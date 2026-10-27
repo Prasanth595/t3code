@@ -65,11 +65,11 @@ export const DEFAULT_FEEDBACK_SECONDS = 600;
  * has its own copy of this default in `prune_versions`; change both together.
  */
 const DEFAULT_KEEP_VERSIONS = 3;
-export const DEFAULT_MIN_FREE_GIB = 10;
+const DEFAULT_MIN_FREE_GIB = 10;
 
 /** Minutes a waiting autodeploy build may hold claims back; see {@link MachineConfig.deployWaitMinutes}. */
-export const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
-export const DEFAULT_MAX_LOAD_PER_CORE = 1;
+const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
+const DEFAULT_MAX_LOAD_PER_CORE = 1;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({

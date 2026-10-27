@@ -18,7 +18,7 @@ import * as AuthHttp from "../../auth/http.ts";
  * session fails 401 and one without the scope fails 403. The handler may read
  * `EnvironmentAuthenticatedPrincipal`.
  */
-export const withScope = Effect.fn("FactoryAuth.withScope")(function* <E, R>(
+const withScope = Effect.fn("FactoryAuth.withScope")(function* <E, R>(
   scope: AuthEnvironmentScope,
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
 ) {

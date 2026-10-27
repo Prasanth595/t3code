@@ -243,7 +243,7 @@ export interface ThreadFields {
   readonly archivedAt: unknown;
 }
 
-export const threadOf = (thread: ThreadFields): Thread => ({
+const threadOf = (thread: ThreadFields): Thread => ({
   worktreePath: thread.worktreePath,
   branch: thread.branch,
   archived: thread.archivedAt !== null && thread.archivedAt !== undefined,
@@ -431,7 +431,7 @@ const LEFTOVER_REMOVE_ATTEMPTS = { schedule: Schedule.spaced("3 seconds"), times
 /** `git worktree remove` of a big `node_modules` can take a while. */
 const REMOVE_WORKTREE_TIMEOUT_MS = 10 * 60 * 1000;
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const management = yield* ThreadManagement.ThreadManagementService;
   const git = yield* GitVcsDriver.GitVcsDriver;

@@ -404,7 +404,7 @@ export interface Out {
   readonly close: () => void;
 }
 
-export const lazyLedger = (ctx: BuildingContext, run: RunId): Out => {
+const lazyLedger = (ctx: BuildingContext, run: RunId): Out => {
   let handle: Ledger | null = null;
   return {
     open: ledger(() => (handle ??= Ledger.open(ctx.dataDir, run, { clock: ctx.clock }))),
@@ -453,7 +453,7 @@ const isEndedBadly = (status: RunStatus): boolean =>
   status === "failed" || status === "cancelled" || status === "rolled_back";
 
 /** Whether a run status is one the run has finished with. An active status is not. */
-export const isTerminal = (status: RunStatus): boolean =>
+const isTerminal = (status: RunStatus): boolean =>
   status === "completed" || status === "interrupted" || isEndedBadly(status);
 
 /**

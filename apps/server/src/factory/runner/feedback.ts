@@ -46,7 +46,7 @@ import {
  * differ from ours and a read can lag behind a write, so a review submitted just before that
  * start may not have been there to read. It costs at most one more page in a flood of reviews.
  */
-export const CLEAN_READ_MARGIN_MS = 60_000;
+const CLEAN_READ_MARGIN_MS = 60_000;
 
 /** What the feedback step asks of the factory: what a re-gate asks, and the read of a pull request's feedback. */
 export interface FeedbackContext extends GateContext {

@@ -74,7 +74,7 @@ export class Attention extends Context.Service<
 >()("t3/factory/attention") {}
 
 export const ATTENTION_FILE = "attention.json";
-export const PASS_ERRORS_IN_A_ROW = 3;
+const PASS_ERRORS_IN_A_ROW = 3;
 export const CONFIG_ITEM_ID = "config";
 export const PASS_ERRORS_ITEM_ID = "pass-errors";
 

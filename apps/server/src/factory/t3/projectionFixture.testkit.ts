@@ -44,7 +44,7 @@ export interface SeededThread {
 }
 
 /** The thread id of the n-th seeded thread (from 1). */
-export const seededThreadId = (n: number) => `thread:seed:${n}`;
+const seededThreadId = (n: number) => `thread:seed:${n}`;
 
 const THREAD_PAYLOAD_BYTES = 1724;
 const RUN_PAYLOAD_BYTES = 1500;

@@ -97,7 +97,7 @@ export interface WorkLeft {
  * Says where the work is. A new attempt starts from the base branch, so this does not promise
  * that it continues from there.
  */
-export const workLeftSentence = ({ branch, commitsAhead, base }: WorkLeft): string =>
+const workLeftSentence = ({ branch, commitsAhead, base }: WorkLeft): string =>
   commitsAhead === null
     ? `The work so far is on branch ${branch}.`
     : commitsAhead === 1
@@ -278,22 +278,21 @@ export const CANNOT_VERIFY_DURING_BUILD =
 export const INSTRUCTION_LIMIT = 20_000;
 
 /** The longest login that is forwarded, in characters. */
-export const LOGIN_LIMIT = 100;
+const LOGIN_LIMIT = 100;
 
 /**
  * Control characters and the invisible or bidirectional marks become spaces, and nothing else is
  * changed: unlike session text, an instructor's text is an instruction for the session, so it is
  * not escaped. `keepLines` keeps newline and tab.
  */
-export const cleanInstruction = (text: string, keepLines: boolean): string =>
-  sanitize(text, keepLines);
+const cleanInstruction = (text: string, keepLines: boolean): string => sanitize(text, keepLines);
 
 /**
  * An instructor's comment or issue body, ready to go into the session: line endings normalised,
  * cut at {@link INSTRUCTION_LIMIT} characters with a last line that says so and where to read the
  * rest, and cleaned.
  */
-export const instructionText = (text: string, repo: string, issue: number): string => {
+const instructionText = (text: string, repo: string, issue: number): string => {
   const chars = Array.from(text.replaceAll("\r\n", "\n"));
   const head = chars.slice(0, INSTRUCTION_LIMIT).join("");
   const cut =
@@ -304,7 +303,7 @@ export const instructionText = (text: string, repo: string, issue: number): stri
 };
 
 /** A GitHub login from the API, as one clean line of at most {@link LOGIN_LIMIT} characters. */
-export const loginText = (login: string): string =>
+const loginText = (login: string): string =>
   cleanInstruction(Array.from(login).slice(0, LOGIN_LIMIT).join(""), false);
 
 /**
