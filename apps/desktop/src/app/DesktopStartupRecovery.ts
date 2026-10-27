@@ -201,7 +201,8 @@ export const listen: Effect.Effect<
           const download = yield* updates.download;
           if (!download.completed) return;
         }
-        yield* updates.install;
+        // Waits for a running background check; plain install would refuse.
+        yield* updates.installPrepared(current.version);
         return;
       }
       case "reinstall":
@@ -310,7 +311,8 @@ export const listen: Effect.Effect<
         if (startup._tag !== "Failing") return;
         if (Option.isSome(yield* Ref.get(failureRef))) return;
         yield* Ref.set(failureRef, Option.some({ reason: startup.reason, output: startup.output }));
-        yield* logWarning("primary backend failing to start", { reason: startup.reason });
+        // The backend manager already logs each failure's reason.
+        yield* logWarning("primary backend failing to start");
         yield* show();
         if (!(yield* Ref.getAndSet(checkedRef, true))) {
           yield* updates.check("startup-recovery").pipe(Effect.forkScoped);
