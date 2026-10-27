@@ -2286,6 +2286,28 @@ describe("timeLimit", () => {
       }),
   );
 
+  it.effect("does not charge the factory's gate to a run it sent back", () =>
+    Effect.gen(function* () {
+      const sentBack: RunEvent = { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } };
+      const back = [...STARTED, PR_OPENED, sentBack];
+      const at = [T0 + 20 * MINUTE, T0 + 90 * MINUTE];
+      const rig = rigFor(back, {
+        ms: (index) => (index < STARTED.length ? startedAtT0(index) : at[index - STARTED.length]!),
+      });
+      const bytes = bytesOf(rig);
+      rig.clock.now = T0 + 100 * MINUTE;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "within" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+      rig.clock.now = T0 + 161 * MINUTE;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: TIME_LIMIT,
+      });
+    }),
+  );
+
   it.effect("limits a run again once it comes back to building from pr-open", () =>
     Effect.gen(function* () {
       const back = [

@@ -1942,8 +1942,10 @@ describe("feedback: the step", () => {
         rig.t3.status = finishedStatus(1);
         const outcome = yield* advanceIn(rig);
         assert.strictEqual(outcome.kind, "ready-for-gate");
-        // The same pull request: no second `pr_opened`.
-        assert.strictEqual(eventsOf(rig, "pr_opened").length, 1);
+        // The same pull request is reported again for the gate, and kept once.
+        assert.strictEqual(eventsOf(rig, "pr_opened").length, 2);
+        assert.deepStrictEqual(progressOf(rig).opened, [12]);
+        assert.strictEqual(progressOf(rig).prReported, true);
       }),
   );
 
