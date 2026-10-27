@@ -54,7 +54,6 @@ export function childInputNowItem(input: {
   };
 }
 
-/** The thread's goal, for the end of the timeline. */
 export function goalNowItem(input: {
   readonly threadId: ThreadId;
   readonly goal: OrchestrationV2ProviderGoal;
