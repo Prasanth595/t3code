@@ -75,4 +75,39 @@ describe("claudePushNotification", () => {
       },
     });
   });
+
+  it("leaves a push Claude already resolved unchanged", async () => {
+    const offered: Array<string> = [];
+    const hooks = claudePushNotificationHooks({
+      offer: async (message) => {
+        offered.push(message);
+        return { local: true, phone: true };
+      },
+    });
+    const hook = hooks.PostToolUse[0]?.hooks[0];
+    NodeAssert.ok(hook);
+    const call = (toolResponse: unknown) =>
+      hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "PushNotification",
+          tool_input: { message: "fleet.lock stuck", status: "proactive" },
+          tool_response: toolResponse,
+          tool_use_id: "tool-1",
+          session_id: "session-1",
+          transcript_path: "",
+          cwd: "/workspace",
+        },
+        "tool-1",
+        { signal: new AbortController().signal },
+      );
+    for (const toolResponse of [
+      { message: "Sent", pushSent: true, localSent: true },
+      { message: "Notifications are off.", pushSent: false, disabledReason: "config_off" },
+      { message: "No push transport.", pushSent: false, disabledReason: "no_transport" },
+    ]) {
+      NodeAssert.deepEqual(await call(toolResponse), {});
+    }
+    NodeAssert.deepEqual(offered, []);
+  });
 });

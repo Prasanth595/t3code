@@ -66,6 +66,15 @@ const missingMessageOutput: SyncHookJSONOutput = {
   },
 };
 
+function claudeSuppressedPushBecauseUserPresent(toolResponse: unknown): boolean {
+  return (
+    typeof toolResponse === "object" &&
+    toolResponse !== null &&
+    "disabledReason" in toolResponse &&
+    toolResponse.disabledReason === "user_present"
+  );
+}
+
 export function claudePushNotificationHooks(input: {
   readonly offer: ClaudePushNotificationOffer;
 }) {
@@ -74,6 +83,11 @@ export function claudePushNotificationHooks(input: {
       hookInput.hook_event_name !== "PostToolUse" ||
       hookInput.tool_name !== CLAUDE_PUSH_NOTIFICATION_TOOL
     ) {
+      return {};
+    }
+    // user_present is the SDK session looking like an open terminal. A real send
+    // or another refusal has to reach the model unchanged.
+    if (!claudeSuppressedPushBecauseUserPresent(hookInput.tool_response)) {
       return {};
     }
     const message = readClaudePushNotificationMessage(hookInput.tool_input);
