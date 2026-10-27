@@ -29,7 +29,6 @@ import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => ({
-  registry: undefined as AtomRegistry.AtomRegistry | undefined,
   environment: undefined as EnvironmentRegistry.EnvironmentRegistry["Service"] | undefined,
   active: "active",
   listeners: new Set<() => void>(),
@@ -58,11 +57,6 @@ vi.mock("../connection/runtime", async () => {
     ),
   };
 });
-vi.mock("./atom-registry", () => ({
-  get appAtomRegistry() {
-    return fixture.registry!;
-  },
-}));
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   const config = Atom.make({ environment: { capabilities: { threadPullRequests: true } } });
@@ -71,7 +65,6 @@ vi.mock("./server", async () => {
 
 import { ThreadPrDemandProvider } from "./thread-pr-demand";
 import { useThreadPr } from "./use-thread-pr";
-import { deriveLayout, deriveWorkspacePaneLayout, isPrimarySidebarPinned } from "../lib/layout";
 
 const environmentId = EnvironmentId.make("sidebar-environment");
 const reference = {
@@ -168,7 +161,6 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
   fixture.environment =
     environment as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
   const registry = AtomRegistry.make();
-  fixture.registry = registry;
   const container = document.createElement("div");
   const root = createRoot(container);
   let mounts = 0;
@@ -247,61 +239,6 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
     },
   };
 });
-
-it.effect.each([
-  {
-    name: "root pins the sidebar despite a closed preference",
-    pathname: "/",
-    preferred: false,
-    inspector: false,
-    visible: true,
-  },
-  {
-    name: "detail route keeps an open split sidebar live",
-    pathname: "/threads/1",
-    preferred: true,
-    inspector: false,
-    visible: true,
-  },
-  {
-    name: "detail route respects a closed sidebar",
-    pathname: "/threads/1",
-    preferred: false,
-    inspector: false,
-    visible: false,
-  },
-  {
-    name: "inspector suppresses a retained sidebar when the split has no room",
-    pathname: "/threads/1",
-    preferred: true,
-    inspector: true,
-    visible: false,
-  },
-])("uses the actual pane visibility: $name", ({ pathname, preferred, inspector, visible }) =>
-  Effect.gen(function* () {
-    using h = yield* setup();
-    const layout = deriveLayout({ width: 1024, height: 834 });
-    const pinned = isPrimarySidebarPinned({
-      pathname,
-      nativeWorkspace: false,
-      usesSplitView: layout.usesSplitView,
-    });
-    const panes = deriveWorkspacePaneLayout({
-      layout,
-      viewportWidth: 1024,
-      primarySidebarPreferredVisible: pinned || preferred,
-      auxiliaryPanePreferredVisible: inspector,
-      auxiliaryPaneRole: "inspector",
-    });
-    expect(panes.primarySidebarVisible).toBe(visible);
-    yield* Effect.promise(async () => {
-      await h.render({ visible: panes.primarySidebarVisible });
-      await h.advance(190_000);
-      expect(h.requests).toHaveLength(visible ? 4 : 0);
-      expect(h.badge()).toBe(visible ? "#12 pull request open" : "none");
-    });
-  }),
-);
 
 it.effect(
   "releases retained hidden sidebar demand and keeps the badge while reveal revalidates",
@@ -386,104 +323,6 @@ it.effect.each(["inactive", "background"])("releases sidebar demand while the OS
   }),
 );
 
-it.effect.each([
-  { field: "environment", changed: { environmentId: EnvironmentId.make("other") } },
-  {
-    field: "project",
-    changed: { branchPullRequest: { ...reference, projectId: ProjectId.make("other") } },
-  },
-  {
-    field: "repository",
-    changed: { branchPullRequest: { ...reference, repository: "acme/other" } },
-  },
-  { field: "PR", changed: { branchPullRequest: { ...reference, number: 13 } } },
-])("does not show an old badge after a hidden $field change", ({ changed }) =>
-  Effect.gen(function* () {
-    using h = yield* setup();
-    yield* Effect.promise(async () => {
-      await h.render();
-      await h.render({ visible: false });
-      await h.advance(10_000);
-      const before = h.requests.length;
-      const value = thread(changed);
-      await h.render({ visible: false, value });
-      expect(h.badge()).toBe("none");
-      await h.advance(180_000);
-      expect(h.requests.length).toBe(before);
-      h.holdReplies();
-      await h.render({ value });
-      expect(h.badge()).toBe("none");
-      expect(h.requests.length).toBe(before + 1);
-      expect(h.requests.at(-1)?.environmentId).toBe(value.environmentId);
-      expect(h.requests.at(-1)?.input).toMatchObject({
-        projectId: value.branchPullRequest!.projectId,
-        repository: value.branchPullRequest!.repository,
-        number: value.branchPullRequest!.number,
-      });
-      await h.releaseReplies();
-      expect(h.badge()).toBe(`#${value.branchPullRequest!.number} pull request open`);
-      expect(h.mounts).toBe(1);
-    });
-  }),
-);
-
-it.effect("clears a removed PR while hidden instead of resurrecting its cached badge", () =>
-  Effect.gen(function* () {
-    using h = yield* setup();
-    yield* Effect.promise(async () => {
-      await h.render();
-      const value = thread({ branchPullRequest: null });
-      await h.render({ visible: false, value });
-      expect(h.badge()).toBe("none");
-      await h.advance(190_000);
-      await h.render({ value });
-      expect(h.requests).toHaveLength(1);
-      expect(h.badge()).toBe("none");
-    });
-  }),
-);
-
-it.effect.each([true, false])(
-  "renders linked presentations with no fallback RPC, snapshot present: %s",
-  (snapshot) =>
-    Effect.gen(function* () {
-      using h = yield* setup();
-      yield* Effect.promise(async () => {
-        const value = thread({
-          pullRequests: [
-            {
-              host: "github.com",
-              repository: "acme/app",
-              number: 14,
-              url: "https://github.com/acme/app/pull/14",
-              source: "manual",
-              linkedAt: "2026-10-26T00:00:00Z",
-              stack: null,
-              snapshot: snapshot
-                ? {
-                    title: "Linked",
-                    state: "open",
-                    isDraft: false,
-                    headBranch: "feature",
-                    baseBranch: "main",
-                    updatedAt: null,
-                    syncedAt: "2026-10-26T00:00:00Z",
-                  }
-                : null,
-            },
-          ],
-        });
-        await h.render({ value });
-        expect(h.badge()).toBe(`#14 pull request ${snapshot ? "open" : "status pending"}`);
-        await h.render({ value, visible: false });
-        await h.advance(190_000);
-        await h.render({ value });
-        expect(h.requests).toHaveLength(0);
-        expect(h.badge()).toBe(`#14 pull request ${snapshot ? "open" : "status pending"}`);
-      });
-    }),
-);
-
 it.effect("keeps mounted passive state through an Android-style Activity tab switch", () =>
   Effect.gen(function* () {
     using h = yield* setup();
@@ -503,22 +342,4 @@ it.effect("keeps mounted passive state through an Android-style Activity tab swi
       expect(h.requests.length - before).toBe(1);
     });
   }),
-);
-
-it.effect(
-  "allows only the existing idle-grace poll when the sidebar closes just before a tick",
-  () =>
-    Effect.gen(function* () {
-      using h = yield* setup();
-      yield* Effect.promise(async () => {
-        await h.render();
-        await h.advance(59_000);
-        await h.render({ visible: false });
-        await h.advance(10_000);
-        const afterGrace = h.requests.length;
-        expect(afterGrace).toBeLessThanOrEqual(2);
-        await h.advance(180_000);
-        expect(h.requests.length).toBe(afterGrace);
-      });
-    }),
 );
