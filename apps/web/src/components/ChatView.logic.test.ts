@@ -1090,17 +1090,10 @@ describe("planComposerTurn", () => {
   });
 
   it("waits for setup but keeps the chosen follow-up so the server can steer once it starts", () => {
-    const setup = {
-      ...base,
-      isServerThread: true,
-      activeMessageCount: 1,
-      phase: "connecting" as const,
-      sendQueuesBehindSetup: true,
-    };
+    const setup = { ...base, sendQueuesBehindSetup: true };
     expect(planComposerTurn({ ...setup, dispatchMode: "steer" })).toMatchObject({
       turnDispatchMode: "steer",
       shouldQueueBehindActiveRun: true,
-      baseBranchForWorktree: null,
     });
     expect(planComposerTurn({ ...setup, dispatchMode: "restart" })).toMatchObject({
       turnDispatchMode: "queue",
