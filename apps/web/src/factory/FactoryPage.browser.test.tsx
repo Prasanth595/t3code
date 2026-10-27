@@ -61,6 +61,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     },
 }));
 vi.mock("./useFactoryData", () => ({
+  STATUS_POLL_MS: 5_000,
   useFactoryEnvironments: () =>
     state.listed
       ? [

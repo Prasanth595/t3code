@@ -68,7 +68,7 @@ const status = (attention: number, state: "running" | "idle" = "running") => ({
     first_seen: "2026-10-04T10:00:00.000Z",
   })),
   slots: { used: 0, max: 1 },
-  passes: {},
+  passes: { at: null, poll_seconds: null, running: false },
   problems: [],
 });
 

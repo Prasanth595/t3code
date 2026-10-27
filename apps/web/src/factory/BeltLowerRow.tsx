@@ -1,11 +1,12 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 
-import type { EnvironmentId } from "@t3tools/contracts";
-
 import type { FactoryAttentionItem } from "./api";
+import type { BeltRun } from "./belt";
+import { BeltDot } from "./BeltDot";
 import { formatAge, issueRef } from "./format";
 import { Ref } from "./Ref";
 import { TouchLink } from "./TouchLink";
@@ -51,7 +52,7 @@ function ItemLink({
  * `showEnvironment` each says which environment raised it. `onDismiss` gets the items to dismiss:
  * one, or every item shown for Dismiss all.
  */
-export function AttentionList({
+function AttentionSection({
   items,
   showEnvironment,
   nowMs,
@@ -64,7 +65,7 @@ export function AttentionList({
 }) {
   if (items.length === 0) return null;
   return (
-    <section aria-label="Needs attention" className="flex flex-col gap-2">
+    <section aria-label="Needs attention" className="flex min-w-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-medium">Needs attention</h2>
         <Button onClick={() => onDismiss(items)} size="sm" variant="ghost">
@@ -114,5 +115,116 @@ export function AttentionList({
         })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * A bin of the runs whose newest attempt waits for a person: each issue as a link to its run, its
+ * title (the number alone without one), its environment and the stored reason as plain text,
+ * clamped to two lines.
+ */
+function Bin({
+  name,
+  station,
+  runs,
+  empty,
+  selectedId,
+}: {
+  name: string;
+  station: "stuck" | "info";
+  runs: ReadonlyArray<BeltRun>;
+  empty: string;
+  selectedId: EnvironmentId;
+}) {
+  return (
+    <section
+      aria-label={name}
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2.5"
+      data-station={station}
+    >
+      <div className="flex items-center gap-2">
+        <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />
+        <h2 className="text-sm font-medium">{name}</h2>
+        <span className="ml-auto font-mono text-lg font-semibold leading-none">{runs.length}</span>
+      </div>
+      {runs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
+          {runs.map((run) => (
+            <li className="flex flex-col gap-0.5 py-2 text-sm first:pt-0 last:pb-0" key={run.key}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <Link
+                  className="font-mono font-semibold hover:underline"
+                  params={{ environmentId: run.environmentId, runId: run.id }}
+                  to="/factory/$environmentId/$runId"
+                >
+                  {run.issue}
+                </Link>
+                {run.title === null ? null : (
+                  <span className="min-w-0 break-words">{run.title}</span>
+                )}
+              </div>
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <BeltDot selected={run.environmentId === selectedId} />
+                {run.label}
+              </span>
+              {run.reason ? (
+                <p className="line-clamp-2 break-words text-xs text-muted-foreground">
+                  {run.reason}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Under the belt: Attention, Needs info and Stuck, side by side while there is room for each and
+ * stacked when there is not. Attention takes no place while nothing needs attention.
+ */
+export function BeltLowerRow({
+  attention,
+  needsInfo,
+  stuck,
+  selectedId,
+  showEnvironment,
+  nowMs,
+  onDismiss,
+}: {
+  attention: ReadonlyArray<EnvironmentAttention>;
+  needsInfo: ReadonlyArray<BeltRun>;
+  stuck: ReadonlyArray<BeltRun>;
+  selectedId: EnvironmentId;
+  showEnvironment: boolean;
+  nowMs: number;
+  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] items-start gap-4">
+      <AttentionSection
+        items={attention}
+        nowMs={nowMs}
+        onDismiss={onDismiss}
+        showEnvironment={showEnvironment}
+      />
+      <Bin
+        empty="Nothing needs info."
+        name="Needs info"
+        runs={needsInfo}
+        selectedId={selectedId}
+        station="info"
+      />
+      <Bin
+        empty="Nothing is stuck."
+        name="Stuck"
+        runs={stuck}
+        selectedId={selectedId}
+        station="stuck"
+      />
+    </div>
   );
 }

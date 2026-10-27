@@ -172,6 +172,10 @@ const stat = (page: Page, label: string) => {
   const term = page.all("dt").find((dt) => dt.textContent === label)!;
   return term.nextElementSibling?.textContent;
 };
+/** Opens a post's readout, unless it is the one open: picking that one would fold it. */
+const openStation = async (page: Page, name: string) => {
+  if (readout(page)?.dataset.station !== name) await page.click(station(page, name));
+};
 const claimsSwitch = (page: Page) => page.all('[role="switch"]')[0]!;
 const clock = (ms: number) =>
   `${String(new Date(ms).getHours()).padStart(2, "0")}:${String(new Date(ms).getMinutes()).padStart(2, "0")}`;
@@ -447,7 +451,7 @@ describe("the readout", () => {
         props({ environments: [desktop], recent: recentOf([DESKTOP, []]) }),
       ),
     );
-    await page.click(station(page, "building"));
+    await openStation(page, "building");
     const cells = Array.from(rowsOf(page)[0]!.querySelectorAll("td")).map((c) => c.textContent);
     expect(cells.slice(0, 2)).toEqual(["#8", "#8"]);
   });
@@ -489,7 +493,7 @@ describe("stopping a run from the readout", () => {
     using _state = await setup();
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     const stops = async (name: string) => {
-      await page.click(station(page, name));
+      await openStation(page, name);
       return rowsOf(page).map(
         (row) =>
           !Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!
@@ -638,9 +642,6 @@ describe("the control bar", () => {
     );
     await using page = await render(createElement(FactoryBelt, belt));
     expect(stat(page, "Slots")).toBe("1/2");
-    expect(
-      page.all("dt").find((dt) => dt.textContent === "Slots")!.parentElement?.textContent,
-    ).toContain("Desktop");
     // Started today: #1 #2 #3 #4 #5 #6 #7 and the four done runs of today (#14 began yesterday).
     expect(stat(page, "Runs today")).toBe("11");
     expect(stat(page, "Merged today")).toBe("3");
@@ -704,8 +705,8 @@ describe("Attention, Needs info and Stuck", () => {
     const text = (name: string) =>
       page.all("section").find((section) => section.getAttribute("aria-label") === name)!
         .textContent;
-    expect(text("Needs info")).toContain("No runs need info");
-    expect(text("Stuck")).toContain("No stuck runs");
+    expect(text("Needs info")).toContain("Nothing needs info");
+    expect(text("Stuck")).toContain("Nothing is stuck");
   });
 
   it("leaves a bin once a newer attempt of its issue exists", async () => {
@@ -720,7 +721,7 @@ describe("Attention, Needs info and Stuck", () => {
     ]);
     await using page = await render(createElement(FactoryBelt, belt));
     const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
-    expect(stuck.textContent).toContain("No stuck runs");
+    expect(stuck.textContent).toContain("Nothing is stuck");
   });
 
   it("puts the attention section first, beside the bins", async () => {

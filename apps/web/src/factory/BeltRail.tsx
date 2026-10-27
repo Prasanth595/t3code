@@ -1,0 +1,356 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
+import { ChevronDownIcon, FlagIcon, InboxIcon, ShieldCheckIcon, WrenchIcon } from "lucide-react";
+import { Fragment, useState, type ComponentType } from "react";
+
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
+import { cn } from "~/lib/utils";
+
+import {
+  fitLane,
+  formatClock,
+  STATION_META,
+  STATIONS,
+  type Belt,
+  type BeltRun,
+  type Station,
+} from "./belt";
+import { BeltDot } from "./BeltDot";
+import { BeltReadout, READOUT_ID } from "./BeltReadout";
+import { formatAge } from "./format";
+
+/** A tile is this wide and the gap between tiles this wide, in px: they set how many a lane fits. */
+const TILE_PX = 60;
+const TILE_GAP_PX = 6;
+
+const ICON: Readonly<Record<Station, ComponentType<{ className?: string }>>> = {
+  claimed: InboxIcon,
+  building: WrenchIcon,
+  gate: ShieldCheckIcon,
+  pr: PullRequestGlyph.pullRequest,
+  done: FlagIcon,
+};
+
+const NOTE: Readonly<Record<Exclude<Station, "done">, string>> = {
+  claimed: "session launching",
+  building: "agent session at work",
+  gate: "checks before the pull request",
+  pr: "watched for review, newest first",
+};
+
+/**
+ * Where each station sits on a wide belt: its own column, the post in the first row and the lane in
+ * the second. Narrow, none of these apply and the posts, lanes and readout simply stack in order.
+ * Written out so that Tailwind sees every class.
+ */
+const PLACEMENT: Readonly<
+  Record<Station, { readonly post: string; readonly lane: string; readonly column: string }>
+> = {
+  claimed: {
+    post: "@3xl:col-start-1 @3xl:row-start-1",
+    lane: "@3xl:col-start-1 @3xl:row-start-2",
+    column: "@3xl:col-start-1",
+  },
+  building: {
+    post: "@3xl:col-start-2 @3xl:row-start-1",
+    lane: "@3xl:col-start-2 @3xl:row-start-2",
+    column: "@3xl:col-start-2",
+  },
+  gate: {
+    post: "@3xl:col-start-3 @3xl:row-start-1",
+    lane: "@3xl:col-start-3 @3xl:row-start-2",
+    column: "@3xl:col-start-3",
+  },
+  pr: {
+    post: "@3xl:col-start-4 @3xl:row-start-1",
+    lane: "@3xl:col-start-4 @3xl:row-start-2",
+    column: "@3xl:col-start-4",
+  },
+  done: {
+    post: "@3xl:col-start-5 @3xl:row-start-1",
+    lane: "@3xl:col-start-5 @3xl:row-start-2",
+    column: "@3xl:col-start-5",
+  },
+};
+
+const elapsedOf = (forMs: number | null, nowMs: number) =>
+  forMs === null ? "-" : formatAge(nowMs - forMs, nowMs);
+
+/** A post: the station's name, label and run count; picking it opens or folds its readout. */
+function Post({
+  station,
+  count,
+  note,
+  paused,
+  open,
+  dim,
+  onPick,
+}: {
+  station: Station;
+  count: number;
+  /** The line under the label. */
+  note: string;
+  /** Claims are paused by hand: the note is the pause, and takes the label's place. */
+  paused: boolean;
+  open: boolean;
+  dim: boolean;
+  onPick: () => void;
+}) {
+  const { name, tag } = STATION_META[station];
+  const Icon = ICON[station];
+  return (
+    <button
+      aria-controls={open ? READOUT_ID : undefined}
+      aria-expanded={open}
+      className={cn(
+        "relative flex min-w-0 flex-col gap-1 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        PLACEMENT[station].post,
+        open && "border-(--factory-station) bg-accent/30",
+        dim && station !== "claimed" && "opacity-60 grayscale",
+      )}
+      data-station={station}
+      onClick={onPick}
+      type="button"
+    >
+      <span className="flex items-center gap-2">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-sm font-semibold">{name}</span>
+        <span className="ml-auto font-mono text-xl font-semibold leading-none" data-part="count">
+          {count}
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-180")}
+        />
+      </span>
+      {paused ? null : <span className="font-mono text-3xs text-muted-foreground">{tag}</span>}
+      {note === "" ? null : (
+        <span
+          className={cn(
+            "text-xs",
+            paused
+              ? "rounded-sm bg-warning/16 px-1.5 py-0.5 font-semibold text-warning-foreground"
+              : "text-muted-foreground",
+          )}
+        >
+          {note}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** One run on the rail: a link to its page showing the issue, its environment and its elapsed time. */
+function Tile({
+  run,
+  station,
+  mine,
+  nowMs,
+}: {
+  run: BeltRun;
+  station: Station;
+  /** Whether the run is in the environment picked in the belt: solid, else hollow. */
+  mine: boolean;
+  nowMs: number;
+}) {
+  const elapsed = elapsedOf(run.forMs, nowMs);
+  return (
+    <Link
+      aria-label={`${run.issue}, ${run.label}, ${elapsed}`}
+      className={cn(
+        "relative flex h-12 w-[60px] shrink-0 flex-col justify-between overflow-hidden rounded-md border px-1.5 pt-2 pb-1 text-foreground hover:bg-accent/40",
+        mine ? "bg-card" : "border-dashed bg-transparent",
+      )}
+      data-station={station}
+      params={{ environmentId: run.environmentId, runId: run.id }}
+      to="/factory/$environmentId/$runId"
+    >
+      <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-(--factory-station)" />
+      <span className="font-mono text-xs font-semibold leading-none">{run.issue}</span>
+      <span className="flex items-center gap-1 font-mono text-3xs leading-none text-muted-foreground">
+        <BeltDot selected={mine} />
+        <span className="min-w-0 truncate">{elapsed}</span>
+      </span>
+    </Link>
+  );
+}
+
+/** The last place of a full lane: how many runs do not fit, and which, in its tooltip. */
+function MoreTile({ hidden, onOpen }: { hidden: ReadonlyArray<BeltRun>; onOpen: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            aria-label={`${hidden.length} more runs`}
+            className="flex h-12 w-[60px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-md bg-foreground font-mono text-sm font-semibold leading-none text-background outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            onClick={onOpen}
+            type="button"
+          />
+        }
+      >
+        <span>+{hidden.length}</span>
+        <span className="font-sans text-3xs font-medium">more</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{hidden.map((run) => run.issue).join(" · ")}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * The tiles under a post, as many as the lane's measured width holds. Before the first measure every
+ * tile shows, and the lane clips rather than wraps or scrolls.
+ */
+function Lane({
+  station,
+  runs,
+  selectedId,
+  nowMs,
+  dim,
+  onOpen,
+}: {
+  station: Station;
+  runs: ReadonlyArray<BeltRun>;
+  selectedId: EnvironmentId;
+  nowMs: number;
+  dim: boolean;
+  onOpen: () => void;
+}) {
+  const [width, setWidth] = useState<number | null>(null);
+  const slots =
+    width === null
+      ? Number.POSITIVE_INFINITY
+      : Math.floor((width + TILE_GAP_PX) / (TILE_PX + TILE_GAP_PX));
+  const { shown, hidden } = fitLane(runs.length, slots);
+  return (
+    <div
+      className={cn(
+        "flex min-h-16 min-w-0 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/40 px-2.5 py-2",
+        PLACEMENT[station].lane,
+        dim && "opacity-60 grayscale",
+      )}
+      data-lane={station}
+      data-station={station}
+      ref={(node) =>
+        node === null
+          ? undefined
+          : observeResize(node, (entries) => {
+              const entry = entries[0];
+              if (entry !== undefined) setWidth(entry.contentRect.width);
+            })
+      }
+    >
+      {runs.slice(0, shown).map((run) => (
+        <Tile
+          key={run.key}
+          mine={run.environmentId === selectedId}
+          nowMs={nowMs}
+          run={run}
+          station={station}
+        />
+      ))}
+      {hidden > 0 ? <MoreTile hidden={runs.slice(shown)} onOpen={onOpen} /> : null}
+      {runs.length === 0 ? (
+        <span className="rounded-md border border-dashed px-2 py-1.5 font-mono text-3xs text-muted-foreground">
+          clear
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** The Done post's lane: today's finished runs counted, how they ended, and the latest three. */
+function DoneBin({ belt }: { belt: Belt }) {
+  const { merged, closed, latest } = belt.done;
+  return (
+    <div
+      className={cn(
+        "flex min-h-16 min-w-0 items-center gap-3 overflow-hidden rounded-md border border-l-4 border-l-(--factory-station) bg-card px-3 py-2",
+        PLACEMENT.done.lane,
+      )}
+      data-lane="done"
+      data-station="done"
+    >
+      <span className="font-mono text-2xl font-semibold leading-none">{merged + closed}</span>
+      <span className="min-w-0 text-2xs leading-snug text-muted-foreground">
+        <b className="block font-semibold text-foreground">
+          {merged} merged · {closed} closed
+        </b>
+        <span className="block truncate font-mono">
+          {latest.length > 0 ? latest.join(" · ") : "none yet today"}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Five posts, a lane of tiles under each, and the readout of the picked post. Wide, they are a grid
+ * of five columns; narrow, the same elements in one column, each post followed by its lane and its
+ * readout. Opens on `belt.newest` and changes only when a post is picked.
+ */
+export function BeltRail({
+  belt,
+  selectedId,
+  pausedSince,
+  nowMs,
+  refreshStatus,
+}: {
+  belt: Belt;
+  selectedId: EnvironmentId;
+  /** When claims were paused by hand in the selected environment, or null. */
+  pausedSince: number | null;
+  nowMs: number;
+  refreshStatus: (environmentId: EnvironmentId) => void;
+}) {
+  const [open, setOpen] = useState<Station | null>(belt.newest);
+  const paused = pausedSince !== null;
+  const noteOf = (station: Station) => {
+    if (station === "claimed" && pausedSince !== null) {
+      return `claims paused by hand since ${formatClock(pausedSince)}`;
+    }
+    // The Done bin says what finished.
+    return station === "done" ? "" : NOTE[station];
+  };
+  return (
+    <div className="grid grid-cols-1 gap-2 @3xl:grid-cols-(--factory-cols) @3xl:gap-y-0">
+      {STATIONS.map((station) => (
+        <Fragment key={station}>
+          <Post
+            count={belt.runs[station].length}
+            dim={paused}
+            note={noteOf(station)}
+            onPick={() => setOpen(open === station ? null : station)}
+            open={open === station}
+            paused={station === "claimed" && paused}
+            station={station}
+          />
+          {station === "done" ? (
+            <DoneBin belt={belt} />
+          ) : (
+            <Lane
+              dim={paused}
+              nowMs={nowMs}
+              onOpen={() => setOpen(station)}
+              runs={belt.runs[station]}
+              selectedId={selectedId}
+              station={station}
+            />
+          )}
+          {open === station ? (
+            <BeltReadout
+              column={PLACEMENT[station].column}
+              nowMs={nowMs}
+              refreshStatus={refreshStatus}
+              runs={belt.runs[station]}
+              selectedId={selectedId}
+              station={station}
+            />
+          ) : null}
+        </Fragment>
+      ))}
+    </div>
+  );
+}

@@ -35,6 +35,10 @@ export interface FactoryStatus {
   readonly runs: ReadonlyArray<{
     readonly id: string;
     readonly state: string | null;
+    /** The event of the run's last readable ledger line; null for none. */
+    readonly last_event: string | null;
+    /** The issue title its newest launch recorded; null for a run launched before titles were. */
+    readonly title: string | null;
     readonly user: string | null;
     readonly for_ms: number | null;
     readonly pr_url: string | null;
@@ -43,7 +47,14 @@ export interface FactoryStatus {
   }>;
   readonly attention: ReadonlyArray<FactoryAttentionItem>;
   readonly slots: { readonly used: number; readonly max: number | null };
-  readonly passes: unknown;
+  /** The pass loop, as far as the page reads it. */
+  readonly passes: {
+    /** When the last pass ended, or null before one. */
+    readonly at: string | null;
+    readonly poll_seconds: number | null;
+    /** A pass is running now. */
+    readonly running: boolean;
+  };
   readonly problems: ReadonlyArray<unknown>;
 }
 
@@ -57,6 +68,13 @@ export interface FactoryRunRow {
   readonly pr_url: string | null;
   /** How the pull request ended, for a run that finished on it; absent from older servers. */
   readonly pr_end?: PrEnd | null;
+  /** The issue title its first launch recorded; absent from older servers, null before titles were. */
+  readonly title?: string | null;
+  /**
+   * Why a stuck run is stuck, or the questions a needs-info run posted; absent from older servers,
+   * null for any other state. Untrusted text: show it as text only.
+   */
+  readonly reason?: string | null;
   readonly finished: boolean;
   readonly total_ms: number | null;
   readonly unreadable: boolean;
