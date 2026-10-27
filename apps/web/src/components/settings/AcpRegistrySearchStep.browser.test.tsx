@@ -119,9 +119,16 @@ it("rechecks the grant before preparing an agent", async () => {
 
 it("leaves out Registry agents that T3 Code supports as their own providers", async () => {
   setup();
-  state.result = { agents: [gemini, { ...gemini, id: "codex-acp", name: "Codex" }] };
+  state.result = {
+    agents: [
+      gemini,
+      { ...gemini, id: "codex-acp", name: "Codex" },
+      { ...gemini, id: "glm-acp-agent", name: "GLM Agent" },
+    ],
+  };
   await using _screen = await render(<Step />);
 
   expect(page.getByRole("button", { name: "Add Gemini CLI" }).query()).not.toBeNull();
   expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
+  expect(page.getByRole("button", { name: "Add GLM Agent" }).query()).toBeNull();
 });

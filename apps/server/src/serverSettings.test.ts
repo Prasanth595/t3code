@@ -406,6 +406,132 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("upgrades saved GLM registry instances without changing instance settings", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("acpRegistry_glm_work");
+      const instance = {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        enabled: false,
+        displayName: "Work GLM",
+        accentColor: "#123456",
+        environment: [{ name: "GLM_REGION", value: "global", sensitive: false }],
+        config: {
+          agentId: "glm-acp-agent",
+          distribution: "npx",
+          commandPath: "/opt/local/bin/glm-acp",
+          commandArgs: ["--verbose"],
+          authMethodId: "work-account",
+          customModels: ["glm-5.1"],
+        },
+      };
+      const explicitRegistryId = ProviderInstanceId.make("acpRegistry_glm_personal");
+      const localId = ProviderInstanceId.make("acpRegistry_glm_local");
+      const otherId = ProviderInstanceId.make("acpRegistry_kilo");
+      const localInstance = {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { source: "local", agentId: "glm-acp-agent", commandPath: "custom-glm" },
+      };
+      const otherInstance = {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { agentId: "kilo" },
+      };
+      const selection = { instanceId, model: "glm-5.1" };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          providerInstances: {
+            [instanceId]: instance,
+            [explicitRegistryId]: {
+              ...instance,
+              config: { ...instance.config, source: "registry" },
+            },
+            [localId]: localInstance,
+            [otherId]: otherInstance,
+          },
+          defaultModelSelection: selection,
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      for (const next of [settings, saved]) {
+        assert.deepEqual(next.providerInstances[instanceId], {
+          ...instance,
+          driver: ProviderDriverKind.make("glm"),
+          config: { ...instance.config, source: "registry" },
+        });
+        assert.deepEqual(next.providerInstances[explicitRegistryId], {
+          ...instance,
+          driver: ProviderDriverKind.make("glm"),
+          config: { ...instance.config, source: "registry" },
+        });
+        assert.deepEqual(next.providerInstances[localId], localInstance);
+        assert.deepEqual(next.providerInstances[otherId], otherInstance);
+        assert.deepEqual(next.defaultModelSelection, selection);
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("upgrades GLM registry instances submitted by older clients", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("acpRegistry_glm");
+      const instance = {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        enabled: true,
+        config: { agentId: "glm-acp-agent", source: "registry", customModels: ["glm-5.1"] },
+      };
+      const settings = yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance,
+      });
+      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      for (const next of [settings, saved]) {
+        assert.deepEqual(next.providerInstances[instanceId], {
+          ...instance,
+          driver: ProviderDriverKind.make("glm"),
+        });
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("persists registry identity defaults for explicit GLM instances", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("glm_work");
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ providerInstances: { [instanceId]: { driver: "glm", enabled: true } } }),
+      );
+      const loaded = yield* serverSettings.getSettings;
+      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      for (const next of [loaded, saved]) {
+        assert.deepEqual(next.providerInstances[instanceId]?.config, {
+          source: "registry",
+          agentId: "glm-acp-agent",
+        });
+      }
+
+      const updated = yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: { driver: ProviderDriverKind.make("glm"), config: {} },
+      });
+      assert.deepEqual(updated.providerInstances[instanceId]?.config, {
+        source: "registry",
+        agentId: "glm-acp-agent",
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("creates provider instances atomically without overwriting a concurrent add", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -577,6 +703,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           { id: "reasoningEffort", value: "high" },
         ]),
       );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("falls back from GLM instances for utility text generation", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("glm_work");
+      const selection = { instanceId, model: "glm-5.1" };
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("glm"), enabled: true },
+        },
+        defaultModelSelection: selection,
+        textGenerationModelSelection: selection,
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+      });
+      assert.deepEqual(next.defaultModelSelection, selection);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

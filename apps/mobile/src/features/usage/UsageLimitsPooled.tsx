@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
@@ -37,7 +38,11 @@ const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" 
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
-  if (!account.email) return DRIVER_LABEL[account.driver] ?? String(account.driver);
+  if (!account.email) {
+    return (
+      getProviderClient(account.driver)?.label ?? DRIVER_LABEL[account.driver] ?? account.driver
+    );
+  }
   const [local = "", domain = ""] = account.email.split("@");
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
 }
@@ -330,7 +335,9 @@ export function UsageLimitsSection({
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
-                  {DRIVER_LABEL[pool.driver] ?? pool.driver}
+                  {getProviderClient(pool.driver)?.label ??
+                    DRIVER_LABEL[pool.driver] ??
+                    pool.driver}
                 </Text>
               </View>
               {windows.map((window) => {

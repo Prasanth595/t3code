@@ -144,6 +144,7 @@ computer.
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
 | Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
+| GLM Agent   | Add [GLM Agent](./providers-glm.md) in Settings → Providers, then sign in or configure `Z_AI_API_KEY`.                                                    |
 | fx          | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
@@ -174,7 +175,7 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md),
-[Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+[Muse Code](./providers-muse.md), [fx](./providers-fx.md), and [GLM Agent](./providers-glm.md).
 
 ## Next steps
 

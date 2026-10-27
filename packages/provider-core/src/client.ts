@@ -41,6 +41,8 @@ export interface ProviderClientDefinition {
   readonly settingsSchema: ProviderSettingsSchema;
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
   readonly hasDefaultInstance?: boolean;
+  readonly authMethodsDiscovery?: boolean;
+  readonly registryAgentId?: string;
   readonly badgeLabel?: string;
   /** `false` lists the provider under Add provider's "Show more" instead of up front. */
   readonly featured?: boolean;

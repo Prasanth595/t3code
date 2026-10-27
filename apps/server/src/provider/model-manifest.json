@@ -97,6 +97,11 @@
       ]
     },
     {
+      "driver": "glm",
+      "t3CodeRange": ">=0.0.46",
+      "ranges": [{ "range": ">=0.0.0", "status": "unknown" }]
+    },
+    {
       "driver": "fx",
       "t3CodeRange": ">=0.0.46",
       "recommendedRange": ">=0.0.13",

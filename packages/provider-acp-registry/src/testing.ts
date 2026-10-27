@@ -3,6 +3,7 @@ export {
   ACP_REGISTRY_PROVIDER,
   acpRegistryPromptFailure,
   makeAcpRegistryAdapterV2,
+  makeAcpRegistryRuntime,
   registerMistralVibeAcpExtensions,
 } from "./server/adapter.ts";
 export {
@@ -21,3 +22,4 @@ export {
   type AcpRegistryAvailableCommands,
   type AcpRegistryLiveConfiguration,
 } from "./server/probe.ts";
+export * as AcpRegistryProbe from "./server/probe.ts";

@@ -53,6 +53,7 @@ export interface ProviderInstance {
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {
+    readonly identityDriver?: ProviderDriverKind;
     readonly listSessions: (input: {
       readonly cwd: string;
       readonly cursor?: string;

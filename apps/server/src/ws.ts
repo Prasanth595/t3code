@@ -1457,7 +1457,7 @@ export const layerWsRpc = (
           listed.sessions,
           (session) => {
             const threadId = importedAcpThreadId({
-              driver: instance.driverKind,
+              driver: manager.identityDriver ?? instance.driverKind,
               instanceId: input.instanceId,
               sessionId: session.sessionId,
             });
@@ -1487,7 +1487,7 @@ export const layerWsRpc = (
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
             yield* acpRegistryProject(input.projectId);
-            const { instance } = yield* acpSessionManager(input.instanceId);
+            const { instance, manager } = yield* acpSessionManager(input.instanceId);
             const providerSnapshot = yield* instance.snapshot.getSnapshot;
             if (
               providerSnapshot.nativeSessions?.canLoad !== true &&
@@ -1499,7 +1499,7 @@ export const layerWsRpc = (
               });
             }
             const threadId = importedAcpThreadId({
-              driver: instance.driverKind,
+              driver: manager.identityDriver ?? instance.driverKind,
               instanceId: input.instanceId,
               sessionId: input.sessionId,
             });
@@ -1589,7 +1589,7 @@ export const layerWsRpc = (
               });
             }
             const threadId = importedAcpThreadId({
-              driver: instance.driverKind,
+              driver: manager.identityDriver ?? instance.driverKind,
               instanceId: input.instanceId,
               sessionId: input.sessionId,
             });

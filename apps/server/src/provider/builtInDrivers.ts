@@ -8,6 +8,7 @@ import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
 import { FxDriver, type FxDriverEnv } from "@t3tools/provider-fx/server";
 import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
+import { GlmDriver, type GlmDriverEnv } from "@t3tools/provider-glm/server";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
 import { MuseDriver, type MuseDriverEnv } from "@t3tools/provider-muse/server";
 import { PiDriver, type PiDriverEnv } from "@t3tools/provider-pi/server";
@@ -24,6 +25,7 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | FxDriverEnv
   | GrokDriverEnv
+  | GlmDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
   | MuseDriverEnv;
@@ -33,6 +35,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ClaudeDriver,
   CursorDriver,
   GrokDriver,
+  GlmDriver,
   FxDriver,
   OpenCodeDriver,
   AntigravityDriver,

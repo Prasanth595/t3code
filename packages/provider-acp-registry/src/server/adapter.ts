@@ -64,8 +64,12 @@ export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_R
 
 const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+const decodeErrorDetails = Schema.decodeUnknownOption(Schema.Struct({ details: Schema.String }));
 
 export interface AcpRegistryAdapterV2Options {
+  readonly driverKind?: ProviderDriverKind;
+  readonly itemIdentityDriver?: ProviderDriverKind;
+  readonly resolvePromptFailure?: AcpAdapterV2Flavor["resolvePromptFailure"];
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -114,14 +118,29 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
 }
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  const details = isAcpRequestError(cause) ? decodeErrorDetails(cause.data) : Option.none();
+  const glmMessage =
+    agentId === "glm-acp-agent" &&
+    isAcpRequestError(cause) &&
+    (cause.code === 429 || cause.code === -32603)
+      ? Option.isSome(details)
+        ? details.value.details
+        : cause.errorMessage
+      : undefined;
+  const glmLimit =
+    glmMessage !== undefined &&
+    /^429\s+Usage limit reached for\s+[^\n]+\. Your limit will reset at\s+\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/iu.test(
+      glmMessage,
+    );
   return makeProviderFailure({
     cause,
+    ...(glmLimit ? { retryable: true } : {}),
     ...(isAcpRequestError(cause)
       ? {
-          message: cause.errorMessage,
+          message: glmLimit ? glmMessage : cause.errorMessage,
           code: String(cause.code),
           class:
-            agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
+            glmLimit || (agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED)
               ? ("usage_limit" as const)
               : ("provider_error" as const),
         }
@@ -129,7 +148,7 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   });
 }
 
-function makeAcpRegistryRuntime(
+export function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
 ) {
@@ -148,7 +167,7 @@ function makeAcpRegistryRuntime(
           Effect.mapError(
             (cause) =>
               new EffectAcpErrors.AcpSpawnError({
-                command: options.settings.agentId || ACP_REGISTRY_PROVIDER,
+                command: options.settings.agentId || options.driverKind || ACP_REGISTRY_PROVIDER,
                 cause,
               }),
           ),
@@ -209,10 +228,16 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     : options;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   const flavor: AcpAdapterV2Flavor = {
-    driver: ACP_REGISTRY_PROVIDER,
+    driver: options.driverKind ?? ACP_REGISTRY_PROVIDER,
+    ...(options.itemIdentityDriver === undefined
+      ? {}
+      : { itemIdentityDriver: options.itemIdentityDriver }),
     capabilities: AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
+    ...(options.resolvePromptFailure === undefined
+      ? {}
+      : { resolvePromptFailure: options.resolvePromptFailure }),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
       : {}),
@@ -307,44 +332,63 @@ export type AcpRegistryAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
-export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
-  AcpRegistrySettings,
-  AcpRegistryAdapterV2DriverEnv
-> = {
-  driverKind: ACP_REGISTRY_PROVIDER,
-  configSchema: AcpRegistrySettings,
-  defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
-  create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return yield* makeAcpRegistryAdapterV2({
-        instanceId: input.instanceId,
-        settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        selfInvocation,
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: providerEventLoggers.native,
-            provider: ACP_REGISTRY_PROVIDER,
-            threadId,
-          }),
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: ACP_REGISTRY_PROVIDER,
-              instanceId: input.instanceId,
-              detail: "Failed to create ACP Registry adapter.",
-              cause,
+export function makeAcpRegistryAdapterV2Driver(
+  driverKind: ProviderDriverKind,
+  itemIdentityDriver?: ProviderDriverKind,
+  resolvePromptFailure?: (
+    cause: unknown,
+    environment: NodeJS.ProcessEnv,
+  ) => ReturnType<NonNullable<AcpAdapterV2Flavor["resolvePromptFailure"]>>,
+): ProviderAdapterDriver<AcpRegistrySettings, AcpRegistryAdapterV2DriverEnv> {
+  return {
+    driverKind,
+    configSchema: AcpRegistrySettings,
+    defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
+    create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
+      function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
+        const hostEnvironment = yield* HostProcess.Environment;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+        const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+        const environment = yield* mergeProviderInstanceEnvironment(
+          input.environment,
+          hostEnvironment,
+        );
+        return yield* makeAcpRegistryAdapterV2({
+          driverKind,
+          ...(itemIdentityDriver === undefined ? {} : { itemIdentityDriver }),
+          instanceId: input.instanceId,
+          settings: { ...input.config, enabled: input.enabled },
+          environment,
+          ...(resolvePromptFailure === undefined
+            ? {}
+            : {
+                resolvePromptFailure: (cause: unknown) => resolvePromptFailure(cause, environment),
+              }),
+          selfInvocation,
+          continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+          nativeLogging: (threadId) =>
+            makeNativeLogger({
+              nativeEventLogger: providerEventLoggers.native,
+              provider: driverKind,
+              threadId,
             }),
+        });
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterDriverCreateError({
+                driver: driverKind,
+                instanceId: input.instanceId,
+                detail: "Failed to create ACP Registry adapter.",
+                cause,
+              }),
+          ),
         ),
-      ),
-  ),
-};
+    ),
+  };
+}
+
+export const AcpRegistryAdapterV2Driver = makeAcpRegistryAdapterV2Driver(ACP_REGISTRY_PROVIDER);

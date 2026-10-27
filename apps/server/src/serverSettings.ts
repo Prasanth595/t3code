@@ -18,6 +18,7 @@ import {
   globalIdleCompaction,
   withIdleCompaction,
 } from "@t3tools/contracts";
+import { migrateGlmProviderInstances } from "@t3tools/provider-glm/compatibility";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -109,12 +110,20 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
   };
 };
 
+const migrateGlmProviderSettings = (settings: ServerSettings): ServerSettings => {
+  const providerInstances = migrateGlmProviderInstances(settings.providerInstances);
+  return providerInstances === settings.providerInstances
+    ? settings
+    : { ...settings, providerInstances };
+};
+
 const normalizeServerSettings = (
   settings: ServerSettings,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
+    Effect.map(migrateGlmProviderSettings),
     Effect.map((next) => withIdleCompaction(next, globalIdleCompaction(next))),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
@@ -401,12 +410,14 @@ function migrateLegacyProviderSettings(
 }
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+const GLM_DRIVER = ProviderDriverKind.make("glm");
 
 function selectionSupportsTextGeneration(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
+  const driver = settings.providerInstances[selection.instanceId]?.driver;
+  return driver !== ACP_REGISTRY_DRIVER && driver !== GLM_DRIVER;
 }
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
@@ -740,8 +751,9 @@ const make = Effect.gen(function* () {
         ? settings
         : migrateLegacyProviderSettings(settings, legacyProviders, providerHistory),
     );
+    const upgraded = settingsFileTrusted ? migrateGlmProviderSettings(loaded) : loaded;
     const folded = settingsFileTrusted
-      ? foldLegacyProjectSettings(loaded, legacyProjectRows)
+      ? foldLegacyProjectSettings(upgraded, legacyProjectRows)
       : loaded;
     // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
     const legacySecretsCopied = yield* Effect.forEach(

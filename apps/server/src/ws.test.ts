@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthOrchestrationOperateScope,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -10,6 +11,7 @@ import {
   WS_METHODS,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  WsRpcGroup,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
@@ -18,8 +20,10 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -45,6 +49,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
@@ -65,6 +70,8 @@ import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.t
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -473,6 +480,144 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect.each([
+  { driver: "glm", identityDriver: ProviderDriverKind.make("acpRegistry") },
+  { driver: "acpRegistry", identityDriver: undefined },
+])("protects imported native ACP sessions for $driver", ({ driver, identityDriver }) =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("native-session-delete");
+    const driverKind = ProviderDriverKind.make(driver);
+    const projectId = ProjectId.make("native-session-delete-project");
+    const sessionId = "native-session";
+    const importedThreadId = IdAllocator.deriveThreadFromProviderThread({
+      driver: identityDriver ?? driverKind,
+      providerInstanceId: instanceId,
+      nativeThreadId: sessionId,
+    });
+    const deletions: Array<{ readonly cwd: string; readonly sessionId: string }> = [];
+    const lookedUp: Array<ThreadId> = [];
+    let imported = true;
+    const instance = {
+      instanceId,
+      driverKind,
+      snapshot: {
+        getSnapshot: Effect.succeed({ nativeSessions: { canDelete: true } }),
+      },
+      acpSessionManagement: {
+        ...(identityDriver === undefined ? {} : { identityDriver }),
+        deleteSession: (input: { readonly cwd: string; readonly sessionId: string }) =>
+          Effect.sync(() => deletions.push(input)).pipe(Effect.asVoid),
+      },
+    } as unknown as ProviderInstance;
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/tmp/native-session-delete",
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+        withSessionMutation: (effect) => effect,
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: () => Effect.succeed(instance),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({
+            id: projectId,
+            title: "Native session deletion",
+            workspaceRoot: "/tmp/native-session-delete",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-10-26T00:00:00.000Z",
+            updatedAt: "2026-10-26T00:00:00.000Z",
+            deletedAt: null,
+          }),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.sync(() => {
+            lookedUp.push(threadId);
+            return imported && threadId === importedThreadId
+              ? ({ id: importedThreadId } as OrchestrationV2ThreadShell)
+              : null;
+          }),
+      }),
+    );
+    const responses = yield* Queue.unbounded<{
+      readonly _tag: string;
+      readonly exit?: Exit.Exit<unknown, unknown>;
+    }>();
+    const deleteGroup = RpcGroup.make(
+      ...Array.from(WsRpcGroup.requests.values()).filter(
+        (rpc) => rpc._tag === WS_METHODS.serverDeleteAcpRegistrySession,
+      ),
+    );
+    const server = yield* RpcServer.makeNoSerialization(deleteGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) => Queue.offer(responses, response),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("native-session-delete"),
+              subject: "native-session-delete",
+              method: "browser-session-cookie",
+              scopes: [AuthOrchestrationOperateScope],
+            },
+            {},
+            {},
+            yield* PreviewAutomationBroker.PreviewAutomationBroker,
+            yield* ServerBrowser.ServerBrowser,
+          ).pipe(Layer.provide(services)),
+        ),
+      ),
+    );
+    for (const id of ["imported", "unimported"]) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(id),
+        tag: WS_METHODS.serverDeleteAcpRegistrySession,
+        payload: { instanceId, projectId, sessionId },
+        headers: Headers.empty,
+      });
+      const packet = yield* Queue.take(responses);
+      assert.equal(packet._tag, "Exit", JSON.stringify(packet));
+      if (packet.exit === undefined) return yield* Effect.die("Missing RPC result");
+      const response = packet.exit;
+      assert.deepEqual(lookedUp.at(-1), importedThreadId);
+      if (imported) {
+        assert.isTrue(Exit.isFailure(response));
+        if (Exit.isFailure(response)) {
+          assert.propertyVal(Cause.squash(response.cause), "reason", "session_delete_failed");
+        }
+        assert.isEmpty(deletions);
+      } else {
+        assert.deepEqual(response, Exit.succeed({ deleted: true }));
+        assert.deepEqual(deletions, [{ cwd: "/tmp/native-session-delete", sessionId }]);
+      }
+      imported = false;
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 it.effect(

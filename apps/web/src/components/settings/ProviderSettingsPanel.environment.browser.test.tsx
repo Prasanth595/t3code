@@ -231,6 +231,53 @@ async function setup() {
 }
 
 describe("EnvironmentProviderSettings routing", () => {
+  it("saves a readable GLM endpoint to the selected environment", async () => {
+    await setup();
+    const instanceId = ProviderInstanceId.make("glm_work");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("glm"),
+          enabled: true,
+          displayName: "GLM Agent",
+          environment: [
+            {
+              name: "ACP_GLM_BASE_URL",
+              value: "https://api.z.ai/api/coding/paas/v4",
+              sensitive: false,
+            },
+          ],
+        },
+      },
+    };
+    await using _screen = await render(panel({ targetInstanceId: instanceId }));
+    const endpoint = page.getByLabelText("Coding Plan endpoint", { exact: true });
+    await expect.element(endpoint).toHaveValue("https://api.z.ai/api/coding/paas/v4");
+    await userEvent.fill(endpoint, "https://open.bigmodel.cn/api/coding/paas/v4");
+    await userEvent.keyboard("{Tab}");
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith(
+        {
+          operation: "upsert",
+          instanceId,
+          instance: {
+            ...state.settings.providerInstances[instanceId],
+            environment: [
+              {
+                name: "ACP_GLM_BASE_URL",
+                value: "https://open.bigmodel.cn/api/coding/paas/v4",
+                sensitive: false,
+              },
+            ],
+          },
+        },
+        {},
+      ),
+    );
+    expect(state.mutationEnvironmentIds.every((id) => id === environmentId)).toBe(true);
+  });
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

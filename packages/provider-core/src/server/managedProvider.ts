@@ -160,6 +160,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           a !== undefined && b !== undefined && a !== b;
         const switchedAccount =
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+          differs(
+            probedSnapshot.usageLimits?.credentialFingerprint,
+            state.snapshot.usageLimits?.credentialFingerprint,
+          ) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
