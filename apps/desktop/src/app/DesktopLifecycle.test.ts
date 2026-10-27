@@ -313,4 +313,43 @@ describe("DesktopLifecycle", () => {
       ).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("continues registration when the persisted theme cannot be read", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let activationCount = 0;
+      const activate = Effect.sync(() => {
+        activationCount += 1;
+      });
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layerBrokenTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
+        shouldUseDarkColors: Effect.succeed(false),
+        source: Effect.die("malformed theme.json"),
+        setSource: () => Effect.void,
+        onUpdated: () => Effect.void,
+      });
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners)),
+        Layer.provideMerge(layerBrokenTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow({ activate })),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          appListeners.get("activate")?.();
+          assert.equal(activationCount, 1);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
 });
