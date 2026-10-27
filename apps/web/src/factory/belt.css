@@ -52,3 +52,73 @@
 [data-factory-belt] {
   --factory-cols: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 3fr) minmax(0, 1.3fr);
 }
+
+/*
+ * Motion, once per change of station and never repainting on its own. A run that changes post flies
+ * as a `.factory-ghost` over the belt (beltMotion.ts), the lanes clipping what they hold. The slide
+ * is 750ms, as SLIDE_MS there; the flash, glow and fade are one-shots that the script drops on
+ * `animationend`. Only transform, opacity and shadows move, never layout.
+ */
+.factory-ghost {
+  position: absolute;
+  margin: 0;
+  pointer-events: none;
+  transform-origin: center;
+  transition:
+    transform 750ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 750ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* The post a run lands on: pressed a little and back, its top edge lit. */
+.factory-post-flash {
+  transform-origin: bottom;
+  animation: factory-post-flash 300ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes factory-post-flash {
+  from {
+    transform: scaleY(0.96);
+    box-shadow: 0 -4px 10px -2px var(--factory-station);
+  }
+  to {
+    transform: none;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* The tile that landed: one ring that fades out. */
+.factory-tile-glow {
+  animation: factory-tile-glow 600ms ease-out;
+}
+@keyframes factory-tile-glow {
+  from {
+    box-shadow:
+      0 0 0 2px var(--factory-station),
+      0 0 12px 2px var(--factory-station);
+  }
+  to {
+    box-shadow:
+      0 0 0 0 transparent,
+      0 0 0 0 transparent;
+  }
+}
+
+/* A tile that is new on the board: faded in where it stands. */
+.factory-tile-enter {
+  animation: factory-tile-enter 300ms ease-out;
+}
+@keyframes factory-tile-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .factory-ghost {
+    transition: none;
+  }
+  .factory-post-flash,
+  .factory-tile-glow,
+  .factory-tile-enter {
+    animation: none;
+  }
+}

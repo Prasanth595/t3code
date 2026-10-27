@@ -1416,6 +1416,15 @@ describe("tile motion", () => {
     expect(tile.style.visibility).toBe("hidden");
     expect(tilesOf(lane(page, "building"))).toEqual([]);
     expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(false);
+    // It flies over the belt on a transform transition, not on layout.
+    expect(getComputedStyle(ghost!).position).toBe("absolute");
+    const flight = ghost!
+      .getAnimations()
+      .find((animation) => (animation as CSSTransition).transitionProperty === "transform")!;
+    expect(flight.effect!.getTiming()).toMatchObject({
+      duration: 750,
+      easing: "cubic-bezier(0.2, 0.7, 0.2, 1)",
+    });
 
     await land(ghost!);
     expect(ghostsOf(page)).toEqual([]);

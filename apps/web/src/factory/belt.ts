@@ -254,6 +254,86 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
   };
 }
 
+/** Where a run is on the belt: a post (its lane, or Done's bin) or one of the bins under the belt. */
+export type Place = Station | "stuck" | "info";
+
+/** The posts with a lane of tiles: every post but Done, whose runs are counted in a bin. */
+export type LaneStation = Exclude<Station, "done">;
+export type Bin = "done" | "stuck" | "info";
+
+/** Where each run of the belt is, by key. */
+export function placesOf(belt: Belt): ReadonlyMap<string, Place> {
+  const places = new Map<string, Place>();
+  for (const station of STATIONS) {
+    for (const run of belt.runs[station]) places.set(run.key, station);
+  }
+  for (const run of belt.stuck) places.set(run.key, "stuck");
+  for (const run of belt.info) places.set(run.key, "info");
+  return places;
+}
+
+/** What one run's tile does between two reads of the belt. */
+export type TileMotion =
+  | {
+      readonly kind: "slide";
+      readonly key: string;
+      readonly from: LaneStation;
+      readonly to: LaneStation;
+    }
+  | { readonly kind: "leave"; readonly key: string; readonly from: LaneStation; readonly to: Bin }
+  | { readonly kind: "enter"; readonly key: string; readonly to: LaneStation };
+
+const isLane = (place: Place): place is LaneStation =>
+  place !== "done" && place !== "stuck" && place !== "info";
+
+/**
+ * Which tiles moved from `previous` to `next`: a run that went to another post slides, one that
+ * finished into a bin leaves, one that is new on a post (or back from a bin) enters. Nothing moves
+ * on the first load (`previous` null), and a run that is gone from the board just goes.
+ */
+export function tileMotions(
+  previous: ReadonlyMap<string, Place> | null,
+  next: ReadonlyMap<string, Place>,
+): Array<TileMotion> {
+  if (previous === null) return [];
+  const motions: Array<TileMotion> = [];
+  for (const [key, to] of next) {
+    const from = previous.get(key);
+    if (from === to) continue;
+    if (from === undefined || !isLane(from)) {
+      if (isLane(to)) motions.push({ kind: "enter", key, to });
+    } else if (isLane(to)) {
+      motions.push({ kind: "slide", key, from, to });
+    } else {
+      motions.push({ kind: "leave", key, from, to });
+    }
+  }
+  return motions;
+}
+
+/**
+ * The belt with the runs still sliding into a bin left out of it, so a bin's count changes when the
+ * slide ends. Lanes and counters are as they were.
+ */
+export function holdBins(belt: Belt, landing: ReadonlySet<string>): Belt {
+  if (landing.size === 0) return belt;
+  const kept = (runs: ReadonlyArray<BeltRun>) => runs.filter((run) => !landing.has(run.key));
+  const done = kept(belt.runs.done);
+  // A done run's step is how its pull request ended.
+  const merged = done.filter((run) => run.step === "merged").length;
+  return {
+    ...belt,
+    runs: { ...belt.runs, done },
+    done: {
+      merged,
+      closed: done.length - merged,
+      latest: done.slice(0, 3).map((run) => run.issue),
+    },
+    stuck: kept(belt.stuck),
+    info: kept(belt.info),
+  };
+}
+
 /**
  * How many tiles a lane shows of `count` runs given `slots` places. When every run has a place,
  * all show; otherwise the last place is the `+N` tile for the `hidden` rest.
