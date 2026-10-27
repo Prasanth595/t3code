@@ -166,14 +166,16 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   // Starting one kind of load clears the other, so at most one holds an error.
   const loadError = settledError(refresh) ?? settledError(page);
 
-  // A page asked for while an environment was unreachable fails at once; ask again once it is
-  // back, since the error stops loading on scroll.
+  // A page or refresh asked for while an environment was unreachable fails at once, and its
+  // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
+  // stale by then because the list queries re-run on reconnect.
   // A listener alone does not compute the atom, so nothing would follow the connections.
   useAtomMount(sessionsFamily(scopeKey));
   useAtomSubscribe(sessionsFamily(scopeKey), () => {
-    if (settledError(registry.get(pageAtom)) !== null && !registry.get(refreshAtom).waiting) {
-      registry.set(pageAtom, true);
-    }
+    const pageResult = registry.get(pageAtom);
+    const refreshResult = registry.get(refreshAtom);
+    if (settledError(refreshResult) !== null) registry.set(refreshAtom, Atom.Reset);
+    else if (settledError(pageResult) !== null && !refreshResult.waiting) registry.set(pageAtom, true);
   });
 
   // Read from the registry, not the render: a second onEndReached before React re-renders must
