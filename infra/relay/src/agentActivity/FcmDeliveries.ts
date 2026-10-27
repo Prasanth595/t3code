@@ -46,6 +46,9 @@ export const FcmDeliveryJob = Schema.Struct({
       deepLink: Schema.String,
       environmentId: Schema.String,
       threadId: Schema.String,
+      // Set once at enqueue so a queue retry stays one alert and a later
+      // message with the same body does not.
+      eventId: Schema.String,
     }),
   ),
 });
@@ -129,7 +132,9 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
-      readonly directAlert?: FcmDeliveryJob["directAlert"];
+      readonly directAlert?: Omit<NonNullable<FcmDeliveryJob["directAlert"]>, "eventId"> & {
+        readonly eventId?: string;
+      };
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -172,6 +177,13 @@ const make = Effect.gen(function* () {
         };
       }
       const now = yield* DateTime.now;
+      const directAlert =
+        input.directAlert === undefined
+          ? undefined
+          : {
+              ...input.directAlert,
+              eventId: input.directAlert.eventId ?? (yield* crypto.randomUUIDv4()),
+            };
       yield* sender
         .send({
           userId: input.target.user_id,
@@ -179,7 +191,7 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
-          ...(input.directAlert === undefined ? {} : { directAlert: input.directAlert }),
+          ...(directAlert === undefined ? {} : { directAlert }),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -216,11 +228,31 @@ const make = Effect.gen(function* () {
         ) {
           return;
         }
+        // A queued alert can outlive the link or the environment's permission.
+        const link = yield* links.getForUser({
+          userId: job.userId,
+          environmentId: job.directAlert.environmentId,
+        });
+        if (!link) return;
+        const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+          environmentId: job.directAlert.environmentId,
+          environmentPublicKey: link.environmentPublicKey,
+        });
+        const deliveryUser = deliveryUsers.find((user) => user.userId === job.userId);
+        if (!deliveryUser?.notificationsEnabled) return;
+        const states = preferences.value.liveActivitiesEnabled
+          ? yield* rows.listForUser({ userId: job.userId })
+          : [];
+        const aggregate = makeAggregateState({
+          activeStates: states,
+          terminalState: null,
+          nowMs: now.epochMilliseconds,
+        });
         const alert = {
           alert_id: [
             job.directAlert.environmentId,
             job.directAlert.threadId,
-            job.directAlert.body,
+            job.directAlert.eventId,
           ].join("\n"),
           alert_title: job.directAlert.title,
           alert_body: job.directAlert.body,
@@ -228,9 +260,13 @@ const make = Effect.gen(function* () {
         };
         const data: Record<string, string> = {
           t3_kind: "agent_activity",
+          // Current clients skip the activity update. Older ones still need the
+          // live card fields, or a missing `active` clears the card.
+          alert_only: "true",
           device_id: job.deviceId,
           user_id: job.userId,
           updated_at: String(now.epochMilliseconds),
+          ...androidActivityData(preferences.value.liveActivitiesEnabled ? aggregate : null),
           ...alert,
         };
         const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));

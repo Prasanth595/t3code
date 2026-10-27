@@ -441,6 +441,10 @@ export const make = Effect.gen(function* () {
 
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
+  // Phone alerts must not share this cache. Updating it without clearing
+  // publishedStateByThreadRef makes the next relay look already published.
+  let phoneRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
+  let phoneRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
@@ -885,16 +889,19 @@ export const make = Effect.gen(function* () {
     const publishEnabled = yield* readPublishAgentActivityEnabled;
     if (!relayConfig || !publishEnabled) return;
     if (
-      publishedRelayConfig?.url !== relayConfig.url ||
-      publishedRelayConfig.issuer !== relayConfig.issuer ||
-      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
+      phoneRelayConfig?.url !== relayConfig.url ||
+      phoneRelayConfig.issuer !== relayConfig.issuer ||
+      phoneRelayConfig.environmentCredential !== relayConfig.environmentCredential
     ) {
-      cachedRelayClient = undefined;
-      publishedRelayConfig = relayConfig;
+      phoneRelayClient = undefined;
+      phoneRelayConfig = relayConfig;
     }
-    if (cachedRelayClient === undefined) {
-      cachedRelayClient = yield* makeRelayClient(relayConfig);
+    if (phoneRelayClient === undefined) {
+      phoneRelayClient = yield* makeRelayClient(relayConfig);
     }
+    // Hold the client locally. A later config change can clear the cache while
+    // the shell lookup or the proof is still in flight.
+    const relayClient = phoneRelayClient;
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const shell = yield* threads.getThreadShell(alert.threadId);
     const title = shell?.title.trim() || "T3";
@@ -912,7 +919,7 @@ export const make = Effect.gen(function* () {
       alert: phoneAlert,
       jti: yield* crypto.randomUUIDv4(),
     });
-    yield* cachedRelayClient.server
+    yield* relayClient.server
       .publishAgentAlert({
         params: { environmentId, threadId: alert.threadId },
         payload: { alert: phoneAlert, proof },
