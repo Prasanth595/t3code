@@ -843,14 +843,11 @@ describe("CodexAdapterV2 process exit", () => {
       yield* Deferred.await(outputEnded);
       const rpcError = yield* client.request("thread/list", {}).pipe(Effect.flip);
       assert.strictEqual(rpcError, terminationError);
-      // Drain runnable lifecycle work before inspecting the reader; no wall-clock deadline.
-      yield* TestClock.adjust(0);
-      const readerExit = eventReader.pollUnsafe();
-      // A clean end of stream reads as manual_shutdown to the session manager, so
-      // only a stream failure retires the dead process as a runtime error.
+      // Without the fix the stream never ends, so this waits until the project timeout.
+      const readerExit = yield* Fiber.await(eventReader);
+      // A failure, not a clean end, carries the Codex error into the session's lastError.
       assert.isTrue(
-        readerExit !== undefined &&
-          Exit.isFailure(readerExit) &&
+        Exit.isFailure(readerExit) &&
           isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
         "the session manager must receive process death so it can retire the shared process",
       );
