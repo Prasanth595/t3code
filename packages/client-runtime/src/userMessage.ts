@@ -5,6 +5,7 @@ import {
   type OrchestrationV2IdleCompaction,
   ScheduledTaskId,
 } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
@@ -17,6 +18,11 @@ export const IDLE_COMPACTION_TITLES = {
   beforeCacheExpires: "Context automatically compacted before cache expiry",
   onReturn: "Context compacted after being idle",
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
+
+/** Attachment-only sends carry a prompt for the agent; people see only the attachments. */
+export function userVisibleMessageText(text: string): string {
+  return text.trim() === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ? "" : text;
+}
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
 const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;
@@ -68,7 +74,7 @@ export function resolveUserMessagePresentation(message: {
     };
   }
   return {
-    text: message.text,
+    text: userVisibleMessageText(message.text),
     attribution:
       message.createdBy !== "agent"
         ? null

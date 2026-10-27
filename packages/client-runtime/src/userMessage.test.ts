@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { GuestMessageId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import { resolveUserMessagePresentation } from "./userMessage.ts";
 
@@ -19,6 +20,12 @@ describe("resolveUserMessagePresentation", () => {
         scheduledTaskId: undefined,
       });
     }
+  });
+
+  it("hides the prompt sent for attachment-only messages", () => {
+    expect(
+      resolveUserMessagePresentation({ role: "user", text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT }),
+    ).toEqual({ text: "", attribution: null, scheduledTaskId: undefined });
   });
 
   it("shows a guest's own words and name, not the attributed text the agent reads", () => {
