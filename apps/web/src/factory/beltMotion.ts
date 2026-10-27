@@ -4,7 +4,7 @@ import { holdBins, placesOf, tileMotions, type Belt, type Place, type TileMotion
 
 /** How long a slide takes; belt.css has the rest of the transition of `.factory-ghost`. */
 const SLIDE_MS = 750;
-/** How long the place of a tile that left its lane is remembered, for a bin or the lane to want it. */
+/** How long the place of a tile that left its lane is remembered, for a bin to want it. */
 const MEMORY_MS = 5000;
 /** How big a tile is when it lands in a bin. */
 const BIN_SCALE = "scale(.55)";
@@ -126,7 +126,7 @@ function fly(
  * What the motion keeps between renders, outside React's state. A tile that changes post is
  * removed and mounted again: `tileRef` sees it go and `play` flies a copy to where it lands. A tile
  * that leaves for no place draws nothing, as the lane closes up over it; its place is remembered
- * for `MEMORY_MS`, to fly from if a bin lists it or the lane takes it back.
+ * for `MEMORY_MS`, to fly from if a bin lists it. A run that comes back on a lane forgets it.
  */
 function createMotion() {
   const tiles = new Map<string, HTMLElement>();
