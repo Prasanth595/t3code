@@ -298,7 +298,7 @@ const abandonClosed = Effect.fn("RunnerStart.abandonClosed")(function* (
       }),
     );
     if (ended._tag === "Failure") {
-      if (!abandoned) return yield* Effect.fail(ended.failure);
+      if (!abandoned) return yield* ended.failure;
       return { kind: "abandoned", mayHaveSession, error: ended.failure };
     }
     if (ended.success === "left") continue;

@@ -316,17 +316,19 @@ const make = Effect.fn("FactoryAttention.make")(function* (options: {
   });
 
   return Attention.of({
-    list: () =>
-      Effect.sync(() =>
+    list: Effect.fn("Attention.list")(function () {
+      return Effect.sync(() =>
         [...items.values()].flatMap(({ item, dismissed }) => (dismissed ? [] : [item])),
-      ),
+      );
+    }),
     raise,
     clear,
     passEnded,
-    setNotify: (on) =>
-      Effect.sync(() => {
+    setNotify: Effect.fn("Attention.setNotify")(function (on) {
+      return Effect.sync(() => {
         notifying = on;
-      }),
+      });
+    }),
     dismiss,
   });
 });
