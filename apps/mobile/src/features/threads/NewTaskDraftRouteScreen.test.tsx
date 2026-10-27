@@ -108,48 +108,56 @@ const connected: Snapshot["catalog"] = {
 it.each([
   ["while the catalog reloads", { ...connected, isLoadingConnections: true }],
   ["while the catalog stays ready", connected],
-])("checks the branch out once when a reconnect drops and restores the project %s", async (gap, gapCatalog) => {
-  // Checkouts live in a module table keyed by route, so each case uses its own route.
-  const routeKey = `thread-route ${gap}`;
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const firstCheckout = Promise.withResolvers<unknown>();
-  harness.checkout.mockReturnValueOnce(firstCheckout.promise);
-  harness.checkout.mockResolvedValue(
-    AsyncResult.success({ name: "feature", current: true, isDefault: false, worktreePath: null }),
-  );
-  harness.set({ projects: [project], catalog: connected });
-  const draft = { environmentId: "env-1", projectId: "project-1", branch: "feature" };
-  harness.route = { key: routeKey, name: "Thread", params: { draft } };
-
-  const container = document.createElement("div");
-  const root = createRoot(container);
-  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  act(() =>
-    root.render(
-      <NewTaskDraftRouteScreen
-        route={{ key: routeKey, name: "Thread", params: draft } as never}
-      />,
-    ),
-  );
-  await vi.waitFor(() => expect(harness.checkout).toHaveBeenCalledTimes(1));
-
-  // The connection drops while the checkout runs, then the project comes back.
-  act(() => harness.set({ projects: [], catalog: gapCatalog }));
-  act(() => harness.set({ projects: [project], catalog: connected }));
-  await act(async () => {
-    firstCheckout.resolve(
+])(
+  "checks the branch out once when a reconnect drops and restores the project %s",
+  async (gap, gapCatalog) => {
+    // Checkouts live in a module table keyed by route, so each case uses its own route.
+    const routeKey = `thread-route ${gap}`;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const firstCheckout = Promise.withResolvers<unknown>();
+    harness.checkout.mockReturnValueOnce(firstCheckout.promise);
+    harness.checkout.mockResolvedValue(
       AsyncResult.success({ name: "feature", current: true, isDefault: false, worktreePath: null }),
     );
-  });
+    harness.set({ projects: [project], catalog: connected });
+    const draft = { environmentId: "env-1", projectId: "project-1", branch: "feature" };
+    harness.route = { key: routeKey, name: "Thread", params: { draft } };
 
-  await vi.waitFor(() =>
-    expect(
-      harness.checkout.mock.calls.length > 1 || container.textContent === "draft on feature",
-    ).toBe(true),
-  );
-  expect(harness.checkout).toHaveBeenCalledTimes(1);
-  expect(container.textContent).toBe("draft on feature");
-});
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <NewTaskDraftRouteScreen
+          route={{ key: routeKey, name: "Thread", params: draft } as never}
+        />,
+      ),
+    );
+    await vi.waitFor(() => expect(harness.checkout).toHaveBeenCalledTimes(1));
+
+    // The connection drops while the checkout runs, then the project comes back.
+    act(() => harness.set({ projects: [], catalog: gapCatalog }));
+    act(() => harness.set({ projects: [project], catalog: connected }));
+    await act(async () => {
+      firstCheckout.resolve(
+        AsyncResult.success({
+          name: "feature",
+          current: true,
+          isDefault: false,
+          worktreePath: null,
+        }),
+      );
+    });
+
+    await vi.waitFor(() =>
+      expect(
+        harness.checkout.mock.calls.length > 1 || container.textContent === "draft on feature",
+      ).toBe(true),
+    );
+    expect(harness.checkout).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toBe("draft on feature");
+  },
+);
 
 it("hands the draft screen the same project ref across re-renders", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
