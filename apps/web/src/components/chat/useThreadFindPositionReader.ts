@@ -27,7 +27,7 @@ export function useThreadFindPositionReader({
   readonly threadKey: string;
   readonly navigate: () => void;
   readonly timelineViewportElement: HTMLDivElement | null;
-  readonly findFoldRunIds: ReadonlyMap<string, RunId> | null;
+  readonly findFoldRunIds: ReadonlyMap<string, ReadonlyArray<RunId>> | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly latestRun: TimelineLatestRun | null;
   readonly runningRunId: RunId | null;
@@ -63,16 +63,16 @@ export function useThreadFindPositionReader({
               continue;
             }
             const entry = timelineEntries.find((entry) => {
-              const runId =
+              const inFold =
                 row.kind === "turn-fold"
-                  ? foldRunIds.get(entry.id)
-                  : entry.kind === "message"
-                    ? entry.message.runId
-                    : entry.kind === "proposed-plan"
-                      ? entry.proposedPlan.runId
-                      : null;
+                  ? foldRunIds.get(entry.id)?.includes(row.runId) === true
+                  : (entry.kind === "message"
+                      ? entry.message.runId
+                      : entry.kind === "proposed-plan"
+                        ? entry.proposedPlan.runId
+                        : null) === row.runId;
               return (
-                runId === row.runId &&
+                inFold &&
                 (entry.kind !== "message" || entry.message.role === "assistant") &&
                 (row.kind !== "attempt-fold" || entry.attempt?.id === row.attemptId)
               );

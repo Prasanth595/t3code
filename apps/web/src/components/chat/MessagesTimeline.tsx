@@ -233,7 +233,7 @@ interface MessagesTimelineProps {
   displayThreadKey?: string;
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
-  onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff?: (runId: RunId, filePath?: string, fromTurnCount?: number) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
@@ -441,6 +441,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
+  const expandCitedRun = (runIds: ReadonlyArray<RunId>) => {
+    setExpandedRunIds((current) =>
+      runIds.every((runId) => current.has(runId)) ? current : new Set([...current, ...runIds]),
+    );
+  };
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -497,14 +502,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
-  const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+  const [autoExpandedRunId, setAutoExpandedRunId] = useState<RunId | null>(null);
+  // A response's only run answers to both its own key and its group's, so a
+  // fold opened before the first background wake stays open after it.
+  const onToggleTurnFold = (row: {
+    id: string;
+    foldKeys: ReadonlyArray<RunId>;
+    expanded: boolean;
+  }) => {
+    suspendEndScrollMaintenanceForDisclosure(row.id);
+    if (autoExpandedRunId !== null && row.foldKeys.includes(autoExpandedRunId)) {
+      setAutoExpandedRunId(null);
+    }
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
+      for (const key of row.foldKeys) {
+        if (row.expanded) next.delete(key);
+        else next.add(key);
       }
       return next;
     });
@@ -534,7 +548,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  // An interrupted run opens its fold; a newer run closes the previous run's.
+  // An in-session interrupt expands its turn so the user keeps their place; the next
+  // run folds only that expansion, never one the user, a citation, or find opened.
   const [observedLatestRun, setObservedLatestRun] = useState({
     identity: listIdentityKey,
     runId: latestRun?.runId,
@@ -551,16 +566,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
       status: latestRun?.status,
     });
     const previousRunId = observedLatestRun.runId;
-    if (
-      observedLatestRun.identity === listIdentityKey &&
-      latestRun &&
-      previousRunId !== undefined
-    ) {
+    if (observedLatestRun.identity !== listIdentityKey) {
+      setAutoExpandedRunId(null);
+    } else if (latestRun && previousRunId !== undefined) {
       if (latestRun.runId === previousRunId) {
-        if (observedLatestRun.status === "running" && latestRun.status === "interrupted") {
+        if (
+          observedLatestRun.status === "running" &&
+          latestRun.status === "interrupted" &&
+          !expandedRunIds.has(latestRun.runId)
+        ) {
+          setAutoExpandedRunId(latestRun.runId);
           setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
         }
-      } else {
+      } else if (autoExpandedRunId === previousRunId) {
+        setAutoExpandedRunId(null);
         setExpandedRunIds((existing) => {
           if (!existing.has(previousRunId)) return existing;
           const next = new Set(existing);
@@ -581,16 +600,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
       })
     : null;
-  const activeFindRunId =
+  const activeFindRunIds =
     findActive && activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
-  const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
-  if (expandedFindRunId !== activeFindRunId) {
-    setExpandedFindRunId(activeFindRunId);
-    if (activeFindRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(activeFindRunId) ? previous : new Set(previous).add(activeFindRunId),
-      );
-    }
+  const activeFindRunKey = activeFindRunIds?.join("\0");
+  const [expandedFindRunKey, setExpandedFindRunKey] = useState<string | undefined>();
+  if (expandedFindRunKey !== activeFindRunKey) {
+    setExpandedFindRunKey(activeFindRunKey);
+    if (activeFindRunIds) expandCitedRun(activeFindRunIds);
   }
   // A cited response folded inside a turn opens its fold once per activation;
   // the user can fold it again. Only a citation that can still land opens one.
@@ -612,7 +628,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         )
       : undefined;
   if (citationRequest && citedEntry) {
-    const citedRunId = (
+    const citedRunIds = (
       findFoldRunIds ??
       timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
@@ -623,11 +639,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       })
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
-    if (citedRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
-      );
-    }
+    if (citedRunIds) expandCitedRun(citedRunIds);
     const citedAttempt = citedEntry.attempt;
     if (citedAttempt?.status === "superseded") {
       setExpandedAttemptIds((previous) =>
@@ -636,9 +648,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
   const visibleExpandedRunIds =
-    !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)
+    !activeFindRunIds || activeFindRunIds.every((runId) => paintedExpandedRunIds.has(runId))
       ? paintedExpandedRunIds
-      : new Set(paintedExpandedRunIds).add(activeFindRunId);
+      : new Set([...paintedExpandedRunIds, ...activeFindRunIds]);
 
   const activeFindAttemptId = activeFindMatch
     ? timelineEntries.find((entry) => entry.id === activeFindMatch.entryId)?.attempt?.id
@@ -1567,7 +1579,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         type="button"
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.runId)}
+        onClick={() => ctx.onToggleTurnFold(row)}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>

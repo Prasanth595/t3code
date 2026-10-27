@@ -197,7 +197,7 @@ import {
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
-  messageFoldRunId,
+  messageFoldRunIds,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -1257,7 +1257,7 @@ function renderFeedEntry(
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
-    readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onToggleTurnFold: (row: Extract<ThreadFeedEntry, { type: "run-fold" }>) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -1308,7 +1308,7 @@ function renderFeedEntry(
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: entry.expanded }}
-          onPress={() => props.onToggleTurnFold(entry.runId)}
+          onPress={() => props.onToggleTurnFold(entry)}
           hitSlop={4}
           className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
           style={{
@@ -2138,6 +2138,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const [autoExpandedTurnId, setAutoExpandedTurnId] = useState<RunId | null>(null);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -2743,15 +2744,15 @@ export const ThreadFeed = memo(function ThreadFeed({
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
     guestShare,
   );
-  const jumpRunId =
+  const jumpFoldKeys =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
-      ? messageFoldRunId(props.feed, jumpToMessageId)
-      : null;
-  if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
+      ? messageFoldRunIds(props.feed, jumpToMessageId)
+      : [];
+  if (jumpFoldKeys.some((key) => !expandedTurnIds.has(key))) {
     setInteractionState((current) => ({
       ...current,
-      expandedTurnIds: new Set(current.expandedTurnIds).add(jumpRunId),
+      expandedTurnIds: new Set([...current.expandedTurnIds, ...jumpFoldKeys]),
     }));
   }
   const setupAnchorIndex = presentedFeed.findIndex(
@@ -2862,7 +2863,8 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
     return new Set(terminalIdsByTurn.values());
   })();
-  // An interrupted run unfolds; a run that is no longer latest folds back.
+  // An in-session interrupt expands its turn so the user keeps their place; the next
+  // run folds only that expansion, never one the user opened.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);
   if (previousLatestRun !== props.latestRun) {
     setPreviousLatestRun(props.latestRun);
@@ -2870,14 +2872,21 @@ export const ThreadFeed = memo(function ThreadFeed({
     const previous = previousLatestRun;
     if (latest && previous) {
       if (latest.runId !== previous.runId) {
-        if (expandedTurnIds.has(previous.runId)) {
+        if (autoExpandedTurnId === previous.runId) {
+          setAutoExpandedTurnId(null);
           setInteractionState((current) => {
+            if (!current.expandedTurnIds.has(previous.runId)) return current;
             const next = new Set(current.expandedTurnIds);
             next.delete(previous.runId);
             return { ...current, expandedTurnIds: next };
           });
         }
-      } else if (previous.status === "running" && latest.status === "interrupted") {
+      } else if (
+        previous.status === "running" &&
+        latest.status === "interrupted" &&
+        !expandedTurnIds.has(latest.runId)
+      ) {
+        setAutoExpandedTurnId(latest.runId);
         setInteractionState((current) => ({
           ...current,
           expandedTurnIds: new Set(current.expandedTurnIds).add(latest.runId),
@@ -2997,14 +3006,18 @@ export const ThreadFeed = memo(function ThreadFeed({
     });
   };
 
-  const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
+  // A response's only run answers to both its own key and its group's, so a
+  // fold opened before the first background wake stays open after it.
+  const onToggleTurnFold = (row: Extract<ThreadFeedEntry, { type: "run-fold" }>) => {
+    suspendEndScrollMaintenanceForDisclosure(row.id);
+    if (autoExpandedTurnId !== null && row.foldKeys.includes(autoExpandedTurnId)) {
+      setAutoExpandedTurnId(null);
+    }
     setInteractionState((current) => {
       const next = new Set(current.expandedTurnIds);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
+      for (const key of row.foldKeys) {
+        if (row.expanded) next.delete(key);
+        else next.add(key);
       }
       return { ...current, expandedTurnIds: next };
     });

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { Atom } from "effect/reactivity";
 
+import { mergeResponseGroupCheckpoints } from "@t3tools/client-runtime/state/response-groups";
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/contracts";
 
@@ -17,6 +18,7 @@ import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
   getReviewSectionIdForCheckpoint,
+  parseReviewRangeSectionId,
   resolveReviewSelectedSectionId,
   reviewTurnDiffsBySectionId,
   type ReviewSectionItem,
@@ -73,8 +75,24 @@ export function useReviewSections(input: {
       : NO_TURN_DIFFS_ATOM,
   );
 
+  const checkpoints =
+    selectedThread === null ? [] : deriveThreadCheckpointSummaries(selectedThread.projection);
+  // A response group's stat opens one section spanning its turns; it exists
+  // only while selected.
+  const selectedRange = parseReviewRangeSectionId(reviewCache.selectedSectionId);
+  const range = selectedRange
+    ? mergeResponseGroupCheckpoints(
+        checkpoints.filter(
+          (checkpoint) =>
+            checkpoint.checkpointTurnCount > selectedRange.fromTurnCount &&
+            checkpoint.checkpointTurnCount <= selectedRange.toTurnCount,
+        ),
+      )
+    : null;
   const readyCheckpoints = getReadyReviewCheckpoints(
-    selectedThread === null ? [] : deriveThreadCheckpointSummaries(selectedThread.projection),
+    range?.rangeFromTurnCount === undefined
+      ? checkpoints
+      : [...checkpoints, { ...range, rangeFromTurnCount: range.rangeFromTurnCount }],
   );
   const checkpointBySectionId = new Map(
     readyCheckpoints.map((checkpoint) => [getReviewSectionIdForCheckpoint(checkpoint), checkpoint]),
@@ -103,7 +121,10 @@ export function useReviewSections(input: {
     environmentId: enabled ? (environmentId ?? null) : null,
     threadId: enabled ? (threadId ?? null) : null,
     fromTurnCount:
-      enabled && activeCheckpoint ? Math.max(0, activeCheckpoint.checkpointTurnCount - 1) : null,
+      enabled && activeCheckpoint
+        ? (activeCheckpoint.rangeFromTurnCount ??
+          Math.max(0, activeCheckpoint.checkpointTurnCount - 1))
+        : null,
     toTurnCount: enabled ? (activeCheckpoint?.checkpointTurnCount ?? null) : null,
     ignoreWhitespace: false,
   });

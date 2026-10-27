@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
+  getReviewSectionIdForCheckpoint,
+  parseReviewRangeSectionId,
   resolveReviewSelectedSectionId,
   type ReviewSectionItem,
 } from "./reviewModel";
@@ -302,5 +304,15 @@ describe("applyReviewDiffMetadata", () => {
     expect(result.files[0]?.additions).toBe(4000);
     expect(result.notice).toContain("Counts include all changes");
     expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
+  });
+});
+
+describe("review range sections", () => {
+  it("round-trips a response group's turn range through its section id", () => {
+    const id = getReviewSectionIdForCheckpoint({ checkpointTurnCount: 9, rangeFromTurnCount: 4 });
+    expect(id).toBe("turns:4:9");
+    expect(parseReviewRangeSectionId(id)).toEqual({ fromTurnCount: 4, toTurnCount: 9 });
+    expect(getReviewSectionIdForCheckpoint({ checkpointTurnCount: 9 })).toBe("turn:9");
+    expect(parseReviewRangeSectionId("turn:9")).toBeNull();
   });
 });
