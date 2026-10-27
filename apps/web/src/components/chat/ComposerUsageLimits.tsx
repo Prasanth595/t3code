@@ -1,4 +1,4 @@
-import { resetAvailability } from "@t3tools/client-runtime/reset-availability";
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";

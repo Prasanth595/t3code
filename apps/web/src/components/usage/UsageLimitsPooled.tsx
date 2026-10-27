@@ -1,4 +1,4 @@
-import { resetAvailability } from "@t3tools/client-runtime/reset-availability";
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,

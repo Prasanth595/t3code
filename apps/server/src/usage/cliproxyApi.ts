@@ -17,7 +17,6 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import { claudeResetCreditsToContract } from "../provider/claudeResetCredits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
@@ -76,7 +75,41 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
-const isIneligibleForClaudeResets = Schema.is(Schema.Struct({ eligible: Schema.Literal(false) }));
+const decodeClaudeInventory = Schema.decodeUnknownOption(
+  Schema.Struct({
+    eligible: Schema.Literal(true),
+    grants: Schema.Array(
+      Schema.Struct({
+        resets_left: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        starts_at: Schema.optional(Schema.NullOr(Schema.String)),
+        ends_at: Schema.optional(Schema.NullOr(Schema.String)),
+        paused: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  }),
+);
+
+function claudeBankedCredits(block: unknown, now: number) {
+  const inventory = decodeClaudeInventory(block);
+  if (Option.isNone(inventory)) return undefined;
+  let availableCount = 0;
+  let expiresAt = Infinity;
+  for (const grant of inventory.value.grants) {
+    const start = grant.starts_at == null ? -Infinity : Date.parse(grant.starts_at);
+    const end = grant.ends_at == null ? Infinity : Date.parse(grant.ends_at);
+    if (Number.isNaN(start) || Number.isNaN(end)) return undefined;
+    if (grant.paused || start > now || end <= now || grant.resets_left === 0) continue;
+    availableCount += grant.resets_left;
+    expiresAt = Math.min(expiresAt, end);
+  }
+  return {
+    availableCount,
+    ...(Number.isFinite(expiresAt)
+      ? { nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(expiresAt)) }
+      : {}),
+  };
+}
+
 const decodeClaudeAtLimitReset = Schema.decodeUnknownOption(
   Schema.Struct({ available: Schema.Boolean }),
 );
@@ -224,7 +257,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             Authorization: "Bearer $TOKEN$",
             "anthropic-beta": "oauth-2025-04-20",
             // The OAuth usage endpoint can return 429 without a Claude Code user agent.
-            "User-Agent": "claude-code/2.1.273",
+            "User-Agent": "claude-cli/2.1.273 (external, cli)",
           };
     const raw = yield* management(config, "api-call", {
       auth_index: account.auth_index,
@@ -277,14 +310,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
         const body = yield* apiCall(
           config,
           account,
-          "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1",
+          "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1&skip_spend=1",
         );
         const usage = yield* decodeClaudeUsage(body);
-        const credits =
-          claudeResetCreditsToContract(
-            usage.cedar_ember,
-            DateTime.toEpochMillis(yield* DateTime.now),
-          ) ?? (isIneligibleForClaudeResets(usage.cedar_ember) ? { availableCount: 0 } : undefined);
+        const credits = claudeBankedCredits(
+          usage.cedar_ember,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
         const atLimit = decodeClaudeAtLimitReset(usage.juniper_tide);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -312,14 +344,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 },
               },
             }).limits,
-            ...(credits
-              ? {
-                  resetCredits: {
-                    availableCount: credits.availableCount,
-                    ...(credits.nextExpiresAt ? { nextExpiresAt: credits.nextExpiresAt } : {}),
-                  },
-                }
-              : {}),
+            ...(credits ? { resetCredits: credits } : {}),
             atLimitReset: { available: Option.isSome(atLimit) ? atLimit.value.available : null },
           },
         };

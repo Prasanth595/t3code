@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { resetAvailability } from "@t3tools/client-runtime/reset-availability";
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   collectLimitAccounts,

@@ -9,7 +9,7 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import type { ResetAvailability } from "@t3tools/client-runtime/reset-availability";
+import type { ResetAvailability } from "@t3tools/shared/usageLimits";
 import {
   formatDuration,
   formatResetsIn,
@@ -330,11 +330,10 @@ export function ResetStatus({
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       {resets.weekly ? <span className="text-foreground">Weekly reset available</span> : null}
-      {resets.banked
-        ? (redeem ?? (
-            <span className="tabular-nums">{resetCreditsSummary(resets.banked, now, compact)}</span>
-          ))
-        : null}
+      {redeem ??
+        (resets.banked ? (
+          <span className="tabular-nums">{resetCreditsSummary(resets.banked, now, compact)}</span>
+        ) : null)}
       {resets.unavailable ? <span>{resets.unavailable}</span> : null}
     </div>
   );

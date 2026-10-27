@@ -1,6 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
-import type { ResetAvailability } from "@t3tools/client-runtime/reset-availability";
+import type { ResetAvailability } from "@t3tools/shared/usageLimits";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -249,13 +249,12 @@ export function ResetStatus(props: {
       {resets.weekly ? (
         <Text className={`${size} text-foreground`}>Weekly reset available</Text>
       ) : null}
-      {resets.banked
-        ? (props.redeem ?? (
-            <Text className={`${size} tabular-nums text-foreground-muted`}>
-              {resetCreditsSummary(resets.banked, now)}
-            </Text>
-          ))
-        : null}
+      {props.redeem ??
+        (resets.banked ? (
+          <Text className={`${size} tabular-nums text-foreground-muted`}>
+            {resetCreditsSummary(resets.banked, now)}
+          </Text>
+        ) : null)}
       {resets.unavailable ? (
         <Text className={`${size} text-foreground-muted`}>{resets.unavailable}</Text>
       ) : null}
