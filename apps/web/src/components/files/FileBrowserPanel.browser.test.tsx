@@ -43,7 +43,7 @@ function findTreeRow(path: string): HTMLElement | null {
 }
 
 describe("FileBrowserPanel", () => {
-  it("dragging a file row carries a composer mention and does not open the file", async () => {
+  it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     const onOpenFile = vi.fn();
     await using _screen = await render(
       <FileBrowserPanel
@@ -63,8 +63,17 @@ describe("FileBrowserPanel", () => {
     row.dispatchEvent(
       new DragEvent("dragstart", { bubbles: true, cancelable: true, composed: true, dataTransfer }),
     );
+    // The tree selects the row the drag picked up; mid-drag that must not open it.
+    row.click();
+    await vi.waitFor(() => expect(row.getAttribute("aria-selected")).toBe("true"));
 
     expect(dataTransfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toContain("README.md");
     expect(onOpenFile).not.toHaveBeenCalled();
+
+    row.dispatchEvent(new DragEvent("dragend", { bubbles: true, composed: true, dataTransfer }));
+    await vi.waitFor(() => expect(row.getAttribute("aria-selected")).not.toBe("true"));
+
+    row.click();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
 });
