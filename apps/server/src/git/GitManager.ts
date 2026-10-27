@@ -2321,7 +2321,9 @@ export const make = Effect.gen(function* () {
         cwd,
         baseRefName: baseBranch,
         headSelector: headContext.preferredHeadSelector,
-        ...(headContext.isCrossRepository && headContext.headRepositoryNameWithOwner
+        ...(provider.kind === "gitlab" &&
+        headContext.isCrossRepository &&
+        headContext.headRepositoryNameWithOwner
           ? {
               source: {
                 repository: headContext.headRepositoryNameWithOwner,
