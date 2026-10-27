@@ -1,6 +1,7 @@
 package expo.modules.t3reviewdiff
 
 import android.graphics.Color
+import android.graphics.Paint
 import android.view.View
 import kotlin.math.ceil
 import expo.modules.kotlin.AppContext
@@ -219,6 +220,15 @@ class ReviewDiffGeometryTest {
     }
   }
 
+  @Test
+  fun ellipsizingALongCommentDoesNotRemeasureItPerCharacter() {
+    val paint = CountingPaint().apply { textSize = 24f }
+    val result = ellipsize("A long pending review comment. ".repeat(200), paint, 300f)
+    assertTrue("measured ${paint.measurements} times", paint.measurements <= 2)
+    assertTrue(result.endsWith("..."))
+    assertTrue(paint.measureText(result) <= 300f)
+  }
+
   private fun call(target: Any, name: String, vararg args: Any): Any? = target.javaClass
     .declaredMethods.single { it.name == name && it.parameterCount == args.size }
     .apply { isAccessible = true }.invoke(target, *args)
@@ -239,6 +249,18 @@ class ReviewDiffGeometryTest {
     override fun get(index: Int): DiffRow {
       reads += 1
       return rows[index]
+    }
+  }
+
+  private class CountingPaint : Paint() {
+    var measurements = 0
+    override fun measureText(text: String): Float {
+      measurements += 1
+      return super.measureText(text)
+    }
+    override fun measureText(text: String, start: Int, end: Int): Float {
+      measurements += 1
+      return super.measureText(text, start, end)
     }
   }
 }
