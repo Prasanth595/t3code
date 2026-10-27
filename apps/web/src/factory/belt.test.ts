@@ -6,10 +6,14 @@ import {
   deriveBelt,
   fitLane,
   formatClock,
+  holdBins,
   newestAttempts,
   nextPassText,
+  placesOf,
   stationOf,
+  tileMotions,
   type BeltEnvironment,
+  type Place,
 } from "./belt";
 
 const ENV_A = "env-a" as EnvironmentId;
@@ -591,5 +595,140 @@ describe("deriveBelt newest station", () => {
     expect(belt.newest).toBe("pr");
     expect(deriveBelt([], NOW).newest).toBe("claimed");
     expect(deriveBelt([environment(ENV_A)], NOW).newest).toBe("claimed");
+  });
+});
+
+describe("placesOf", () => {
+  it("maps every run of the belt to its post or bin, by key", () => {
+    const belt = deriveBelt(
+      [
+        environment(ENV_A, {
+          active: [
+            active({ id: id(1), state: "triage", last_event: "claimed" }),
+            active({ id: id(2) }),
+            active({ id: id(3), last_event: "gate_command" }),
+            active({ id: id(4), state: "pr-open" }),
+          ],
+          recent: [
+            finished(5, "merged", at(9), 3_600_000),
+            row({ id: id(6), state: "stuck", finished: true }),
+            row({ id: id(7), state: "needs-info", finished: true }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    const key = (issue: number) => `${ENV_A} ${id(issue)}`;
+    expect(Object.fromEntries(placesOf(belt))).toEqual({
+      [key(1)]: "claimed",
+      [key(2)]: "building",
+      [key(3)]: "gate",
+      [key(4)]: "pr",
+      [key(5)]: "done",
+      [key(6)]: "stuck",
+      [key(7)]: "info",
+    });
+  });
+});
+
+describe("tileMotions", () => {
+  const places = (...entries: Array<[string, Place]>): ReadonlyMap<string, Place> =>
+    new Map(entries);
+
+  it("moves nothing on the first load", () => {
+    expect(tileMotions(null, places(["a", "building"], ["b", "done"]))).toEqual([]);
+  });
+
+  it("moves nothing when no run changed place", () => {
+    const same = places(["a", "building"], ["b", "done"], ["c", "stuck"]);
+    expect(tileMotions(same, new Map(same))).toEqual([]);
+  });
+
+  it("slides a run that went to another post", () => {
+    expect(tileMotions(places(["a", "building"]), places(["a", "gate"]))).toEqual([
+      { kind: "slide", key: "a", from: "building", to: "gate" },
+    ]);
+  });
+
+  it.each(["done", "stuck", "info"] as const)("sends a run that finished into %s", (bin) => {
+    expect(tileMotions(places(["a", "pr"]), places(["a", bin]))).toEqual([
+      { kind: "leave", key: "a", from: "pr", to: bin },
+    ]);
+  });
+
+  it("enters a run that is new on a post", () => {
+    expect(tileMotions(places(["a", "gate"]), places(["a", "gate"], ["b", "claimed"]))).toEqual([
+      { kind: "enter", key: "b", to: "claimed" },
+    ]);
+  });
+
+  it("enters a run that came back from a bin onto a post", () => {
+    expect(tileMotions(places(["a", "stuck"]), places(["a", "building"]))).toEqual([
+      { kind: "enter", key: "a", to: "building" },
+    ]);
+  });
+
+  it("moves nothing for a run that is new in a bin, or went from one bin to another", () => {
+    expect(
+      tileMotions(places(["a", "stuck"]), places(["a", "info"], ["b", "done"], ["c", "stuck"])),
+    ).toEqual([]);
+  });
+
+  it("moves nothing for a run that is gone from the board", () => {
+    expect(tileMotions(places(["a", "gate"], ["b", "pr"]), places(["b", "pr"]))).toEqual([]);
+  });
+
+  it("reports each run of one change on its own", () => {
+    expect(
+      tileMotions(
+        places(["a", "claimed"], ["b", "pr"], ["c", "gate"]),
+        places(["a", "building"], ["b", "done"], ["c", "gate"], ["d", "claimed"]),
+      ),
+    ).toEqual([
+      { kind: "slide", key: "a", from: "claimed", to: "building" },
+      { kind: "leave", key: "b", from: "pr", to: "done" },
+      { kind: "enter", key: "d", to: "claimed" },
+    ]);
+  });
+});
+
+describe("holdBins", () => {
+  const belt = deriveBelt(
+    [
+      environment(ENV_A, {
+        active: [active({ id: id(1), state: "pr-open" })],
+        recent: [
+          finished(2, "merged", at(9), 3_600_000),
+          finished(3, "merged", at(10), 3_600_000),
+          finished(4, "closed", at(11), 3_600_000),
+          row({ id: id(5), state: "stuck", finished: true }),
+          row({ id: id(6), state: "needs-info", finished: true }),
+        ],
+      }),
+    ],
+    NOW,
+  );
+  const key = (issue: number) => `${ENV_A} ${id(issue)}`;
+
+  it("is the same belt when nothing is landing", () => {
+    expect(holdBins(belt, new Set())).toBe(belt);
+  });
+
+  it("leaves out the runs still sliding into a bin, and recounts Done", () => {
+    // Done holds newest finish first: 4 (closed), 3, 2.
+    expect(belt.runs.done.map((run) => run.id)).toEqual([id(4), id(3), id(2)]);
+    const held = holdBins(belt, new Set([key(3), key(5)]));
+    expect(held.runs.done.map((run) => run.id)).toEqual([id(4), id(2)]);
+    expect(held.done).toEqual({ merged: 1, closed: 1, latest: ["#4", "#2"] });
+    expect(held.stuck).toEqual([]);
+    expect(held.info.map((run) => run.id)).toEqual([id(6)]);
+  });
+
+  it("keeps the lanes, the counters and the newest post", () => {
+    const held = holdBins(belt, new Set([key(2), key(4), key(6)]));
+    expect(held.runs.pr).toBe(belt.runs.pr);
+    expect(held.counters).toBe(belt.counters);
+    expect(held.newest).toBe(belt.newest);
+    expect(held.info).toEqual([]);
   });
 });

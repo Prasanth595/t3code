@@ -1345,3 +1345,208 @@ describe("the belt in both themes", () => {
     });
   });
 });
+
+describe("tile motion", () => {
+  const ghostsOf = (page: Page) => page.all(".factory-ghost");
+  const post = (page: Page, name: string) =>
+    page.all("[data-post]").find((node) => node.dataset.post === name)!;
+  const binCount = (page: Page, name: string) =>
+    page
+      .all("section[data-bin]")
+      .find((node) => node.dataset.bin === name)
+      ?.querySelector(":scope > div > span.font-mono")?.textContent;
+  /** The belt with one environment, whose runs the status and the recent list say. */
+  const world = (runs: ReadonlyArray<StatusRun>, rows: ReadonlyArray<FactoryRunRow> = []): Belt =>
+    props({
+      environments: [environment(DESKTOP, "Desktop", runs)],
+      recent: recentOf([DESKTOP, rows]),
+    });
+  const gateRun = (issue: number) => statusRun(issue, { last_event: "gate_command" });
+  const land = (ghost: Element) =>
+    act(() => {
+      ghost.dispatchEvent(
+        new TransitionEvent("transitionend", { propertyName: "transform", bubbles: true }),
+      );
+    });
+  const endFlash = (node: Element, animationName: string) =>
+    act(() => {
+      node.dispatchEvent(new AnimationEvent("animationend", { animationName, bubbles: true }));
+    });
+  /** Makes `(prefers-reduced-motion: reduce)` match until disposed, other queries as they were. */
+  const reduceMotion = (): Disposable => {
+    const own = window.matchMedia;
+    window.matchMedia = (query) =>
+      query.includes("prefers-reduced-motion")
+        ? ({
+            matches: true,
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          } as unknown as MediaQueryList)
+        : own(query);
+    return { [Symbol.dispose]: () => void (window.matchMedia = own) };
+  };
+
+  it("animates nothing on the first load", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    expect(ghostsOf(page)).toEqual([]);
+    expect(page.all(".factory-tile-enter, .factory-tile-glow, .factory-post-flash")).toEqual([]);
+  });
+
+  it("animates nothing when a poll leaves every run where it was", async () => {
+    using _state = await setup();
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+    );
+    await page.rerender(createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])));
+    expect(ghostsOf(page)).toEqual([]);
+    expect(page.all(".factory-tile-enter, .factory-tile-glow, .factory-post-flash")).toEqual([]);
+  });
+
+  it("slides a run that moved to its new post, then flashes the post and glows the tile", async () => {
+    using _state = await setup();
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+    );
+    await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
+    const [ghost] = ghostsOf(page);
+    expect(ghostsOf(page)).toHaveLength(1);
+    const tile = tilesOf(lane(page, "gate"))[0]!;
+    expect(tile.style.visibility).toBe("hidden");
+    expect(tilesOf(lane(page, "building"))).toEqual([]);
+    expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(false);
+
+    await land(ghost!);
+    expect(ghostsOf(page)).toEqual([]);
+    expect(tile.style.visibility).toBe("");
+    expect(tile.classList.contains("factory-tile-glow")).toBe(true);
+    expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(true);
+
+    // The animations end on the elements that play them, and a child's ending is not theirs.
+    await endFlash(tile.firstElementChild!, "x");
+    expect(tile.classList.contains("factory-tile-glow")).toBe(true);
+    await endFlash(post(page, "gate"), "factory-post-flash");
+    expect(post(page, "gate").classList.contains("factory-post-flash")).toBe(false);
+    await endFlash(tile, "factory-tile-glow");
+    expect(tile.classList.contains("factory-tile-glow")).toBe(false);
+  });
+
+  it("holds Done's count until the run that finished has slid into it", async () => {
+    using _state = await setup();
+    const open = statusRun(4, { state: "pr-open" });
+    await using page = await render(
+      createElement(
+        FactoryBelt,
+        world([open], [recentRow(4, { state: "pr-open", pr_url: "https://x/pull/4" })]),
+      ),
+    );
+    expect(countOf(station(page, "done"))).toBe("0");
+    await page.rerender(createElement(FactoryBelt, world([], [doneRow(4, "merged", at(14))])));
+    const [ghost] = ghostsOf(page);
+    expect(ghostsOf(page)).toHaveLength(1);
+    expect(countOf(station(page, "done"))).toBe("0");
+    expect(lane(page, "done").textContent).toContain("0 merged · 0 closed");
+
+    await land(ghost!);
+    expect(ghostsOf(page)).toEqual([]);
+    expect(countOf(station(page, "done"))).toBe("1");
+    expect(lane(page, "done").textContent).toContain("1 merged · 0 closed");
+    expect(post(page, "done").classList.contains("factory-post-flash")).toBe(true);
+  });
+
+  it("holds the Stuck bin's count until the run that got stuck has slid into it", async () => {
+    using _state = await setup();
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(4)], [recentRow(4)])),
+    );
+    expect(binCount(page, "stuck")).toBe("0");
+    await page.rerender(
+      createElement(
+        FactoryBelt,
+        world(
+          [],
+          [recentRow(4, { state: "stuck", finished: true, status: "finished", reason: "no luck" })],
+        ),
+      ),
+    );
+    const [ghost] = ghostsOf(page);
+    expect(ghostsOf(page)).toHaveLength(1);
+    expect(binCount(page, "stuck")).toBe("0");
+    expect(page.all("section[data-bin=stuck] a")).toEqual([]);
+
+    await land(ghost!);
+    expect(ghostsOf(page)).toEqual([]);
+    expect(binCount(page, "stuck")).toBe("1");
+    expect(page.all("section[data-bin=stuck] a")).toHaveLength(1);
+  });
+
+  it("fades a new run in at its post without sliding it", async () => {
+    using _state = await setup();
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+    );
+    await page.rerender(
+      createElement(
+        FactoryBelt,
+        world(
+          [statusRun(2), statusRun(9, { state: "triage", last_event: "claimed" })],
+          [recentRow(2), recentRow(9, { state: "triage", step: null })],
+        ),
+      ),
+    );
+    expect(ghostsOf(page)).toEqual([]);
+    const [fresh] = tilesOf(lane(page, "claimed"));
+    expect(fresh!.classList.contains("factory-tile-enter")).toBe(true);
+    expect(tilesOf(lane(page, "building"))[0]!.classList.contains("factory-tile-enter")).toBe(
+      false,
+    );
+    await endFlash(fresh!, "factory-tile-enter");
+    expect(fresh!.classList.contains("factory-tile-enter")).toBe(false);
+  });
+
+  it("makes no ghost for a run that is gone from the board", async () => {
+    using _state = await setup();
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+    );
+    await page.rerender(createElement(FactoryBelt, world([], [])));
+    expect(ghostsOf(page)).toEqual([]);
+    expect(tilesOf(lane(page, "building"))).toEqual([]);
+  });
+
+  describe("with reduced motion", () => {
+    it("moves a tile with no ghost, no flash and no glow", async () => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+      );
+      using _motion = reduceMotion();
+      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
+      expect(ghostsOf(page)).toEqual([]);
+      const tile = tilesOf(lane(page, "gate"))[0]!;
+      expect(tile.style.visibility).toBe("");
+      expect(page.all(".factory-tile-enter, .factory-tile-glow, .factory-post-flash")).toEqual([]);
+    });
+
+    it("changes a bin's count at once, and fades a new run in with nothing", async () => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(FactoryBelt, world([statusRun(4)], [recentRow(4)])),
+      );
+      using _motion = reduceMotion();
+      await page.rerender(
+        createElement(
+          FactoryBelt,
+          world(
+            [statusRun(9)],
+            [recentRow(4, { state: "stuck", finished: true, status: "finished" }), recentRow(9)],
+          ),
+        ),
+      );
+      expect(binCount(page, "stuck")).toBe("1");
+      expect(ghostsOf(page)).toEqual([]);
+      expect(page.all(".factory-tile-enter")).toEqual([]);
+    });
+  });
+});
