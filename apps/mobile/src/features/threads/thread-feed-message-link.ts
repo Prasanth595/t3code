@@ -53,6 +53,7 @@ export function resolveLinkedMessageStep(input: {
   readonly hasMoreHistory: boolean;
   /** The last load through the message finished without changing the feed. */
   readonly lastLoadChangedNothing: boolean;
+  readonly historyPagesRequested?: number;
 }): "scroll" | "expand" | "expand-row" | "wait" | "load" | "missing" | "failed" {
   // A sync snapshot or history page can replace a cached row before scrolling.
   if (input.syncStatus === "deleted") return "missing";
@@ -80,5 +81,7 @@ export function resolveLinkedMessageStep(input: {
   if (input.historyError !== null) return "failed";
   if (!input.hasMoreHistory) return "missing";
   // Older history remains, so a load that returned nothing failed rather than ran out.
-  return input.lastLoadChangedNothing ? "failed" : "load";
+  return input.lastLoadChangedNothing || (input.historyPagesRequested ?? 0) >= 20
+    ? "failed"
+    : "load";
 }

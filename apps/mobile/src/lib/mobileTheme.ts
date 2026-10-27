@@ -148,11 +148,7 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
   return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
 }
 
-/**
- * Native chip drawing parses only opaque hex — an `rgba()` string falls back to a default that
- * is nothing like the colour asked for — so a translucent role like `--color-border` has to be
- * flattened first.
- */
+/** Native chips require opaque hex; flatten translucent roles. */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
   if (alphaHex) {
@@ -211,6 +207,12 @@ function contrastRatio(
     (Math.max(firstLuminance, secondLuminance) + 0.05) /
     (Math.min(firstLuminance, secondLuminance) + 0.05)
   );
+}
+
+export function themeColorContrastRatio(first: string, second: string): number {
+  const firstChannels = rgbChannels(first);
+  const secondChannels = rgbChannels(second);
+  return firstChannels && secondChannels ? contrastRatio(firstChannels, secondChannels) : 1;
 }
 
 export function themeColorWithContrast(

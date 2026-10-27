@@ -115,6 +115,10 @@ export function useLinkedMessageTarget({
     // Each page lands before the next request, so a cursor already asked for is still loading.
     const cursor = historyControls.historyCursor ?? "first";
     if (progress.requestedPages.has(cursor)) return;
+    if (progress.requestedPages.size >= 20) {
+      fail("Load earlier turns, then open the link again.");
+      return;
+    }
     progress.requestedPages.add(cursor);
     historyControls.onLoadEarlier(request.messageId);
   }, [

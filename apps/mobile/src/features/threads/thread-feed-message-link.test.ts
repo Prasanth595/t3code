@@ -178,3 +178,11 @@ it("copies an attachment-only message's URL instead of empty text", () => {
     text: "  Message body  ",
   });
 });
+
+it("stops automatic history paging at its budget but still opens a loaded target", () => {
+  const exhausted = { ...absent, historyPagesRequested: 20 };
+  expect(resolveLinkedMessageStep({ ...absent, historyPagesRequested: 19 })).toBe("load");
+  expect(resolveLinkedMessageStep(exhausted)).toBe("failed");
+  expect(resolveLinkedMessageStep({ ...exhausted, presented: true })).toBe("scroll");
+  expect(resolveLinkedMessageStep({ ...exhausted, hasMoreHistory: false })).toBe("missing");
+});

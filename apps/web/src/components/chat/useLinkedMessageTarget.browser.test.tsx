@@ -269,3 +269,32 @@ it("finishes a measured target once after live sync and reports its handled acti
   expect(onHandled.mock.calls).toEqual([[request.key]]);
   expect(warn).not.toHaveBeenCalled();
 });
+
+it("bounds automatic history paging when an unknown message keeps advancing the cursor", async () => {
+  using fixture = viewportFixture();
+  const onLoadEarlier = vi.fn();
+  await using screen = await render(null, { router: false });
+  for (let page = 0; page <= 20; page += 1) {
+    await act(() =>
+      screen.rerender(
+        <Harness
+          viewport={fixture.viewport}
+          controls={{
+            historyCursor: `page-${page}`,
+            hasMoreHistory: true,
+            loading: false,
+            error: null,
+            onLoadEarlier,
+          }}
+        />,
+      ),
+    );
+  }
+  expect(onLoadEarlier).toHaveBeenCalledTimes(20);
+  expect(screen.container.textContent).toBe("finished");
+  expect(warn).toHaveBeenCalledWith(
+    expect.objectContaining({
+      description: "Load earlier turns, then open the link again.",
+    }),
+  );
+});
