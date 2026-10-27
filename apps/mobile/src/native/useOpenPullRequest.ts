@@ -11,12 +11,17 @@ import { environmentServerConfigsAtom } from "../state/server";
 
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
-// Avoid useRoute so layouts without route context can open any thread's pull requests.
-export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
+// Route-free so navigator layouts such as the workspace sidebar, which have no
+// route context for useRoute, can open pull requests for any thread.
+export function useNavigateToPullRequest(options?: {
+  readonly replace?: boolean;
+  readonly mode?: "contextual" | "workspace";
+}) {
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const projects = useProjects();
   const replace = options?.replace;
+  const mode = options?.mode ?? "workspace";
   return useCallback(
     async (url: string, context: PullRequestContext | null) => {
       // Read at press time so a capability push does not hand every link a new handler.
@@ -28,18 +33,19 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
         (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
       );
       if (!params) return tryOpenExternalUrl(url, "pull-request");
-      // Android shows one page at a time; iOS opens it over the current page, so Back returns.
-      if (Platform.OS === "android") selectDetail({ name: "PullRequest", params });
+      if (Platform.OS === "android" && mode === "workspace")
+        selectDetail({ name: "PullRequest", params });
       else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
       else navigation.dispatch(StackActions.push("PullRequest", params));
       return true;
     },
-    [navigation, projects, replace, selectDetail],
+    [navigation, projects, replace, mode, selectDetail],
   );
 }
 
 export function useOpenPullRequest(options?: {
   readonly replace?: boolean;
+  readonly mode?: "contextual" | "workspace";
   readonly context?: PullRequestContext;
 }) {
   const route = useRoute();
@@ -63,7 +69,10 @@ export function useOpenPullRequest(options?: {
   );
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
-  const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
+  const navigateToPullRequest = useNavigateToPullRequest({
+    replace: options?.replace,
+    mode: options?.mode ?? "contextual",
+  });
   return useCallback(
     (url: string) =>
       navigateToPullRequest(
