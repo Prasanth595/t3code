@@ -20,7 +20,11 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
+  createSidebarProjectScopeSession,
+  markSidebarProjectScopeChosen,
+  shouldClearPersistedSidebarProjectScope,
   shouldRecedeSidebarThread,
+  sidebarProjectScopeWasRestored,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
@@ -1350,5 +1354,158 @@ describe("resolveSidebarRouteReveal", () => {
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: false });
+  });
+});
+
+describe("shouldClearPersistedSidebarProjectScope", () => {
+  const local = EnvironmentId.make("env-local");
+  const remote = EnvironmentId.make("env-remote");
+  const remoteScratchRoot = "/home/user/.t3/scratch";
+  const scratchWorkspaceRootFor = (environmentId: EnvironmentId) =>
+    environmentId === remote ? remoteScratchRoot : "/Users/me/.t3/scratch";
+  const scratchGroup = {
+    memberProjects: [{ environmentId: remote, workspaceRoot: `${remoteScratchRoot}/` }],
+  };
+  const repoGroup = {
+    memberProjects: [{ environmentId: remote, workspaceRoot: "/home/user/src/t3code" }],
+  };
+
+  it("keeps the scope until project snapshots are ready", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: false,
+        restored: true,
+        scopedGroup: null,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: false,
+        restored: true,
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps an empty scope", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: null,
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: null,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a scope whose catalog group is gone", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: "missing-project",
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: null,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears a restored scope that resolves to a scratch workspace", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a scratch scope the user picked in this session", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: false,
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a scratch scope restored into a new session", () => {
+    const session = createSidebarProjectScopeSession();
+    expect(sidebarProjectScopeWasRestored(session)).toBe(true);
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: sidebarProjectScopeWasRestored(session),
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a scratch scope the user chose when the sidebar remounts", () => {
+    const session = createSidebarProjectScopeSession();
+    markSidebarProjectScopeChosen(session);
+    // A remount reads the layout's session again; it does not start a new one.
+    expect(sidebarProjectScopeWasRestored(session)).toBe(false);
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: sidebarProjectScopeWasRestored(session),
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a scope that resolves to a normal project", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: "github.com/pingdotgg/t3code",
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: repoGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("compares each member with its own environment scratch root", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${local}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: {
+          memberProjects: [{ environmentId: local, workspaceRoot: remoteScratchRoot }],
+        },
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a group that still contains a non-scratch checkout", () => {
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: "github.com/pingdotgg/t3code",
+        snapshotsReady: true,
+        restored: true,
+        scopedGroup: {
+          memberProjects: [...scratchGroup.memberProjects, ...repoGroup.memberProjects],
+        },
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -558,6 +559,59 @@ export function buildMultiSelectThreadContextMenuItems(input: {
 
 export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
+}
+
+// The thread sidebar remounts when the viewport crosses the mobile breakpoint.
+// AppSidebarLayout holds this, so a Scratch pick in the page session is not
+// read back as restored state and cleared.
+export interface SidebarProjectScopeSession {
+  userChose: boolean;
+}
+
+export function createSidebarProjectScopeSession(): SidebarProjectScopeSession {
+  return { userChose: false };
+}
+
+export function markSidebarProjectScopeChosen(session: SidebarProjectScopeSession): void {
+  session.userChose = true;
+}
+
+export function sidebarProjectScopeWasRestored(session: SidebarProjectScopeSession): boolean {
+  return !session.userChose;
+}
+
+// Scratch is a real catalog project, so a key that points only at it never
+// looks missing and keeps filtering the sidebar. A pick in this session stays;
+// a missing group is cleared once snapshots are ready.
+export function shouldClearPersistedSidebarProjectScope(input: {
+  readonly scopeKey: string | null;
+  readonly snapshotsReady: boolean;
+  /** False when the user chose this scope during the current page session. */
+  readonly restored: boolean;
+  readonly scopedGroup: {
+    readonly memberProjects: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly workspaceRoot: string;
+    }>;
+  } | null;
+  readonly scratchWorkspaceRootFor: (environmentId: EnvironmentId) => string | null | undefined;
+}): boolean {
+  if (input.scopeKey === null || !input.snapshotsReady) {
+    return false;
+  }
+  const group = input.scopedGroup;
+  if (group === null) {
+    return true;
+  }
+  if (!input.restored) {
+    return false;
+  }
+  return (
+    group.memberProjects.length > 0 &&
+    group.memberProjects.every((member) =>
+      isScratchProject(member, input.scratchWorkspaceRootFor(member.environmentId)),
+    )
+  );
 }
 
 // Subagent threads have no sidebar row, so an open subagent is represented by

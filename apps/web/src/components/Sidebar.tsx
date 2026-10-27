@@ -175,7 +175,11 @@ import {
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   searchSidebarThreads,
+  markSidebarProjectScopeChosen,
+  shouldClearPersistedSidebarProjectScope,
   shouldCreateNewThreadInCurrentProject,
+  sidebarProjectScopeWasRestored,
+  type SidebarProjectScopeSession,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -779,7 +783,13 @@ function readRouteThreadKey(router: AnyRouter): string | null {
   return ref === null ? null : scopedThreadKey(ref);
 }
 
-export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
+export default function Sidebar({
+  routeReveal,
+  projectScopeSession,
+}: {
+  routeReveal: SidebarRouteReveal;
+  projectScopeSession: SidebarProjectScopeSession;
+}) {
   const {
     projects,
     serverConfigs,
@@ -895,6 +905,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
+  const projectCatalogReady = allProjectSnapshotsReady && allProjectConfigsReady;
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
@@ -947,7 +958,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
 
   // A selection made under one scope can hold threads the next scope hides.
+  // A scope loaded with the page can be cleared. A pick in this session is kept.
   const setProjectScopeKey = (key: string | null) => {
+    markSidebarProjectScopeChosen(projectScopeSession);
     clearSelection();
     setPersistedProjectScopeKey(key);
   };
@@ -957,7 +970,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     groups: projectGroups,
     key: persistedProjectScopeKey,
     settings: projectGroupingSettings,
-    canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    canClearMissingScope: projectCatalogReady,
   });
   const chosenProjectGroup =
     chosenProjectScopeKey === null
@@ -1008,6 +1021,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKey(null);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKey]);
+  // A restored Scratch scope is a real group, so the missing-project read leaves
+  // its stored key in place and the sidebar stays filtered. Clear that key once
+  // the catalog is ready. Pass the resolved key: a missing project stays stored
+  // until it returns. A Scratch scope picked in this session stays.
+  useEffect(() => {
+    if (
+      !shouldClearPersistedSidebarProjectScope({
+        scopeKey: chosenProjectScopeKey,
+        snapshotsReady: projectCatalogReady,
+        restored: sidebarProjectScopeWasRestored(projectScopeSession),
+        scopedGroup: chosenProjectGroup,
+        scratchWorkspaceRootFor: (environmentId) =>
+          serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+      })
+    ) {
+      return;
+    }
+    clearSelection();
+    setPersistedProjectScopeKey(null);
+  }, [
+    chosenProjectGroup,
+    chosenProjectScopeKey,
+    clearSelection,
+    projectCatalogReady,
+    projectScopeSession,
+    serverConfigs,
+    setPersistedProjectScopeKey,
+  ]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (

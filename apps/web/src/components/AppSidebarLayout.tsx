@@ -37,6 +37,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
+import { createSidebarProjectScopeSession } from "./Sidebar.logic";
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
@@ -379,6 +380,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     observedKey: null,
     pendingKey: null,
   }));
+  // The shell swaps its tree across the mobile breakpoint and remounts the
+  // sidebar. This outlives that so a Scratch scope picked this session stays.
+  const [projectScopeSession] = useState(() => createSidebarProjectScopeSession());
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -443,7 +447,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           {legacySidebarEnabled ? (
             <LegacyThreadSidebar routeReveal={sidebarRouteReveal} />
           ) : (
-            <ThreadSidebar routeReveal={sidebarRouteReveal} />
+            <ThreadSidebar
+              routeReveal={sidebarRouteReveal}
+              projectScopeSession={projectScopeSession}
+            />
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
