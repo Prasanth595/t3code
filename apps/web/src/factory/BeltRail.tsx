@@ -126,6 +126,7 @@ function Post({
         />
       </span>
       {paused ? null : <span className="font-mono text-3xs text-muted-foreground">{tag}</span>}
+      {/* The pause note is not a Badge: a Badge never wraps, and the note takes two lines here. */}
       {note === "" ? null : (
         <span
           className={cn(

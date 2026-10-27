@@ -14,6 +14,7 @@ import {
   readRuns,
   runInfoOf,
   runsByThread,
+  type RunReadCache,
 } from "./listRuns.ts";
 import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
@@ -834,6 +835,42 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     ]);
   });
 
+  it("finds the first launch past the first read of the file, as the whole read does", () => {
+    const dataDir = tempDir();
+    const files = [
+      // 20 KB before the launch: the forward read takes three chunks to reach it.
+      finishedRun(
+        dataDir,
+        rid(1),
+        [...padding(20), sessionLaunched("Deep title"), moved("building", "pr-open")],
+        "pr-open",
+        null,
+      ),
+      // The first launch, deep in the file, has no title: a later titled one gives none.
+      finishedRun(
+        dataDir,
+        rid(2),
+        [
+          ...padding(20),
+          sessionLaunched(),
+          ...padding(10),
+          sessionLaunched("Later title"),
+          moved("building", "pr-open"),
+        ],
+        "pr-open",
+        null,
+      ),
+    ];
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)).toEqual(whole);
+    for (const file of files) expect(fullReads()).not.toContain(file);
+    expect(titleAndReason(dataDir)).toEqual([
+      ["1", "Deep title", null],
+      ["2", null, null],
+    ]);
+  });
+
   it("reads the title and reason of a run that is not finished", () => {
     const dataDir = tempDir();
     const ledger = Ledger.create(dataDir, rid(1), { clock: ticking(T0, 1000) });
@@ -976,6 +1013,50 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     vi.mocked(NodeFS.readFileSync).mockClear();
     expect(listRuns(dataDir)[0]).toMatchObject({ state: "building", finished: false });
     expect(fullReads()).toContain(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(1))));
+  });
+});
+
+describe("readRuns with a cache", () => {
+  it("reads a file again only once it changes, and forgets the files it no longer reads", () => {
+    const dataDir = tempDir();
+    const first = writeRun(dataDir, rid(1), stateLine("triage"));
+    const second = writeRun(dataDir, rid(2), stateLine("building"));
+    const cache: RunReadCache = new Map();
+    const states = () => readRuns(dataDir, { cache }).map((read) => read.summary.state);
+    expect(states()).toEqual(["triage", "building"]);
+
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(states()).toEqual(["triage", "building"]);
+    expect(fullReads()).toEqual([]);
+
+    NodeFS.appendFileSync(first, stateLine("pr-open"));
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(states()).toEqual(["pr-open", "building"]);
+    expect(fullReads()).toEqual([first]);
+
+    NodeFS.rmSync(second);
+    expect(states()).toEqual(["pr-open"]);
+    expect([...cache.keys()]).toEqual([first]);
+  });
+
+  it("reads a file again when it is rewritten to the same size", () => {
+    const dataDir = tempDir();
+    const path = writeRun(dataDir, rid(1), stateLine("stuck"));
+    const cache: RunReadCache = new Map();
+    expect(readRuns(dataDir, { cache })[0]?.summary.state).toBe("stuck");
+    NodeFS.writeFileSync(path, stateLine("ready"));
+    expect(readRuns(dataDir, { cache })[0]?.summary.state).toBe("ready");
+  });
+
+  it("drops a finished file once it falls before the cutoff", () => {
+    const dataDir = tempDir();
+    const path = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const cache: RunReadCache = new Map();
+    readRuns(dataDir, { cache, skipFinishedBefore: 0 });
+    expect([...cache.keys()]).toEqual([path]);
+    NodeFS.utimesSync(path, 1, 1);
+    expect(readRuns(dataDir, { cache, skipFinishedBefore: 2000 })).toEqual([]);
+    expect(cache.size).toBe(0);
   });
 });
 

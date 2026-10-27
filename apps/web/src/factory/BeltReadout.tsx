@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Table,
@@ -73,9 +74,9 @@ export function BeltReadout({
         <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />
         <h2 className="text-sm font-semibold">{name}</h2>
         <span className="font-mono text-xs text-muted-foreground">{tag}</span>
-        <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs">
+        <Badge variant="secondary">
           {runs.length} {runs.length === 1 ? "run" : "runs"}
-        </span>
+        </Badge>
       </div>
       {runs.length === 0 ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">Nothing at {name}.</p>

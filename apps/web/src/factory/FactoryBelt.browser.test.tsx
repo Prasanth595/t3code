@@ -1275,6 +1275,34 @@ describe("the belt in both themes", () => {
     }
   });
 
+  it("paints Done, Stuck and Needs info in the theme's status colours", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    const of = (name: string) =>
+      page.all("[data-station]").find((node) => node.dataset.station === name)!;
+    const root = document.documentElement;
+    try {
+      root.dataset.themeId = "probe";
+      root.style.setProperty("--app-theme-error-foreground", "rgb(10, 20, 30)");
+      root.style.setProperty("--app-theme-warning-foreground", "rgb(40, 50, 60)");
+      await expect
+        .poll(() => rgbaOf(getComputedStyle(of("stuck")).getPropertyValue("--factory-station")))
+        .toEqual([10, 20, 30, 1]);
+      expect(rgbaOf(getComputedStyle(of("info")).getPropertyValue("--factory-station"))).toEqual([
+        40, 50, 60, 1,
+      ]);
+      await inBothThemes(() => {
+        expect(rgbaOf(stationVar(page, "done"))).toEqual(
+          rgbaOf(getComputedStyle(root).getPropertyValue("--success-foreground")),
+        );
+      });
+    } finally {
+      delete root.dataset.themeId;
+      root.style.removeProperty("--app-theme-error-foreground");
+      root.style.removeProperty("--app-theme-warning-foreground");
+    }
+  });
+
   it("keeps the text of posts, tiles and readout rows at 4.5:1 in light and dark", async () => {
     using _state = await setup();
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
