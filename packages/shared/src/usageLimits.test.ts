@@ -516,19 +516,21 @@ describe("pools", () => {
       workspaceId: "ws-plus",
       usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 14 }] },
     };
+    const sources = [{ ...source, accounts: [hubAccount] }];
     const input = new Map([
       [
         EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [native],
-            usageLimitSources: [{ ...source, accounts: [hubAccount] }],
-          },
-        },
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: sources } },
       ],
     ]);
-    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual(["env-a:codex"]);
+    expect(collectLimitAccounts(input).map(({ key, email }) => ({ key, email }))).toEqual([
+      { key: "env-a:codex", email: "me@example.com" },
+    ]);
+    expect(
+      collectProviderUsageLimits(native.instanceId, [native], sources, now)?.accounts.map(
+        ({ id, email }) => ({ id, email }),
+      ),
+    ).toEqual([{ id: "codex", email: "me@example.com" }]);
   });
 
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {

@@ -145,7 +145,10 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (!key) {
-      const known = report.workspaceId && members.get(`${report.driver}:${report.workspaceId}`);
+      const known =
+        report.driver === "codex" &&
+        report.workspaceId &&
+        members.get(`${report.driver}:${report.workspaceId}`);
       return known && known.size === 1 ? `${[...known][0]}:${report.workspaceId}` : null;
     }
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
@@ -214,6 +217,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
+      email: previous.email ?? next.email,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -720,6 +724,11 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
+    const email =
+      provider.auth.email ??
+      sources
+        .flatMap((source) => source.accounts)
+        .find((account) => key !== null && resolveKey(account) === key && account.email)?.email;
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
@@ -745,7 +754,7 @@ export function collectProviderUsageLimits(
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      ...(provider.auth.email ? { email: provider.auth.email } : {}),
+      ...(email ? { email } : {}),
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
