@@ -36,6 +36,9 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+// Keep SQLite startup and journaling from turning a full filesystem into a restart loop.
+const MIN_SERVICE_START_FREE_BYTES = 64 * 1024 ** 2;
+const DISK_SPACE_RETRY_MS = 30_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -218,6 +221,11 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   },
   canClone: backupCanClone,
 };
+
+export const serviceStartDiskSpaceBlocker = (freeBytes: number): string | undefined =>
+  freeBytes < MIN_SERVICE_START_FREE_BYTES
+    ? `T3 Code needs at least ${MIN_SERVICE_START_FREE_BYTES} bytes free before starting the server; ${freeBytes} bytes available.`
+    : undefined;
 
 /** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupBlocker(
@@ -524,6 +532,36 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #serviceStartDiskSpaceBlocker(): Promise<string | undefined> {
+    try {
+      return serviceStartDiskSpaceBlocker(
+        await filesystemBackupSpaceProbe.readFreeBytes(this.#baseDir),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  #waitForDiskSpace(
+    reason: string,
+    version: string,
+    role: ChildRole,
+    update?: ServiceUpdateRecord,
+  ): void {
+    if (this.#timer !== undefined || this.#stopping) return;
+    process.stderr.write(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
+    this.#timer = setInterval(
+      () =>
+        this.#enqueue(async () => {
+          if (this.#child !== null || this.#stopping) return;
+          if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
+          this.#clearTimer();
+          await this.#startChild(version, role, update);
+        }),
+      DISK_SPACE_RETRY_MS,
+    );
+  }
+
   async #recover(): Promise<void> {
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
@@ -567,6 +605,11 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
+    const diskSpaceBlocker = await this.#serviceStartDiskSpaceBlocker();
+    if (diskSpaceBlocker !== undefined) {
+      this.#waitForDiskSpace(diskSpaceBlocker, version, role, update);
+      return;
+    }
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -747,6 +790,12 @@ export class Launcher {
     this.#child = null;
     if (code === STATE_DIR_OWNED_EXIT_CODE) {
       await this.#idleWhileStateDirOwned();
+      return;
+    }
+    const diskSpaceBlocker = await this.#serviceStartDiskSpaceBlocker();
+    if (diskSpaceBlocker !== undefined) {
+      this.#clearTimer();
+      this.#waitForDiskSpace(diskSpaceBlocker, child.version, child.role, this.#state.update);
       return;
     }
     if (child.role === "trial") {

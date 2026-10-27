@@ -15,6 +15,7 @@ import {
   main,
   readServiceEnvironment,
   type BackupSpaceProbe,
+  serviceStartDiskSpaceBlocker,
   readServiceState,
   writeServiceState,
 } from "./serviceLauncher.ts";
@@ -63,6 +64,11 @@ it("orders exact semantic versions without treating build metadata as precedence
   assert.equal(compareExactServiceVersions("2.0.0-alpha-beta", "2.0.0-alpha-alpha"), 1);
   assert.equal(compareExactServiceVersions("2.0.0", "2.0.0-rc.1"), 1);
   assert.equal(compareExactServiceVersions("2.0.0+one", "2.0.0+two"), 0);
+});
+
+it("blocks service startup when free disk space is below the launch headroom", () => {
+  assert.isUndefined(serviceStartDiskSpaceBlocker(64 * 1024 ** 2));
+  assert.include(serviceStartDiskSpaceBlocker(0) ?? "", "before starting the server");
 });
 
 it("rejects contradictory service state", () => {
