@@ -175,7 +175,8 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const pageResult = registry.get(pageAtom);
     const refreshResult = registry.get(refreshAtom);
     if (settledError(refreshResult) !== null) registry.set(refreshAtom, Atom.Reset);
-    else if (settledError(pageResult) !== null && !refreshResult.waiting) registry.set(pageAtom, true);
+    else if (settledError(pageResult) !== null && !refreshResult.waiting)
+      registry.set(pageAtom, true);
   });
 
   // Read from the registry, not the render: a second onEndReached before React re-renders must
