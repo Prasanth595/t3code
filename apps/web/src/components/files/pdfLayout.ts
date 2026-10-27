@@ -89,6 +89,18 @@ function pdfFindText(runs: readonly string[]) {
   return { text, owner };
 }
 
+/** Whether a page's text holds the query, under the same rules as `pdfFindMatchRuns`, without
+ * mapping characters back to runs: the page scan checks every page on each query. */
+export function pdfFindIncludes(text: string, query: string) {
+  const needle = query.toLowerCase().replace(/\s+/g, " ");
+  if (!needle.trim()) return false;
+  return text
+    .toLowerCase()
+    .replace(/(\p{L})-\n(?=\p{L})/gu, "$1")
+    .replace(/\s+/g, " ")
+    .includes(needle);
+}
+
 /** Which text runs hold part of a case-insensitive match, when pdf.js splits words across spans. */
 export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   const { text, owner } = pdfFindText(runs);

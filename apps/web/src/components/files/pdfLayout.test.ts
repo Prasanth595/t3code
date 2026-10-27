@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   currentPdfPage,
+  pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
   pdfPageScrollTop,
@@ -117,6 +118,14 @@ describe("pdfFindMatchRuns", () => {
       false,
       true,
     ]);
+  });
+
+  it("finds the same pages the highlights do", () => {
+    const page = "Q3 quarterly\noutlook ahead, the quar-\nterly report";
+    expect(pdfFindIncludes(page, "Quarterly  OUTLOOK")).toBe(true);
+    expect(pdfFindIncludes(page, "quarterly report")).toBe(true);
+    expect(pdfFindIncludes(page, "bud-get")).toBe(false);
+    expect(pdfFindIncludes(page, " ")).toBe(false);
   });
 
   it("highlights nothing for a blank or missing query", () => {
