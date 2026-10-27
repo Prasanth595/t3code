@@ -39,16 +39,14 @@ let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
 
-/** Writes the selections if they changed; an update restart awaits it before reloading. */
+/** Writes the selections if they changed; an update restart awaits it and stops if it fails. */
 export function saveWorkspaceSelections(): Promise<void> {
   const writing = selections;
   if (saved === writing) return Promise.resolve();
   // Marked saved only once written, so a failed write is retried on the next background.
-  return savePreferencesPatch({ workspaceSelections: writing })
-    .then(() => {
-      saved = writing;
-    })
-    .catch(() => undefined);
+  return savePreferencesPatch({ workspaceSelections: writing }).then(() => {
+    saved = writing;
+  });
 }
 
 // Route keys only name routes of the session that wrote them; a saved one would make a tab rebuild
@@ -72,7 +70,7 @@ export function hydrateWorkspaceSelections() {
       selections = { ...withoutRouteKeys(preferences.workspaceSelections), ...selections };
       saved = selections;
       AppState.addEventListener("change", (status) => {
-        if (status !== "active") void saveWorkspaceSelections();
+        if (status !== "active") saveWorkspaceSelections().catch(() => undefined);
       });
     })
     .catch(() => undefined);
