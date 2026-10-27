@@ -2677,7 +2677,7 @@ describe("advance: a closed issue", () => {
         assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
         assert.deepStrictEqual(rig.gh, ["pullRequest 14"]);
         assert.deepStrictEqual(
-          (linesOf(rig).at(-1)?.data as { pr_url: string }).pr_url,
+          (linesOf(rig).at(-1)?.data as { pr_url: string } | undefined)?.pr_url,
           "https://github.com/rawphp/softfac/pull/14",
         );
       }),

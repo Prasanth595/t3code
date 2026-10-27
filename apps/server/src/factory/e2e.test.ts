@@ -50,6 +50,11 @@ const READY_AT = "2026-10-16T00:00:00Z";
 
 const json = (value: unknown) => JSON.stringify(value);
 
+const dataOf = <T>(entry: Entry | undefined): T => {
+  assert.isDefined(entry);
+  return entry.data as T;
+};
+
 const ok = (stdout: string): RunResult => ({
   exitCode: 0,
   timedOut: false,
@@ -602,8 +607,10 @@ const scenario = (spec: Spec) =>
 
           const sessions = yield* Sessions.FactorySessions;
           const launched = entries.find((entry) => entry.event === "session_launched");
-          const threadId = (launched?.data as { thread_id: string }).thread_id;
-          const removed = entries.find((entry) => entry.event === "worktree_removed");
+          const threadId = dataOf<{ thread_id: string }>(launched).thread_id;
+          const removedPath = dataOf<{ path: string }>(
+            entries.find((entry) => entry.event === "worktree_removed"),
+          ).path;
           return {
             github,
             entries,
@@ -611,8 +618,8 @@ const scenario = (spec: Spec) =>
             threadId,
             thread: yield* sessions.thread(threadId),
             status: yield* sessions.status(threadId),
-            removedPath: (removed?.data as { path: string }).path,
-            removedPathExists: yield* fs.exists((removed?.data as { path: string }).path),
+            removedPath,
+            removedPathExists: yield* fs.exists(removedPath),
             baseSha,
             ghDir,
             gateCommand,

@@ -8,13 +8,7 @@ import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { commandLine, sanitize, shortSha } from "../text.ts";
-import type {
-  CheckStatus,
-  DropReason,
-  Feedback,
-  FeedbackKind,
-  InlineComment,
-} from "../tracker/github.ts";
+import type { CheckStatus, DropReason, Feedback, FeedbackKind } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
