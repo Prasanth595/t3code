@@ -74,7 +74,7 @@ export function shouldShowInstanceBadge(
     readonly enabled: boolean;
   }>,
 ): boolean {
-  if (normalizeProviderAccentColor(entry.accentColor)) return true;
+  if (entry.accentColor) return true;
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;

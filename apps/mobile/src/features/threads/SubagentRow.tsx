@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -96,11 +97,7 @@ function SubagentMetadata(props: {
 }) {
   const { environmentId, subagent } = props;
   const config = useEnvironmentServerConfig(environmentId);
-  const providers = config?.providers ?? [];
-  const provider = providers.find(
-    (candidate) => candidate.instanceId === subagent.providerInstanceId,
-  );
-  const badgeEntries = providers.map((candidate) => {
+  const providers = (config?.providers ?? []).map((candidate) => {
     const rawConfig = config?.settings.providerInstances[candidate.instanceId]?.config;
     const instanceConfig =
       rawConfig !== null && typeof rawConfig === "object"
@@ -110,16 +107,14 @@ function SubagentMetadata(props: {
     return {
       ...candidate,
       driverKind: candidate.driver,
+      accentColor: normalizeProviderAccentColor(candidate.accentColor),
       acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
     };
   });
-  const badgeEntry = badgeEntries.find(
+  const provider = providers.find(
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
-  const showBadge =
-    provider !== undefined &&
-    badgeEntry !== undefined &&
-    shouldShowInstanceBadge(badgeEntry, badgeEntries);
+  const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, providers);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
