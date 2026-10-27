@@ -755,10 +755,10 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
   const titleAndReason = (dataDir: string) =>
     listRuns(dataDir).map((run) => [run.id.issue, run.title, run.reason]);
 
-  it("reads the title of the newest launch that has one, and the reason the last state asks for, as the whole read does", () => {
+  it("reads the title of the first launch that has one, and the reason the last state asks for, as the whole read does", () => {
     const dataDir = tempDir();
     const files = [
-      // The newest titled launch wins; the stuck line before the state change gives the reason.
+      // The first titled launch wins; the stuck line before the state change gives the reason.
       finishedRun(
         dataDir,
         rid(1),
@@ -780,14 +780,15 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
         "needs-info",
         null,
       ),
-      // A launch without a title does not hide an earlier one; the title is far from the end.
+      // A launch without a title is skipped, and the title is far from the end.
       finishedRun(
         dataDir,
         rid(3),
         [
+          sessionLaunched(),
           sessionLaunched("Far title"),
           ...padding(80),
-          sessionLaunched(),
+          sessionLaunched("Later title"),
           moved("ready", "building"),
         ],
         "pr-open",
@@ -809,7 +810,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(listRuns(dataDir)).toEqual(whole);
     for (const file of files) expect(fullReads()).not.toContain(file);
     expect(titleAndReason(dataDir)).toEqual([
-      ["1", "New title", "gate failed"],
+      ["1", "Old title", "gate failed"],
       ["2", null, "which db?"],
       ["3", "Far title", null],
       ["4", null, null],
@@ -852,24 +853,31 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(whole[0]).toMatchObject({ state: "building", prUrl: "https://example.test/pull/2" });
   });
 
-  it("reads only the end of a large finished run whose pull request is near it", () => {
+  it("reads only the ends of a large finished run whose pull request is near its end", () => {
     const dataDir = tempDir();
     const path = finishedRun(
       dataDir,
       rid(1),
-      // The newest title is near the end too: a file with none is scanned to its start.
-      [...padding(2000), sessionLaunched("Near title"), opened(2), moved("building", "pr-open")],
+      // The title sits near the start, as a launch writes it, before the bulk of the run.
+      [sessionLaunched("Early title"), ...padding(2000), opened(2), moved("building", "pr-open")],
       "pr-open",
       PR_URL,
     );
     const size = NodeFS.statSync(path).size;
     vi.mocked(NodeFS.readSync).mockClear();
-    expect(listRuns(dataDir)[0]).toMatchObject({ state: "pr-open", prUrl: PR_URL, finished: true });
+    const listed = listRuns(dataDir)[0];
+    expect(listed).toMatchObject({
+      state: "pr-open",
+      prUrl: PR_URL,
+      finished: true,
+      title: "Early title",
+    });
     const chunked = vi
       .mocked(NodeFS.readSync)
       .mock.results.reduce((sum, result) => sum + (result.value as number), 0);
     expect(size).toBeGreaterThan(1_000_000);
     expect(chunked).toBeLessThan(100_000);
+    expect(listed).toEqual(readRuns(dataDir)[0]?.summary);
   });
 
   it("still reads an unfinished run whole", () => {
