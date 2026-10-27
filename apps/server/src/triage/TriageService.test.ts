@@ -48,7 +48,11 @@ const RELEASE_COMMIT = "7027b1f";
 const makeTriage = (
   answer: (command: string) => Effect.Effect<string, GitCommandError> = (command) =>
     Effect.succeed(
-      command === "ls-remote" ? `${RELEASE_COMMIT}\trefs/tags/v${packageJson.version}\n` : "",
+      command === "ls-remote"
+        ? `${RELEASE_COMMIT}\trefs/tags/v${packageJson.version}\n`
+        : command === "rev-parse"
+          ? `${RELEASE_COMMIT}\n`
+          : "",
     ),
 ) =>
   Effect.gen(function* () {
@@ -115,7 +119,7 @@ it.effect("reuses a finished clone without fetching", () =>
 
     yield* triage.prepare({ client: {} });
 
-    assert.deepEqual(commands, ["ls-remote"]);
+    assert.deepEqual(commands, ["ls-remote", "rev-parse"]);
     assert.include(yield* readContext, "The server cloned the source for its own version");
   }).pipe(Effect.provide(TestLayer)),
 );
@@ -137,5 +141,29 @@ it.effect("still starts triage when the source lookup fails", () =>
 
     assert.include(prompt, "triage-playbook.md");
     assert.include(yield* readContext, "Could not resolve host: github.com");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("does not trust a folder that is not a checkout of the commit", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const config = yield* ServerConfig.ServerConfig;
+    yield* fs.makeDirectory(`${config.baseDir}/source/${RELEASE_COMMIT}`, { recursive: true });
+    const { triage } = yield* makeTriage((command) =>
+      command === "ls-remote"
+        ? Effect.succeed(`${RELEASE_COMMIT}\trefs/tags/v${packageJson.version}\n`)
+        : Effect.fail(
+            new GitCommandError({
+              operation: "TriageService.checkSource",
+              command: "git rev-parse",
+              cwd: "/",
+              detail: "not a git repository",
+            }),
+          ),
+    );
+
+    yield* triage.prepare({ client: {} });
+
+    assert.include(yield* readContext, "is not a complete checkout");
   }).pipe(Effect.provide(TestLayer)),
 );

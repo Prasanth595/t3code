@@ -151,7 +151,19 @@ const make = Effect.gen(function* () {
     }
     const directory = path.join(sourceDir, source.commit);
     if (yield* fs.exists(directory)) {
-      return { _tag: "cloned", directory, serverVersion, ...source } as const;
+      // Our clones appear only when complete, but an agent may have cloned
+      // here by hand and stopped partway.
+      const head = yield* runGit("checkSource", directory, ["rev-parse", "HEAD"], 10_000).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
+      return head === source.commit
+        ? ({ _tag: "cloned", directory, serverVersion, ...source } as const)
+        : ({
+            _tag: "failed",
+            serverVersion,
+            reason: `${directory} exists but is not a complete checkout of ${source.commit}.`,
+          } satisfies TriageSourceClone);
     }
     if (!cloning.has(source.commit)) {
       cloning.add(source.commit);
