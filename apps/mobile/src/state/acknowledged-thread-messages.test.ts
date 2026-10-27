@@ -1,7 +1,9 @@
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { unsettledAcknowledgedThreadMessages } from "./acknowledged-thread-messages";
+
+vi.mock("./threads", () => ({ environmentThreadDetails: {} }));
 
 const environmentId = EnvironmentId.make("environment-1");
 const threadId = ThreadId.make("thread-1");
