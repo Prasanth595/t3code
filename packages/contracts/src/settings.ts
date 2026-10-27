@@ -20,8 +20,6 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { SecretProviderConfig } from "./secretProvider.ts";
-import { SecretProviderId } from "./secretProviderId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -814,6 +812,38 @@ export const UsageLimitSourceConfig = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
+
+export const SecretProviderId = Schema.String.pipe(Schema.brand("SecretProviderId"));
+export type SecretProviderId = typeof SecretProviderId.Type;
+
+const ONE_PASSWORD_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Any value `op --account` accepts: shorthand, sign-in address, account ID, or user ID.
+ * It is passed to the CLI as an argument, so it can never start with `-`.
+ */
+export const OnePasswordAccount = Schema.String.check(
+  Schema.isMaxLength(253),
+  Schema.makeFilter((value: string) =>
+    ONE_PASSWORD_ACCOUNT_PATTERN.test(value)
+      ? true
+      : "1Password account must be a shorthand, sign-in address, or ID with no spaces.",
+  ),
+).pipe(Schema.brand("OnePasswordAccount"));
+export type OnePasswordAccount = typeof OnePasswordAccount.Type;
+
+const SecretProviderLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+
+export const OnePasswordSecretProviderConfig = Schema.Struct({
+  kind: Schema.Literal("1password"),
+  label: SecretProviderLabel,
+  account: OnePasswordAccount,
+});
+
+/** One member per kind; clients key per-kind presentation by `kind`. */
+export const SecretProviderConfig = Schema.Union([OnePasswordSecretProviderConfig]);
+export type SecretProviderConfig = typeof SecretProviderConfig.Type;
+export type SecretProviderKind = SecretProviderConfig["kind"];
 
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;

@@ -1,7 +1,6 @@
 import {
-  OnePasswordAccount,
+  OnePasswordSecretProviderConfig,
   SecretProviderId,
-  SecretProviderLabel,
   type SecretProviderConfig,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
@@ -10,10 +9,9 @@ import * as Schema from "effect/Schema";
 /** Stable and readable in settings.json, so re-adding a provider under the same name restores its variables. */
 function secretProviderIdFromName(name: string): SecretProviderId | null {
   const slug = name
-    .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/^-|-$/g, "");
   return slug.length === 0 ? null : SecretProviderId.make(slug);
 }
 
@@ -22,31 +20,23 @@ export interface SecretProviderDraft {
   readonly account: string;
 }
 
-export const EMPTY_SECRET_PROVIDER_DRAFT: SecretProviderDraft = { name: "", account: "" };
-
-export function secretProviderDraftFromConfig(config: SecretProviderConfig): SecretProviderDraft {
-  return { name: config.label, account: config.account };
-}
-
 export type SecretProviderTarget =
   | { readonly mode: "add" }
   | { readonly mode: "edit"; readonly id: SecretProviderId };
+
+export type SecretProviderDraftIssues = {
+  readonly [Field in keyof SecretProviderDraft]?: string;
+};
 
 function decodeField<S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   value: string,
   emptyMessage: string,
 ): Result.Result<S["Type"], string> {
-  if (value.trim().length === 0) return Result.fail(emptyMessage);
-  const decoded = Schema.decodeResult(schema)(value.trim());
-  return Result.isFailure(decoded)
-    ? Result.fail(decoded.failure.message)
-    : Result.succeed(decoded.success);
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return Result.fail(emptyMessage);
+  return Result.mapError(Schema.decodeResult(schema)(trimmed), (error) => error.message);
 }
-
-export type SecretProviderDraftField = "name" | "account";
-
-export type SecretProviderDraftIssues = Partial<Readonly<Record<SecretProviderDraftField, string>>>;
 
 /** The settings entry a draft adds or replaces, or every field that blocks it, one message each. */
 export function secretProviderFromDraft(
@@ -57,33 +47,31 @@ export function secretProviderFromDraft(
   { readonly id: SecretProviderId; readonly config: SecretProviderConfig },
   SecretProviderDraftIssues
 > {
-  const issues: { -readonly [Field in SecretProviderDraftField]?: string } = {};
+  const { fields } = OnePasswordSecretProviderConfig;
+  const label = decodeField(fields.label, draft.name, "Enter a name.");
+  const account = decodeField(fields.account, draft.account, "Enter the 1Password account.");
 
-  const label = decodeField(SecretProviderLabel, draft.name, "Enter a name.");
-  const id =
-    target.mode === "edit"
-      ? target.id
-      : Result.isSuccess(label)
-        ? secretProviderIdFromName(label.success)
-        : null;
+  let id: SecretProviderId | null = null;
+  let nameIssue: string | undefined;
   if (Result.isFailure(label)) {
-    issues.name = label.failure;
-  } else if (id === null) {
-    issues.name = "The name needs at least one letter or digit.";
-  } else if (target.mode === "add" && existingIds.has(id)) {
-    issues.name = `A secret provider named ${label.success} exists.`;
+    nameIssue = label.failure;
+  } else {
+    id = target.mode === "edit" ? target.id : secretProviderIdFromName(label.success);
+    if (id === null) nameIssue = "The name needs at least one letter or digit.";
+    else if (target.mode === "add" && existingIds.has(id))
+      nameIssue = `A secret provider named ${label.success} exists.`;
   }
 
-  const account = decodeField(OnePasswordAccount, draft.account, "Enter the 1Password account.");
-  if (Result.isFailure(account)) issues.account = account.failure;
-
   if (
-    issues.name !== undefined ||
-    Result.isFailure(label) ||
     id === null ||
+    nameIssue !== undefined ||
+    Result.isFailure(label) ||
     Result.isFailure(account)
   ) {
-    return Result.fail(issues);
+    return Result.fail({
+      ...(nameIssue === undefined ? {} : { name: nameIssue }),
+      ...(Result.isFailure(account) ? { account: account.failure } : {}),
+    });
   }
   return Result.succeed({
     id,

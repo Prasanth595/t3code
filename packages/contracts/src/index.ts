@@ -68,6 +68,3 @@ export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
-export * from "./onePassword.ts";
-export * from "./secretProvider.ts";
-export * from "./secretProviderId.ts";

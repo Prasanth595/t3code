@@ -15,37 +15,27 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import {
-  EMPTY_SECRET_PROVIDER_DRAFT,
-  secretProviderDraftFromConfig,
-  secretProviderFromDraft,
-  type SecretProviderDraft,
-  type SecretProviderDraftField,
-} from "./SecretProviderDialog.logic";
+import { secretProviderFromDraft, type SecretProviderDraft } from "./SecretProviderDialog.logic";
 
-/**
- * Adds or edits a named secret provider on one environment. Provider variables on that
- * environment pick it by name; values are read on the server when a provider starts.
- */
+/** Mounted per open, so each open starts from a fresh draft. */
 export function SecretProviderDialog({
-  open,
-  onOpenChange,
+  onClose,
   environmentId,
   environmentLabel,
   existingIds,
   existing,
 }: {
-  readonly open: boolean;
-  readonly onOpenChange: (open: boolean) => void;
+  readonly onClose: () => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly existingIds: ReadonlySet<string>;
   readonly existing?: { readonly id: SecretProviderId; readonly config: SecretProviderConfig };
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [draft, setDraft] = useState<SecretProviderDraft>(
-    existing ? secretProviderDraftFromConfig(existing.config) : EMPTY_SECRET_PROVIDER_DRAFT,
-  );
+  const [draft, setDraft] = useState<SecretProviderDraft>({
+    name: existing?.config.label ?? "",
+    account: existing?.config.account ?? "",
+  });
   const [submitted, setSubmitted] = useState(false);
   const result = secretProviderFromDraft(
     draft,
@@ -53,29 +43,22 @@ export function SecretProviderDialog({
     existing ? { mode: "edit", id: existing.id } : { mode: "add" },
   );
   const issues = Result.isFailure(result) ? result.failure : {};
-  const fieldError = (field: SecretProviderDraftField) => (submitted ? issues[field] : undefined);
-  const nameError = fieldError("name");
-  const accountError = fieldError("account");
+  const nameError = submitted ? issues.name : undefined;
+  const accountError = submitted ? issues.account : undefined;
 
   const update = (patch: Partial<SecretProviderDraft>) => setDraft({ ...draft, ...patch });
-  const close = () => {
-    setDraft(EMPTY_SECRET_PROVIDER_DRAFT);
-    setSubmitted(false);
-    onOpenChange(false);
-  };
   const save = () => {
     setSubmitted(true);
     if (Result.isFailure(result)) return;
     updateSettings({ secretProviders: { [result.success.id]: result.success.config } });
-    close();
+    onClose();
   };
 
   return (
     <Dialog
-      open={open}
+      open
       onOpenChange={(next) => {
-        if (!next) close();
-        else onOpenChange(next);
+        if (!next) onClose();
       }}
     >
       <DialogPopup className="max-w-md">
@@ -155,7 +138,7 @@ export function SecretProviderDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <Button variant="outline" onClick={close}>
+          <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button

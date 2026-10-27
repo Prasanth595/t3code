@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentSessionState } from "../../state/session";
+import { OnePasswordIcon, type Icon } from "../Icons";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -26,9 +27,14 @@ import {
 } from "./ProviderSettingsPanel.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SecretProviderKindIcon } from "./SecretProviderKindIcon";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+
+const SECRET_PROVIDER_KINDS: Readonly<
+  Record<SecretProviderKind, { readonly name: string; readonly icon: Icon }>
+> = {
+  "1password": { name: "1Password", icon: OnePasswordIcon },
+};
 
 /** Secret providers belong to one environment, so this page shows the representative one. */
 export function SecretsSettingsPanel() {
@@ -106,49 +112,54 @@ function EnvironmentSecretProviders({
             description="Add a 1Password account, then pick it as the source of a provider variable."
           />
         ) : (
-          entries.map(([id, config]) => (
-            <SettingsRow
-              key={id}
-              title={<SecretProviderTitle kind={config.kind} label={config.label} />}
-              description={
-                <span className="flex min-w-0 items-center gap-1">
-                  1Password ·
-                  <RedactedSensitiveText
-                    value={config.account}
-                    ariaLabel="Toggle account visibility"
-                    revealTooltip="Click to reveal account"
-                    hideTooltip="Click to hide account"
-                    className="max-w-full truncate"
-                  />
-                </span>
-              }
-              control={
-                !readOnly ? (
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => setDialog({ mode: "edit", id })}
-                    >
-                      Edit
-                    </Button>
-                    <RemoveSecretProviderButton
-                      label={config.label}
-                      onConfirm={() => updateSettings({ secretProviders: { [id]: null } })}
+          entries.map(([id, config]) => {
+            const kind = SECRET_PROVIDER_KINDS[config.kind];
+            return (
+              <SettingsRow
+                key={id}
+                title={
+                  <span className="flex items-center gap-2">
+                    <kind.icon className="size-4.5 shrink-0 text-foreground/80" aria-hidden />
+                    {config.label}
+                  </span>
+                }
+                description={
+                  <span className="flex min-w-0 items-center gap-1">
+                    {kind.name} ·
+                    <RedactedSensitiveText
+                      value={config.account}
+                      ariaLabel="Toggle account visibility"
+                      revealTooltip="Click to reveal account"
+                      hideTooltip="Click to hide account"
+                      className="max-w-full truncate"
                     />
-                  </div>
-                ) : null
-              }
-            />
-          ))
+                  </span>
+                }
+                control={
+                  !readOnly ? (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setDialog({ mode: "edit", id })}
+                      >
+                        Edit
+                      </Button>
+                      <RemoveSecretProviderButton
+                        label={config.label}
+                        onConfirm={() => updateSettings({ secretProviders: { [id]: null } })}
+                      />
+                    </div>
+                  ) : null
+                }
+              />
+            );
+          })
         )}
       </SettingsSection>
       {dialog !== null && !readOnly && (dialog.mode === "add" || editing !== undefined) ? (
         <SecretProviderDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setDialog(null);
-          }}
+          onClose={() => setDialog(null)}
           environmentId={environmentId}
           environmentLabel={environment.label}
           existingIds={new Set(Object.keys(providers))}
@@ -156,25 +167,6 @@ function EnvironmentSecretProviders({
         />
       ) : null}
     </>
-  );
-}
-
-function SecretProviderTitle({
-  kind,
-  label,
-}: {
-  readonly kind: SecretProviderKind;
-  readonly label: string;
-}) {
-  return (
-    <span className="flex items-center gap-2">
-      <SecretProviderKindIcon
-        kind={kind}
-        className="size-4.5 shrink-0 text-foreground/80"
-        aria-hidden
-      />
-      {label}
-    </span>
   );
 }
 
