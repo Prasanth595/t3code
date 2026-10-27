@@ -252,6 +252,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly threadId: ThreadId;
   readonly state: RelayAgentActivityState | null;
   readonly jti: string;
+  readonly replay?: boolean;
 }) {
   const now = yield* DateTime.now;
   const expiresAt = DateTime.add(now, { minutes: 5 });
@@ -265,6 +266,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     environmentId: input.environmentId as RelayAgentActivityPublishProofPayload["environmentId"],
     threadId: input.threadId,
     state: input.state,
+    ...(input.replay ? { replay: true } : {}),
   } satisfies RelayAgentActivityPublishProofPayload;
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
@@ -291,6 +293,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
+  readonly now: number;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -317,6 +320,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
         environmentId: input.environmentId,
         project: input.project.value,
         thread: input.thread.value,
+        now: input.now,
       }),
     ),
     reason: "snapshot",
@@ -347,13 +351,9 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
+        now: input.startedAt,
       });
-      return (
-        state !== null &&
-        (state.phase !== "completed" && state.phase !== "failed"
-          ? true
-          : terminalWorkSinceStart(thread, input.startedAt))
-      );
+      return state !== null;
     })
     .map((thread) => thread.id);
 }
@@ -467,6 +467,7 @@ export const make = Effect.gen(function* () {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
+      readonly replay?: boolean;
     }) {
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
@@ -478,6 +479,7 @@ export const make = Effect.gen(function* () {
         environmentId,
         threadId,
         state: input.state,
+        replay: input.replay ?? false,
         jti: yield* crypto.randomUUIDv4(),
       });
 
@@ -498,6 +500,7 @@ export const make = Effect.gen(function* () {
           },
           payload: {
             state: input.state,
+            ...(input.replay ? { replay: true } : {}),
             proof,
           },
         })
@@ -531,15 +534,15 @@ export const make = Effect.gen(function* () {
       environmentId,
       thread,
       project,
+      now: (yield* DateTime.now).epochMilliseconds,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-    if (
+    const replay =
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
-    ) {
-      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
-    }
+      !publishedStateByThread.has(threadId) &&
+      Option.isSome(thread) &&
+      !terminalWorkSinceStart(thread.value, startedAt);
     if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
@@ -558,7 +561,7 @@ export const make = Effect.gen(function* () {
     const requiresConfirmation =
       (snapshot.state === null &&
         publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+      (snapshot.state?.phase === "completed" && !replay);
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -596,6 +599,7 @@ export const make = Effect.gen(function* () {
               environmentId,
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
+              now: nowMs,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
@@ -635,6 +639,7 @@ export const make = Effect.gen(function* () {
       projectId: snapshot.projectId,
       state: snapshot.state,
       reason: snapshot.reason,
+      replay,
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);

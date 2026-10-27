@@ -70,3 +70,15 @@ assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["rel
 let coveredUnknown: [String: Any] = ["activities": [row("relay", "running")]]
 let coveredTimeline = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: coveredUnknown, now: now)
 assert(props(coveredTimeline[0])["activeCount"] as? Int == 1)
+
+// Exact relay totals survive native background merges, including capped rows.
+let counted: [String: Any] = ["activeCount": 12, "workingCount": 8, "attentionCount": 4, "totalCount": 20, "activities": [row("relay", "running")]]
+var countedLocal = local
+countedLocal["totalCount"] = 3
+let countedEntries = AgentWidgetState.timeline(aggregate: counted, environmentIds: ["relay"], localObservation: countedLocal, now: now)
+assert(props(countedEntries[0])["workingCount"] as? Int == 8)
+assert(props(countedEntries[0])["attentionCount"] as? Int == 5)
+assert(props(countedEntries[0])["totalCount"] as? Int == 22)
+assert(props(countedEntries[1])["workingCount"] == nil)
+assert(props(countedEntries.last!)["attentionCount"] == nil)
+print("Agent widget counts: working, attention, overflow, and stale merges passed")

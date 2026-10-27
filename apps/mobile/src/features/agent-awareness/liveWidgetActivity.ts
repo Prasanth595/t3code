@@ -6,7 +6,6 @@ import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell"
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
-import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
@@ -14,7 +13,6 @@ import type { AgentActivityRowProps } from "../../widgets/AgentActivity";
 
 export type LiveWidgetActivities = ReadonlyMap<EnvironmentId, ReadonlyArray<AgentActivityRowProps>>;
 
-const TERMINAL_DISPLAY_MS = 15 * 60 * 1_000;
 const MAX_WIDGET_ROWS = 5;
 
 const statusByPhase = {
@@ -49,13 +47,8 @@ export function createLiveWidgetActivitiesAtom(input: {
       for (const thread of snapshot.threads) {
         const project = projects.get(thread.projectId);
         if (!project) continue;
-        const state = projectThreadAwarenessV2({ environmentId, project, thread });
+        const state = projectThreadAwarenessV2({ environmentId, project, thread, now });
         if (!state) continue;
-        if (
-          (state.phase === "completed" || state.phase === "failed") &&
-          now - DateTime.makeUnsafe(state.updatedAt).epochMilliseconds > TERMINAL_DISPLAY_MS
-        )
-          continue;
         rows.push({
           environmentId,
           threadId: state.threadId,
@@ -101,7 +94,10 @@ export function retainUnconfirmedWidgetActivities(
 ): LiveWidgetActivities {
   if ((snapshot.excludedEnvironmentIds?.length ?? 0) > 0) return observed;
   const relayRows = snapshot.aggregate?.activities ?? [];
-  const complete = (snapshot.aggregate?.activeCount ?? 0) === relayRows.filter(isActive).length;
+  const complete =
+    (snapshot.aggregate?.activeCount ?? 0) === relayRows.filter(isActive).length &&
+    (snapshot.aggregate?.totalCount === undefined ||
+      snapshot.aggregate.totalCount === relayRows.length);
   const retained = new Map(observed);
   for (const [environmentId, rows] of observed) {
     if (live.has(environmentId) || readStartedWith.get(environmentId) !== rows) continue;
@@ -157,11 +153,37 @@ export function reconcileWidgetActivity(
         activeCount = localActiveCount + remoteRows.filter(isActive).length;
     }
   }
-  const activities = [...localRows, ...remoteRows]
+  const allRows = [...localRows, ...remoteRows];
+  const mergedCount = (
+    key: "workingCount" | "attentionCount" | "totalCount",
+    matches: (row: AgentActivityRowProps) => boolean,
+  ): number | null => {
+    const localCount = localRows.filter(matches).length;
+    const remoteCount = aggregate?.[key];
+    if (snapshot === null) return null;
+    if (exactScope && (remoteCount !== undefined || aggregate == null))
+      return localCount + (remoteCount ?? 0);
+    if (globalScope && live.size === 0 && remoteCount !== undefined) return remoteCount;
+    if (globalScope && (aggregate == null || aggregate.totalCount === relayRows.length))
+      return allRows.filter(matches).length;
+    if (key !== "totalCount" && globalScope && relayCountIsComplete)
+      return allRows.filter(matches).length;
+    return null;
+  };
+  const workingCount = mergedCount(
+    "workingCount",
+    (row) => row.phase === "running" || row.phase === "starting",
+  );
+  const attentionCount = mergedCount(
+    "attentionCount",
+    (row) => row.phase === "waiting_for_input" || row.phase === "waiting_for_approval",
+  );
+  const totalCount = mergedCount("totalCount", () => true);
+  const activities = allRows
     .sort(
       (left, right) =>
         rowPriority(left) - rowPriority(right) || right.updatedAt.localeCompare(left.updatedAt),
     )
     .slice(0, MAX_WIDGET_ROWS);
-  return { activeCount, activities };
+  return { activeCount, workingCount, attentionCount, totalCount, activities };
 }

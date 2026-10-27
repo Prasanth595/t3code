@@ -535,6 +535,9 @@ function publishRegularWidget(props: AgentActivityProps): void {
   // Streaming text changes shell timestamps without changing widget content.
   const content = JSON.stringify({
     activeCount: props.activeCount,
+    workingCount: props.workingCount,
+    attentionCount: props.attentionCount,
+    totalCount: props.totalCount,
     isStale: props.isStale,
     expiresAt: props.expiresAt === undefined ? undefined : Math.floor(props.expiresAt / 60_000),
     activities: props.activities.map(({ updatedAt: _updatedAt, ...row }) => row),
@@ -566,6 +569,9 @@ function publishReconciledWidget(): void {
           ? "Agent work in progress"
           : "No active agents",
     activeCount: result.activeCount,
+    workingCount: result.workingCount,
+    attentionCount: result.attentionCount,
+    totalCount: result.totalCount,
     isStale: [...observedWidgetActivities.keys()].some((id) => !liveWidgetActivities.has(id)),
     expiresAt: confirmedAt + AGENT_ACTIVITY_FRESHNESS_MS,
     updatedAt: new Date().toISOString(),

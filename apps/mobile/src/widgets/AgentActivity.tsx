@@ -49,6 +49,9 @@ export interface AgentActivityProps {
   readonly title: string;
   readonly subtitle: string;
   readonly activeCount: number | null;
+  readonly workingCount?: number | null;
+  readonly attentionCount?: number | null;
+  readonly totalCount?: number | null;
   readonly isStale?: boolean;
   readonly isExpired?: boolean;
   readonly expiresAt?: number;
@@ -86,6 +89,29 @@ export function AgentActivity(
       : typeof props.activeCount === "number"
         ? props.activeCount
         : 0;
+  const visibleActiveCount = receivedActivities.filter(
+    (row) => row.phase !== "completed" && row.phase !== "failed",
+  ).length;
+  const countsComplete = activeCount !== null && activeCount === visibleActiveCount;
+  const workingCount =
+    typeof props.workingCount === "number" && props.workingCount >= 0
+      ? props.workingCount
+      : countsComplete
+        ? receivedActivities.filter((row) => row.phase === "running" || row.phase === "starting")
+            .length
+        : null;
+  const attentionCount =
+    typeof props.attentionCount === "number" && props.attentionCount >= 0
+      ? props.attentionCount
+      : countsComplete
+        ? receivedActivities.filter(
+            (row) => row.phase === "waiting_for_input" || row.phase === "waiting_for_approval",
+          ).length
+        : null;
+  const totalCount =
+    typeof props.totalCount === "number" && props.totalCount >= receivedActivities.length
+      ? props.totalCount
+      : null;
   const widgetFamily = "widgetFamily" in environment ? environment.widgetFamily : undefined;
 
   // Hierarchical foregrounds inherit system tint and vibrancy.
@@ -176,30 +202,26 @@ export function AgentActivity(
       ? "Agent work completed"
       : "No active agents";
 
-  // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
-  // the two parts in-line so the attention half can carry the accent color;
-  // `summary` is the short form for tight spots (expanded center, watch card).
-  const agentWord = activeCount === 1 ? "agent" : "agents";
   const countLabel = allDone
     ? outcomeLabel
     : props.isExpired || isSystemStale
       ? "Agent status out of date"
-      : activeCount === null
-        ? "Activity count unavailable"
-        : `${activeCount} active ${agentWord}`;
+      : workingCount === null
+        ? "Working count unavailable"
+        : `${workingCount} working`;
   const agentsLabel =
     props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
-    attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
+    attentionCount !== null && attentionCount > 0
+      ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`
       : "";
   const currentLabel = allDone
     ? doneLabel
     : props.isExpired || isSystemStale
       ? "Out of date"
-      : activeCount === null
+      : workingCount === null
         ? "Count unavailable"
-        : `${activeCount} active`;
+        : `${workingCount} working`;
   const activeLabel =
     props.isStale && !props.isExpired ? `Last observed: ${currentLabel}` : currentLabel;
   // A retained observation keeps its "Last observed" label instead of a glyph
@@ -526,9 +548,7 @@ export function AgentActivity(
         ...(deepLink ? [widgetURL(deepLink)] : []),
       ]}
     >
-      {/* Logo pinned to the leading edge; the status texts centered across the
-          full width (ZStack so the logo doesn't skew the centering). No footer —
-          overflow beyond the visible rows is inferable from the count. */}
+      {/* Keep the status centered independently of the logo. */}
       <ZStack>
         <HStack spacing={0} alignment="center">
           {renderLogo(13, primaryForeground)}
@@ -568,7 +588,13 @@ export function AgentActivity(
       {row1 ? renderCompactRow(row1) : null}
       {row2 ? renderCompactRow(row2) : null}
       {row3 ? renderCompactRow(row3) : null}
-      {row4 ? renderCompactRow(row4) : null}
+      {totalCount !== null && totalCount > 5 ? (
+        <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
+          {`${totalCount - 4} more threads · Open T3`}
+        </Text>
+      ) : row4 ? (
+        renderCompactRow(row4)
+      ) : null}
     </VStack>
   );
 
@@ -616,7 +642,7 @@ export function AgentActivity(
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
         <Text modifiers={[font({ weight: "bold", size: 13 }), foregroundStyle(tint)]}>
-          {activeCount === null ? "?" : allDone ? doneLabel : `${activeCount}`}
+          {workingCount === null ? "?" : allDone ? doneLabel : `${workingCount}`}
         </Text>
       </HStack>
     ),

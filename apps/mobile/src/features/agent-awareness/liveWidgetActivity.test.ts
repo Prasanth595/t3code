@@ -136,7 +136,7 @@ function snapshot(
 }
 
 describe("live widget activity", () => {
-  it("expires terminal rows without a catalog or shell update", async () => {
+  it("retains completed rows until settlement rather than timing them out", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW_MS);
     const h = harness(shell([thread({ status: "completed" })]), Date.now);
@@ -149,6 +149,16 @@ describe("live widget activity", () => {
           ?.map((row) => row.phase),
       ).toEqual(["completed"]);
       await vi.advanceTimersByTimeAsync(16 * 60_000);
+      expect(
+        h.registry
+          .get(h.atom)
+          .get(ENVIRONMENT)
+          ?.map((row) => row.phase),
+      ).toEqual(["completed"]);
+      h.registry.set(
+        h.shellAtoms(ENVIRONMENT),
+        shell([thread({ status: "completed", settledOverride: "settled" })]),
+      );
       expect(h.registry.get(h.atom).get(ENVIRONMENT)).toEqual([]);
     } finally {
       stop();
@@ -223,7 +233,7 @@ describe("live widget activity", () => {
     }
   });
 
-  it("keeps current attention and recent failures, not old completed history or orphan threads", () => {
+  it("keeps attention, failures, and older unsettled work but excludes orphan threads", () => {
     const h = harness(
       shell([
         thread({
@@ -261,7 +271,7 @@ describe("live widget activity", () => {
           .get(h.atom)
           .get(ENVIRONMENT)
           ?.map((value) => value.status),
-      ).toEqual(["Approval", "Input", "Failed"]);
+      ).toEqual(["Approval", "Input", "Failed", "Done"]);
     } finally {
       h.registry.dispose();
     }
@@ -270,13 +280,38 @@ describe("live widget activity", () => {
   it("replaces an entire live environment, including its idle and deleted threads", () => {
     const relay = snapshot([row(ENVIRONMENT), row()]);
     const live = new Map<EnvironmentId, ReadonlyArray<AgentActivityRowProps>>([[ENVIRONMENT, []]]);
-    expect(reconcileWidgetActivity(live, relay)).toEqual({ activeCount: 1, activities: [row()] });
+    expect(reconcileWidgetActivity(live, relay)).toEqual({
+      activeCount: 1,
+      workingCount: 1,
+      attentionCount: 0,
+      totalCount: null,
+      activities: [row()],
+    });
     live.set(ENVIRONMENT, [row(ENVIRONMENT, ThreadId.make("different-task"))]);
     expect(reconcileWidgetActivity(live, relay).activeCount).toBe(2);
     expect(reconcileWidgetActivity(live, relay).activities.map((value) => value.threadId)).toEqual([
       "different-task",
       "remote-thread",
     ]);
+  });
+
+  it("keeps working, input, and total counts exact across a capped scoped relay", () => {
+    const localRows = [
+      row(ENVIRONMENT),
+      row(ENVIRONMENT, ThreadId.make("input"), "waiting_for_input"),
+    ];
+    const remote = snapshot([row()], 12);
+    const result = reconcileWidgetActivity(new Map([[ENVIRONMENT, localRows]]), {
+      ...remote,
+      excludedEnvironmentIds: [ENVIRONMENT],
+      aggregate: { ...remote.aggregate!, workingCount: 8, attentionCount: 4, totalCount: 20 },
+    });
+    expect(result).toMatchObject({
+      activeCount: 14,
+      workingCount: 9,
+      attentionCount: 5,
+      totalCount: 22,
+    });
   });
 
   it("counts all local work before capping displayed rows", () => {

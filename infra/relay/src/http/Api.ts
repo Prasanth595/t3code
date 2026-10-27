@@ -1303,6 +1303,7 @@ export const layerServerApi = HttpApiBuilder.group(
             environmentPublicKey: principal.environmentPublicKey,
             threadId: params.threadId,
             state: payload.state,
+            replay: payload.replay ?? false,
           });
         },
         mapErrorTags({

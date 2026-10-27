@@ -190,6 +190,7 @@ const make = Effect.gen(function* () {
         .where(
           and(
             sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+            sql`COALESCE(${relayAgentActivityRows.stateJson} ->> 'retained', 'false') != 'true'`,
             lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
           ),
         )

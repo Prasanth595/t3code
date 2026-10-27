@@ -156,6 +156,46 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("repaints backfilled inbox rows without a notification", () => {
+    const replays: boolean[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state: { ...state, phase: "completed", retained: true },
+        replay: true,
+      });
+      expect(replays).toEqual([true]);
+    }).pipe(
+      Effect.provide(
+        layerPublisher.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      replays.push(input.replay === true);
+                      return null;
+                    }),
+                  sendPushNotificationForTarget: () => Effect.die("Backfill must not notify"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   it.effect("enqueues the widget refresh even when Android notification delivery fails", () => {
     const widgetUsers: string[] = [];
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
@@ -227,7 +267,7 @@ describe("AgentActivityPublisher", () => {
         deviceId: android.device_id,
       });
       expect(fcmCalls).toEqual([
-        { target: android, state },
+        { target: android, state, replay: false },
         { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual(["ios"]);
@@ -570,6 +610,43 @@ describe("makeAggregateState", () => {
         nowMs: hourMs,
       }),
     ).toBeNull();
+  });
+
+  it("keeps older inbox completions and exact counts beyond the row cap", () => {
+    const oldRows = Array.from({ length: 8 }, (_, index): RelayAgentActivityState => ({
+      ...state,
+      threadId: `old-${index}` as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      retained: true,
+    }));
+    const aggregate = AgentActivityPublisher.makeAggregateState({
+      activeStates: [
+        { ...state, updatedAt: "1970-01-02T00:00:00.000Z" },
+        {
+          ...state,
+          threadId: "input" as RelayAgentActivityState["threadId"],
+          phase: "waiting_for_input",
+          updatedAt: "1970-01-02T00:00:00.000Z",
+        },
+        ...oldRows,
+      ],
+      terminalState: null,
+      nowMs: 24 * hourMs,
+    });
+    expect(aggregate).toMatchObject({
+      activeCount: 2,
+      workingCount: 1,
+      attentionCount: 1,
+      totalCount: 10,
+    });
+    expect(aggregate?.activities).toHaveLength(5);
+    expect(aggregate?.activities.map((row) => row.phase)).toEqual([
+      "waiting_for_input",
+      "running",
+      "completed",
+      "completed",
+      "completed",
+    ]);
   });
 
   it("gives active agents the display slots before finished ones", () => {

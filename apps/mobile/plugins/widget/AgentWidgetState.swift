@@ -34,6 +34,22 @@ enum AgentWidgetState {
       let unavailable = directRows.contains { $0["phase"] as? String == "stale" }
       let directCount = directRows.filter { isUnfinished($0) }.count
       props["activeCount"] = unavailable || countUnavailable ? -1 : (base["activeCount"] as? Int ?? 0) + directCount
+      for key in ["workingCount", "attentionCount", "totalCount"] {
+        let total = base[key] as? Int
+        let localTotal = localObservation?["totalCount"] as? Int
+        let allLocalRowsPresent = localTotal == allLocalRows.count
+        let direct = directRows.filter { row in
+          let phase = row["phase"] as? String
+          if key == "workingCount" { return phase == "running" || phase == "starting" }
+          if key == "attentionCount" { return phase == "waiting_for_input" || phase == "waiting_for_approval" }
+          return true
+        }.count
+        if let total, total >= 0, !unavailable, !countUnavailable, localRows.isEmpty || allLocalRowsPresent {
+          props[key] = total + direct
+        } else {
+          props.removeValue(forKey: key)
+        }
+      }
       return props
     }
     var entries = [entry(at: now, props: merged(at: now))]
@@ -43,6 +59,8 @@ enum AgentWidgetState {
     var expired = merged(at: freshnessDeadline)
     expired["activities"] = (expired["activities"] as? [[String: Any]] ?? []).map(stale)
     expired["activeCount"] = -1
+    expired.removeValue(forKey: "workingCount")
+    expired.removeValue(forKey: "attentionCount")
     expired["isExpired"] = true
     expired["subtitle"] = "Open T3 to refresh"
     entries.append(entry(at: freshnessDeadline, props: expired))

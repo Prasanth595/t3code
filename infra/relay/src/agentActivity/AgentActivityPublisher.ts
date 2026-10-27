@@ -40,6 +40,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -64,6 +65,7 @@ const make = Effect.gen(function* () {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
+    readonly replay?: boolean;
   }) {
     const widgetDeliveries = yield* widgets.notify({ userId: input.deliveryUser.userId }).pipe(
       Effect.tapError((cause) => Effect.logWarning("Widget refresh enqueue failed", { cause })),
@@ -80,6 +82,7 @@ const make = Effect.gen(function* () {
         })
       : null;
     const notificationOnlyAggregate =
+      !input.replay &&
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
       input.state !== null
@@ -94,7 +97,13 @@ const make = Effect.gen(function* () {
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return [
+            yield* fcmDeliveries.enqueue({
+              target,
+              state: input.state,
+              replay: input.replay ?? false,
+            }),
+          ];
         }
         return yield* Effect.all(
           [
@@ -102,6 +111,7 @@ const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              replay: input.replay ?? false,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -213,7 +223,7 @@ const make = Effect.gen(function* () {
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
       if (input.state) {
-        // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
+        // Inbox rows are removed by settlement or archival, not by elapsed time.
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
@@ -237,6 +247,7 @@ const make = Effect.gen(function* () {
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
+            replay: input.replay ?? false,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },

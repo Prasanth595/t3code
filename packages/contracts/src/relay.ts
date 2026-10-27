@@ -126,6 +126,7 @@ export const RelayAgentActivityState = Schema.Struct({
   threadTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
   headline: TrimmedNonEmptyString,
+  retained: Schema.optional(Schema.Boolean),
   detail: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
@@ -150,6 +151,9 @@ export const RelayAgentActivityAggregateState = Schema.Struct({
   title: TrimmedNonEmptyString,
   subtitle: TrimmedNonEmptyString,
   activeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  workingCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  attentionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   updatedAt: TrimmedNonEmptyString,
   activities: Schema.Array(RelayAgentActivityAggregateRow),
 });
@@ -266,11 +270,13 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  replay: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
 
 export const RelayAgentActivityPublishRequest = Schema.Struct({
+  replay: Schema.optional(Schema.Boolean),
   state: Schema.NullOr(RelayAgentActivityState).annotate({
     description: "Current agent-awareness state, or null to remove the published state.",
   }),
