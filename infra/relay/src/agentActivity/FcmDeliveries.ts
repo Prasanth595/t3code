@@ -39,6 +39,15 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  directAlert: Schema.optional(
+    Schema.Struct({
+      title: Schema.String,
+      body: Schema.String,
+      deepLink: Schema.String,
+      environmentId: Schema.String,
+      threadId: Schema.String,
+    }),
+  ),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -120,6 +129,7 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly directAlert?: FcmDeliveryJob["directAlert"];
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -169,6 +179,7 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(input.directAlert === undefined ? {} : { directAlert: input.directAlert }),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -188,6 +199,67 @@ const make = Effect.gen(function* () {
       );
       const now = yield* DateTime.now;
       if (now.epochMilliseconds - job.queuedAt > 5 * 60_000) return;
+      if (job.directAlert) {
+        const targets = yield* devices.listTargets({ userId: job.userId });
+        const target = targets.find(
+          (device) =>
+            device.device_id === job.deviceId &&
+            device.platform === "android" &&
+            device.push_token === job.token,
+        );
+        if (!target) return;
+        const preferences = decodePreferences(target.preferences_json);
+        if (
+          Option.isNone(preferences) ||
+          !preferences.value.notificationsEnabled ||
+          !preferences.value.notifyOnInput
+        ) {
+          return;
+        }
+        const alert = {
+          alert_id: [
+            job.directAlert.environmentId,
+            job.directAlert.threadId,
+            job.directAlert.body,
+          ].join("\n"),
+          alert_title: job.directAlert.title,
+          alert_body: job.directAlert.body,
+          alert_path: job.directAlert.deepLink,
+        };
+        const data: Record<string, string> = {
+          t3_kind: "agent_activity",
+          device_id: job.deviceId,
+          user_id: job.userId,
+          updated_at: String(now.epochMilliseconds),
+          ...alert,
+        };
+        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));
+        data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const result = yield* client.send({
+          token: job.token,
+          packageName: target.bundle_id,
+          alert: true,
+          data: fitFcmData(data),
+        });
+        if (result.unregistered) {
+          yield* db
+            .update(relayMobileDevices)
+            .set({ pushToken: null })
+            .where(
+              and(
+                eq(relayMobileDevices.userId, job.userId),
+                eq(relayMobileDevices.deviceId, job.deviceId),
+                eq(relayMobileDevices.pushToken, job.token),
+              ),
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) => new FcmDeliveryError({ operation: "invalidate-token", cause }),
+              ),
+            );
+        }
+        return;
+      }
       const targets = yield* devices.listTargets({ userId: job.userId });
       const target = targets.find(
         (device) =>

@@ -91,6 +91,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import * as AgentAlerts from "./notifications/AgentAlerts.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
@@ -580,8 +581,10 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+const layerAgentAlerts = AgentAlerts.layer;
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
-  AgentAwarenessRelay.layer,
+  AgentAwarenessRelay.layer.pipe(Layer.provide(layerAgentAlerts)),
+  layerAgentAlerts,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -735,7 +738,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
-    Ws.layer,
+    Ws.layer.pipe(Layer.provide(layerAgentAlerts)),
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),

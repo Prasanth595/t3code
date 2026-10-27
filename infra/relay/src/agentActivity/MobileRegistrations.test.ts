@@ -191,6 +191,7 @@ function makeAgentActivityPublisher(
 ): AgentActivityPublisher.AgentActivityPublisher["Service"] {
   return {
     publish: () => Effect.succeed({ ok: true, deliveries: [] }),
+    publishAlert: () => Effect.succeed({ ok: true, deliveries: [] }),
     replayForLiveActivityRegistration: () => Effect.succeed(null),
     endIdleLiveActivities: Effect.void,
     ...overrides,
