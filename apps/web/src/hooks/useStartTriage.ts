@@ -18,7 +18,13 @@ import { useScratchProject } from "./useScratchProject";
 
 export const TRIAGE_CLI_COMMAND = "npx t3 triage";
 
-const copyTriageCliCommand = () => writeTextToClipboard(TRIAGE_CLI_COMMAND, "command");
+const copyTriageCliCommand = () =>
+  writeTextToClipboard(TRIAGE_CLI_COMMAND, "command").catch(() =>
+    toastManager.add({
+      type: "error",
+      title: `Could not copy. Type ${TRIAGE_CLI_COMMAND} instead.`,
+    }),
+  );
 
 /** A draft is a triage draft while its message still links the playbook file. */
 export const isTriagePrompt = (prompt: string) => prompt.includes(`[${TRIAGE_PROMPT_FILE_NAME}](`);
