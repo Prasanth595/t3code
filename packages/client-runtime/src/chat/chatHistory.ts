@@ -1,4 +1,5 @@
 import {
+  SAAS_MAX_LISTED_CHATS,
   SaasChatConversation,
   type SaasChatAttachment,
   type SaasChatMessage,
@@ -30,6 +31,12 @@ export interface ChatReplyError {
   readonly code: ChatReplyErrorCode;
   readonly message: string;
 }
+
+/** Failures that may pass on their own, so the question can be asked again as is. */
+export const isRetryable = (error: ChatReplyError) =>
+  error.code === "network" ||
+  error.code === "upstream_unavailable" ||
+  error.code === "model_unavailable";
 
 export interface ChatHistoryState {
   readonly loaded: boolean;
@@ -183,9 +190,23 @@ export class ChatHistory {
     if (this.remote !== remote) return;
     const synced = new Set(this.stored.synced);
     const updated = new Map(fetched.map((chat) => [chat.id, chat]));
+    // A full listing leaves out older chats rather than deleted ones.
+    const listedFrom =
+      summaries.length >= SAAS_MAX_LISTED_CHATS
+        ? summaries.reduce(
+            (oldest, summary) => (summary.updatedAt < oldest ? summary.updatedAt : oldest),
+            summaries[0]?.updatedAt ?? "",
+          )
+        : "";
     const chats = [
       ...this.stored.chats
-        .filter((chat) => remoteIds.has(chat.id) || !synced.has(chat.id) || dirty.has(chat.id))
+        .filter(
+          (chat) =>
+            remoteIds.has(chat.id) ||
+            !synced.has(chat.id) ||
+            dirty.has(chat.id) ||
+            chat.updatedAt < listedFrom,
+        )
         .map((chat) => updated.get(chat.id) ?? chat),
       ...fetched.filter((chat) => !local.has(chat.id)),
     ];
@@ -255,26 +276,46 @@ export class ChatHistory {
     this.write(chat);
     this.publish({ streaming: { chatId: chat.id, text: "" }, error: null });
     options.onStarted?.(chat.id);
+    await this.reply(chat);
+    return chat.id;
+  }
 
-    const result = await this.options.requestReply(
-      {
-        messages: chat.messages.map((message) => ({
-          role: message.role,
-          content: message.content,
-          ...(message.attachments ? { attachments: message.attachments } : {}),
-        })),
-        onText: (partial) => this.publish({ streaming: { chatId: chat.id, text: partial } }),
-        onSearching: () =>
-          this.publish({
-            streaming: {
-              chatId: chat.id,
-              text: this.state.streaming?.text ?? "",
-              searching: true,
-            },
-          }),
-      },
-      this.stored.deviceId,
-    );
+  /** Asks again for the reply to a chat whose last question went unanswered. */
+  async retry(chatId: string): Promise<void> {
+    await this.load();
+    const chat = this.find(chatId);
+    if (chat === undefined || chat.messages.at(-1)?.role !== "user") return;
+    if (this.state.streaming !== null) return;
+    this.publish({ streaming: { chatId, text: "" }, error: null });
+    await this.reply(chat);
+  }
+
+  private async reply(chat: SaasChatConversation) {
+    const result = await this.options
+      .requestReply(
+        {
+          messages: chat.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+            ...(message.attachments ? { attachments: message.attachments } : {}),
+          })),
+          onText: (partial) => this.publish({ streaming: { chatId: chat.id, text: partial } }),
+          onSearching: () =>
+            this.publish({
+              streaming: {
+                chatId: chat.id,
+                text: this.state.streaming?.text ?? "",
+                searching: true,
+              },
+            }),
+        },
+        this.stored.deviceId,
+      )
+      .catch((): ChatReplyResult => ({
+        ok: false,
+        code: "network",
+        message: "Could not reach Mira. Check your internet connection.",
+      }));
     if (result.ok && result.text !== "") {
       const latest = this.find(chat.id) ?? chat;
       const repliedAt = this.now();
@@ -295,7 +336,6 @@ export class ChatHistory {
           : { chatId: chat.id, code: result.code, message: result.message },
       });
     }
-    return chat.id;
   }
 
   remove(chatId: string) {

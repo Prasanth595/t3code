@@ -1,10 +1,11 @@
 import {
   chatAttachmentProblem,
   chatAttachmentUrl,
+  isRetryable,
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
 import { EnvironmentId } from "@t3tools/contracts";
-import { splitChatVisuals } from "@t3tools/shared/htmlRender";
+import { chatVisualsAsText, splitChatVisuals } from "@t3tools/shared/htmlRender";
 import type {
   SaasChatAttachment,
   SaasChatConversation,
@@ -119,6 +120,7 @@ export function ChatModeContent(props: {
             error={error}
             onSignIn={() => navigation.navigate("SettingsAuth")}
             onUpgrade={() => void openMiraUpgrade().catch(() => undefined)}
+            onRetry={() => void miraChatHistory.retry(error.chatId)}
           />
         </View>
       ) : null}
@@ -127,18 +129,33 @@ export function ChatModeContent(props: {
   );
 }
 
+const FOLLOW_THRESHOLD = 80;
+
 function ChatMessages(props: {
   readonly chat: SaasChatConversation;
   readonly streaming: { readonly text: string; readonly searching?: boolean } | null;
 }) {
   const scrollRef = useRef<ScrollViewInstance>(null);
+  // Follow new content only from the bottom, so a visual resizing above (a tab switch) keeps its place.
+  const atBottom = useRef(true);
+  const followedMessages = useRef(props.chat.messages.length);
   return (
     <ScrollView
       ref={scrollRef}
       className="flex-1"
       contentContainerClassName="px-4 pt-3 pb-4"
       keyboardDismissMode="interactive"
-      onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+      scrollEventThrottle={64}
+      onScroll={({ nativeEvent }) => {
+        const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+        atBottom.current =
+          contentSize.height - contentOffset.y - layoutMeasurement.height < FOLLOW_THRESHOLD;
+      }}
+      onContentSizeChange={() => {
+        const newMessage = props.chat.messages.length !== followedMessages.current;
+        followedMessages.current = props.chat.messages.length;
+        if (newMessage || atBottom.current) scrollRef.current?.scrollToEnd({ animated: true });
+      }}
       // The keyboard shrinks the list; keep the latest message in view, as threads do.
       onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
     >
@@ -219,7 +236,7 @@ function AssistantRow(props: { readonly text: string; readonly streaming: boolea
         <View className="mt-1 flex-row items-center gap-1">
           <CopyTextButton
             accessibilityLabel="Copy message"
-            text={props.text}
+            text={chatVisualsAsText(props.text)}
             tintColor={iconColor}
             buttonSize={28}
             iconSize={13}
@@ -234,6 +251,7 @@ function ChatErrorNotice(props: {
   readonly error: ChatReplyError;
   readonly onSignIn: () => void;
   readonly onUpgrade: () => void;
+  readonly onRetry: () => void;
 }) {
   const action =
     props.error.code === "sign_up_required" || props.error.code === "session_expired"
@@ -243,7 +261,9 @@ function ChatErrorNotice(props: {
         }
       : props.error.code === "daily_limit"
         ? { label: "Upgrade to Pro", run: props.onUpgrade }
-        : null;
+        : isRetryable(props.error)
+          ? { label: "Try again", run: props.onRetry }
+          : null;
   return (
     <View
       accessibilityRole="alert"

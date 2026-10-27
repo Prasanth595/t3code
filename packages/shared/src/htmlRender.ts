@@ -226,6 +226,7 @@ export const HTML_RENDER_THEME_GUIDE = [
   "--background, --foreground, --muted, --card, --popover, --secondary, --border, --ring, --primary, --accent, --destructive, --warning, --success, --info, --code-background",
   "(most have a matching -foreground; accent, destructive, and warning also have -surface),",
   "--chart-1 to --chart-6, --radius, --font-sans, --font-mono.",
+  "Text uses --foreground, or --muted-foreground when secondary. --muted, --card, --secondary, and --background are surfaces and are unreadable as text.",
   "The base sheet sets background, text, and font.",
 ].join(" ");
 
@@ -446,6 +447,7 @@ export const CHAT_VISUAL_GUIDE = [
   "To show one, call the `show_visual` tool with one complete, self-contained HTML document; never write HTML in the reply text.",
   "The app draws it inline in the reply where you call it. Inline all CSS and JavaScript. Use no external libraries, fonts, or images; draw charts with inline SVG or CSS.",
   "Make it interactive when that helps (tabs, hover details, toggles). Write its text in the user's language.",
+  "Keep the HTML compact, well under 15 KB: no comments, shared CSS classes instead of repeated inline styles. A longer reply gets cut off and the visual is lost.",
   "Keep a short text answer around it, but do not repeat what the visual already shows.",
   HTML_RENDER_LAYOUT_GUIDE,
   HTML_RENDER_THEME_GUIDE,
@@ -456,6 +458,36 @@ export type ChatVisualSegment =
   | { readonly kind: "visual"; readonly html: string; readonly complete: boolean };
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/;
+
+const MAX_VISUAL_TEXT_LENGTH = 600;
+
+const visualWords = (html: string) => {
+  const words = html
+    .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words.length > MAX_VISUAL_TEXT_LENGTH
+    ? `${words.slice(0, MAX_VISUAL_TEXT_LENGTH)}…`
+    : words;
+};
+
+/** A reply with each visual reduced to its words, for copying and for the model's history. */
+export function chatVisualsAsText(text: string): string {
+  if (!text.includes(CHAT_VISUAL_LANGUAGE)) return text;
+  return splitChatVisuals(text)
+    .flatMap((segment) => {
+      if (segment.kind === "markdown")
+        return segment.text.trim() === "" ? [] : [segment.text.trim()];
+      return segment.complete ? [`[Visual: ${visualWords(segment.html)}]`] : [];
+    })
+    .join("\n\n");
+}
 
 /** Splits a reply into markdown and ```visual blocks, leaving fences of other languages as markdown. */
 export function splitChatVisuals(text: string): ReadonlyArray<ChatVisualSegment> {

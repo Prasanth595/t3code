@@ -5,6 +5,7 @@ import {
   type SaasChatAttachment,
   type SaasChatErrorCode,
 } from "@t3tools/contracts/saas";
+import { chatVisualsAsText } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -37,8 +38,9 @@ export class ChatAttachmentStore extends Context.Service<
   }
 >()("t3code-relay/saas/ChatAttachments/ChatAttachmentStore") {}
 
-// Older photos are named instead of re-sent, so a long chat does not resend every image.
+// Older photos and documents are named instead of re-sent, so a long chat does not resend them all.
 const IMAGE_MESSAGES_SENT = 3;
+const DOCUMENT_MESSAGES_SENT = 2;
 
 const fileKey = (id: string) => `chat/${id}`;
 const textKey = (id: string) => `chat/${id}.txt`;
@@ -189,23 +191,31 @@ export const make = Effect.gen(function* () {
       readonly attachments?: ReadonlyArray<SaasChatAttachment>;
     }>,
   ) {
-    const withImages = messages
-      .map((message, index) => ({ message, index }))
-      .filter(({ message }) => message.attachments?.some((file) => file.kind === "image"))
-      .slice(-IMAGE_MESSAGES_SENT)
-      .map(({ index }) => index);
+    const latestWith = (kind: SaasChatAttachment["kind"], count: number) =>
+      messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => message.attachments?.some((file) => file.kind === kind))
+        .slice(-count)
+        .map(({ index }) => index);
+    const withImages = latestWith("image", IMAGE_MESSAGES_SENT);
+    const withDocuments = latestWith("document", DOCUMENT_MESSAGES_SENT);
 
     return yield* Effect.forEach(
       messages,
       Effect.fnUntraced(function* (message, index): Effect.fn.Return<ModelMessage> {
         const attachments = message.attachments ?? [];
-        if (message.role !== "user" || attachments.length === 0) {
-          return { role: message.role, content: message.content };
+        if (message.role === "assistant") {
+          return { role: "assistant", content: chatVisualsAsText(message.content) };
         }
+        if (attachments.length === 0) return { role: "user", content: message.content };
         const notes: Array<string> = [];
         const images: Array<ModelContentPart> = [];
         for (const attachment of attachments) {
-          if (attachment.kind === "document") {
+          if (attachment.kind === "document" && !withDocuments.includes(index)) {
+            notes.push(
+              `[Earlier document: ${attachment.name}. Its text is no longer included; ask the user to attach it again if you need it.]`,
+            );
+          } else if (attachment.kind === "document") {
             const text = yield* readText(attachment);
             notes.push(
               Option.isSome(text)

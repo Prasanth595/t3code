@@ -23,7 +23,7 @@ const MAX_REMEMBERED_SIZES = 200;
 const SIZE_MESSAGE_TYPE = "mira-visual-size";
 
 // The page is the top frame here, so it reports its own size instead of posting to a parent.
-const SIZE_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body,h=Math.ceil(Math.max(d.scrollHeight,d.getBoundingClientRect().height)),x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,k=h+","+x;if(k===last)return;last=k;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(SIZE_MESSAGE_TYPE)},height:h,overflowX:x}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("load",report);window.addEventListener("resize",report);})();true;`;
+const SIZE_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,k=h+","+x;if(k===last)return;last=k;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(SIZE_MESSAGE_TYPE)},height:h,overflowX:x}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("load",report);window.addEventListener("resize",report);})();true;`;
 
 type VisualSize = { readonly height: number; readonly overflowX: boolean };
 
@@ -129,6 +129,8 @@ function ChatVisualFrame(props: { readonly html: string }) {
 
 function ChatVisualFullScreen(props: { readonly html: string; readonly onClose: () => void }) {
   const insets = useSafeAreaInsets();
+  // A Modal renders outside the app's theme scope, so theme classes fall back to light colors.
+  const colors = useHtmlRenderTheme().variables;
   return (
     <Modal
       visible
@@ -139,11 +141,22 @@ function ChatVisualFullScreen(props: { readonly html: string; readonly onClose: 
       navigationBarTranslucent
     >
       <View
-        className="flex-1 bg-background"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+        style={{
+          flex: 1,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          backgroundColor: colors["--background"],
+        }}
       >
-        <View className="flex-row items-center gap-3 border-b border-border px-4 py-2">
-          <AppText className="flex-1 font-t3-semibold text-foreground" numberOfLines={1}>
+        <View
+          className="flex-row items-center gap-3 border-b px-4 py-2"
+          style={{ borderColor: colors["--border"] }}
+        >
+          <AppText
+            className="flex-1 font-t3-semibold"
+            style={{ color: colors["--foreground"] }}
+            numberOfLines={1}
+          >
             {TITLE}
           </AppText>
           <ControlPill label="Close" variant="pill" onPress={props.onClose} />

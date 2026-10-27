@@ -1,3 +1,4 @@
+import { chatVisualsAsText } from "@t3tools/shared/htmlRender";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -205,7 +206,8 @@ function AssistantCopyButton({
   streaming: boolean;
 }) {
   const assistantCopyState = resolveAssistantMessageCopyState({
-    text: message.text ?? null,
+    // Copy a visual as its words, not its page markup.
+    text: message.text == null ? null : chatVisualsAsText(message.text),
     showCopyButton,
     streaming,
   });

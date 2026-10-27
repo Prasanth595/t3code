@@ -1,4 +1,4 @@
-import type { SaasChatConversation } from "@t3tools/contracts/saas";
+import { SAAS_MAX_LISTED_CHATS, type SaasChatConversation } from "@t3tools/contracts/saas";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -195,6 +195,61 @@ describe("ChatHistory", () => {
     const chat = history.getSnapshot().chats[0];
     expect(chat?.title).toBe("cat.png");
     expect(chat?.messages[0]?.attachments).toEqual([photo]);
+  });
+
+  it("reports a reply request that throws instead of staying busy", async () => {
+    const history = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async () => {
+        throw new Error("relay client unavailable");
+      },
+    });
+    const chatId = await history.send(null, "Hi");
+    const state = history.getSnapshot();
+    expect(state.streaming).toBeNull();
+    expect(state.error).toMatchObject({ chatId, code: "network" });
+  });
+
+  it("retries an unanswered question without sending it twice", async () => {
+    const replies: Array<ChatReplyResult> = [
+      { ok: false, code: "network", message: "Offline" },
+      { ok: true, text: "Hello" },
+    ];
+    const sent: Array<ReadonlyArray<{ readonly content: string }>> = [];
+    const history = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async (request) => {
+        sent.push(request.messages);
+        return replies.shift() ?? { ok: true, text: "" };
+      },
+    });
+    const chatId = await history.send(null, "Hi");
+    expect(history.getSnapshot().error?.code).toBe("network");
+    await history.retry(chatId);
+    const chat = history.getSnapshot().chats[0];
+    expect(chat?.messages.map((message) => message.content)).toEqual(["Hi", "Hello"]);
+    expect(sent[1]?.map((message) => message.content)).toEqual(["Hi"]);
+    expect(history.getSnapshot().error).toBeNull();
+  });
+
+  it("keeps chats older than the relay's listing window", async () => {
+    const listed = Array.from({ length: SAAS_MAX_LISTED_CHATS }, (_, index) =>
+      remoteChat(
+        `listed-${index}`,
+        `2026-10-${String(10 + (index % 10)).padStart(2, "0")}T00:00:00.000Z`,
+      ),
+    );
+    const old = remoteChat("old", "2026-09-01T00:00:00.000Z");
+    const { remote } = memoryRemote("user-1", [...listed, old]);
+    const listing: ChatHistoryRemote = {
+      ...remote,
+      list: async () => (await remote.list()).filter((chat) => chat.id !== "old"),
+    };
+    const { history } = makeHistory({});
+    await history.setRemote(memoryRemote("user-1", [old]).remote);
+    expect(history.getSnapshot().chats.map((chat) => chat.id)).toContain("old");
+    await history.setRemote(listing);
+    expect(history.getSnapshot().chats.map((chat) => chat.id)).toContain("old");
   });
 
   it("titles empty and long first messages", () => {

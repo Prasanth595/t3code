@@ -236,6 +236,9 @@ export const SaasChatSummary = Schema.Struct({
 });
 export type SaasChatSummary = typeof SaasChatSummary.Type;
 
+/** The relay lists at most this many chats, newest first; older ones stay stored. */
+export const SAAS_MAX_LISTED_CHATS = 200;
+
 export const SaasChatListResponse = Schema.Struct({
   chats: Schema.Array(SaasChatSummary),
 });
