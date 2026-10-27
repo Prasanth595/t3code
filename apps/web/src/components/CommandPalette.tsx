@@ -635,25 +635,25 @@ function OpenCommandPaletteDialog(props: {
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
-  // Triage the machine the user is looking at, else the primary, else the only
-  // capable machine. Not limited to machines that offer No project threads:
-  // when that is missing, the action explains the terminal fallback.
-  const triageCapableEnvironments = environments.filter(
-    (environment) => environment.serverConfig?.environment.capabilities.triage === true,
-  );
-  const soleTriageEnvironmentId =
-    triageCapableEnvironments.length === 1
-      ? (triageCapableEnvironments[0]?.environmentId ?? null)
-      : null;
+  // Triage the machine the user is looking at. With nothing open, the primary
+  // if it supports triage, else the first machine that does. Not limited to
+  // machines with No project threads: without them, the action explains the
+  // terminal fallback.
+  const supportsTriage = (environmentId: EnvironmentId | null) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.environment.capabilities.triage === true;
   const triageEnvironmentId =
     currentProjectEnvironmentId ??
-    primaryEnvironmentId ??
-    soleTriageEnvironmentId ??
-    scratchTargetEnvironmentId;
+    (supportsTriage(primaryEnvironmentId)
+      ? primaryEnvironmentId
+      : (environments.find(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            supportsTriage(environment.environmentId),
+        )?.environmentId ?? null));
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
-    environments.find((environment) => environment.environmentId === triageEnvironmentId)
-      ?.serverConfig?.environment.capabilities.triage === true;
+    supportsTriage(triageEnvironmentId);
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;

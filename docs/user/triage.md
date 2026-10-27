@@ -13,11 +13,10 @@ provider, describe what went wrong after the link, and send. T3 Code gets the
 source for the server's version while you write.
 
 Triage runs on the machine of the thread or draft that you have open. With
-nothing open, web uses your primary machine, or your only machine that supports
-triage. Mobile uses the first connected machine that supports triage. The new
-thread shows the machine name, and on mobile the palette row shows it before
-you start. The agent runs inside that T3 Code server, so it
-gives you any restart steps and does not do them itself.
+nothing open, it uses your primary machine if that supports triage, or else the
+first connected machine that does. The new thread shows the machine name, and on
+mobile the palette row shows it before you start. The agent runs inside that T3
+Code server, so it gives you any restart steps and does not do them itself.
 
 ## In a terminal
 

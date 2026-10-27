@@ -19,6 +19,7 @@ const testState = vi.hoisted(() => {
     readonly threadId: string;
   } | null = null;
   let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
+  let draftsWithUserText = new Set<string>();
   const router = {
     state: {
       location: { href: "/" },
@@ -29,7 +30,7 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn(() => ({})),
+    getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() =>
       openDraftRoute === null
@@ -69,6 +70,11 @@ const testState = vi.hoisted(() => {
     removeProject() {
       projectRemoved = true;
     },
+    hasUserText: (draft: { readonly draftId?: string } | null | undefined) =>
+      draft?.draftId !== undefined && draftsWithUserText.has(draft.draftId),
+    giveUserText(draftId: string) {
+      draftsWithUserText = new Set([...draftsWithUserText, draftId]);
+    },
     get openDraftRoute() {
       return openDraftRoute;
     },
@@ -87,6 +93,7 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       openDraftRoute = null;
+      draftsWithUserText = new Set();
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
       targetSettings = {
@@ -182,7 +189,8 @@ vi.mock("../composerDraftStore", () => {
     getState: () => testState.draftStore,
   });
   return {
-    composerDraftHasUserContent: () => false,
+    composerDraftHasUserContent: (draft: { readonly draftId?: string } | null | undefined) =>
+      testState.hasUserText(draft),
     markPromotedDraftThreadByRef: vi.fn(),
     useComposerDraftStore,
   };
@@ -305,6 +313,28 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
+  it("keeps the text of a draft that gained some while it waited", async () => {
+    testState.reset(null);
+    const raced = {
+      draftId: "draft-raced",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-raced",
+    };
+    testState.draftStore.getDraftSessionByLogicalProjectKey
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(raced as never);
+    testState.giveUserText("draft-raced");
+
+    const opened = await useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    expect(opened?.draftId).toBe("draft-raced");
+    expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
+  });
+
   it("seeds the prompt into the empty draft that is already open", async () => {
     testState.reset(null);
     testState.openEmptyDraft("draft-open");
