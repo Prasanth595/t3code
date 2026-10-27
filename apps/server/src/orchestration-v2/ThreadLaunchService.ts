@@ -2,6 +2,7 @@ import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { branchNameMessage, orTitleBranch } from "@t3tools/shared/placeholderNames";
 import {
   CommandId,
   type ChatAttachment,
@@ -100,7 +101,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "title"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -348,7 +349,7 @@ const make = Effect.gen(function* () {
                 instructions: settings.branchNameInstructions,
               },
               cwd,
-              message: message.text,
+              message: branchNameMessage(input.title, message.text),
               attachments: message.attachments,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
@@ -358,6 +359,7 @@ const make = Effect.gen(function* () {
                 branch: result.branch,
                 exactName: settings.branchNamingMode === "custom",
               })),
+              Effect.catch(orTitleBranch(input.title, settings)),
             );
         },
       );
@@ -1091,6 +1093,7 @@ const make = Effect.gen(function* () {
       {
         commandId: input.commandId,
         projectId: projection.thread.projectId,
+        title: projection.thread.title,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined

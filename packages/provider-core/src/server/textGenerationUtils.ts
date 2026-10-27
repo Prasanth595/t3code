@@ -1,6 +1,7 @@
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { isPlaceholderName } from "@t3tools/shared/placeholderNames";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 const decodeJsonThreadTitle = Schema.decodeOption(
@@ -69,6 +70,7 @@ export function sanitizeThreadTitle(raw: string): string {
   if (!normalized || normalized.trim().length === 0) {
     return "New thread";
   }
+  if (isPlaceholderName(normalized)) return "New thread";
 
   if (normalized.length <= MAX_THREAD_TITLE_CHARS) {
     return normalized;
