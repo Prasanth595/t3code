@@ -34,8 +34,7 @@ import {
 import { retryShowcaseOperation } from "./showcaseRetry";
 import {
   clearShowcaseRenderSignal,
-  getShowcaseRenderReports,
-  getShowcaseRenderSignal,
+  getShowcaseRenderSnapshot,
   subscribeToShowcaseRenderSignal,
 } from "./showcaseRenderSignal";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
@@ -80,24 +79,16 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const [requestedScene, setRequestedScene] = useState<ShowcaseScene | null>(null);
   const [requestedTheme, setRequestedTheme] = useState<MobileThemeId | null>(null);
   const [themeRequestSettled, setThemeRequestSettled] = useState(false);
-  const [marked, setMarked] = useState<{
-    readonly key: string;
-    readonly scene: ShowcaseScene;
-  } | null>(null);
+  const [readyScene, setReadyScene] = useState<ShowcaseScene | null>(null);
   const [orientationSettled, setOrientationSettled] = useState(false);
   const [agentActivityStaged, setAgentActivityStaged] = useState(false);
   const requestedSceneRef = useRef<ShowcaseScene | null>(null);
   // Read current entities without restarting on shell updates and re-entering open permission prompts.
   const readFixtureEntities = useEffectEvent(() => ({ threads, projects }));
-  const renderSignal = useSyncExternalStore(
+  const { signal: renderSignal, reports: renderReports } = useSyncExternalStore(
     subscribeToShowcaseRenderSignal,
-    getShowcaseRenderSignal,
-    getShowcaseRenderSignal,
-  );
-  const renderReports = useSyncExternalStore(
-    subscribeToShowcaseRenderSignal,
-    getShowcaseRenderReports,
-    getShowcaseRenderReports,
+    getShowcaseRenderSnapshot,
+    getShowcaseRenderSnapshot,
   );
 
   useEffect(() => {
@@ -293,9 +284,8 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     renderSignal,
     renderReports,
   });
-  // A marker belongs to the readiness it was settled for; any change hides it until it settles again.
-  if (marked !== null && marked.key !== readinessKey) setMarked(null);
-  const readyScene = marked?.scene ?? null;
+  // Losing readiness hides the marker. A redraw or theme change while ready keeps it and re-settles.
+  if (readinessKey === null && readyScene !== null) setReadyScene(null);
 
   useEffect(() => {
     if (readinessKey === null || scene === null) return;
@@ -307,7 +297,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       renderFrame = requestAnimationFrame(() => {
         readyFrame = requestAnimationFrame(() => {
           markNativeShowcaseReady(scene);
-          setMarked({ key: readinessKey, scene });
+          setReadyScene(scene);
         });
       });
     }, 500);

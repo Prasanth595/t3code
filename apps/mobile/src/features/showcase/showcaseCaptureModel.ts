@@ -4,7 +4,7 @@ import { isShowcaseNativeContentReady, type ShowcaseRenderSignal } from "./showc
 
 export const SHOWCASE_THREAD_ID = "remote-command-center";
 
-export function sceneFromPathname(pathname: string): ShowcaseScene | null {
+function sceneFromPathname(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
   if (routePath === "/settings" || routePath.endsWith("/settings/environments")) {
     return "environments";
