@@ -23,7 +23,14 @@ import {
   View,
 } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import Animated, { FadeIn, FadeInUp, FadeOut, useAnimatedStyle } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeInUp,
+  FadeOut,
+  FadeOutDown,
+  useAnimatedStyle,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolveClassNames } from "uniwind";
 
@@ -31,7 +38,6 @@ import { ComposerActionButton } from "../../components/ComposerToolbar";
 import { ComposerEditor } from "../../components/ComposerEditor";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
 import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
@@ -424,6 +430,38 @@ function usePendingFiles() {
 
 const COMPACT_ATTACHMENT_LIMIT = 1;
 
+// Large targets riding on the composer: an anchored popup stayed behind when the keyboard closed.
+function AttachTray(props: { readonly onPhotos: () => void; readonly onFiles: () => void }) {
+  return (
+    <Animated.View
+      className="mb-2 flex-row gap-2"
+      entering={FadeInDown.duration(160)}
+      exiting={FadeOutDown.duration(120)}
+    >
+      <AttachTile icon="photo" label="Photos" onPress={props.onPhotos} />
+      <AttachTile icon="folder" label="Files" onPress={props.onFiles} />
+    </Animated.View>
+  );
+}
+
+function AttachTile(props: {
+  readonly icon: "photo" | "folder";
+  readonly label: string;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      className="flex-1 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 active:opacity-70"
+      onPress={props.onPress}
+    >
+      <SymbolView name={props.icon} size={20} tintColorClassName="accent-icon" type="monochrome" />
+      <AppText className="font-t3-medium text-base text-foreground">{props.label}</AppText>
+    </Pressable>
+  );
+}
+
 /**
  * The thread composer's layout and motion: a one-row pill that grows with the text, attachments
  * in the row or above it while editing, and the same attach and send buttons. No model control.
@@ -440,6 +478,7 @@ function ChatComposer(props: {
   const { color: foregroundColor } = useResolveClassNames("text-foreground");
   const [text, setText] = useState("");
   const [isFocused, setIsFocused] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const pending = usePendingFiles();
   const compactEditor = useCompactComposerEditor(bodyText, text);
   const isExpanded = isFocused;
@@ -460,6 +499,18 @@ function ChatComposer(props: {
       className={Platform.OS === "android" ? "bg-composer-panel px-[12px]" : "px-[12px]"}
       style={{ paddingTop: 6, paddingBottom: props.bottomInset + THREAD_COMPOSER_BOTTOM_GUTTER }}
     >
+      {attaching ? (
+        <AttachTray
+          onPhotos={() => {
+            setAttaching(false);
+            void pending.pickPhotos();
+          }}
+          onFiles={() => {
+            setAttaching(false);
+            void pending.pickDocuments();
+          }}
+        />
+      ) : null}
       <View className="relative w-full self-center">
         <ComposerSurface
           animateLayout={false}
@@ -485,11 +536,19 @@ function ChatComposer(props: {
           ) : null}
           <View onLayout={compactEditor.onRowLayout}>
             <View className="flex-row items-end">
-              <ComposerAttachmentButton
-                supportsFiles
-                onPickMedia={pending.pickPhotos}
-                onPickFiles={pending.pickDocuments}
-              />
+              <Pressable
+                accessibilityLabel={attaching ? "Close attachments" : "Add attachment"}
+                accessibilityRole="button"
+                className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70"
+                onPress={() => setAttaching(!attaching)}
+              >
+                <SymbolView
+                  name={attaching ? "xmark" : "plus"}
+                  size={20}
+                  tintColorClassName="accent-icon"
+                  type="monochrome"
+                />
+              </Pressable>
               <Animated.View
                 className="min-w-0 flex-1"
                 onLayout={compactEditor.onEditorLayout}

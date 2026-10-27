@@ -214,7 +214,8 @@ export function useSwipeableScrollGate(options?: {
 
 interface ThreadSwipeableProps {
   readonly backgroundColor: ColorValue;
-  readonly children: (close: () => void) => ReactNode;
+  /** `open` reveals the actions, for rows that also open them on long press. */
+  readonly children: (close: () => void, open: () => void) => ReactNode;
   readonly compactActions?: boolean;
   readonly containerStyle?: StyleProp<ViewStyle>;
   readonly enabled?: boolean;
@@ -243,6 +244,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
   const close = useCallback(() => swipeableRef.current?.close(), []);
+  const open = useCallback(() => swipeableRef.current?.openRight(), []);
   const gateEnabled = use(SwipeableScrollGateContext);
   const mountedRef = useRef(true);
   const dismissalRef = useRef<{ finished: Promise<void>; restore: () => void } | null>(null);
@@ -506,7 +508,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           rightThreshold={actionsWidth * 0.42}
           simultaneousWith={props.simultaneousWith}
         >
-          {props.children(close)}
+          {props.children(close, open)}
         </ReanimatedSwipeable>
       </View>
     </Animated.View>

@@ -1,68 +1,103 @@
 import { useNavigation } from "@react-navigation/native";
-import type { SaasChatSummary } from "@t3tools/contracts/saas";
-import { Platform, ScrollView, View } from "react-native";
+import type { SaasChatConversation } from "@t3tools/contracts/saas";
+import * as Haptics from "expo-haptics";
+import { useMemo } from "react";
+import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useResolveClassNames } from "uniwind";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import { IconButton } from "../../components/ui/IconButton";
-import { Menu } from "../../components/ui/Menu";
 import { RowPressable } from "../../components/ui/RowPressable";
-import { relativeTime } from "../../lib/time";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { androidHomeFabPosition } from "../home/AndroidHomeFab.shared";
-import { THREAD_LIST_V2_MONO_FONT } from "../threads/thread-list-v2-row-appearance";
+import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { chatListSections, chatPreview, chatTimeLabel } from "./chatList";
 import { miraChatHistory, useMiraChatHistory } from "./miraChat";
 
-const CHAT_ROW_MENU = [{ id: "delete", title: "Delete", attributes: { destructive: true } }];
+const confirmDelete = (chat: SaasChatConversation) =>
+  Dialog.confirm({
+    title: "Delete this chat?",
+    message: "It is removed from every device signed in to your account.",
+    cancelText: "Cancel",
+    confirmText: "Delete",
+    destructive: true,
+    onConfirm: () => miraChatHistory.remove(chat.id),
+  });
 
-/** A chat in the list, drawn like a settled thread row. */
-function ChatListRow(props: { readonly chat: SaasChatSummary; readonly onOpen: () => void }) {
+/** A chat: title, its latest message, and Delete behind a swipe or long press, as thread rows. */
+function ChatListRow(props: {
+  readonly chat: SaasChatConversation;
+  readonly now: Date;
+  readonly last: boolean;
+  readonly onOpen: () => void;
+}) {
+  const { chat } = props;
+  const { width } = useWindowDimensions();
+  const { backgroundColor } = useResolveClassNames("bg-screen");
+  const preview = chatPreview(chat);
+  const deleteAction = useMemo(
+    () => ({
+      accessibilityLabel: `Delete ${chat.title}`,
+      destructive: true,
+      icon: "trash" as const,
+      label: "Delete",
+      onPress: () => confirmDelete(chat),
+    }),
+    [chat],
+  );
   return (
-    <Menu
-      actions={CHAT_ROW_MENU}
-      shouldOpenOnLongPress
-      onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event !== "delete") return;
-        Dialog.confirm({
-          title: "Delete this chat?",
-          message: "It is removed from every device signed in to your account.",
-          cancelText: "Cancel",
-          confirmText: "Delete",
-          destructive: true,
-          onConfirm: () => miraChatHistory.remove(props.chat.id),
-        });
-      }}
+    <ThreadSwipeable
+      threadKey={chat.id}
+      threadTitle={chat.title}
+      resetKey={chat.id}
+      backgroundColor={backgroundColor ?? "transparent"}
+      enableTrackpadSwipe
+      fullSwipeAction="primary"
+      fullSwipeWidth={width - 32}
+      onDelete={() => confirmDelete(chat)}
+      primaryAction={deleteAction}
+      secondaryAction={null}
     >
-      <RowPressable
-        accessibilityRole="button"
-        accessibilityLabel={props.chat.title}
-        className="bg-screen"
-        interactionClassName="bg-row-hover"
-        interactionOpacity={1}
-        onPress={props.onOpen}
-      >
-        <View className="min-h-[44px] flex-row items-center gap-2.5 px-5 py-2">
-          {/* Where a thread row shows its project icon. */}
-          <View className="opacity-40">
-            <SymbolView name="bubble.left" size={15} tintColorClassName="accent-foreground" />
+      {(_close, open) => (
+        <RowPressable
+          accessibilityRole="button"
+          accessibilityLabel={chat.title}
+          accessibilityHint="Opens the chat. Swipe left or long press to delete."
+          className="bg-screen"
+          interactionClassName="bg-row-hover"
+          onPress={props.onOpen}
+          onLongPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            open();
+          }}
+        >
+          <View className="px-5 py-3">
+            <View className="flex-row items-baseline gap-3">
+              <Text
+                className="min-w-0 flex-1 font-t3-semibold text-base text-foreground"
+                numberOfLines={1}
+              >
+                {chat.title}
+              </Text>
+              <Text className="text-xs tabular-nums text-foreground-tertiary">
+                {chatTimeLabel(chat.updatedAt, props.now)}
+              </Text>
+            </View>
+            {preview !== "" ? (
+              <Text className="mt-0.5 text-sm text-foreground-secondary" numberOfLines={2}>
+                {preview}
+              </Text>
+            ) : null}
           </View>
-          <Text className={"min-w-0 flex-1 text-base text-foreground"} numberOfLines={1}>
-            {props.chat.title}
-          </Text>
-          <Text
-            className={"text-sm tabular-nums text-foreground-tertiary"}
-            style={{ fontFamily: THREAD_LIST_V2_MONO_FONT }}
-          >
-            {relativeTime(props.chat.updatedAt)}
-          </Text>
-        </View>
-      </RowPressable>
-    </Menu>
+          {props.last ? null : <View className="ml-5 h-px bg-border-subtle" />}
+        </RowPressable>
+      )}
+    </ThreadSwipeable>
   );
 }
 
@@ -83,6 +118,8 @@ export function ChatHome() {
   const insets = useSafeAreaInsets();
   const { chats, loaded } = useMiraChatHistory();
   const newChat = () => navigation.navigate("Chat", {});
+  // Read per render; the list re-renders whenever a chat changes, which keeps day groups current.
+  const now = new Date();
   return (
     <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
       {Platform.OS === "android" ? (
@@ -115,15 +152,24 @@ export function ChatHome() {
           </View>
         ) : (
           <ScrollView
-            contentContainerClassName="pt-4 pb-28"
+            contentContainerClassName="pt-1 pb-28"
             contentInsetAdjustmentBehavior="automatic"
           >
-            {chats.map((chat) => (
-              <ChatListRow
-                key={chat.id}
-                chat={chat}
-                onOpen={() => navigation.navigate("Chat", { chatId: chat.id })}
-              />
+            {chatListSections(chats, now).map((section) => (
+              <View key={section.title} className="mb-2">
+                <Text className="px-5 pb-1 pt-4 font-t3-semibold text-xs uppercase tracking-wide text-foreground-tertiary">
+                  {section.title}
+                </Text>
+                {section.chats.map((chat, index) => (
+                  <ChatListRow
+                    key={chat.id}
+                    chat={chat}
+                    now={now}
+                    last={index === section.chats.length - 1}
+                    onOpen={() => navigation.navigate("Chat", { chatId: chat.id })}
+                  />
+                ))}
+              </View>
             ))}
           </ScrollView>
         )}
