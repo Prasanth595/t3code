@@ -34,6 +34,7 @@ apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts
 apps/server/src/httpCors.ts
+apps/server/src/orchestration-v2/ThreadLaunchService.ts
 apps/server/src/provider/CodexChatGptAuth.test.ts
 apps/server/src/server.ts
 apps/server/src/serverRuntimeState.test.ts
@@ -45,11 +46,13 @@ apps/web/src/components/sidebar/mainAppLocation.ts
 apps/web/src/components/ui/input.tsx
 apps/web/src/environments/primary/auth.ts
 apps/web/src/routeTree.gen.ts
+packages/provider-core/src/server/textGenerationUtils.ts
 packages/shared/package.json
 packages/shared/src/codexAuthHandoff.test.ts
 packages/shared/src/codexAuthHandoff.ts
 packages/shared/src/forkIdentity.test.ts
 packages/shared/src/forkIdentity.ts
+packages/shared/src/placeholderNames.ts
 packages/shared/src/promptLinks.test.ts
 packages/shared/src/promptLinks.ts
 packages/shared/src/providerAuthReturnUrl.test.ts

@@ -50,6 +50,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { withLaunchTitle } from "@t3tools/shared/placeholderNames";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -340,7 +341,8 @@ const make = Effect.gen(function* () {
                   yield* providerRegistry.getProviders,
                   input.projectId,
                 );
-          return yield* textGeneration
+          const { title } = (yield* threads.getThreadShell(threadId)) ?? { title: "" };
+          return yield* withLaunchTitle(textGeneration, title)
             .generateBranchName({
               naming: {
                 mode: settings.branchNamingMode,
