@@ -20,12 +20,12 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { SecretProviderDialog } from "./SecretProviderDialog";
-import { secretProviderSummary } from "./SecretProviderDialog.logic";
 import {
   classifyProviderEnvironmentAccess,
   resolveRemoteOperateAccess,
 } from "./ProviderSettingsPanel.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SecretProviderKindIcon } from "./SecretProviderKindIcon";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -110,7 +110,18 @@ function EnvironmentSecretProviders({
             <SettingsRow
               key={id}
               title={<SecretProviderTitle kind={config.kind} label={config.label} />}
-              description={<span className="break-all">{secretProviderSummary(config)}</span>}
+              description={
+                <span className="flex min-w-0 items-center gap-1">
+                  1Password ·
+                  <RedactedSensitiveText
+                    value={config.account}
+                    ariaLabel="Toggle account visibility"
+                    revealTooltip="Click to reveal account"
+                    hideTooltip="Click to hide account"
+                    className="max-w-full truncate"
+                  />
+                </span>
+              }
               control={
                 !readOnly ? (
                   <div className="flex items-center gap-1">
