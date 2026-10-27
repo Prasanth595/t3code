@@ -265,8 +265,9 @@ export function fitLane(count: number, slots: number): { shown: number; hidden: 
 }
 
 /**
- * The control bar's pass line: "pass running" while one runs, else the seconds left until the last
- * pass plus the poll; null when the factory has not said (no pass yet, or no poll).
+ * The control bar's pass line: "pass running" while one runs, "pass overdue" once the server calls
+ * the last pass stale, else the seconds left until the last pass plus the poll; null when the
+ * factory has not said (no pass yet, or no poll).
  */
 export function nextPassText(
   passes: Partial<FactoryStatus["passes"]> | undefined,
@@ -274,6 +275,7 @@ export function nextPassText(
 ): string | null {
   if (passes === undefined) return null;
   if (passes.running === true) return "pass running";
+  if (passes.stale === true) return "pass overdue";
   if (typeof passes.at !== "string" || typeof passes.poll_seconds !== "number") return null;
   const at = Date.parse(passes.at);
   if (Number.isNaN(at)) return null;

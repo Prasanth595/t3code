@@ -35,10 +35,10 @@ export interface FactoryStatus {
   readonly runs: ReadonlyArray<{
     readonly id: string;
     readonly state: string | null;
-    /** The event of the run's last readable ledger line; null for none. */
-    readonly last_event: string | null;
-    /** The issue title its newest launch recorded; null for a run launched before titles were. */
-    readonly title: string | null;
+    /** The event of the run's last readable ledger line; null for none; absent from older servers. */
+    readonly last_event?: string | null;
+    /** The issue title its first launch recorded; null when it has none; absent from older servers. */
+    readonly title?: string | null;
     readonly user: string | null;
     readonly for_ms: number | null;
     readonly pr_url: string | null;
@@ -54,6 +54,8 @@ export interface FactoryStatus {
     readonly poll_seconds: number | null;
     /** A pass is running now. */
     readonly running: boolean;
+    /** The last pass is older than a few polls: the pass loop has stalled; absent from older servers. */
+    readonly stale?: boolean;
   };
   readonly problems: ReadonlyArray<unknown>;
 }
