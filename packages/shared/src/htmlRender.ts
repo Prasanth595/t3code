@@ -437,6 +437,15 @@ export function injectHtmlRenderBootstrap(html: string, theme?: HtmlRenderTheme)
   return `<!doctype html><head>${markup}</head>${html}`;
 }
 
+// Chat visuals sit directly on the reply: models still wrap them in a page background or outer card.
+const CHAT_VISUAL_CSS =
+  "<style>html,body{background:transparent!important}body>div:only-of-type{background:transparent!important;border:0!important;box-shadow:none!important}</style>";
+
+/** A chat visual as a page with the app theme and no background of its own. */
+export function chatVisualDocument(html: string, theme?: HtmlRenderTheme): string {
+  return injectHtmlRenderBootstrap(html + CHAT_VISUAL_CSS, theme);
+}
+
 /** Fence language for HTML visuals written inline in a chat reply. */
 export const CHAT_VISUAL_LANGUAGE = "visual";
 
@@ -449,6 +458,7 @@ export const CHAT_VISUAL_GUIDE = [
   "Make it interactive when that helps (tabs, hover details, toggles). Write its text in the user's language.",
   "Keep the HTML compact, well under 15 KB: no comments, shared CSS classes instead of repeated inline styles. A longer reply gets cut off and the visual is lost.",
   "Keep a short text answer around it, but do not repeat what the visual already shows.",
+  "It sits directly on the chat with no background or frame of its own; never wrap it in an outer card.",
   HTML_RENDER_LAYOUT_GUIDE,
   HTML_RENDER_THEME_GUIDE,
 ].join(" ");

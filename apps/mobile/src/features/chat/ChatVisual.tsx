@@ -1,24 +1,19 @@
 import {
   HTML_RENDER_MAX_FIT_HEIGHT,
-  injectHtmlRenderBootstrap,
+  chatVisualDocument,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useRef, useState } from "react";
-import { Modal, Pressable, View } from "react-native";
+import { View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useResolveClassNames } from "uniwind";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
-import { ControlPill } from "../../components/ui/ControlPill";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { postTheme, useHtmlRenderTheme } from "../threads/HtmlRenderWebView";
 
 const TITLE = "Visual";
 const PLACEHOLDER_HEIGHT = 80;
-const FULL_SCREEN_GUTTER = 16;
 const MAX_REMEMBERED_SIZES = 200;
 const SIZE_MESSAGE_TYPE = "mira-visual-size";
 
@@ -81,8 +76,6 @@ export function ChatVisual(props: { readonly html: string; readonly complete: bo
 
 function ChatVisualFrame(props: { readonly html: string }) {
   const [size, setSize] = useState(() => measuredSizes.get(props.html));
-  const [expanded, setExpanded] = useState(false);
-  const { color: iconColor } = useResolveClassNames("text-icon-subtle");
   const height =
     size === undefined ? PLACEHOLDER_HEIGHT : Math.min(size.height, HTML_RENDER_MAX_FIT_HEIGHT);
   return (
@@ -104,85 +97,24 @@ function ChatVisualFrame(props: { readonly html: string }) {
         <View pointerEvents="none" className="absolute inset-0">
           <Placeholder />
         </View>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open full screen"
-          hitSlop={8}
-          className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
-          onPress={() => setExpanded(true)}
-        >
-          <SymbolView
-            name="arrow.up.left.and.arrow.down.right"
-            size={12}
-            tintColor={iconColor}
-            type="monochrome"
-          />
-        </Pressable>
-      )}
-      {expanded ? (
-        <ChatVisualFullScreen html={props.html} onClose={() => setExpanded(false)} />
       ) : null}
     </View>
-  );
-}
-
-function ChatVisualFullScreen(props: { readonly html: string; readonly onClose: () => void }) {
-  const insets = useSafeAreaInsets();
-  // A Modal renders outside the app's theme scope, so theme classes fall back to light colors.
-  const colors = useHtmlRenderTheme().variables;
-  return (
-    <Modal
-      visible
-      animationType="slide"
-      presentationStyle="fullScreen"
-      onRequestClose={props.onClose}
-      statusBarTranslucent
-      navigationBarTranslucent
-    >
-      <View
-        style={{
-          flex: 1,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
-          backgroundColor: colors["--background"],
-        }}
-      >
-        <View
-          className="flex-row items-center gap-3 border-b px-4 py-2"
-          style={{ borderColor: colors["--border"] }}
-        >
-          <AppText
-            className="flex-1 font-t3-semibold"
-            style={{ color: colors["--foreground"] }}
-            numberOfLines={1}
-          >
-            {TITLE}
-          </AppText>
-          <ControlPill label="Close" variant="pill" onPress={props.onClose} />
-        </View>
-        <View style={{ flex: 1, paddingHorizontal: FULL_SCREEN_GUTTER }}>
-          <VisualWebView html={props.html} scrollEnabled />
-        </View>
-      </View>
-    </Modal>
   );
 }
 
 function VisualWebView(props: {
   readonly html: string;
   readonly scrollEnabled: boolean;
-  readonly onSize?: (size: VisualSize) => void;
+  readonly onSize: (size: VisualSize) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState<HtmlRenderTheme>(theme);
-  const [source] = useState(() => ({ html: injectHtmlRenderBootstrap(props.html, initialTheme) }));
+  const [source] = useState(() => ({ html: chatVisualDocument(props.html, initialTheme) }));
   const webView = useRef<WebView<object>>(null);
   useEffect(() => {
     if (theme !== initialTheme) postTheme(webView.current, theme);
   }, [theme, initialTheme]);
   const { onSize } = props;
-  const fullScreen = onSize === undefined;
   return (
     <WebView<object>
       ref={webView}
@@ -192,20 +124,16 @@ function VisualWebView(props: {
       allowsInlineMediaPlayback
       scrollEnabled={props.scrollEnabled}
       // Patched Android WebView hands vertical drags back to the chat list at its edges.
-      nestedScrollEnabled={!fullScreen && props.scrollEnabled}
-      bounces={fullScreen}
-      overScrollMode={fullScreen ? "always" : "never"}
-      showsVerticalScrollIndicator={fullScreen}
-      showsHorizontalScrollIndicator={fullScreen}
-      {...(onSize === undefined
-        ? {}
-        : {
-            injectedJavaScript: SIZE_SCRIPT,
-            onMessage: (event: WebViewMessageEvent) => {
-              const next = readSizeMessage(event.nativeEvent.data);
-              if (next !== null) onSize(next);
-            },
-          })}
+      nestedScrollEnabled={props.scrollEnabled}
+      bounces={false}
+      overScrollMode="never"
+      showsVerticalScrollIndicator={false}
+      showsHorizontalScrollIndicator={false}
+      injectedJavaScript={SIZE_SCRIPT}
+      onMessage={(event: WebViewMessageEvent) => {
+        const next = readSizeMessage(event.nativeEvent.data);
+        if (next !== null) onSize(next);
+      }}
       // Links leave the app; the page itself never navigates away from its inline document.
       onShouldStartLoadWithRequest={(request) => {
         if (request.isTopFrame === false || /^(?:about|data):/i.test(request.url)) return true;

@@ -143,9 +143,8 @@ export async function requestChatReply(request: ChatReplyRequest): Promise<ChatR
     }
     if (decoder.finish()) request.onText(decoder.text);
   } catch {
-    if (decoder.text === "") {
-      return failure("network", "The answer was cut off. Try again.");
-    }
+    // Half a reply would be saved as if it were whole; retrying asks for all of it again.
+    return failure("network", "The answer was cut off. Try again.");
   }
   return { ok: true, text: decoder.text };
 }

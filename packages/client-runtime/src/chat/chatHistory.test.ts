@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ChatHistory, type ChatHistoryRemote, chatTitle } from "./chatHistory.ts";
 import type { ChatReplyResult } from "./chatReply.ts";
-import { ChatSseDecoder } from "./chatReply.ts";
+import { ChatSseDecoder, requestChatReply } from "./chatReply.ts";
 
 function memoryStorage(initial: string | null = null) {
   let value = initial;
@@ -230,6 +230,43 @@ describe("ChatHistory", () => {
     expect(chat?.messages.map((message) => message.content)).toEqual(["Hi", "Hello"]);
     expect(sent[1]?.map((message) => message.content)).toEqual(["Hi"]);
     expect(history.getSnapshot().error).toBeNull();
+  });
+
+  it("does not bring back a chat deleted while its reply streams", async () => {
+    const history: ChatHistory = new ChatHistory({
+      storage: memoryStorage(),
+      requestReply: async () => {
+        const chatId = history.getSnapshot().streaming?.chatId;
+        if (chatId !== undefined) history.remove(chatId);
+        return { ok: true, text: "Hello" };
+      },
+    });
+    await history.send(null, "Hi");
+    expect(history.getSnapshot().chats).toEqual([]);
+    expect(history.getSnapshot().streaming).toBeNull();
+  });
+
+  it("reports a reply cut off midway instead of keeping half of it", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"choices":[{"delta":{"content":"Half an answer"}}]}\n\n'),
+        );
+      },
+      pull(controller) {
+        controller.error(new Error("connection lost"));
+      },
+    });
+    const result = await requestChatReply({
+      relayUrl: "https://relay.test",
+      clerkToken: null,
+      deviceId: "device",
+      messages: [{ role: "user", content: "Hi" }],
+      onText: () => {},
+      fetch: async () => new Response(body),
+    });
+    expect(result).toMatchObject({ ok: false, code: "network" });
   });
 
   it("keeps chats older than the relay's listing window", async () => {
