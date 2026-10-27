@@ -471,6 +471,17 @@ export const composerDraftsAtom = Atom.make<Record<string, ComposerDraft>>({}).p
   Atom.withLabel("mobile:composer-drafts"),
 );
 
+const composerDraftsHydratedAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:composer-drafts-hydrated"),
+);
+
+/** Whether persisted drafts have merged in; reading it starts hydration. */
+export const composerDraftsLoadedAtom = Atom.make((get) => {
+  ensureComposerDraftsLoaded();
+  return get(composerDraftsHydratedAtom);
+}).pipe(Atom.withLabel("mobile:composer-drafts-loaded"));
+
 export const stickyComposerModelSelectionAtom = Atom.make<ModelSelection | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:sticky-composer-model-selection"),
@@ -507,6 +518,7 @@ const persistenceQueue = new SerializedAsyncQueue();
 
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
+  appAtomRegistry.set(composerDraftsHydratedAtom, false);
   persistRetryNeeded = false;
 }
 
@@ -1039,6 +1051,7 @@ export function ensureComposerDraftsLoaded(): void {
         ),
       });
     }
+    appAtomRegistry.set(composerDraftsHydratedAtom, true);
   });
   loadPromise = loading;
   void loading.catch((cause) => {
