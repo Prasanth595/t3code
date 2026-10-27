@@ -33,6 +33,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  threadStatusPillText,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
@@ -620,6 +621,21 @@ describe("resolveThreadStatusPill", () => {
 });
 
 describe("resolveProjectStatusIndicator", () => {
+  it("lets a blocked question outrank one the agent keeps working past", () => {
+    const input = {
+      label: "Awaiting Input" as const,
+      colorClass: "text-indigo-600",
+      dotClass: "bg-indigo-500",
+    };
+    const blocked = { ...input, pulse: false, working: false };
+    const working = { ...input, pulse: true, working: true };
+
+    expect(resolveProjectStatusIndicator([blocked, working])).toBe(blocked);
+    expect(resolveProjectStatusIndicator([working, blocked])).toBe(blocked);
+    expect(threadStatusPillText(working)).toBe("Awaiting Input · Working");
+    expect(threadStatusPillText(blocked)).toBe("Awaiting Input");
+  });
+
   it("ranks waiting below active work and above plan-ready", () => {
     const waiting = {
       label: "Waiting" as const,

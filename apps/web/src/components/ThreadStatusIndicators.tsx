@@ -43,6 +43,7 @@ import {
   pullRequestMatchesSearchQuery,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
+  threadStatusPillText,
   type ThreadStatusPill,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -810,7 +811,7 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
-  const text = status.working ? `${status.label} · Working` : status.label;
+  const text = threadStatusPillText(status);
   if (compact) {
     return (
       <Tooltip>

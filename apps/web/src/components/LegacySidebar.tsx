@@ -201,6 +201,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  threadStatusPillText,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -2302,7 +2303,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <TooltipTrigger
                 render={
                   <span
-                    aria-label={projectStatus.label}
+                    aria-label={threadStatusPillText(projectStatus)}
                     className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
                   />
                 }
@@ -2316,7 +2317,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 </span>
                 <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-icon-muted opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
               </TooltipTrigger>
-              <TooltipPopup side="top">{projectStatus.label}</TooltipPopup>
+              <TooltipPopup side="top">{threadStatusPillText(projectStatus)}</TooltipPopup>
             </Tooltip>
           ) : (
             <ChevronRightIcon
