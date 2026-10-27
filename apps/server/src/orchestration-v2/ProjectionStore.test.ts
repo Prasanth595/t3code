@@ -983,6 +983,20 @@ it.effect.each([
     const retry = { ...recovery, resetAt: "2099-01-02T00:00:00.000Z", waitForReset: true };
     yield* updateThread("retry", { limitRecovery: retry });
     assert.deepEqual((yield* candidate)?.limitRecovery, retry);
+    const failure = (yield* store.getThreadProjection(threadId)).turnItems.find(
+      (item) => item.id === TurnItemId.make("armed-before-reset:error"),
+    );
+    assert(failure?.type === "error");
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:no-reset"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...failure, failure: { ...failure.failure!, resetAt: null } },
+    });
+    assert.equal((yield* candidate)?.usageLimitResetAt, retry.resetAt);
+    yield* updateThread("no-reset-unarmed", {});
+    assert.isUndefined(yield* candidate);
     yield* updateThread("retry-cancelled", { limitRecovery: { ...retry, autoResume: false } });
     assert.isUndefined(yield* candidate);
     yield* updateThread("snoozed", { snoozedUntil: DateTime.makeUnsafe(resetAt) });

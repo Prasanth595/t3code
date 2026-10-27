@@ -3174,7 +3174,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
-        failure.resetAt !== command.limitRecovery.resetAt ||
+        (failure.resetAt ??
+          (thread.limitRecovery?.runId === run.id && thread.limitRecovery.waitForReset === true
+            ? thread.limitRecovery.resetAt
+            : null)) !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
@@ -5040,7 +5043,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
+        recovery.resetAt !==
+          (failure.resetAt ?? (recovery.waitForReset === true ? recovery.resetAt : null)) ||
         (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) &&
           (recovery.waitForReset === true ||
             command.usageLimitClearedAt === undefined ||

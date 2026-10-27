@@ -6183,15 +6183,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
-  it.effect(
-    "resumes an armed continuation early and preserves its reset fallback with global auto-resume off",
-    () =>
+  it.effect.each([true, false])(
+    "preserves early recovery with global auto-resume off when retry reports reset: %s",
+    (retryReportsReset) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const events = yield* EventSink.EventSinkV2;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const threadId = ThreadId.make("recovery:early-reset");
-        const projectId = ProjectId.make("recovery:project:early-reset");
+        const threadId = ThreadId.make(`recovery:early-reset:${retryReportsReset}`);
+        const projectId = ProjectId.make(`recovery:project:early-reset:${retryReportsReset}`);
         const now = yield* DateTime.now;
         yield* seedProject({
           projectId,
@@ -6202,7 +6202,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.create",
-          commandId: CommandId.make("recovery:create:early-reset"),
+          commandId: CommandId.make(`recovery:create:early-reset:${retryReportsReset}`),
           threadId,
           projectId,
           title: "Limited thread",
@@ -6216,9 +6216,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make("recovery:message:early-reset"),
+          commandId: CommandId.make(`recovery:message:early-reset:${retryReportsReset}`),
           threadId,
-          messageId: MessageId.make("recovery:message:early-reset"),
+          messageId: MessageId.make(`recovery:message:early-reset:${retryReportsReset}`),
           text: "Work on this.",
           attachments: [],
           dispatchMode: { type: "defer_start" },
@@ -6230,19 +6230,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:run:early-reset"),
+              id: EventId.make(`recovery:run:early-reset:${retryReportsReset}`),
               type: "run.updated",
               threadId,
               occurredAt: now,
               payload: { ...run, status: "failed", completedAt: now },
             },
             {
-              id: EventId.make("recovery:error:early-reset"),
+              id: EventId.make(`recovery:error:early-reset:${retryReportsReset}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: now,
               payload: {
-                id: TurnItemId.make("recovery:error:early-reset"),
+                id: TurnItemId.make(`recovery:error:early-reset:${retryReportsReset}`),
                 type: "error",
                 threadId,
                 runId: run.id,
@@ -6347,7 +6347,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert(staleResume?.type === "message.dispatch");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:cancel:early-reset"),
+          commandId: CommandId.make(`recovery:cancel:early-reset:${retryReportsReset}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false },
         });
@@ -6356,7 +6356,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:rearm:early-reset"),
+          commandId: CommandId.make(`recovery:rearm:early-reset:${retryReportsReset}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -6370,7 +6370,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const nodeId = run.rootNodeId;
         assert(nodeId !== null);
         const request = {
-          id: RuntimeRequestId.make("recovery:pending-race"),
+          id: RuntimeRequestId.make(`recovery:pending-race:${retryReportsReset}`),
           nodeId,
           providerTurnId: null,
           nativeRequestRef: null,
@@ -6383,7 +6383,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:pending-race"),
+              id: EventId.make(`recovery:pending-race:${retryReportsReset}`),
               type: "runtime-request.updated",
               threadId,
               nodeId,
@@ -6397,7 +6397,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:pending-race:resolved"),
+              id: EventId.make(`recovery:pending-race:resolved:${retryReportsReset}`),
               type: "runtime-request.updated",
               threadId,
               nodeId,
@@ -6414,23 +6414,25 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         // The reading can omit the limit that stopped the run, such as a
         // per-model weekly limit. The early run then fails on the same limit.
         const earlyRun = resumed.runs[1]!;
-        const retryResetAt = DateTime.formatIso(DateTime.add(now, { hours: 4 }));
+        const retryResetAt = retryReportsReset
+          ? DateTime.formatIso(DateTime.add(now, { hours: 4 }))
+          : resetAt;
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:run:early-reset:again"),
+              id: EventId.make(`recovery:run:early-reset:again:${retryReportsReset}`),
               type: "run.updated",
               threadId,
               occurredAt: checkedNow,
               payload: { ...earlyRun, status: "failed", completedAt: checkedNow },
             },
             {
-              id: EventId.make("recovery:error:early-reset:again"),
+              id: EventId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: checkedNow,
               payload: {
-                id: TurnItemId.make("recovery:error:early-reset:again"),
+                id: TurnItemId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
                 type: "error",
                 threadId,
                 runId: earlyRun.id,
@@ -6450,7 +6452,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                   message: "Plan limit reached.",
                   code: "usageLimitExceeded",
                   retryable: null,
-                  resetAt: retryResetAt,
+                  resetAt: retryReportsReset ? retryResetAt : null,
                 },
               },
             },
