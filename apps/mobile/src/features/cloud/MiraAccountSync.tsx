@@ -32,7 +32,7 @@ async function readAutoAdded(accountId: string): Promise<ReadonlySet<string>> {
 
 /** Adds every computer on the signed-in account; one the user removes later stays removed. */
 export function MiraAccountSync() {
-  const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const accountId = isSignedIn && userId ? userId : null;
   const environments = useWorkspaceEnvironments();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
@@ -47,6 +47,8 @@ export function MiraAccountSync() {
 
   // The plan decides chat limits and agentic access; chats follow the account across devices.
   useEffect(() => {
+    // Before Clerk restores the session everyone looks signed out, which would drop the account's chats.
+    if (!isLoaded) return;
     if (accountId === null) {
       miraAccess.set({ signedIn: false, account: null, openSignIn: null });
       void miraChatHistory.setRemote(null);
@@ -72,7 +74,7 @@ export function MiraAccountSync() {
       cancelled = true;
       subscription.remove();
     };
-  }, [accountId]);
+  }, [isLoaded, accountId]);
 
   useEffect(() => {
     if (accountId === null) return;
