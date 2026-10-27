@@ -1,8 +1,11 @@
+import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { ProjectListEntriesError, type EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { Atom } from "effect/reactivity";
 
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useDebouncedValue } from "../../state/queries";
@@ -94,6 +97,7 @@ function getRequests(
   }
   return requests;
 }
+const noSessionGeneration = Atom.make(0);
 
 export function useFileTreeEntries(input: {
   readonly cwd: string | null;
@@ -289,6 +293,17 @@ export function useFileTreeEntries(input: {
     setDirectories(() => createDirectories());
   }
   const { refresh: refreshSearch, data: searchData, successResult: searchResult } = search;
+  // A folder read fails at once while its environment is unreachable; read it again once a new
+  // session is up rather than leaving the error until someone refreshes.
+  const sessionGeneration =
+    environmentId === null
+      ? noSessionGeneration
+      : environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    for (const path of directories.errors.keys()) void loadDirectory(path, true);
+  });
   const snapshot = (() => {
     const merged = new Map(missingRoot ? [] : directories.discoveries);
     if (searching && !missingRoot) {

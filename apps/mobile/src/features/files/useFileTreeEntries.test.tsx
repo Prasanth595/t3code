@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => {
       readonly resolve: (result: Result) => void;
     }[],
     responseTimestamp: 0,
+    reconnect: () => {},
     rootQuery: null as unknown as QueryState,
     searchQuery: null as unknown as QueryState,
     results: new WeakMap<
@@ -73,6 +74,9 @@ vi.mock("../../state/projects", () => ({
     listEntries: (query: Query) => query,
     searchEntries: (query: Query) => query,
   },
+}));
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { sessionGenerationAtom: () => ({}) },
 }));
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("@effect/atom-react", () => ({
@@ -106,6 +110,10 @@ vi.mock("@effect/atom-react", () => ({
     return result;
   },
   useAtomRefresh: () => mocks.state.rootQuery.refresh,
+  useAtomMount: () => {},
+  useAtomSubscribe: (_atom: unknown, callback: () => void) => {
+    mocks.state.reconnect = callback;
+  },
 }));
 
 const { Children, Nothing } = vi.hoisted(() => ({
@@ -290,6 +298,20 @@ function setup(withBrowser = false) {
 }
 
 describe("file tree workspace state", () => {
+  it("retries failed folders once on reconnect", async () => {
+    using screen = setup();
+    screen.render();
+    screen.load();
+    await screen.fail(0);
+    act(() => mocks.state.reconnect());
+    expect(screen.requests).toHaveLength(2);
+    act(() => mocks.state.reconnect());
+    expect(screen.requests).toHaveLength(2);
+    await screen.succeed(1);
+    act(() => mocks.state.reconnect());
+    expect(screen.requests).toHaveLength(2);
+  });
+
   it("publishes immutable loading and loaded snapshots", async () => {
     using screen = setup();
     screen.render();
