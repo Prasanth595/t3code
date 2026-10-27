@@ -5,6 +5,7 @@ import { GlmSettings } from "./settings.ts";
 
 export const glmClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("glm"),
+  acpRegistryAgentIds: ["glm-acp-agent"],
   label: "GLM Agent",
   hasDefaultInstance: false,
   authMethodsDiscovery: true,
