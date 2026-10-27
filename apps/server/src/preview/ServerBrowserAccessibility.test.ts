@@ -33,6 +33,41 @@ const frame = (
 ): AccessibilityFrameTree => ({ key, nodes, secretNodes: new Set(), ...extra });
 
 describe("buildAccessibilityTree", () => {
+  it("omits secret field descendants as well as their values", () => {
+    const { root } = buildAccessibilityTree([
+      frame(
+        "0",
+        [
+          node("1", "RootWebArea", { childIds: ["2"] }),
+          node("2", "textbox", {
+            label: "Code",
+            backendDOMNodeId: 2,
+            childIds: ["3"],
+            value: { value: "654321" },
+          }),
+          node("3", "generic", { childIds: ["4"] }),
+          node("4", "StaticText", { label: "654321" }),
+        ],
+        { secretNodes: new Set([2]) },
+      ),
+    ]);
+    expect(root!.children).toEqual([
+      { id: "0.2", role: "textbox", name: "Code", editable: true, protected: true },
+    ]);
+  });
+
+  it("preserves spaces around inline text and links", () => {
+    const { root } = buildAccessibilityTree([
+      frame("0", [
+        node("1", "RootWebArea", { childIds: ["2", "3", "4"] }),
+        node("2", "StaticText", { label: "Read " }),
+        node("3", "link", { label: "the docs" }),
+        node("4", "StaticText", { label: " for help." }),
+      ]),
+    ]);
+    expect(root!.children!.map((child) => child.name).join("")).toBe("Read the docs for help.");
+  });
+
   it("keeps descendants of ignored and generic wrappers in reading order", () => {
     const { root } = buildAccessibilityTree([
       frame("0", [
@@ -288,6 +323,19 @@ const fakePage = (
 };
 const captures = (session: ReturnType<typeof fakeSession>) =>
   session.send.mock.calls.filter(([method]) => method === "Accessibility.getFullAXTree").length;
+
+it("marks the document incomplete when an embedded frame cannot be read", async () => {
+  const main = fakeSession(() => [node("1", "RootWebArea", { label: "Page" })], { id: "main" });
+  const page = fakePage(main, new Map([[{}, null]]));
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+  const offer = vi.fn(() => true);
+  try {
+    await mirror.subscribe("viewer", offer);
+    expect(offer).toHaveBeenCalledWith(expect.objectContaining({ truncated: true }));
+  } finally {
+    await mirror.close();
+  }
+});
 
 it.each([
   "DOM.scrollIntoViewIfNeeded",

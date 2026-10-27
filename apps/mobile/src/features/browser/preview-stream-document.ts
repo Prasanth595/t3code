@@ -68,7 +68,7 @@ export function previewStreamDocument(configuration: string, script: string) {
     .agent-cursor .ping { animation: none; opacity: 0; }
   }
   /* Pinned so focus never scrolls; 16px keeps iOS from zooming on focus. */
-  textarea {
+  body > textarea {
     position: fixed; left: 0; top: 0; width: 1px; height: 1px;
     padding: 0; margin: -1px; border: 0; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; font-size: 16px;

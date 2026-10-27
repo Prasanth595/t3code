@@ -519,7 +519,7 @@ export function createAccessibleDocumentView(
       summary = !document
         ? "Loading the page's accessible view..."
         : document.truncated
-          ? "This page is long, so only its first part is shown."
+          ? "Some page content could not be shown. The page may be too long or contain an unavailable frame."
           : "";
       say("");
       if (!document) {

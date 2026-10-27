@@ -20,7 +20,6 @@ import type {
   PreviewStreamHostSetup,
   PreviewViewportSetting,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -38,7 +37,6 @@ import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
@@ -65,7 +63,6 @@ const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
-const ACCESSIBLE_VIEW_STORAGE_KEY = "t3code.previewAccessibleView";
 
 type MouseInput = Extract<PreviewStreamInput, { type: "mouse" }>;
 type WheelInput = Extract<PreviewStreamInput, { type: "wheel" }>;
@@ -177,11 +174,7 @@ export function ServerBrowserSurface(props: {
   const [promptText, setPromptText] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
-  const [accessibleView, setAccessibleView] = useLocalStorage(
-    ACCESSIBLE_VIEW_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
+  const [accessibleView, setAccessibleView] = useState(false);
   const [accessibleDocument, setAccessibleDocument] = useState<PreviewAccessibilityDocument | null>(
     null,
   );

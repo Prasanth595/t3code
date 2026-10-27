@@ -197,7 +197,10 @@ export function buildAccessibilityTree(
       return [...nested, ...owned];
     };
     if (raw.ignored || HOISTED_ROLES.has(role)) return children();
-    const name = text(raw.name?.value);
+    const name =
+      role === "text" && typeof raw.name?.value === "string"
+        ? raw.name.value.slice(0, TEXT_MAX_CHARS)
+        : text(raw.name?.value);
     if (role === "text" && name === undefined) return [];
     if (count >= maxNodes) {
       truncated = true;
@@ -239,7 +242,7 @@ export function buildAccessibilityTree(
     const invalid = properties.get("invalid");
     if (invalid !== undefined && invalid !== "false" && invalid !== false) node.invalid = true;
     if (editable) node.editable = true;
-    if (role !== "text") {
+    if (role !== "text" && !hidden) {
       const kids = children();
       if (kids.length > 0) node.children = kids;
     }
@@ -680,7 +683,14 @@ export class ServerBrowserAccessibility {
     const [main_, ...rest] = trees;
     if (!main_) throw new Error("The page's accessibility tree is unavailable.");
     const built = buildAccessibilityTree([main_, ...rest.filter((tree) => tree !== null)]);
-    return { token, ...built };
+    return {
+      token,
+      ...built,
+      truncated:
+        built.truncated ||
+        trees.some((tree) => tree === null) ||
+        documents.size < this.page.frames().length,
+    };
   }
 }
 
