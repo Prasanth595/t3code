@@ -147,6 +147,7 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
       if (linuxArm64) {
         yield* injectLinuxArm64Sea({
           bundlePath,

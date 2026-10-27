@@ -87,6 +87,7 @@ export default mergeConfig(
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
       // SEA can only resolve built-ins; keep dynamic imports inside its one module.
       ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
       ...(packMode === "1"
