@@ -58,24 +58,19 @@ export function useReviewFilePatches({
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
   );
-  // Opening the panel refreshes the preview. Under its new revision, each cached file revalidates
-  // once, including files requested later. Refreshing them on mount as well would request and
-  // decode every patch twice.
-  const revalidated = useRef({ revision, queries: null as Set<unknown> | null });
+  const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
   useEffect(() => {
-    const previous = revalidated.current;
-    if (previous.revision !== revision) revalidated.current = { revision, queries: new Set() };
-    const seen = revalidated.current.queries;
-    if (!seen) return;
+    const previous = previousPreview.current;
+    previousPreview.current = { scope, revision, queries };
     for (const { query } of queries) {
-      if (seen.has(query)) continue;
-      seen.add(query);
-      const result = registry.get(query);
-      // A request still running from the previous revision may predate the refreshed preview.
-      const stale = previous.queries?.has(query) || (result._tag !== "Initial" && !result.waiting);
-      if (stale) registry.refresh(query);
+      const changed = previous.scope === scope && previous.revision !== revision;
+      const cached =
+        !previous.queries.some((entry) => entry.query === query) &&
+        registry.get(query)._tag !== "Initial" &&
+        !registry.get(query).waiting;
+      if (changed || cached) registry.refresh(query);
     }
-  }, [revision, queries, registry]);
+  }, [scope, revision, queries, registry]);
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
     const files = sortedReviewFiles(source);

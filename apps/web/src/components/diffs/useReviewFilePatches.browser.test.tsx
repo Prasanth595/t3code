@@ -118,7 +118,7 @@ new file mode 100644
   };
 }
 
-it("reopening shows the kept parse and revalidates once the preview refreshes", async () => {
+it("reopening keeps the parse while mount and preview refreshes revalidate", async () => {
   const h = setup();
   {
     await using screen = await render(h.ui());
@@ -128,10 +128,10 @@ it("reopening shows the kept parse and revalidates once the preview refreshes", 
   const parsed = h.latest().renderableFiles[0];
   await using screen = await render(h.ui());
   expect(h.latest().renderableFiles[0]).toBe(parsed);
-  expect(mocks.requests).toEqual(["a.ts"]);
+  expect(mocks.requests).toEqual(["a.ts", "a.ts"]);
 
   await screen.rerender(h.ui("refreshed"));
-  expect(mocks.requests).toEqual(["a.ts", "a.ts"]);
+  expect(mocks.requests).toEqual(["a.ts", "a.ts", "a.ts"]);
   await vi.waitFor(() => expect(h.latest().isPending).toBe(true));
   expect(h.latest().renderableFiles[0]).toBe(parsed);
   h.complete("a.ts", "first");
@@ -164,4 +164,17 @@ it("revalidates a cached file requested after the preview refreshes", async () =
   // e.ts is still loading from the previous revision, so the next refresh restarts it.
   await screen.rerender(h.ui("focused"));
   expect(h.requestsFor("e.ts")).toBe(3);
+});
+
+it("restarts an in-flight file load on the first preview refresh", async () => {
+  const h = setup();
+  await using screen = await render(h.ui());
+  expect(h.requestsFor("a.ts")).toBe(1);
+  await screen.rerender(h.ui("refreshed"));
+  expect(h.requestsFor("a.ts")).toBe(2);
+  await screen.rerender(h.ui("refreshed"));
+  expect(h.requestsFor("a.ts")).toBe(2);
+  h.complete("a.ts", "fresh");
+  await expect.element(screen.getByText("a.ts fresh")).toBeInTheDocument();
+  await vi.waitFor(() => expect(h.latest().isPending).toBe(false));
 });

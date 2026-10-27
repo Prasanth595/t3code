@@ -1,8 +1,5 @@
 import type { RenderablePatch } from "~/lib/diffRendering";
 
-// Parsing a large patch takes tens of milliseconds, mostly in @pierre/diffs copying every line,
-// and the diff panel parses while its open and close transitions run. Copying the parsed
-// result back from a worker costs well under a millisecond.
 let worker: Worker | null = null;
 let nextId = 0;
 const pending = new Map<
