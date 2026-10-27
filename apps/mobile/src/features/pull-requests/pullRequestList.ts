@@ -50,6 +50,50 @@ export const pullRequestStatKey = (
   row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
 ) => `${row.projectId}:${row.repository}:${row.number}`;
 
+/** Diff stats an environment has answered, and each row's `updatedAt` as its list last answered it. */
+export interface PullRequestStatsCache {
+  readonly stats: ReadonlyMap<string, PullRequestDiffStat>;
+  readonly updatedAt: ReadonlyMap<string, string>;
+}
+
+export const EMPTY_PULL_REQUEST_STATS_CACHE: PullRequestStatsCache = {
+  stats: new Map(),
+  updatedAt: new Map(),
+};
+
+/**
+ * Records the rows a list answered. Stats carry no head, so a row whose `updatedAt` moved (a push,
+ * among other changes) drops its cached stat and the list asks for it again.
+ */
+export function withListedPullRequests(
+  cache: PullRequestStatsCache,
+  entries: readonly Pick<
+    PullRequestListEntry,
+    "projectId" | "repository" | "number" | "updatedAt"
+  >[],
+): PullRequestStatsCache {
+  const moved = entries.filter(
+    (entry) => cache.updatedAt.get(pullRequestStatKey(entry)) !== entry.updatedAt,
+  );
+  if (!moved.length) return cache;
+  const stats = new Map(cache.stats);
+  const updatedAt = new Map(cache.updatedAt);
+  for (const entry of moved) {
+    stats.delete(pullRequestStatKey(entry));
+    updatedAt.set(pullRequestStatKey(entry), entry.updatedAt);
+  }
+  return { stats, updatedAt };
+}
+
+export function withAnsweredPullRequestStats(
+  cache: PullRequestStatsCache,
+  answered: readonly PullRequestDiffStat[],
+): PullRequestStatsCache {
+  const stats = new Map(cache.stats);
+  for (const row of answered) stats.set(pullRequestStatKey(row), row);
+  return { ...cache, stats };
+}
+
 /**
  * Fills rows that have no diff stat yet from the stats answers on screen. Returns `entries`
  * itself when no row changes, so the list keeps its identity across renders.

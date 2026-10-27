@@ -8,6 +8,7 @@ import {
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
+  EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
@@ -21,6 +22,8 @@ import {
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
+  withAnsweredPullRequestStats,
+  withListedPullRequests,
   withShownPullRequestStats,
   withoutScratchProjectScope,
 } from "./pullRequestList";
@@ -433,5 +436,32 @@ describe("shown PR diff stats", () => {
       [4, 1],
     ]);
     expect(filled[1]).toBe(rows[1]);
+  });
+});
+
+describe("cached PR diff stats", () => {
+  const stat = (number: number, additions: number) => ({
+    projectId: "project" as PullRequestListEntry["projectId"],
+    repository: "org/repo",
+    number,
+    additions,
+    deletions: 0,
+  });
+
+  it("drops a row's stat when a list answers it with a new updatedAt", () => {
+    const answered = withAnsweredPullRequestStats(
+      withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]),
+      [stat(1, 5), stat(2, 7)],
+    );
+    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toBe(answered);
+
+    const pushed = withListedPullRequests(answered, [
+      entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
+      entry(2),
+    ]);
+    expect([...pushed.stats.values()]).toEqual([stat(2, 7)]);
+    expect(
+      withAnsweredPullRequestStats(pushed, [stat(1, 9)]).stats.get("project:org/repo:1"),
+    ).toEqual(stat(1, 9));
   });
 });
