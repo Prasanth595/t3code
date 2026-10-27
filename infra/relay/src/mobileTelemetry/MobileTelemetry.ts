@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -94,6 +95,8 @@ export class SourceMapObjects extends Context.Service<
 
 const makeSourceMaps = Effect.gen(function* () {
   const objects = yield* SourceMapObjects;
+  // The cache only joins lookups of one key; a decode holds ~40 MB, so different keys take turns.
+  const decoding = yield* Semaphore.make(1);
   const cache = yield* Cache.makeWith(
     (key: string) =>
       Effect.gen(function* () {
@@ -110,7 +113,7 @@ const makeSourceMaps = Effect.gen(function* () {
         if (map) return { key, map } satisfies FoundSourceMap;
         yield* Effect.logWarning("Stored mobile source map could not be decoded", { key });
         return undefined;
-      }),
+      }).pipe(Semaphore.withPermit(decoding)),
     {
       capacity: SOURCE_MAP_CACHE_CAPACITY,
       timeToLive: (exit) =>
@@ -122,14 +125,15 @@ const makeSourceMaps = Effect.gen(function* () {
     },
   );
   return SourceMaps.of({
-    find: (key) =>
-      Cache.get(cache, key).pipe(
+    find: Effect.fn("MobileTelemetry.findSourceMap")(function* (key: string) {
+      return yield* Cache.get(cache, key).pipe(
         Effect.catch((error) =>
           Effect.logWarning("Mobile source map lookup failed", { key: error.key }).pipe(
             Effect.as(undefined),
           ),
         ),
-      ),
+      );
+    }),
   });
 });
 

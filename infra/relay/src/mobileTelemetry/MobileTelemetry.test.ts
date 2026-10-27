@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { RelayApi } from "@t3tools/contracts/relay";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -274,6 +275,38 @@ describe("MobileTelemetry", () => {
       const tooLarge = "x".repeat(MobileTelemetry.MOBILE_TELEMETRY_MAX_BODY_BYTES + 1);
       expect((yield* harness.send(ingest("logs", tooLarge))).status).toBe(413);
       expect(harness.sent).toEqual([]);
+    }),
+  );
+
+  it.effect("decodes one source map at a time", () =>
+    Effect.gen(function* () {
+      const releaseFirst = yield* Deferred.make<void>();
+      const firstStarted = yield* Deferred.make<void>();
+      let firstDone = false;
+      let secondSawFirstDone: boolean | undefined;
+      const sourceMaps = yield* MobileTelemetry.SourceMaps.pipe(
+        Effect.provide(MobileTelemetry.layerSourceMaps),
+        Effect.provideService(MobileTelemetry.SourceMapObjects, {
+          get: (key) =>
+            key === "first"
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseFirst)),
+                  Effect.as({ size: SOURCE_MAP.length, text: Effect.succeed(SOURCE_MAP) }),
+                  Effect.ensuring(Effect.sync(() => (firstDone = true))),
+                )
+              : Effect.sync(() => {
+                  secondSawFirstDone = firstDone;
+                  return { size: SOURCE_MAP.length, text: Effect.succeed(SOURCE_MAP) };
+                }),
+        }),
+      );
+      const first = yield* Effect.forkChild(sourceMaps.find("first"));
+      yield* Deferred.await(firstStarted);
+      const second = yield* Effect.forkChild(sourceMaps.find("second"), { startImmediately: true });
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(first);
+      expect((yield* Fiber.join(second))?.key).toBe("second");
+      expect(secondSawFirstDone).toBe(true);
     }),
   );
 });

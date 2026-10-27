@@ -9,10 +9,8 @@ export const crashReportingAvailable = typeof relayUrl === "string" && relayUrl.
 
 let latestConfiguration = 0;
 
-/**
- * While sending is off, each dispatch pass drops what it finds. A report recorded after the
- * last pass would still go out once sending resumes, so a pass runs before turning it back on.
- */
+// While sending is off, a dispatch pass drops what it finds, so one runs before turning it back on.
+// Best effort: Observe skips the pass while it is backing off from a failed send.
 export async function setCrashReportsEnabled(enabled: boolean) {
   const configuration = ++latestConfiguration;
   const dispatchingEnabled = crashReportingAvailable && enabled;
@@ -40,10 +38,8 @@ if (!crashReportingAvailable) {
         changedSinceLoad()
           ? undefined
           : setCrashReportsEnabled(preferences.crashReportsEnabled !== false),
-      (error: unknown) => {
-        console.warn("[observe] could not read the crash report setting", error);
-        return changedSinceLoad() ? undefined : setCrashReportsEnabled(false);
-      },
+      // Observe keeps the last choice it was given, which stands in for the unreadable one.
+      (error: unknown) => console.warn("[observe] could not read the crash report setting", error),
     )
     .catch((error: unknown) => {
       console.warn("[observe] could not apply the crash report setting", error);

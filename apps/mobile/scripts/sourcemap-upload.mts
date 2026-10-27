@@ -26,7 +26,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export function parseCredentials(value: string | undefined): UploadCredentials | undefined {
   if (!value?.trim()) return undefined;
-  const parsed: unknown = JSON.parse(value);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    // JSON.parse's message quotes the input, which here is the secret.
+    throw new Error("MOBILE_SOURCEMAPS_R2 is not valid JSON.");
+  }
   if (!isRecord(parsed)) throw new Error("MOBILE_SOURCEMAPS_R2 is not a JSON object.");
   const { endpoint, bucketName, accessKeyId, secretAccessKey } = parsed;
   if (

@@ -1,13 +1,11 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import * as Exit from "effect/Exit";
-import { AsyncResult } from "effect/reactivity";
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { View } from "react-native";
@@ -180,8 +178,8 @@ function CrashReportsSetting() {
       </SettingsSection>
       <Text className="px-2 text-sm leading-normal text-foreground-muted">
         When the app crashes or hits an error, it sends the error message, the stack trace, the app
-        version, and the device model and OS version to the T3 Code team. Reports from while this is
-        off are never sent.
+        version, and the device model and OS version to the T3 Code team. Each launch also sends
+        startup timings. Reports carry a random ID for this install.
       </Text>
     </View>
   );
