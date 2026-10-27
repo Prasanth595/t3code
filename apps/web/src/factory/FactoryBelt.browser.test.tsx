@@ -1176,4 +1176,28 @@ describe("the belt in both themes", () => {
       await expect.poll(() => Math.min(...texts().map(contrastOf))).toBeGreaterThanOrEqual(4.5);
     });
   });
+
+  it("keeps the pause note at 4.5:1 in light and dark", async () => {
+    using _state = await setup();
+    const since = at(11, 2);
+    const belt = twoEnvironments();
+    const desktop = belt.environments[0]!;
+    belt.environments = [
+      {
+        ...desktop,
+        status: resource({
+          data: {
+            ...desktop.status.data!,
+            paused_by_hand: { since: iso(since), for_ms: NOW - since },
+          },
+        }),
+      },
+      belt.environments[1]!,
+    ];
+    await using page = await render(createElement(FactoryBelt, belt));
+    const note = () => withText(station(page, "claimed"), /^claims paused by hand since/);
+    await inBothThemes(async () => {
+      await expect.poll(() => contrastOf(note())).toBeGreaterThanOrEqual(4.5);
+    });
+  });
 });
