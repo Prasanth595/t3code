@@ -642,10 +642,6 @@ export interface ThreadStatusPill {
   working?: boolean;
 }
 
-export function threadStatusPillText(status: ThreadStatusPill): string {
-  return status.working ? `${status.label} · Working` : status.label;
-}
-
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -1172,14 +1168,9 @@ export function resolveProjectStatusIndicator(
 
   for (const status of statuses) {
     if (status === null) continue;
-    const priority = THREAD_STATUS_PRIORITY[status.label];
-    const highestPriority =
-      highestPriorityStatus === null ? null : THREAD_STATUS_PRIORITY[highestPriorityStatus.label];
     if (
-      highestPriority === null ||
-      priority > highestPriority ||
-      // A blocked question outranks one the agent keeps working past.
-      (priority === highestPriority && highestPriorityStatus?.working === true && !status.working)
+      highestPriorityStatus === null ||
+      THREAD_STATUS_PRIORITY[status.label] > THREAD_STATUS_PRIORITY[highestPriorityStatus.label]
     ) {
       highestPriorityStatus = status;
     }
