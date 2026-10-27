@@ -12,12 +12,18 @@ import {
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
-  useFocusEffect,
   useNavigation,
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -464,13 +470,14 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
-  const focusedThreadIdentityRef = useRef<string | null>(null);
-  useFocusEffect(() => {
-    focusedThreadIdentityRef.current = routeThreadIdentity;
+  const currentRouteThreadIdentityRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- route identity must update before pending results resume
+  useLayoutEffect(() => {
+    currentRouteThreadIdentityRef.current = routeThreadIdentity;
     return () => {
-      focusedThreadIdentityRef.current = null;
+      currentRouteThreadIdentityRef.current = null;
     };
-  });
+  }, [routeThreadIdentity]);
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -777,7 +784,8 @@ function ThreadRouteContent(
           scriptId: script.id,
         },
       });
-      if (focusedThreadIdentityRef.current !== routeThreadIdentity) return;
+      if (!navigation.isFocused() || currentRouteThreadIdentityRef.current !== routeThreadIdentity)
+        return;
       if (result._tag !== "Success") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
