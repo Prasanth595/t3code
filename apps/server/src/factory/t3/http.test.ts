@@ -638,13 +638,75 @@ describe("GET /api/factory/runs", () => {
         "finished",
         "total_ms",
         "unreadable",
+        "title",
+        "reason",
       ]);
       assert.deepStrictEqual(
         body.runs.map((run) => run.step),
         ["gate-passed", null, null],
       );
+      assert.deepStrictEqual(
+        body.runs.map((run) => [run.title, run.reason]),
+        [
+          [null, null],
+          [null, null],
+          [null, null],
+        ],
+      );
       assert.strictEqual(body.runs[0]!.started_ts, formatTs(T0 + 1000));
       assert.strictEqual(body.runs[0]!.unreadable, false);
+    }),
+  );
+
+  it.effect("serves the issue title a run launched with and why a stopped run waits", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      const launched = (title?: string): RunEvent =>
+        ({
+          event: "session_launched",
+          data: {
+            thread_id: "thr_1",
+            worktree: null,
+            branch: null,
+            model_instance: null,
+            model: null,
+            model_options: null,
+            resumed_from: null,
+            base: "main",
+            ...(title === undefined ? {} : { title }),
+          },
+        }) as RunEvent;
+      seed(
+        dir,
+        run10,
+        [
+          ...BUILDING,
+          launched("Fix the login"),
+          { event: "stuck", data: { reason: "gate failed" } },
+          moved("building", "stuck"),
+        ],
+        T0,
+      );
+      seed(
+        dir,
+        run11,
+        [
+          CLAIMED,
+          launched(),
+          { event: "questions_posted", data: { questions: "which db?" } },
+          moved("triage", "needs-info"),
+        ],
+        T0 + 10_000,
+      );
+      const body = (await json(await call("GET", "/api/factory/runs", tokens.read))) as {
+        runs: Array<Record<string, unknown>>;
+      };
+      assert.deepStrictEqual(
+        body.runs.map((run) => [run.id, run.state, run.title, run.reason]),
+        [
+          [ID, "stuck", "Fix the login", "gate failed"],
+          [runIdToString(run11), "needs-info", null, "which db?"],
+        ],
+      );
     }),
   );
 

@@ -878,6 +878,7 @@ const relaunchedLine: Line = {
     model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
     base: "main",
+    title: "Build step",
   },
 };
 

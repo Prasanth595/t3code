@@ -28,10 +28,13 @@ const environments = vi.hoisted(() => ({
   primary: "env-1" as string | null,
   connected: [] as Array<string>,
   labels: new Map<string, string>(),
+  // Whether the list of connected ids is a new array on every call, as a derived one would be.
+  freshIds: false,
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => environments.primary,
-  useConnectedEnvironmentIds: () => environments.connected,
+  useConnectedEnvironmentIds: () =>
+    environments.freshIds ? [...environments.connected] : environments.connected,
   useEnvironments: () => ({
     presentationById: new Map(
       [...environments.labels].map(([id, label]) => [id, { entry: { target: { label } } }]),
@@ -68,7 +71,7 @@ const status = (attention: number, state: "running" | "idle" = "running") => ({
     first_seen: "2026-10-04T10:00:00.000Z",
   })),
   slots: { used: 0, max: 1 },
-  passes: {},
+  passes: { at: null, poll_seconds: null, running: false },
   problems: [],
 });
 
@@ -152,6 +155,7 @@ function setup(): AsyncDisposable {
   stack.use(setDocumentVisible(true));
   environments.primary = ENV_1;
   environments.connected = [];
+  environments.freshIds = false;
   environments.labels = new Map();
   stack.defer(() => {
     __setFactoryApiForTests();
@@ -701,6 +705,114 @@ describe("useFactoryEnvironments", () => {
     const calls = (env: EnvironmentId) => fetchStatus.mock.calls.filter(([e]) => e === env).length;
     expect([calls(ENV_1), calls(ENV_2), calls(ENV_3)]).toEqual([1, 1, 1]);
     expect(renders).toBeLessThan(20);
+  });
+});
+
+describe("useFactoryEnvironments with a status poll", () => {
+  const FIVE_SECONDS = 5_000;
+  const statusCalls = () => {
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    return fetchStatus;
+  };
+
+  it("reads every environment's status every 5 seconds, and not in between", async () => {
+    await using _state = setup();
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = statusCalls();
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(4_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(1_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(4);
+    await settle(5_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(6);
+  });
+
+  it("keeps the 30 seconds without the option", async () => {
+    await using _state = setup();
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = statusCalls();
+    await mount(() => useFactoryEnvironments());
+    await settle(25_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(5_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it("costs one read per 5 seconds with a 30 second reader of the same status beside it", async () => {
+    await using _state = setup();
+    const fetchStatus = statusCalls();
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await mount(useFactoryAttentionCount);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await settle(30_000);
+    // The first read, then one every 5 seconds; the badge's tick at 30 seconds joins the page's.
+    expect(fetchStatus).toHaveBeenCalledTimes(7);
+  });
+
+  it("shows the faster reads to the readers that poll slowly", async () => {
+    await using _state = setup();
+    let attention = 0;
+    __setFactoryApiForTests(api({ status: async () => status(attention) }));
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    const badge = await mount(useFactoryAttentionCount);
+    expect(badge.current).toBe(0);
+    attention = 3;
+    await settle(5_000);
+    expect(badge.current).toBe(3);
+  });
+
+  it("reads nothing while the window is hidden, and reads on coming back to it", async () => {
+    await using _state = setup();
+    const fetchStatus = statusCalls();
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await show(false);
+    await settle(20_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await show(true);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(5_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not read again on coming back before a period has passed", async () => {
+    await using _state = setup();
+    const fetchStatus = statusCalls();
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await settle(5_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await show(false);
+    await settle(1_000);
+    await show(true);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps its 5 second period when an answer lands mid-period and the page renders again", async () => {
+    await using _state = setup();
+    environments.freshIds = true;
+    // The answer lands at 3 seconds, so the page renders again between two ticks.
+    const answer = deferred<ReturnType<typeof status>>();
+    const fetchStatus = vi.fn((_env: EnvironmentId) => answer.promise);
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await settle(3_000);
+    await act(async () => answer.resolve(status(0)));
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await settle(2_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a status no more after a 404, and stops its timer with the reader", async () => {
+    await using _state = setup();
+    const fetchStatus = vi.fn(notFound);
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await settle(30_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await unmountAll();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

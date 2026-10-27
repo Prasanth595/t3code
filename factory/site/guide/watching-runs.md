@@ -1,17 +1,20 @@
 # Watch runs
 
-The fork's web app has a Factory page, reached from the sidebar. It shows every connected environment that runs a factory, the primary environment first: the runs of all of them in one table, their attention items in one list, and a status row for each with its own Pause claims. In the desktop app the primary is the LaunchAgent server once you have [paired it](/guide/install#install-the-desktop-app). Reading needs a normal paired session. Pausing claims, stopping a run and dismissing an item need the `orchestration:operate` scope, which a normal pairing carries.
+The fork's web app has a Factory page, reached from the sidebar. It shows every connected environment that runs a factory, the primary environment first: a belt at the top with the runs of all of them, and below it one table of their runs. In the desktop app the primary is the LaunchAgent server once you have [paired it](/guide/install#install-the-desktop-app). Reading needs a normal paired session. Pausing claims, stopping a run and dismissing an item need the `orchestration:operate` scope, which a normal pairing carries.
 
 The pages work in a phone's browser too, paired over your tailnet as described in [remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md). The T3 mobile app is upstream's build and has no Factory screen.
 
 ## The Factory page
 
-<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a merged run, each with its step, age and pull request" />
-<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a merged run, each with its step, age and pull request" />
+<!-- factory-page-{light,dark}.png predate the belt: retake them (factory/site/README.md), then show them here. -->
 
-Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. A run that ended because its pull request was merged or closed shows `merged` or `closed` as its state. Show all runs to read the full history. It refreshes every 30 seconds. With several environments or repos, narrow the page to one with the Environment and Repo selects in its header; the choice is in the URL, so a reload or a shared link keeps it.
+Use it to see what the factory is doing now. The belt at the top has five posts, one per station a run passes: Claimed, Building, Gate, PR open and Done. Each unfinished run is a tile under its post, showing its issue number and how long it has been there; click a tile to open the run. Click a post to open a table of its runs under the rail, with each run's title, step and pull request and a Stop button. Done counts the runs whose pull request was merged or closed today. The belt reads status every 5 seconds while the page is open.
 
-It also says when the factory is idle and why (no machine config, or one that failed to load), with a link to Settings → Factory, and lets you pause claims. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Resume to start claiming again.
+Under the belt, the runs table lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. A run that ended because its pull request was merged or closed shows `merged` or `closed` as its state. Show all runs to read the full history. It refreshes every 30 seconds. With several environments or repos, narrow the page to one with the Environment and Repo selects in its header; the choice is in the URL, so a reload or a shared link keeps it.
+
+With several environments, pick one in the belt's Environment control. Its tiles are solid and the others' are hollow, and the control bar above the rail acts on it: its claims switch, the countdown to its next pass, and its slots. The counters beside them (runs today, merged today, stuck) cover every environment. The Environment control also says when a factory is idle and why (no machine config, or one that failed to load), with a link to Settings → Factory.
+
+Turn the claims switch off to pause claims in the picked environment. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Turn the switch back on to start claiming again.
 
 ## A run's page
 
@@ -24,10 +27,9 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 
 ## Needs attention
 
-<img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
-<img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
+<!-- needs-attention-{light,dark}.png predate the belt: retake them, then show them here. -->
 
-Below the status rows, the Factory page lists what needs a person, and the sidebar's Factory item shows how many. An item is raised when:
+Under the belt, the Factory page lists what needs a person in three bins: Needs attention, Needs info and Stuck. Needs info and Stuck list each run's issue with the questions it asked or the reason it stopped. The sidebar's Factory item shows how many items need attention. An item is raised when:
 
 - a run went to `factory:stuck` or `factory:needs-info`,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,

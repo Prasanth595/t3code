@@ -156,6 +156,8 @@ const runsRoute = factoryRoute(
         finished: run.finished,
         total_ms: run.totalMs,
         unreadable: run.unreadable,
+        title: run.title,
+        reason: run.reason,
       })),
     });
   }),

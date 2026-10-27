@@ -8,7 +8,13 @@ import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
 import { dataText } from "./ledger/read.ts";
-import { holdsSlot, readRuns, runInfoOf, type RunRead } from "./ledger/listRuns.ts";
+import {
+  holdsSlot,
+  readRuns,
+  runInfoOf,
+  type RunRead,
+  type RunReadCache,
+} from "./ledger/listRuns.ts";
 import { asciiLower, runIdToString } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
 
@@ -65,6 +71,10 @@ export interface StatusReport {
   readonly runs: ReadonlyArray<{
     readonly id: string;
     readonly state: string | null;
+    /** The event of the run's last readable ledger line; null for none, or an unreadable file. */
+    readonly last_event: string | null;
+    /** The issue title its first launch recorded; null when that launch has none, or there is none. */
+    readonly title: string | null;
     /** The GitHub user the run was claimed as, from its `claimed` line. */
     readonly user: string | null;
     readonly for_ms: number | null;
@@ -203,12 +213,17 @@ const passesOf = (
   };
 };
 
+/** The run files the last report read: the Factory page asks for one every 5 seconds. */
+const statusReads: RunReadCache = new Map();
+
 const runRow = (read: RunRead, nowMs: number): StatusReport["runs"][number] => {
   const { summary, seen } = read;
   const lastChange = read.record?.entries.findLast((entry) => entry.event === "state_changed");
   return {
     id: runIdToString(summary.id),
     state: summary.state,
+    last_event: summary.lastEvent,
+    title: summary.title,
     user: seen?.githubUser ?? null,
     for_ms: lastChange === undefined ? null : Math.max(0, nowMs - lastChange.ms),
     pr_url: summary.prUrl,
@@ -241,7 +256,10 @@ export const buildStatus = (input: {
   const log = readMachineLog(dataDir, nowMs);
   // One read of the runs gives the rows, the slots and the problems. A finished run last written
   // before the window cannot hold a line inside it, so it is not read.
-  const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - PROBLEM_WINDOW_MS });
+  const reads = readRuns(dataDir, {
+    skipFinishedBefore: nowMs - PROBLEM_WINDOW_MS,
+    cache: statusReads,
+  });
   const open = reads.filter((read) => !read.summary.finished);
 
   // The one place the port follows the fork's pass, not softfac's `holds_slot`: a run counts as

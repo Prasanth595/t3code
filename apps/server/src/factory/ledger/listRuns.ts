@@ -130,6 +130,16 @@ interface WholeRead {
   readonly seen: Seen;
 }
 
+/**
+ * Whole reads kept between calls of {@link readRuns}, by path. A run file is only appended to, so
+ * one whose size, mtime and ctime are unchanged reads the same, and is not read again. A call drops
+ * the paths it did not read, so the cache holds no more than the last call read.
+ */
+export type RunReadCache = Map<
+  string,
+  { readonly stamp: string; readonly read: FileRead<WholeRead> }
+>;
+
 const readWhole = (dataDir: string, id: RunId): FileRead<WholeRead> => {
   const record = readRun(dataDir, id);
   return {
@@ -146,7 +156,7 @@ const readWhole = (dataDir: string, id: RunId): FileRead<WholeRead> => {
 const scanRuns = <T>(
   dataDir: string,
   options: {
-    readonly read: (id: RunId, path: string) => FileRead<T>;
+    readonly read: (id: RunId, path: string, stat: NodeFS.Stats) => FileRead<T>;
     readonly only?: { readonly repo: string; readonly issue: number } | undefined;
     readonly skip?: ((path: string, mtimeMs: number) => boolean) | undefined;
   },
@@ -175,7 +185,7 @@ const scanRuns = <T>(
       const stat = NodeFS.lstatSync(path);
       if (!stat.isFile()) continue;
       if (skip?.(path, stat.mtimeMs) === true) continue;
-      runs.push({ id, ...read(id, path) });
+      runs.push({ id, ...read(id, path, stat) });
     } catch (error) {
       // Gone between the listing and the read (the lstat's ENOENT, or the read's not-found): not
       // a run any more.
@@ -211,6 +221,18 @@ export interface RunSummary {
   readonly startedTs: string | null;
   /** The event of the last readable line; null for a file with no readable line. */
   readonly lastEvent: string | null;
+  /**
+   * The issue title recorded on the run's first `session_launched` line; null when that line has
+   * none (a run launched before titles were recorded), when the run has not launched, and for a
+   * file that could not be read.
+   */
+  readonly title: string | null;
+  /**
+   * Why the run waits for a person: the `reason` of the newest `stuck` line while its last state
+   * is `stuck`, the `questions` of the newest `questions_posted` line while it is `needs-info`;
+   * null otherwise. Cut to {@link REASON_MAX_CHARS} characters.
+   */
+  readonly reason: string | null;
   /** The `to` of the last `state_changed`; null before any, or for one this build does not know. */
   readonly state: State | null;
   /**
@@ -240,6 +262,8 @@ const unreadableSummary = (id: RunId): RunSummary => ({
   id,
   startedTs: null,
   lastEvent: null,
+  title: null,
+  reason: null,
   state: null,
   step: null,
   prUrl: null,
@@ -261,13 +285,47 @@ const prEndOf = (end: Entry | undefined): PrEnd | null => {
   return prEnd === "merged" || prEnd === "closed" ? prEnd : null;
 };
 
+/** The event and field whose text says why a run in `state` waits for a person; null for any other. */
+const REASON_SOURCE = {
+  stuck: { event: "stuck", key: "reason" },
+  "needs-info": { event: "questions_posted", key: "questions" },
+} as const;
+
+const reasonSource = (state: State | null) =>
+  state === "stuck" || state === "needs-info" ? REASON_SOURCE[state] : null;
+
+/** The longest `reason` a summary carries: the rows are polled, and a reader shows a line or two. */
+const REASON_MAX_CHARS = 300;
+
+/** A reason cut to {@link REASON_MAX_CHARS} characters, ending in an ellipsis; never splits a character. */
+const capReason = (reason: string | null): string | null => {
+  if (reason === null || reason.length <= REASON_MAX_CHARS) return reason;
+  const chars = Array.from(reason);
+  return chars.length <= REASON_MAX_CHARS
+    ? reason
+    : `${chars.slice(0, REASON_MAX_CHARS - 1).join("")}\u2026`;
+};
+
+const isLaunch = (entry: Entry) => entry.event === "session_launched";
+
 /** The summary of a run read whole: its progress, plus what the progress does not carry. */
 const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
   const end = record.entries.findLast((entry) => entry.event === "finished");
+  const launch = record.entries.find(isLaunch);
+  const source = reasonSource(seen.state);
+  const reason =
+    source === null
+      ? null
+      : dataText(
+          record.entries.findLast((entry) => entry.event === source.event)?.data,
+          source.key,
+        );
   return {
     id,
     startedTs: record.entries[0]?.ts ?? null,
     lastEvent: record.entries.at(-1)?.event ?? null,
+    title: dataText(launch?.data, "title"),
+    reason: capReason(reason),
     state: seen.state,
     step: seen.finished
       ? null
@@ -282,15 +340,19 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
 
 /**
  * The summary of a finished run file without reading it whole, equal to {@link summarise} of the
- * whole read. A finished file is never appended to, so the first line, the `finished` line, the
- * last `state_changed` and (if `finished` has no PR URL) the last `pr_opened` say everything.
+ * whole read. A finished file is never appended to, so the first line, the first launch, the
+ * `finished` line, the last `state_changed`, the newest reason line and (if `finished` has no PR
+ * URL) the last `pr_opened` say everything. The first launch is read forwards, the rest backwards.
  */
 const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
   withRunFile(path, (fd) => {
     const first = firstEntry(fd);
+    const title = dataText(firstEntry(fd, undefined, isLaunch)?.data, "title");
     let end: Entry | undefined;
     let state: State | null | undefined;
     let prUrl: string | null = null;
+    // The text of the newest line of each reason source, by event; absent until one is seen.
+    const reasons = new Map<string, string | null>();
     scanLinesBack(fd, (line) => {
       const entry = parseLine(line);
       if (entry === null) return "continue";
@@ -304,14 +366,24 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         const url = dataField(entry.data, "url");
         if (typeof dataField(entry.data, "pr") === "number" && typeof url === "string") prUrl = url;
       }
-      return state !== undefined && prUrl !== null ? "stop" : "continue";
+      for (const { event, key } of Object.values(REASON_SOURCE)) {
+        if (entry.event === event && !reasons.has(event))
+          reasons.set(event, dataText(entry.data, key));
+      }
+      // The reason is only wanted for a run whose last state has a reason source.
+      const source = reasonSource(state ?? null);
+      const reasonFound = source === null || reasons.has(source.event);
+      return state !== undefined && prUrl !== null && reasonFound ? "stop" : "continue";
     });
+    const source = reasonSource(state ?? null);
     return {
       firstMs: first?.ms ?? null,
       read: {
         id,
         startedTs: first?.ts ?? null,
         lastEvent: "finished",
+        title,
+        reason: capReason(source === null ? null : (reasons.get(source.event) ?? null)),
         state: state ?? null,
         step: null,
         prUrl,
@@ -331,16 +403,32 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
  */
 export const readRuns = (
   dataDir: string,
-  options: { readonly skipFinishedBefore?: number } = {},
-): Array<RunRead> =>
-  scanRuns(dataDir, {
-    read: (id) => readWhole(dataDir, id),
+  options: { readonly skipFinishedBefore?: number; readonly cache?: RunReadCache } = {},
+): Array<RunRead> => {
+  const { cache } = options;
+  const visited = new Set<string>();
+  const runs = scanRuns(dataDir, {
+    read: (id, path, stat) => {
+      if (cache === undefined) return readWhole(dataDir, id);
+      visited.add(path);
+      const stamp = `${stat.size} ${stat.mtimeMs} ${stat.ctimeMs}`;
+      const kept = cache.get(path);
+      if (kept?.stamp === stamp) return kept.read;
+      const read = readWhole(dataDir, id);
+      cache.set(path, { stamp, read });
+      return read;
+    },
     skip: finishedBefore(options.skipFinishedBefore),
-  }).map((run) => ({
+  });
+  if (cache !== undefined) {
+    for (const path of cache.keys()) if (!visited.has(path)) cache.delete(path);
+  }
+  return runs.map((run) => ({
     summary: run.read === null ? unreadableSummary(run.id) : summarise(run.id, run.read),
     record: run.read?.record ?? null,
     seen: run.read?.seen ?? null,
   }));
+};
 
 /** The `skip` of a scan with a `skipFinishedBefore` cutoff: a finished file last written before it. */
 const finishedBefore = (cutoffMs: number | undefined) =>

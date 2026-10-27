@@ -11,14 +11,15 @@ import {
 } from "~/components/ui/select";
 
 import { factoryApi } from "./api";
-import { AttentionList, type EnvironmentAttention } from "./AttentionList";
-import { EnvironmentStatusRows } from "./EnvironmentStatusRows";
+import type { EnvironmentAttention } from "./BeltLowerRow";
+import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf, parseRunId } from "./format";
 import { RunsTable } from "./RunsTable";
 import type { FactorySearch } from "./search";
 import {
+  STATUS_POLL_MS,
   useFactoryEnvironments,
   useFactoryRunsOf,
   useFactorySupported,
@@ -84,20 +85,23 @@ export function FactoryPage() {
   const navigate = useNavigate();
   const setSearch = (next: FactorySearch) =>
     void navigate({ to: "/factory", search: next, replace: true });
-  const environments = useFactoryEnvironments();
+  // Status is read every few seconds while the page is open: the belt's countdown and tiles follow it.
+  const environments = useFactoryEnvironments({ statusPollMs: STATUS_POLL_MS });
   const supported = useFactorySupported();
   // The recent window until the user asks for every run; the switch starts a fresh read.
   const [allRuns, setAllRuns] = useState(false);
   // Runs are read once an environment's status has answered with data: a status still loading may
-  // yet say 404 (an upstream server, left out above), and one that failed shows its error on its
-  // row, so neither should raise a second notice for its runs.
+  // yet say 404 (an upstream server, left out above), and one that failed shows its error in the
+  // belt's environment control, so neither should raise a second notice for its runs.
   const answered = environments.filter(({ status }) => status.data !== null);
-  const runsOf = useFactoryRunsOf(
-    answered.map(({ environmentId }) => environmentId),
-    allRuns,
-  );
+  const answeredIds = answered.map(({ environmentId }) => environmentId);
+  const runsOf = useFactoryRunsOf(answeredIds, allRuns);
   const runsById = new Map(answered.map(({ environmentId }, i) => [environmentId, runsOf[i]]));
-  // The environments with a pause or resume in flight: one row's control never disables another's.
+  // The belt reads the recent window whether or not the table asks for every run. With the window
+  // showing, this is the table's own read.
+  const recentOf = useFactoryRunsOf(answeredIds, false);
+  const recentById = new Map(answered.map(({ environmentId }, i) => [environmentId, recentOf[i]!]));
+  // The environments with a pause or resume in flight: one environment's control never disables another's.
   const [busy, setBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [note, setNote] = useState<string | null>(null);
   // The attention items dismissed on this page, hidden before the server's next status says so.
@@ -168,6 +172,7 @@ export function FactoryPage() {
     0,
     ...environments.map(({ status }) => status.readAt),
     ...runsOf.map(({ readAt }) => readAt),
+    ...recentOf.map(({ readAt }) => readAt),
   );
   const showEnvironment = environments.length > 1;
   const listedRuns = answered.flatMap(({ environmentId, label }, i) =>
@@ -214,15 +219,21 @@ export function FactoryPage() {
   });
   const runsListed = shownRunsOf.some(({ data }) => data !== null);
   const runsPending = shownRunsOf.some(({ status }) => status === "loading");
-  // A failed read is a notice naming its environment while the rest of the page stays.
-  const notices = shownEnvironments.flatMap(({ environmentId, label, status }) => {
-    const runsRead = runsById.get(environmentId);
-    const failed =
+  // A failed read is a notice naming its environment while the rest of the page stays. The belt
+  // counts every environment's recent window, so a recent read that failed before its first answer
+  // is named whatever the filter and the table's window: the belt is left without that environment.
+  const notices = environments.flatMap(({ environmentId, label, status }) => {
+    const shown = inEnvironment(environmentId);
+    const runsRead = shown ? runsById.get(environmentId) : undefined;
+    const recentRead = recentById.get(environmentId);
+    const failedRuns =
       runsRead?.status === "error"
         ? runsRead
-        : status.status === "error" && status.data !== null
-          ? status
+        : recentRead?.status === "error" && recentRead.data === null
+          ? recentRead
           : null;
+    const failed =
+      failedRuns ?? (shown && status.status === "error" && status.data !== null ? status : null);
     if (failed === null) return [];
     return [
       {
@@ -231,7 +242,7 @@ export function FactoryPage() {
         message: messageOf(failed.error),
         retry: () => {
           status.refresh();
-          runsRead?.refresh();
+          (failedRuns ?? runsRead)?.refresh();
         },
       },
     ];
@@ -252,16 +263,14 @@ export function FactoryPage() {
   } else {
     body = (
       <>
-        <EnvironmentStatusRows
+        <FactoryBelt
+          attention={attention}
           busy={busy}
-          environments={shownEnvironments}
-          nowMs={nowMs}
-          onTogglePause={(environment) => void togglePause(environment)}
-        />
-        <AttentionList
-          items={attention}
+          environments={environments}
           nowMs={nowMs}
           onDismiss={dismiss}
+          onTogglePause={(environment) => void togglePause(environment)}
+          recent={recentById}
           showEnvironment={showEnvironment}
         />
         {notices.map(({ environmentId, label, message, retry }) => (

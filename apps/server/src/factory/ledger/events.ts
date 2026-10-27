@@ -81,6 +81,11 @@ export type RunEvent =
          * line written before the run's base was recorded, which reads as `factory.base`.
          */
         base?: string;
+        /**
+         * The issue's title when the session was launched. Absent on a line written before the
+         * title was recorded; the run's title then comes from an earlier launch, or is unknown.
+         */
+        title?: string;
       };
     }
   | { readonly event: "comment_forwarded"; readonly data: { comment_id: string } }
@@ -216,6 +221,7 @@ export const RUN_EVENT_FIELDS = {
     "model_options",
     "resumed_from",
     "base",
+    "title",
   ],
   comment_forwarded: ["comment_id"],
   session_interrupted: [

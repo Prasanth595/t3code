@@ -34,8 +34,13 @@ const line = (ms: number, event: string, data: unknown) =>
 const claimed = (ms: number, user = "rawphp") =>
   line(ms, "claimed", { machine: "mac", github_user: user });
 const state = (ms: number, from: string, to: string) => line(ms, "state_changed", { from, to });
-const launched = (ms: number, thread: string) =>
-  line(ms, "session_launched", { thread_id: thread, worktree: null, branch: null });
+const launched = (ms: number, thread: string, title?: string) =>
+  line(ms, "session_launched", {
+    thread_id: thread,
+    worktree: null,
+    branch: null,
+    ...(title === undefined ? {} : { title }),
+  });
 const prOpened = (ms: number, pr: number, url: string) => line(ms, "pr_opened", { pr, url });
 const finished = (ms: number) =>
   line(ms, "finished", {
@@ -275,6 +280,8 @@ describe("buildStatus: runs and slots", () => {
       {
         id: "original-solutions__answer-bot__10__1",
         state: "pr-open",
+        last_event: "state_changed",
+        title: null,
         user: "rawphp",
         for_ms: 2 * HOUR + 10 * MIN,
         pr_url: "https://github.com/original-solutions/answer-bot/pull/4",
@@ -284,6 +291,8 @@ describe("buildStatus: runs and slots", () => {
       {
         id: "rawphp__softfac__59__1",
         state: "building",
+        last_event: "state_changed",
+        title: null,
         user: "rawphp",
         for_ms: 34 * MIN,
         pr_url: "https://github.com/rawphp/softfac/pull/63",
@@ -293,6 +302,8 @@ describe("buildStatus: runs and slots", () => {
       {
         id: "rawphp__softfac__70__1",
         state: "needs-info",
+        last_event: "state_changed",
+        title: null,
         user: "rawphp",
         for_ms: 5 * MIN,
         pr_url: null,
@@ -302,6 +313,8 @@ describe("buildStatus: runs and slots", () => {
       {
         id: "rawphp__softfac__71__1",
         state: null,
+        last_event: "claimed",
+        title: null,
         user: "rawphp",
         for_ms: null,
         pr_url: null,
@@ -313,6 +326,8 @@ describe("buildStatus: runs and slots", () => {
             {
               id: "rawphp__broken__2__1",
               state: null,
+              last_event: null,
+              title: null,
               user: null,
               for_ms: null,
               pr_url: null,
@@ -323,6 +338,33 @@ describe("buildStatus: runs and slots", () => {
         : []),
     ];
     expect(rows).toEqual(expected);
+  });
+
+  it("a run shows the event of its last line and the title its launch recorded", () => {
+    const dir = tempDir();
+    writeRun(dir, "rawphp__softfac__1__1", [
+      claimed(ago(3 * HOUR)),
+      launched(ago(2 * HOUR), "thread:a", "Fix the thing"),
+      launched(ago(90 * MIN), "thread:b", "Later title"),
+      line(ago(10 * MIN), "gate_command", { command: "vp check" }),
+    ]);
+    writeRun(dir, "rawphp__softfac__2__1", [
+      claimed(ago(HOUR)),
+      launched(ago(50 * MIN), "thread:c"),
+    ]);
+    const rows = report(dir).runs.map((row) => [row.id, row.last_event, row.title]);
+    expect(rows).toEqual([
+      ["rawphp__softfac__1__1", "gate_command", "Fix the thing"],
+      ["rawphp__softfac__2__1", "session_launched", null],
+    ]);
+  });
+
+  it("a run with no readable line has no last event and no title", () => {
+    const dir = tempDir();
+    writeRun(dir, "rawphp__softfac__3__1", ["not json\n"]);
+    expect(report(dir).runs.map((row) => [row.id, row.last_event, row.title])).toEqual([
+      ["rawphp__softfac__3__1", null, null],
+    ]);
   });
 
   // The fork counts a slot as its pass does (`holdsSlot`): a run that was never confirmed holds
@@ -668,6 +710,8 @@ describe("buildStatus: the rest of the report", () => {
         {
           id: "rawphp__softfac__59__1",
           state: "building",
+          last_event: "error",
+          title: null,
           user: "rawphp",
           for_ms: 34 * MIN,
           pr_url: "https://github.com/rawphp/softfac/pull/63",

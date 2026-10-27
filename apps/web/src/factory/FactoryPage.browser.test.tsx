@@ -61,6 +61,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     },
 }));
 vi.mock("./useFactoryData", () => ({
+  STATUS_POLL_MS: 5_000,
   useFactoryEnvironments: () =>
     state.listed
       ? [
@@ -135,6 +136,20 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
+type Page = Awaited<ReturnType<typeof render>>;
+/** The claims switch of the selected environment: the belt's one switch. */
+const claimsSwitch = (page: Page) => page.all('[role="switch"]')[0]!;
+const isDisabled = (node: Element) => node.hasAttribute("data-disabled");
+const clock = (iso: string) => {
+  const date = new Date(iso);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+/** The environments the belt offers, in its segmented control. */
+const environmentChoices = (page: Page) => page.all('[aria-label="Environments"] button');
+/** The tables that are not the belt's readout: the runs table. */
+const runsTables = (page: Page) =>
+  page.all("table").filter((table) => table.closest("[data-readout]") === null);
+
 // Ages are read from the clock; only Date is faked, so the page's own timers stay real.
 function setup(): Disposable {
   vi.setSystemTime(NOW);
@@ -159,7 +174,7 @@ describe("FactoryPage", () => {
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Factory");
     expect(page.text()).toContain("No runs in the last week");
-    expect(page.text()).not.toContain("Needs attention");
+    expect(page.text()).toContain("Nothing needs a person.");
     await page.click(page.button("Show all runs")!);
     expect(page.text()).toContain("No runs yet");
   });
@@ -232,6 +247,27 @@ describe("FactoryPage", () => {
     expect(page.button("Show all runs")).toBeUndefined();
     await page.click(page.button("Show recent runs")!);
     expect(runLinks()).toHaveLength(1);
+  });
+
+  it("keeps a run stuck for more than a week out of the Stuck bin when every run is shown", async () => {
+    using _state = setup();
+    const old = runRow({
+      id: "o__r__1__1",
+      started_ts: "2026-09-01T10:00:00.000Z",
+      finished: true,
+      state: "stuck",
+      reason: "gate failed long ago",
+    });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({ data: { runs: [runRow(), old] } });
+    await using page = await render(createElement(FactoryPage));
+    const stuck = () =>
+      page.all("section").find((node) => node.getAttribute("aria-label") === "Stuck")!;
+    expect(stuck().textContent).toContain("Nothing is stuck");
+    await page.click(page.button("Show all runs")!);
+    expect(page.text()).toContain("o__r__1__1");
+    expect(stuck().textContent).toContain("Nothing is stuck");
+    expect(stuck().textContent).not.toContain("gate failed long ago");
   });
 
   it("says when the week holds no runs and still offers every run", async () => {
@@ -406,8 +442,9 @@ describe("FactoryPage", () => {
     }));
     __setFactoryApiForTests(api({ pauseClaims }));
     await using page = await render(createElement(FactoryPage));
-    expect(page.button("Resume claims")).toBeUndefined();
-    await page.click(page.button("Pause claims")!);
+    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Mac Studio");
+    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("true");
+    await page.click(claimsSwitch(page));
     expect(pauseClaims).toHaveBeenCalledTimes(1);
     expect(pauseClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims paused");
@@ -416,10 +453,9 @@ describe("FactoryPage", () => {
 
   it("resumes claims when they are paused by hand, saying since when", async () => {
     using _state = setup();
+    const since = "2026-10-17T11:00:00.000Z";
     state.status = resource({
-      data: statusData({
-        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
-      }),
+      data: statusData({ paused_by_hand: { since, for_ms: 3_600_000 } }),
     });
     const resumeClaims = vi.fn(async () => ({
       paused: false as const,
@@ -428,15 +464,15 @@ describe("FactoryPage", () => {
     }));
     __setFactoryApiForTests(api({ resumeClaims }));
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Claims paused since 1h");
-    expect(page.button("Pause claims")).toBeUndefined();
-    await page.click(page.button("Resume claims")!);
+    expect(page.text()).toContain(`claims paused by hand since ${clock(since)}`);
+    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("false");
+    await page.click(claimsSwitch(page));
     expect(resumeClaims).toHaveBeenCalledTimes(1);
     expect(resumeClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims resumed");
   });
 
-  it("disables Pause claims while the call is pending", async () => {
+  it("disables the claims switch while a pause is pending", async () => {
     using _state = setup();
     state.status = resource({ data: statusData() });
     let resolve!: (value: {
@@ -453,16 +489,16 @@ describe("FactoryPage", () => {
     );
     __setFactoryApiForTests(api({ pauseClaims }));
     await using page = await render(createElement(FactoryPage));
-    expect(page.button("Pause claims")!.disabled).toBeFalsy();
-    await page.click(page.button("Pause claims")!);
-    expect(page.button("Pause claims")!.disabled).toBe(true);
+    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    await page.click(claimsSwitch(page));
+    expect(isDisabled(claimsSwitch(page))).toBe(true);
     await act(async () =>
       resolve({ paused: true, already: false, since: "2026-10-17T12:00:00.000Z", message: "ok" }),
     );
-    expect(page.button("Pause claims")!.disabled).toBeFalsy();
+    expect(isDisabled(claimsSwitch(page))).toBe(false);
   });
 
-  it("disables Resume claims while the call is pending", async () => {
+  it("disables the claims switch while a resume is pending", async () => {
     using _state = setup();
     state.status = resource({
       data: statusData({
@@ -475,11 +511,11 @@ describe("FactoryPage", () => {
     );
     __setFactoryApiForTests(api({ resumeClaims }));
     await using page = await render(createElement(FactoryPage));
-    expect(page.button("Resume claims")!.disabled).toBeFalsy();
-    await page.click(page.button("Resume claims")!);
-    expect(page.button("Resume claims")!.disabled).toBe(true);
+    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    await page.click(claimsSwitch(page));
+    expect(isDisabled(claimsSwitch(page))).toBe(true);
     await act(async () => resolve({ paused: false, already: false, message: "ok" }));
-    expect(page.button("Resume claims")!.disabled).toBeFalsy();
+    expect(isDisabled(claimsSwitch(page))).toBe(false);
   });
 
   it("shows the message of a control call that fails", async () => {
@@ -492,7 +528,7 @@ describe("FactoryPage", () => {
       }),
     );
     await using page = await render(createElement(FactoryPage));
-    await page.click(page.button("Pause claims")!);
+    await page.click(claimsSwitch(page));
     expect(page.text()).toContain("Missing permission orchestration:operate");
   });
 });
@@ -522,6 +558,53 @@ describe("FactoryPage environments", () => {
     expect(page.all('[aria-label="Loading Laptop"]')).toHaveLength(1);
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
+  });
+
+  it("puts the runs of every environment on one belt, each tile leading to its own environment", async () => {
+    using _state = setup();
+    const unfinished = (id: string, state: string) => ({
+      id,
+      state,
+      last_event: "step_changed",
+      title: null,
+      user: null,
+      for_ms: 60_000,
+      pr_url: null,
+      thread_id: null,
+      unreadable: false,
+    });
+    state.status = resource({
+      data: statusData({ runs: [unfinished(RUN_ID, "pr-open")] }),
+    });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({
+          data: statusData({
+            runs: [
+              unfinished("acme__widgets__7__1", "pr-open"),
+              unfinished("acme__w__8__1", "building"),
+            ],
+          }),
+        }),
+        runs: resource({ data: { runs: [] } }),
+      },
+    ];
+    await using page = await render(createElement(FactoryPage));
+    const post = (name: string) =>
+      page.all("button[data-station]").find((button) => button.dataset.station === name)!;
+    expect(post("pr").querySelector("[data-part=count]")?.textContent).toBe("2");
+    expect(post("building").querySelector("[data-part=count]")?.textContent).toBe("1");
+    const tiles = page
+      .all("[data-lane=pr] a")
+      .map((a) => JSON.parse(a.getAttribute("data-params")!) as Record<string, string>);
+    expect(tiles).toEqual(
+      expect.arrayContaining([
+        { environmentId: "env-2", runId: RUN_ID },
+        { environmentId: "env-3", runId: "acme__widgets__7__1" },
+      ]),
+    );
   });
 
   it("shows the error of a status that failed with no data, and retries only that status", async () => {
@@ -634,7 +717,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     using _state = setup();
     populate();
     await using page = await renderAt(width, createElement(FactoryPage));
-    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    expect(runsTables(page)).toHaveLength(narrow ? 0 : 1);
     const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
@@ -666,7 +749,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
       }),
     );
     await using page = await renderAt(width, createElement(FactoryPage));
-    await page.click(page.button("Pause claims")!);
+    await page.click(claimsSwitch(page));
     const text = page.text();
     expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
     expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
@@ -784,7 +867,7 @@ describe.each([
     using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
     await using page = await renderAt(width, createElement(FactoryPage));
-    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    expect(runsTables(page)).toHaveLength(narrow ? 0 : 1);
     const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
@@ -852,21 +935,21 @@ describe("FactoryPage dismissing attention items", () => {
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
-    expect(section(page)).toBeUndefined();
-    expect(page.text()).not.toContain("Needs attention");
+    expect(section(page)?.textContent).toContain("Nothing needs a person.");
+    expect(page.button("Dismiss all")).toBeUndefined();
   });
 
-  it("keeps Pause claims disabled when a dismiss finishes while the pause is pending", async () => {
+  it("keeps the claims switch disabled when a dismiss finishes while the pause is pending", async () => {
     using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     const pauseClaims = vi.fn(() => new Promise<never>(() => {}));
     const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
     __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
     await using page = await render(createElement(FactoryPage));
-    await page.click(page.button("Pause claims")!);
+    await page.click(claimsSwitch(page));
     await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(dismissAttention).toHaveBeenCalled();
-    expect(page.button("Pause claims")!.disabled).toBe(true);
+    expect(isDisabled(claimsSwitch(page))).toBe(true);
   });
 
   it("has no Dismiss all when nothing needs attention", async () => {
@@ -965,8 +1048,6 @@ describe("FactoryPage filters", () => {
       .all("table a")
       .filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")
       .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
-  const statusRows = (page: Awaited<ReturnType<typeof render>>) =>
-    page.all('[aria-label="Factories"] li').map((li) => li.textContent ?? "");
   const pick = async (select: string, option: string) => {
     await userEvent.click(browser.getByRole("combobox", { name: select }));
     await userEvent.click(browser.getByRole("option", { name: option, exact: true }));
@@ -993,8 +1074,8 @@ describe("FactoryPage filters", () => {
       search: { environment: "env-3" },
       replace: true,
     });
-    expect(statusRows(page)).toHaveLength(1);
-    expect(statusRows(page)[0]).toContain("Laptop");
+    // The belt shows every environment whatever the filter says; the filter narrows the items and runs.
+    expect(environmentChoices(page)).toHaveLength(2);
     expect(runLinks(page)).toEqual([LAPTOP_RUN]);
     expect(page.text()).toContain("laptop run ended stuck");
     expect(page.text()).not.toContain("run ended stuck: the gate failed");
@@ -1017,7 +1098,7 @@ describe("FactoryPage filters", () => {
     expect(page.text()).toContain("laptop run ended stuck");
     expect(page.text()).toContain("the machine config failed to load");
     expect(page.text()).not.toContain("run ended stuck: the gate failed");
-    expect(statusRows(page)).toHaveLength(2);
+    expect(environmentChoices(page)).toHaveLength(2);
   });
 
   it("lists the repos of the runs and items once each, sorted without regard to case", async () => {
@@ -1085,6 +1166,69 @@ describe("FactoryPage filters", () => {
     expect(page.text()).not.toContain("Could not refresh Mac Studio");
   });
 
+  describe("when an environment's recent runs failed before their first answer", () => {
+    const stuckRow = runRow({
+      id: LAPTOP_RUN,
+      state: "stuck",
+      finished: true,
+      reason: "gate failed",
+    });
+    const stat = (page: Awaited<ReturnType<typeof render>>, label: string) =>
+      page.all("dt").find((dt) => dt.textContent === label)?.nextElementSibling?.textContent;
+    const failing = () => {
+      twoEnvironments();
+      state.runs = resource({ status: "error", error: new Error("timed out") });
+      state.others[0]!.runs = resource({ data: { runs: [stuckRow] } });
+    };
+    const expectBelt = (page: Awaited<ReturnType<typeof render>>) => {
+      const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
+      expect(stuck.textContent).toContain("gate failed");
+      expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
+      expect(stat(page, "Stuck")).toBe("1");
+      expect(page.text()).toContain("Could not refresh Mac Studio: timed out");
+      expect(page.all('[aria-label="Retry Mac Studio"]')).toHaveLength(1);
+    };
+
+    it("names the failure and shows the other environment's stuck run", async () => {
+      using _state = setup();
+      failing();
+      await using page = await render(createElement(FactoryPage));
+      expectBelt(page);
+    });
+
+    it("names it with the environment filter on the healthy environment", async () => {
+      using _state = setup();
+      failing();
+      state.search = { environment: "env-3" };
+      await using page = await render(createElement(FactoryPage));
+      expectBelt(page);
+    });
+
+    it("names it with every run picked", async () => {
+      using _state = setup();
+      failing();
+      state.allRuns = resource({ data: { runs: [runRow()] } });
+      await using page = await render(createElement(FactoryPage));
+      await page.click(page.button("Show all runs")!);
+      expectBelt(page);
+    });
+
+    it("retries that recent read, once", async () => {
+      using _state = setup();
+      failing();
+      const refreshRecent = vi.fn();
+      state.runs = resource({
+        status: "error",
+        error: new Error("timed out"),
+        refresh: refreshRecent,
+      });
+      state.search = { environment: "env-3" };
+      await using page = await render(createElement(FactoryPage));
+      await page.click(page.button("Retry")!);
+      expect(refreshRecent).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("says the runs are loading, not that none match, while the chosen environment's runs are read", async () => {
     using _state = setup();
     twoEnvironments();
@@ -1127,7 +1271,7 @@ describe("FactoryPage filters", () => {
     twoEnvironments();
     state.search = { environment: "env-9", repo: "nobody/nothing" };
     await using page = await render(createElement(FactoryPage));
-    expect(statusRows(page)).toHaveLength(2);
+    expect(environmentChoices(page)).toHaveLength(2);
     expect(runLinks(page)).toHaveLength(2);
     expect(page.text()).toContain("laptop run ended stuck");
     expect(page.text()).toContain("run ended stuck: the gate failed");

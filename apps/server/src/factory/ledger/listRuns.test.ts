@@ -14,6 +14,7 @@ import {
   readRuns,
   runInfoOf,
   runsByThread,
+  type RunReadCache,
 } from "./listRuns.ts";
 import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
@@ -521,6 +522,8 @@ describe("listRuns", () => {
         id: rid(8),
         startedTs: "2026-10-04T10:13:16.123Z",
         lastEvent: "finished",
+        title: null,
+        reason: null,
         state: null,
         step: null,
         prUrl: null,
@@ -533,6 +536,8 @@ describe("listRuns", () => {
         id: rid(2, "rawphp/other", 1),
         startedTs: "2026-10-04T10:14:16.123Z",
         lastEvent: "claimed",
+        title: null,
+        reason: null,
         state: null,
         step: "approved 2026-10-04T10:00:00Z",
         prUrl: null,
@@ -626,6 +631,8 @@ describe("listRuns", () => {
       id: rid(2, "rawphp/broken"),
       startedTs: null,
       lastEvent: null,
+      title: null,
+      reason: null,
       state: null,
       step: null,
       prUrl: null,
@@ -711,6 +718,14 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       finishedRun(dataDir, rid(4), [moved("ready", "launching"), opened(7)], "stuck", null),
       // No state change at all.
       finishedRun(dataDir, rid(5), [], "needs-info", null),
+      // Stuck, the finished line carrying a pull request, and the stuck line before the state change.
+      finishedRun(
+        dataDir,
+        rid(6),
+        [opened(8), stuckLine("gate failed"), moved("building", "stuck")],
+        "stuck",
+        PR_URL,
+      ),
     ];
     const whole = readRuns(dataDir).map((read) => read.summary);
     vi.mocked(NodeFS.readFileSync).mockClear();
@@ -725,9 +740,221 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       ["stuck", "https://example.test/pull/6", null, true, "finished"],
       [null, "https://example.test/pull/7", null, true, "finished"],
       [null, null, null, true, "finished"],
+      ["stuck", PR_URL, "merged", true, "finished"],
+    ]);
+    expect(summaries.map((run) => run.reason)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      "gate failed",
     ]);
     expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
     expect(summaries.every((run) => run.step === null)).toBe(true);
+  });
+
+  const sessionLaunched = (title?: string) => ({
+    event: "session_launched",
+    data: {
+      thread_id: "thr_1",
+      worktree: null,
+      branch: null,
+      model_instance: null,
+      model: null,
+      model_options: null,
+      resumed_from: null,
+      base: "main",
+      ...(title === undefined ? {} : { title }),
+    },
+  });
+  const stuckLine = (reason: string) => ({ event: "stuck", data: { reason } });
+  const asked = (questions: string) => ({ event: "questions_posted", data: { questions } });
+  const titleAndReason = (dataDir: string) =>
+    listRuns(dataDir).map((run) => [run.id.issue, run.title, run.reason]);
+
+  it("reads the title of the first launch, and the reason the last state asks for, as the whole read does", () => {
+    const dataDir = tempDir();
+    const files = [
+      // The first titled launch wins; the stuck line before the state change gives the reason.
+      finishedRun(
+        dataDir,
+        rid(1),
+        [
+          sessionLaunched("Old title"),
+          sessionLaunched("New title"),
+          stuckLine("older"),
+          stuckLine("gate failed"),
+          moved("building", "stuck"),
+        ],
+        "stuck",
+        null,
+      ),
+      // Needs info: the newest questions, whichever side of the state change they sit on.
+      finishedRun(
+        dataDir,
+        rid(2),
+        [asked("first?"), moved("triage", "needs-info"), asked("which db?")],
+        "needs-info",
+        null,
+      ),
+      // The first launch has no title, so the run has none, whatever a later launch carries.
+      finishedRun(
+        dataDir,
+        rid(3),
+        [
+          sessionLaunched(),
+          sessionLaunched("Later title"),
+          ...padding(80),
+          moved("ready", "building"),
+        ],
+        "pr-open",
+        null,
+      ),
+      // No title anywhere: null. A stuck line that the run has since left says nothing.
+      finishedRun(
+        dataDir,
+        rid(4),
+        [sessionLaunched(), stuckLine("old"), moved("stuck", "building")],
+        "pr-open",
+        null,
+      ),
+      // Stuck with no stuck line: no reason, and the scan reaches the start.
+      finishedRun(dataDir, rid(5), [...padding(80), moved("building", "stuck")], "stuck", null),
+    ];
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)).toEqual(whole);
+    for (const file of files) expect(fullReads()).not.toContain(file);
+    expect(titleAndReason(dataDir)).toEqual([
+      ["1", "Old title", "gate failed"],
+      ["2", null, "which db?"],
+      ["3", null, null],
+      ["4", null, null],
+      ["5", null, null],
+    ]);
+  });
+
+  it("finds the first launch past the first read of the file, as the whole read does", () => {
+    const dataDir = tempDir();
+    const files = [
+      // 20 KB before the launch: the forward read takes three chunks to reach it.
+      finishedRun(
+        dataDir,
+        rid(1),
+        [...padding(20), sessionLaunched("Deep title"), moved("building", "pr-open")],
+        "pr-open",
+        null,
+      ),
+      // The first launch, deep in the file, has no title: a later titled one gives none.
+      finishedRun(
+        dataDir,
+        rid(2),
+        [
+          ...padding(20),
+          sessionLaunched(),
+          ...padding(10),
+          sessionLaunched("Later title"),
+          moved("building", "pr-open"),
+        ],
+        "pr-open",
+        null,
+      ),
+    ];
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)).toEqual(whole);
+    for (const file of files) expect(fullReads()).not.toContain(file);
+    expect(titleAndReason(dataDir)).toEqual([
+      ["1", "Deep title", null],
+      ["2", null, null],
+    ]);
+  });
+
+  it("reads the title and reason of a run that is not finished", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(1), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    ledger.append(sessionLaunched("Open run") as never, cause);
+    ledger.append(stuckLine("gate failed") as never, cause);
+    ledger.append(moved("building", "stuck") as never, cause);
+    expect(titleAndReason(dataDir)).toEqual([["1", "Open run", "gate failed"]]);
+    expect(readRuns(dataDir)[0]?.summary).toEqual(listRuns(dataDir)[0]);
+  });
+
+  it("caps a long reason at 300 characters on a character boundary, in both reads", () => {
+    const dataDir = tempDir();
+    // Astral characters are two code units each, so a cut by code unit could split one.
+    const long = "\u{1F600}".repeat(400);
+    finishedRun(dataDir, rid(1), [stuckLine(long), moved("building", "stuck")], "stuck", null);
+    finishedRun(
+      dataDir,
+      rid(2),
+      [asked("short?"), moved("triage", "needs-info")],
+      "needs-info",
+      null,
+    );
+    const ledger = Ledger.create(dataDir, rid(3), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    ledger.append(stuckLine(long) as never, cause);
+    ledger.append(moved("building", "stuck") as never, cause);
+    const listed = listRuns(dataDir);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
+    const reasonOf = (issue: number) =>
+      listed.find((run) => run.id.issue === String(issue))?.reason ?? "";
+    const [capped, short, open] = [reasonOf(1), reasonOf(2), reasonOf(3)];
+    for (const reason of [capped, open]) {
+      expect(reason.isWellFormed()).toBe(true);
+      expect([...reason]).toHaveLength(300);
+      expect(reason.endsWith("\u2026")).toBe(true);
+      expect(reason).toBe(`${"\u{1F600}".repeat(299)}\u2026`);
+    }
+    expect(short).toBe("short?");
+  });
+
+  it("leaves a reason of exactly 300 characters whole, and cuts one of 301 to 299 and an ellipsis", () => {
+    const dataDir = tempDir();
+    // 300 astral characters are 600 code units, so only a count by character keeps them whole.
+    const exact = "\u{1F600}".repeat(300);
+    finishedRun(dataDir, rid(1), [stuckLine(exact), moved("building", "stuck")], "stuck", null);
+    finishedRun(
+      dataDir,
+      rid(2),
+      [stuckLine(`${exact}\u{1F600}`), moved("building", "stuck")],
+      "stuck",
+      null,
+    );
+    const listed = listRuns(dataDir);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
+    const reasonOf = (issue: number) =>
+      listed.find((run) => run.id.issue === String(issue))?.reason ?? "";
+    expect(reasonOf(1)).toBe(exact);
+    expect(reasonOf(2)).toBe(`${"\u{1F600}".repeat(299)}\u2026`);
+  });
+
+  it("stops the title read at the first launch when it has no title, so a large untitled run is read from its ends", () => {
+    const dataDir = tempDir();
+    const path = finishedRun(
+      dataDir,
+      rid(1),
+      [sessionLaunched(), ...padding(2000), opened(2), moved("building", "pr-open")],
+      "pr-open",
+      PR_URL,
+    );
+    // A run that never launched has no launch to stop at; it is small.
+    finishedRun(dataDir, rid(2), [moved("triage", "needs-info")], "needs-info", null);
+    const size = NodeFS.statSync(path).size;
+    vi.mocked(NodeFS.readSync).mockClear();
+    const listed = listRuns(dataDir);
+    const chunked = vi
+      .mocked(NodeFS.readSync)
+      .mock.results.reduce((sum, result) => sum + (result.value as number), 0);
+    expect(size).toBeGreaterThan(1_000_000);
+    expect(chunked).toBeLessThan(100_000);
+    expect(listed.map((run) => run.title)).toEqual([null, null]);
+    expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
   });
 
   it("skips damaged lines at both ends as the whole read does", () => {
@@ -753,23 +980,31 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     expect(whole[0]).toMatchObject({ state: "building", prUrl: "https://example.test/pull/2" });
   });
 
-  it("reads only the end of a large finished run whose pull request is near it", () => {
+  it("reads only the ends of a large finished run whose pull request is near its end", () => {
     const dataDir = tempDir();
     const path = finishedRun(
       dataDir,
       rid(1),
-      [...padding(2000), opened(2), moved("building", "pr-open")],
+      // The title sits near the start, as a launch writes it, before the bulk of the run.
+      [sessionLaunched("Early title"), ...padding(2000), opened(2), moved("building", "pr-open")],
       "pr-open",
       PR_URL,
     );
     const size = NodeFS.statSync(path).size;
     vi.mocked(NodeFS.readSync).mockClear();
-    expect(listRuns(dataDir)[0]).toMatchObject({ state: "pr-open", prUrl: PR_URL, finished: true });
+    const listed = listRuns(dataDir)[0];
+    expect(listed).toMatchObject({
+      state: "pr-open",
+      prUrl: PR_URL,
+      finished: true,
+      title: "Early title",
+    });
     const chunked = vi
       .mocked(NodeFS.readSync)
       .mock.results.reduce((sum, result) => sum + (result.value as number), 0);
     expect(size).toBeGreaterThan(1_000_000);
     expect(chunked).toBeLessThan(100_000);
+    expect(listed).toEqual(readRuns(dataDir)[0]?.summary);
   });
 
   it("still reads an unfinished run whole", () => {
@@ -778,6 +1013,50 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     vi.mocked(NodeFS.readFileSync).mockClear();
     expect(listRuns(dataDir)[0]).toMatchObject({ state: "building", finished: false });
     expect(fullReads()).toContain(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(1))));
+  });
+});
+
+describe("readRuns with a cache", () => {
+  it("reads a file again only once it changes, and forgets the files it no longer reads", () => {
+    const dataDir = tempDir();
+    const first = writeRun(dataDir, rid(1), stateLine("triage"));
+    const second = writeRun(dataDir, rid(2), stateLine("building"));
+    const cache: RunReadCache = new Map();
+    const states = () => readRuns(dataDir, { cache }).map((read) => read.summary.state);
+    expect(states()).toEqual(["triage", "building"]);
+
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(states()).toEqual(["triage", "building"]);
+    expect(fullReads()).toEqual([]);
+
+    NodeFS.appendFileSync(first, stateLine("pr-open"));
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(states()).toEqual(["pr-open", "building"]);
+    expect(fullReads()).toEqual([first]);
+
+    NodeFS.rmSync(second);
+    expect(states()).toEqual(["pr-open"]);
+    expect([...cache.keys()]).toEqual([first]);
+  });
+
+  it("reads a file again when it is rewritten to the same size", () => {
+    const dataDir = tempDir();
+    const path = writeRun(dataDir, rid(1), stateLine("stuck"));
+    const cache: RunReadCache = new Map();
+    expect(readRuns(dataDir, { cache })[0]?.summary.state).toBe("stuck");
+    NodeFS.writeFileSync(path, stateLine("ready"));
+    expect(readRuns(dataDir, { cache })[0]?.summary.state).toBe("ready");
+  });
+
+  it("drops a finished file once it falls before the cutoff", () => {
+    const dataDir = tempDir();
+    const path = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const cache: RunReadCache = new Map();
+    readRuns(dataDir, { cache, skipFinishedBefore: 0 });
+    expect([...cache.keys()]).toEqual([path]);
+    NodeFS.utimesSync(path, 1, 1);
+    expect(readRuns(dataDir, { cache, skipFinishedBefore: 2000 })).toEqual([]);
+    expect(cache.size).toBe(0);
   });
 });
 

@@ -301,9 +301,14 @@ export const scanLinesBack = (
 /**
  * The first entry of an open run file, as `readRun` would have it first: the file is read forwards
  * in chunks (the first `firstChunk` bytes, each after it twice the one before) until a complete
- * line parses. Null when no complete line does.
+ * line parses and `wanted` accepts it (any entry, by default). Null when no complete line does;
+ * a `wanted` that nothing satisfies reads the whole file.
  */
-export const firstEntry = (fd: number, firstChunk = 4096): Entry | null => {
+export const firstEntry = (
+  fd: number,
+  firstChunk = 4096,
+  wanted: (entry: Entry) => boolean = () => true,
+): Entry | null => {
   const size = NodeFS.fstatSync(fd).size;
   let bytes: Buffer = Buffer.alloc(0);
   let pos = 0;
@@ -318,7 +323,7 @@ export const firstEntry = (fd: number, firstChunk = 4096): Entry | null => {
     bytes = Buffer.concat([bytes, more.subarray(0, n)]);
     for (let end = bytes.indexOf(NEWLINE, start); end !== -1; end = bytes.indexOf(NEWLINE, start)) {
       const entry = parseLine(bytes.subarray(start, end));
-      if (entry !== null) return entry;
+      if (entry !== null && wanted(entry)) return entry;
       start = end + 1;
     }
   }

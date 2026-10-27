@@ -19,8 +19,11 @@ import {
 /** How often an open page or badge reads again, while the window shows and the reader is about. */
 export const POLL_MS = 30_000;
 
+/** How often the Factory page reads status while it is open and the window shows. */
+export const STATUS_POLL_MS = 5_000;
+
 /**
- * A tick within this of `POLL_MS` since the last read started still reads: the timer that fires a
+ * A tick within this of its period since the last read started still reads: the timer that fires a
  * millisecond early would otherwise skip every other poll. Two readers' timers out of step by more
  * than this still cost one read per period, since only the first past the gap reads.
  */
@@ -100,14 +103,15 @@ const refresh = (key: string): void => {
 };
 
 /**
- * A poll tick: not while a read is in flight, nor within a period (less slack) of the last start,
- * and not after a 404, which says the server has no factory or no such run.
+ * A poll tick of a reader whose period is `periodMs`: not while a read is in flight, nor within a
+ * period (less slack) of the last start, and not after a 404, which says the server has no factory
+ * or no such run. A slow reader's tick shortly after a fast reader's read is thus no second read.
  */
-const tick = (key: string): void => {
+const tick = (key: string, periodMs: number = POLL_MS): void => {
   const store = stores.get(key);
   if (store === undefined || store.inFlight) return;
   if (store.state.error instanceof FactoryApiError && store.state.error.status === 404) return;
-  if (Date.now() - store.startedAt < POLL_MS - TICK_SLACK_MS) return;
+  if (Date.now() - store.startedAt < periodMs - TICK_SLACK_MS) return;
   read(key, store);
 };
 
@@ -195,13 +199,19 @@ export const useFactoryRun = (
 function useFactoryResources<T>(
   environmentIds: ReadonlyArray<EnvironmentId>,
   resource: Resource,
+  options: { readonly pollMs?: number } = {},
 ): Array<FactoryResource<T>> {
   const keys = environmentIds.map((id) => keyOf(id, resource));
   const last = useRef<ReadonlyArray<Loaded<unknown>>>([]);
   const states = useSyncExternalStore(
     (listener: () => void) => {
       const unsubscribes = environmentIds.map((id) => subscribe(id, resource, listener));
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+      const stopPolling =
+        options.pollMs === undefined ? noUnsubscribe : pollWhileVisible(keys, options.pollMs);
+      return () => {
+        stopPolling();
+        unsubscribes.forEach((unsubscribe) => unsubscribe());
+      };
     },
     () => {
       const next = keys.map(snapshot);
@@ -213,7 +223,7 @@ function useFactoryResources<T>(
       return next;
     },
   );
-  useLiveRefresh(() => keys.forEach(tick), {
+  useLiveRefresh(() => keys.forEach((key) => tick(key)), {
     key: `factory:all:${resource}`,
     intervalMs: POLL_MS,
     enabled: keys.length > 0 && resource !== "runs:all",
@@ -223,6 +233,58 @@ function useFactoryResources<T>(
     refresh: () => refresh(key),
   }));
 }
+
+/**
+ * Reads `keys` every `periodMs` while the window shows and on coming back to it, until the returned
+ * function runs. `tick` skips a read made less than a period ago, so this and the 30 second
+ * readers of the same keys cost one read per period together.
+ */
+const startPolling = (keys: ReadonlyArray<string>, periodMs: number): (() => void) => {
+  const readAll = () => keys.forEach((key) => tick(key, periodMs));
+  const visible = () => document.visibilityState === "visible";
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const arm = () => {
+    clearInterval(timer);
+    timer = visible() ? setInterval(readAll, periodMs) : undefined;
+  };
+  const onVisibilityChange = () => {
+    if (visible()) readAll();
+    arm();
+  };
+  arm();
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+};
+
+const pollers = new Map<string, { users: number; readonly stop: () => void }>();
+
+/**
+ * One timer per period and set of keys while anyone polls it. A subscribe closure that changes on
+ * a render makes React drop and add its subscription in one flush; the last drop waits a microtask,
+ * as the stores' does, so that flush keeps the timer instead of restarting its period.
+ */
+const pollWhileVisible = (keys: ReadonlyArray<string>, periodMs: number): (() => void) => {
+  const id = `${periodMs} ${keys.join("|")}`;
+  let poller = pollers.get(id);
+  if (poller === undefined) {
+    poller = { users: 0, stop: startPolling(keys, periodMs) };
+    pollers.set(id, poller);
+  }
+  const added = poller;
+  added.users++;
+  return () => {
+    added.users--;
+    queueMicrotask(() => {
+      if (added.users === 0 && pollers.get(id) === added) {
+        pollers.delete(id);
+        added.stop();
+      }
+    });
+  };
+};
 
 /** The runs list of each environment: the recent window, polled; or every run with `all`, read once. */
 export const useFactoryRunsOf = (
@@ -255,7 +317,7 @@ const isNotFound = (error: Error | null): boolean =>
  * polled through the same stores the pages' own hooks use. An environment still loading or failed
  * stays; an upstream server without a factory (404) is left out here, and only here.
  */
-function useFactoryCandidates(): {
+function useFactoryCandidates(statusPollMs?: number): {
   readonly candidates: ReadonlyArray<EnvironmentId>;
   readonly statuses: ReadonlyArray<FactoryResource<FactoryStatus>>;
 } {
@@ -263,15 +325,26 @@ function useFactoryCandidates(): {
   const connected = useConnectedEnvironmentIds();
   const candidates =
     primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)];
-  return { candidates, statuses: useFactoryResources<FactoryStatus>(candidates, "status") };
+  return {
+    candidates,
+    statuses: useFactoryResources<FactoryStatus>(
+      candidates,
+      "status",
+      statusPollMs === undefined ? {} : { pollMs: statusPollMs },
+    ),
+  };
 }
 
 /**
  * The environments whose factory the pages show, in order: the primary, then the other connected
- * environments, each with its label and status, without those that have no factory.
+ * environments, each with its label and status, without those that have no factory. With
+ * `statusPollMs` the statuses are also read that often while the window shows (the Factory page
+ * reads `STATUS_POLL_MS`); without it they poll every `POLL_MS` like the other readers.
  */
-export function useFactoryEnvironments(): ReadonlyArray<FactoryEnvironment> {
-  const { candidates, statuses } = useFactoryCandidates();
+export function useFactoryEnvironments({
+  statusPollMs,
+}: { readonly statusPollMs?: number } = {}): ReadonlyArray<FactoryEnvironment> {
+  const { candidates, statuses } = useFactoryCandidates(statusPollMs);
   const { presentationById } = useEnvironments();
   return candidates.flatMap((environmentId, i) => {
     const status = statuses[i]!;
