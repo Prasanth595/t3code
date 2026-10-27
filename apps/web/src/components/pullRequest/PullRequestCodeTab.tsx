@@ -3,7 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -36,7 +36,6 @@ import {
   use,
   useEffect,
   useEffectEvent,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -313,9 +312,6 @@ function PullRequestCodeTab({
     readonly cursor: string | null;
     readonly slices: ReadonlyArray<DiffSlice>;
   }>({ key: "", cursor: null, slices: NO_SLICES });
-  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
-    null,
-  );
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -454,7 +450,7 @@ function PullRequestCodeTab({
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
-  const requestTreeReveal = useCodeViewFileReveal(viewer);
+  const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -701,14 +697,14 @@ function PullRequestCodeTab({
 
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
-    if (item === undefined) return false;
-    // Unfold only: a reveal retried before the unfold renders must not fold the file again.
+    if (item === undefined) return;
+    // Unfold only: a second reveal before the unfold renders must not fold the file again.
     if (item.collapsed === true) {
       setToggledFiles((current) =>
         toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
       );
     }
-    return requestTreeReveal(item.id);
+    codeViewReveal.request(item.id);
   };
 
   const toggleAllFiles = () => {
@@ -848,6 +844,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
+    onPostRender: codeViewReveal.flush,
   };
 
   const runThreadCommand = async (
@@ -1284,22 +1281,22 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // The viewer takes new items in its own layout effect and attaches after the first commit, so
-  // a reveal can only position after commit. It stays unanswered until it does, and a file not
-  // loaded yet pages forward each time a slice arrives.
+  // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
+  // positions it when it renders it.
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
-    if (revealFile(revealRequest.path)) answeredRevealNonce.current = revealRequest.nonce;
+    answeredRevealNonce.current = revealRequest.nonce;
+    revealFile(revealRequest.path);
   });
-  useLayoutEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Positioning the viewer is the external sync; paging forward and unfolding set state only on the way there.
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
     answerReveal();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load and the viewer attaches until the requested file is positioned.
-  }, [canLoadNextSlice, items, revealRequest, viewer]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
+  }, [canLoadNextSlice, items, revealRequest]);
   useEffect(() => {
     if (commit !== null && selectedCommit === undefined) {
       onSelectedCommitChange(null);
@@ -1435,7 +1432,7 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={setViewer}
+              viewerRef={codeViewReveal.attach}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}

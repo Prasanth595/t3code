@@ -8,33 +8,35 @@ interface FileRevealHandle {
 }
 
 /**
- * Scrolls a code view to a file. A file the viewer does not hold yet stays
- * pending until `flush` (from the viewer's post-render) finds it. A pending
- * reveal belongs to the viewer it was asked of, so a remounted viewer, such as
- * one for another diff scope, drops it.
+ * Scrolls a code view to a file. `attach` is the viewer's ref and `flush` its post-render
+ * handler, so a reveal asked before the viewer mounts, or for a file it does not hold yet, is
+ * positioned once it does. A reveal belongs to the diff it was asked of, so detaching the viewer,
+ * such as remounting it for another diff scope, drops it.
  */
 export function createCodeViewFileReveal() {
-  let pending: { readonly viewer: FileRevealHandle; readonly fileKey: string } | null = null;
-  const apply = (viewer: FileRevealHandle, fileKey: string) => {
-    if (!viewer.getInstance() || viewer.getItem(fileKey) === undefined) return false;
-    viewer.scrollTo({ type: "item", id: fileKey, align: "start" });
-    return true;
+  let viewer: FileRevealHandle | null = null;
+  let pending: string | null = null;
+  const flush = () => {
+    if (pending === null || viewer === null) return;
+    if (!viewer.getInstance() || viewer.getItem(pending) === undefined) return;
+    viewer.scrollTo({ type: "item", id: pending, align: "start" });
+    pending = null;
   };
   return {
-    /** Whether the viewer was positioned now, rather than left pending or dropped. */
-    request(viewer: FileRevealHandle | null, fileKey: string): boolean {
-      const applied = viewer !== null && apply(viewer, fileKey);
-      pending = viewer === null || applied ? null : { viewer, fileKey };
-      return applied;
+    attach(next: FileRevealHandle | null) {
+      if (viewer !== null && next !== viewer) pending = null;
+      viewer = next;
+      flush();
     },
-    flush(viewer: FileRevealHandle | null) {
-      if (pending === null || pending.viewer !== viewer) return;
-      if (apply(pending.viewer, pending.fileKey)) pending = null;
+    request(fileKey: string) {
+      pending = fileKey;
+      flush();
     },
+    flush,
   };
 }
 
-export function useCodeViewFileReveal(viewer: FileRevealHandle | null) {
+export function useCodeViewFileReveal() {
   const [reveal] = useState(createCodeViewFileReveal);
-  return (fileKey: string) => reveal.request(viewer, fileKey);
+  return reveal;
 }
