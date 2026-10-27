@@ -11,6 +11,7 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
+  isSidebarEnvironmentDisconnected,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
@@ -1080,6 +1081,18 @@ describe("Working shelf (beta)", () => {
         hasActionableProposedPlan: true,
       }),
     ).toBe(false);
+  });
+
+  it.each([
+    ["connected", false],
+    ["connecting", false],
+    ["reconnecting", true],
+    ["offline", true],
+    ["error", true],
+    ["unsupported", true],
+    ["available", true],
+  ] as const)("lists threads outside the shelf on a %s environment: %s", (phase, disconnected) => {
+    expect(isSidebarEnvironmentDisconnected(phase)).toBe(disconnected);
   });
 
   describe("sortInboxThreadsByReturn", () => {
