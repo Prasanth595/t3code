@@ -162,6 +162,12 @@ class GitRefsRefreshCacheKey extends Data.Class<{
   generation: number;
 }> {}
 
+class ReviewMergeBaseKey extends Data.Class<{
+  cwd: string;
+  branch: string | null;
+  baseRef: string | undefined;
+}> {}
+
 interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
@@ -184,6 +190,7 @@ interface ExecuteGitOptions {
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
+  nulSeparatedPrefixMaxBytes?: number | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
 }
 
@@ -825,6 +832,7 @@ const collectOutput = Effect.fnUntraced(function* (
   appendTruncationMarker: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
   keepLineCallbacksAfterTruncation = false,
+  nulSeparatedPrefixMaxBytes = 0,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
   const lineDecoder = keepLineCallbacksAfterTruncation && onLine ? new TextDecoder() : null;
@@ -832,6 +840,8 @@ const collectOutput = Effect.fnUntraced(function* (
   let text = "";
   let lineBuffer = "";
   let truncated = false;
+  let prefixPending = nulSeparatedPrefixMaxBytes > 0;
+  let previousByteWasNull = false;
   // Bound newline-free output; oversized lines are not useful to callbacks.
   const maxPendingLineBytes = 64 * 1024;
 
@@ -857,6 +867,30 @@ const collectOutput = Effect.fnUntraced(function* (
   });
 
   const processChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
+    if (prefixPending) {
+      let boundary = -1;
+      for (let index = 0; index < chunk.byteLength; index++) {
+        if (previousByteWasNull && chunk[index] === 0) {
+          boundary = index + 1;
+          break;
+        }
+        previousByteWasNull = chunk[index] === 0;
+      }
+      const prefix = boundary < 0 ? chunk : chunk.subarray(0, boundary);
+      bytes += prefix.byteLength;
+      if (bytes - (boundary < 0 ? 0 : 1) > nulSeparatedPrefixMaxBytes) {
+        return yield* new GitCommandError({
+          ...gitCommandContext(input),
+          detail: "Git diff statistics exceeded the metadata limit.",
+          outputLength: bytes,
+        });
+      }
+      text += decoder.decode(prefix, { stream: true });
+      if (boundary < 0) return;
+      prefixPending = false;
+      bytes = 0;
+      chunk = chunk.subarray(boundary);
+    }
     if (appendTruncationMarker && truncated) {
       if (lineDecoder) {
         lineBuffer += lineDecoder.decode(chunk, { stream: true });
@@ -931,149 +965,151 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
   const statusFetchProcesses = yield* Semaphore.make(4);
 
-  const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
-    function* (input) {
-      const commandInput = {
-        ...input,
-        args: [...input.args],
-      } as const;
-      const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;
-      const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-      const appendTruncationMarker = input.appendTruncationMarker ?? false;
+  const executeRaw = Effect.fnUntraced(function* (
+    input: GitVcsDriver.ExecuteGitInput,
+    nulSeparatedPrefixMaxBytes = 0,
+  ) {
+    const commandInput = {
+      ...input,
+      args: [...input.args],
+    } as const;
+    const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;
+    const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const appendTruncationMarker = input.appendTruncationMarker ?? false;
 
-      const runGitCommand = Effect.fn("runGitCommand")(function* () {
-        const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
+    const runGitCommand = Effect.fn("runGitCommand")(function* () {
+      const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              ...gitCommandContext(commandInput),
+              detail: "Failed to create Git trace monitor.",
+              cause,
+            }),
+        ),
+      );
+      const baseEnv = {
+        ...process.env,
+        // Concurrent status polls must not take index.lock to save refreshed indexes.
+        GIT_OPTIONAL_LOCKS: "0",
+        ...input.env,
+        ...trace2Monitor.env,
+      };
+      const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
+      const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
+      const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
+      // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
+      const executable = resolved.shell ? "git" : resolved.command;
+      const child = yield* commandSpawner
+        .spawn(
+          ChildProcess.make(executable, commandInput.args, {
+            cwd: commandInput.cwd,
+            env: spawnEnv,
+            forceKillAfter: input.forceKillAfterMs,
+          }),
+        )
+        .pipe(
           Effect.mapError(
             (cause) =>
               new GitCommandError({
                 ...gitCommandContext(commandInput),
-                detail: "Failed to create Git trace monitor.",
+                detail: "Failed to spawn Git process.",
                 cause,
               }),
           ),
         );
-        const baseEnv = {
-          ...process.env,
-          // Concurrent status polls must not take index.lock to save refreshed indexes.
-          GIT_OPTIONAL_LOCKS: "0",
-          ...input.env,
-          ...trace2Monitor.env,
-        };
-        const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
-        const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
-        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
-        // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
-        const executable = resolved.shell ? "git" : resolved.command;
-        const child = yield* commandSpawner
-          .spawn(
-            ChildProcess.make(executable, commandInput.args, {
-              cwd: commandInput.cwd,
-              env: spawnEnv,
-              forceKillAfter: input.forceKillAfterMs,
-            }),
-          )
-          .pipe(
+
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectOutput(
+            commandInput,
+            child.stdout,
+            maxOutputBytes,
+            appendTruncationMarker,
+            input.progress?.onStdoutLine,
+            input.keepLineCallbacksAfterTruncation,
+            nulSeparatedPrefixMaxBytes,
+          ),
+          collectOutput(
+            commandInput,
+            child.stderr,
+            maxOutputBytes,
+            appendTruncationMarker,
+            input.progress?.onStderrLine,
+            input.keepLineCallbacksAfterTruncation,
+          ),
+          child.exitCode.pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
                   ...gitCommandContext(commandInput),
-                  detail: "Failed to spawn Git process.",
+                  detail: "Failed to read Git process exit code.",
                   cause,
                 }),
             ),
-          );
-
-        const [stdout, stderr, exitCode] = yield* Effect.all(
-          [
-            collectOutput(
-              commandInput,
-              child.stdout,
-              maxOutputBytes,
-              appendTruncationMarker,
-              input.progress?.onStdoutLine,
-              input.keepLineCallbacksAfterTruncation,
-            ),
-            collectOutput(
-              commandInput,
-              child.stderr,
-              maxOutputBytes,
-              appendTruncationMarker,
-              input.progress?.onStderrLine,
-              input.keepLineCallbacksAfterTruncation,
-            ),
-            child.exitCode.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new GitCommandError({
-                    ...gitCommandContext(commandInput),
-                    detail: "Failed to read Git process exit code.",
-                    cause,
-                  }),
-              ),
-            ),
-            input.stdin === undefined
-              ? Effect.void
-              : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new GitCommandError({
-                        ...gitCommandContext(commandInput),
-                        detail: "Failed to write Git process input.",
-                        cause,
-                      }),
-                  ),
+          ),
+          input.stdin === undefined
+            ? Effect.void
+            : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new GitCommandError({
+                      ...gitCommandContext(commandInput),
+                      detail: "Failed to write Git process input.",
+                      cause,
+                    }),
                 ),
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.map(([stdout, stderr, exitCode]) => [stdout, stderr, exitCode] as const));
-        yield* trace2Monitor.flush;
+              ),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.map(([stdout, stderr, exitCode]) => [stdout, stderr, exitCode] as const));
+      yield* trace2Monitor.flush;
 
-        if (!input.allowNonZeroExit && exitCode !== 0) {
-          const reason = classifyGitFailure(stderr.text);
-          return yield* new GitCommandError({
-            ...gitCommandContext(commandInput),
-            ...(reason === null ? {} : { reason }),
-            detail: gitFailureDetail(reason),
-            exitCode,
-            stdoutLength: stdout.text.length,
-            stderrLength: stderr.text.length,
-          });
-        }
-
-        return {
+      if (!input.allowNonZeroExit && exitCode !== 0) {
+        const reason = classifyGitFailure(stderr.text);
+        return yield* new GitCommandError({
+          ...gitCommandContext(commandInput),
+          ...(reason === null ? {} : { reason }),
+          detail: gitFailureDetail(reason),
           exitCode,
-          stdout: stdout.text,
-          stderr: stderr.text,
-          stdoutTruncated: stdout.truncated,
-          stderrTruncated: stderr.truncated,
-        } satisfies GitVcsDriver.ExecuteGitResult;
-      });
-
-      const execution = runGitCommand().pipe(Effect.scoped);
-      if (timeoutMs === null) {
-        return yield* execution;
+          stdoutLength: stdout.text.length,
+          stderrLength: stderr.text.length,
+        });
       }
 
-      return yield* execution.pipe(
-        Effect.timeoutOption(timeoutMs),
-        Effect.flatMap((result) =>
-          Effect.fromOption(
-            result,
-            () =>
-              new GitCommandError({
-                ...gitCommandContext(commandInput),
-                detail: "Git command timed out.",
-              }),
-          ),
-        ),
-      );
-    },
-  );
+      return {
+        exitCode,
+        stdout: stdout.text,
+        stderr: stderr.text,
+        stdoutTruncated: stdout.truncated,
+        stderrTruncated: stderr.truncated,
+      } satisfies GitVcsDriver.ExecuteGitResult;
+    });
 
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
-    executeRaw(input).pipe(
+    const execution = runGitCommand().pipe(Effect.scoped);
+    if (timeoutMs === null) {
+      return yield* execution;
+    }
+
+    return yield* execution.pipe(
+      Effect.timeoutOption(timeoutMs),
+      Effect.flatMap((result) =>
+        Effect.fromOption(
+          result,
+          () =>
+            new GitCommandError({
+              ...gitCommandContext(commandInput),
+              detail: "Git command timed out.",
+            }),
+        ),
+      ),
+    );
+  });
+
+  const execute = (input: GitVcsDriver.ExecuteGitInput, nulSeparatedPrefixMaxBytes = 0) =>
+    executeRaw(input, nulSeparatedPrefixMaxBytes).pipe(
       withMetrics({
         counter: gitCommandsTotal,
         timer: gitCommandDuration,
@@ -1101,23 +1137,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     args: readonly string[],
     options: ExecuteGitOptions = {},
   ): Effect.Effect<GitVcsDriver.ExecuteGitResult, GitCommandError> =>
-    execute({
-      operation,
-      cwd,
-      args,
-      ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
-      ...(options.env !== undefined ? { env: options.env } : {}),
-      allowNonZeroExit: true,
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.forceKillAfterMs !== undefined
-        ? { forceKillAfterMs: options.forceKillAfterMs }
-        : {}),
-      ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-      ...(options.appendTruncationMarker !== undefined
-        ? { appendTruncationMarker: options.appendTruncationMarker }
-        : {}),
-      ...(options.progress ? { progress: options.progress } : {}),
-    }).pipe(
+    execute(
+      {
+        operation,
+        cwd,
+        args,
+        ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+        ...(options.env !== undefined ? { env: options.env } : {}),
+        allowNonZeroExit: true,
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.forceKillAfterMs !== undefined
+          ? { forceKillAfterMs: options.forceKillAfterMs }
+          : {}),
+        ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+        ...(options.appendTruncationMarker !== undefined
+          ? { appendTruncationMarker: options.appendTruncationMarker }
+          : {}),
+        ...(options.progress ? { progress: options.progress } : {}),
+      },
+      options.nulSeparatedPrefixMaxBytes,
+    ).pipe(
       Effect.flatMap((result) => {
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
@@ -1460,6 +1499,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
   const normalizeRepositoryPathsCacheKey = (cwd: string) => path.normalize(path.resolve(cwd));
+  // Share concurrent readers only; branch switches and repository replacement must remain fresh.
+  const reviewRepositoryPaths = yield* Cache.makeWith(resolveRepositoryPathsUncached, {
+    capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
+    timeToLive: () => Duration.zero,
+  });
   const resolveRepositoryPaths = (cwd: string, refresh = false) => {
     const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
@@ -2984,6 +3028,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef, mergeBase };
   });
 
+  const reviewMergeBases = yield* Cache.makeWith(
+    (key: ReviewMergeBaseKey) => resolveReviewMergeBase(key.cwd, key.branch, key.baseRef),
+    { capacity: REPOSITORY_PATHS_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+
   const readBranchChangeTotals = Effect.fn("readBranchChangeTotals")(function* (
     cwd: string,
     branch: string | null,
@@ -3042,7 +3091,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const patchLimit = input.file
       ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES
       : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES;
-    const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+    const repository = yield* Cache.get(
+      reviewRepositoryPaths,
+      normalizeRepositoryPathsCacheKey(input.cwd),
+    ).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
           isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
@@ -3061,58 +3113,61 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const review =
       input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
-        : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
-
+        : yield* Cache.get(
+            reviewMergeBases,
+            new ReviewMergeBaseKey({
+              cwd,
+              branch: repository.currentBranch,
+              baseRef: input.baseRef,
+            }),
+          );
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
-      "--minimal",
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
     ];
-    const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
-      ref: string,
-      env?: NodeJS.ProcessEnv,
-    ) {
-      const args = [...diffArgs, "--numstat", "-z"];
-      const result = yield* executeGit(
-        "GitVcsDriver.getReviewDiffPreview.stat",
-        cwd,
-        [...args, ref, "--", ...pathArgs],
-        { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, env },
-      );
-      if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
-      if (ref === "HEAD" && isUnbornHeadStderr(result.stderr)) {
-        const emptyTree = yield* readEmptyTreeHash(cwd);
-        const stdout = yield* runGitStdoutWithOptions(
-          "GitVcsDriver.getReviewDiffPreview.unbornStat",
-          cwd,
-          [...args, emptyTree, "--", ...pathArgs],
-          { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, env },
-        );
-        return { ref: emptyTree, files: parseReviewNumstat(stdout) };
-      }
-      return yield* new GitCommandError({
-        operation: "GitVcsDriver.getReviewDiffPreview.stat",
-        cwd,
-        command: "git diff --numstat",
-        detail: "Could not read complete diff statistics.",
-        exitCode: result.exitCode,
-      });
-    });
     const readTrackedDiff = Effect.fn("GitVcsDriver.getReviewDiffPreview.tracked")(function* (
       ref: string | null,
       env?: NodeJS.ProcessEnv,
     ) {
       if (ref === null) return { stdout: "", stdoutTruncated: false, files: [] };
-      const stat = yield* readStats(ref, env);
-      if (stat.files.length === 0) return { stdout: "", stdoutTruncated: false, files: [] };
-      const patch = yield* executeGit(
-        "GitVcsDriver.getReviewDiffPreview.patch",
-        cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
-        { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
-      );
-      return { ...patch, files: stat.files };
+      const args = [...diffArgs, "--numstat", "-z", "--patch"];
+      const read = (ref: string) =>
+        executeGit(
+          "GitVcsDriver.getReviewDiffPreview.patch",
+          cwd,
+          [...args, ref, "--", ...pathArgs],
+          {
+            allowNonZeroExit: true,
+            maxOutputBytes: patchLimit,
+            appendTruncationMarker: true,
+            nulSeparatedPrefixMaxBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
+            env,
+          },
+        );
+      let result = yield* read(ref);
+      if (result.exitCode !== 0 && ref === "HEAD" && isUnbornHeadStderr(result.stderr)) {
+        result = yield* read(yield* readEmptyTreeHash(cwd));
+      }
+      if (result.exitCode !== 0) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.getReviewDiffPreview.patch",
+          cwd,
+          command: "git diff --numstat --patch",
+          detail: "Could not read the review diff.",
+          exitCode: result.exitCode,
+        });
+      }
+      // With -z Git separates the complete numstat prefix from patches with an extra NUL.
+      const boundary = result.stdout.indexOf("\0\0");
+      return {
+        stdout: boundary < 0 ? "" : result.stdout.slice(boundary + 2),
+        stdoutTruncated: result.stdoutTruncated,
+        files: parseReviewNumstat(
+          boundary < 0 ? result.stdout : result.stdout.slice(0, boundary + 1),
+        ),
+      };
     });
+
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
       const [dirty, base] =

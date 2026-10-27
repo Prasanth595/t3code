@@ -309,7 +309,6 @@
   "apps/web/src/components/device/DeviceWorkspace.tsx": 1,
   "apps/web/src/components/device/useDeviceControls.ts": 2,
   "apps/web/src/components/diffs/DiffCommentAnnotation.tsx": 1,
-  "apps/web/src/components/diffs/DiffFileLoadingBoundary.tsx": 1,
   "apps/web/src/components/diffs/DiffFileTree.tsx": 3,
   "apps/web/src/components/diffs/useCodeViewFileReveal.ts": 1,
   "apps/web/src/components/diffs/useReviewFilePatches.ts": 1,

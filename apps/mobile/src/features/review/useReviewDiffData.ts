@@ -5,6 +5,7 @@ import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewC
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { markReviewEvent, measureReviewWork } from "./reviewPerf";
 import { getCachedReviewParsedDiff } from "./reviewState";
+import { getReviewFilePatchLookahead } from "./reviewFilePatchDemand";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
@@ -127,6 +128,8 @@ export function useReviewDiffData(input: {
   readonly cwd: string | null;
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
+  readonly expandedFileIds: ReadonlyArray<string> | undefined;
+  readonly enabled: boolean;
 }) {
   const { draftMessage, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
@@ -154,17 +157,24 @@ export function useReviewDiffData(input: {
     source?.baseRef,
     source?.diffHash,
   ]);
-  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
-  const indices = useMemo(
-    () => new Set(requested.scope === scope ? requested.indices : [0, 1, 2]),
-    [requested, scope],
+  const initialPaths = useMemo(
+    () => getReviewFilePatchLookahead(lazySource?.files ?? [], 0, input.expandedFileIds),
+    [input.expandedFileIds, lazySource?.files],
+  );
+  const [requested, setRequested] = useState<{ scope: string; paths: ReadonlyArray<string> }>({
+    scope,
+    paths: [],
+  });
+  const requestedPaths = useMemo(
+    () => new Set([...(requested.scope === scope ? requested.paths : []), ...initialPaths]),
+    [initialPaths, requested, scope],
   );
   const queries = useMemo(
     () =>
-      !environmentId || !cwd || !lazySource
+      !input.enabled || !environmentId || !cwd || !lazySource
         ? []
-        : (lazySource.files ?? []).map((file, index) =>
-            indices.has(index)
+        : (lazySource.files ?? []).map((file) =>
+            requestedPaths.has(file.path)
               ? reviewEnvironment.diffFilePatch({
                   environmentId,
                   input: {
@@ -184,7 +194,7 @@ export function useReviewDiffData(input: {
                 })
               : null,
           ),
-    [environmentId, cwd, lazySource, indices, scope],
+    [input.enabled, environmentId, cwd, lazySource, requestedPaths, scope],
   );
   const parsedQuery = useMemo(
     () =>
@@ -210,14 +220,22 @@ export function useReviewDiffData(input: {
         fileId === null ? 0 : (lazySource?.files?.findIndex((file) => file.path === fileId) ?? -1);
       if (index < 0) return;
       setRequested((current) => {
-        const previous = current.scope === scope ? current.indices : [0, 1, 2];
-        const added = [index, index + 1, index + 2].filter((next) => !previous.includes(next));
-        return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+        const previous = current.scope === scope ? current.paths : initialPaths;
+        const expandedFileIds =
+          retry && fileId !== null && input.expandedFileIds !== undefined
+            ? [...input.expandedFileIds, fileId]
+            : input.expandedFileIds;
+        const added = getReviewFilePatchLookahead(
+          lazySource?.files ?? [],
+          index,
+          expandedFileIds,
+        ).filter((path) => !previous.includes(path));
+        return added.length === 0 ? current : { scope, paths: [...previous, ...added] };
       });
       if (retry && patches[index]?._tag === "Failure" && queries[index])
         registry.refresh(queries[index]);
     },
-    [lazySource, scope, patches, queries, registry],
+    [initialPaths, input.expandedFileIds, lazySource, scope, patches, queries, registry],
   );
   const parsedDiff = useMemo<ReviewParsedDiff>(() => {
     if (!lazySource?.files) return applyReviewDiffMetadata(previewDiff, selectedSection);

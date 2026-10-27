@@ -40,7 +40,11 @@ export function prewarmReviewDiffSection(input: {
   readonly section: ReviewSectionItem;
 }): void {
   const { section, threadKey } = input;
-  if (section.diff === null || section.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) {
+  if (
+    section.diff === null ||
+    section.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS ||
+    (section.source?.truncated && section.source.files)
+  ) {
     return;
   }
 
@@ -80,7 +84,11 @@ export function getReviewDiffPrewarmSections(input: {
         return pendingSections;
       }
       const section = sections[index];
-      if (!section || section.diff === null) {
+      if (
+        !section ||
+        section.diff === null ||
+        (section.source?.truncated && section.source.files)
+      ) {
         continue;
       }
       const sectionCharacterCount = getReviewParsedDiffSourceCharacterCount({
