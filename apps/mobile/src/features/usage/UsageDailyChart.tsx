@@ -19,10 +19,7 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
 
   return (
     <View style={{ height }} className="flex-row items-end gap-px">
-      {/* column-reverse stacks the bottom-first provider values upward
-          without reversing the array (Hermes lacks Array#toReversed).
-          Each column is only as tall as its stack so the rounding clips the
-          bar's top, not empty space above it. */}
+      {/* Use column-reverse: provider values are bottom-first and Hermes lacks toReversed. */}
       {chartDays.map((day) => (
         <View
           key={day.day}
