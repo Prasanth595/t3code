@@ -244,6 +244,22 @@ provider supports it. Web and desktop also offer compaction from the context met
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
+### Thread and orchestration skills
+
+The repository includes optional `t3code-threads` and `t3code-orchestration`
+skills in [`.agents/skills`](../../.agents/skills). Copy the skill folders into
+your provider's project skill directory on the machine running the agent:
+`.agents/skills` for Codex or `.claude/skills` for Claude. Other providers use
+their own skill discovery locations. Restart the agent session after installing.
+
+Use `$t3code-threads` to hand work to an independent thread or move the current
+conversation into a managed worktree. Use `$t3code-orchestration` to coordinate
+background delegates, including their child threads, results, and blockers.
+For example: “Use `$t3code-orchestration` to delegate API research and test
+research in parallel, then combine their findings.” These skills require the
+agent's T3 Code MCP connection; installing them in a standalone CLI does not
+connect it to T3 Code. They use your existing providers and permissions.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

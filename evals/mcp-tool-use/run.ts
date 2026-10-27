@@ -172,6 +172,9 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
+    skills: Schema.optional(
+      Schema.Array(Schema.Literals(["t3code-threads", "t3code-orchestration"])),
+    ),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -197,6 +200,25 @@ export const McpToolUseCase = Schema.Struct({
   notes: Schema.optional(Schema.String),
 });
 export type McpToolUseCase = typeof McpToolUseCase.Type;
+
+export const loadCaseSkills = Effect.fn("evaluateMcpToolUse.loadCaseSkills")(function* (
+  testCase: McpToolUseCase,
+) {
+  if (!testCase.setup.skills?.length) return testCase;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const skills = yield* Effect.forEach(testCase.setup.skills, (name) =>
+    fs.readFileString(path.join(import.meta.dirname, "../../.agents/skills", name, "SKILL.md")),
+  );
+  return {
+    ...testCase,
+    setup: {
+      ...testCase.setup,
+      context: [testCase.setup.context, ...skills].filter(Boolean).join("\n\n"),
+    },
+  };
+});
+
 const AnyBlock = Schema.StructWithRest(
   Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   Rest,
@@ -1694,10 +1716,13 @@ const main = Effect.gen(function* () {
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
-  const selected = cases.filter(
-    ({ id, setup }) =>
-      (wanted === undefined || wanted.includes(id)) &&
-      (setup.harness === undefined || setup.harness === harness),
+  const selected = yield* Effect.forEach(
+    cases.filter(
+      ({ id, setup }) =>
+        (wanted === undefined || wanted.includes(id)) &&
+        (setup.harness === undefined || setup.harness === harness),
+    ),
+    loadCaseSkills,
   );
   if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
   // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
