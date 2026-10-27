@@ -6078,6 +6078,106 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("restores T3 context when Codex continues a goal after compaction", () =>
+      Effect.gen(function* () {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: `Start working toward this goal: ${objective}` }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          hasT3Mcp: true,
+        });
+        const goalTurnStart = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "goal-turn-1",
+          prompt: objective,
+        }).slice(6);
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-continuation-restores-context",
+          entries: [
+            ...sessionStart,
+            ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, objective, status: "paused" },
+              { goal: codexGoal("paused", 0) },
+            ),
+            {
+              type: "expect_outbound",
+              label: "goal turn",
+              frame: { id: 5, method: "turn/start", params },
+            },
+            ...withReplayRequestId(goalTurnStart, 5),
+            ...request(
+              6,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: codexGoal("active", 0) },
+            ),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-1",
+              goal: codexGoal("active", 0),
+            }),
+            notification("compacted", "item/completed", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-1",
+              item: { type: "contextCompaction", id: "compact-goal" },
+            }),
+            notification("first turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+            }),
+            notification("continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+            }),
+            ...request(
+              7,
+              "thread/inject_items",
+              {
+                threadId: nativeThreadId,
+                items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                  type: "message",
+                  role: "developer",
+                  content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+                })),
+              },
+              {},
+            ),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-2",
+              goal: codexGoal("complete", 1200),
+            }),
+            notification("continuation done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("test"),
+          threadId: harness.threadId,
+          providerSessionId: "goal-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          browserToolsAvailable: true,
+        });
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect("settles a run held for the next goal turn when Stop arrives in between", () =>
       Effect.gen(function* () {
         const prompt = "Keep going";

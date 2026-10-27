@@ -4392,6 +4392,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               goalRuns.set(goalHold.context.providerTurnId, goalRun);
               goalRuns.set(next.providerTurnId, goalRun);
               yield* Deferred.succeed(goalHold.next, next);
+              // Codex starts goal turns itself, so restore here instead of in startNativeTurn.
+              const context = (yield* Ref.get(additionalContextByThread)).get(payload.threadId);
+              yield* restoreAdditionalContext(payload.threadId, context).pipe(
+                Effect.forkIn(scope, { startImmediately: true }),
+              );
               return;
             }
             // Pause orphan goal turns so they cannot work without an owning run.
