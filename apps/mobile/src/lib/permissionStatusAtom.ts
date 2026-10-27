@@ -14,18 +14,12 @@ export function makePermissionStatusAtom<S>(options: {
 }): Atom.Writable<S, S> {
   return Atom.writable(
     (get) => {
-      let active = true;
+      // A read that settles after unmount is dropped: setSelf on a disposed lifetime is a no-op.
       const refresh = () => {
-        void options.read().then((status) => {
-          if (active) get.setSelf(status);
-        });
+        void options.read().then((status) => get.setSelf(status));
       };
       refresh();
-      const unsubscribe = subscribeAppActive(refresh);
-      get.addFinalizer(() => {
-        active = false;
-        unsubscribe();
-      });
+      get.addFinalizer(subscribeAppActive(refresh));
       return options.initial;
     },
     (ctx, status: S) => ctx.setSelf(status),

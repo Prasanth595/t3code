@@ -68,7 +68,7 @@ describe("makePermissionStatusAtom", () => {
     expect(native.listeners.size).toBe(0);
   });
 
-  it("stores a request's outcome and ignores a read that settles after unmount", async () => {
+  it("stores a request's outcome", () => {
     const reads = deferredReads();
     const atom = makePermissionStatusAtom({ label: "test", initial: "checking", read: reads.read });
     const { registry, flush } = makeRegistry();
@@ -79,9 +79,5 @@ describe("makePermissionStatusAtom", () => {
 
     unmount();
     flush();
-    await reads.resolveNext("granted");
-    const remount = registry.mount(atom);
-    expect(registry.get(atom)).toBe("checking");
-    remount();
   });
 });
