@@ -538,10 +538,12 @@ export class Launcher {
         this.#state.update?.status === "pending"
           ? this.#state.update.dbPath
           : NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
-      const resolvedDatabasePath = await NodeFSP.realpath(databasePath).catch(() => databasePath);
+      const resolvedDatabasePath = await restoreTarget(databasePath).catch(() => databasePath);
       const [baseFreeBytes, databaseFreeBytes] = await Promise.all([
         filesystemBackupSpaceProbe.readFreeBytes(this.#baseDir),
-        filesystemBackupSpaceProbe.readFreeBytes(NodePath.dirname(resolvedDatabasePath)),
+        filesystemBackupSpaceProbe
+          .readFreeBytes(NodePath.dirname(resolvedDatabasePath))
+          .catch(() => Number.POSITIVE_INFINITY),
       ]);
       return serviceStartDiskSpaceBlocker(Math.min(baseFreeBytes, databaseFreeBytes));
     } catch {
