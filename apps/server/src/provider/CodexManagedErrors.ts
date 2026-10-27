@@ -53,13 +53,6 @@ const usageLimitCodes = new Set<string>([
   "subscription_sharing_usage_limit_exceeded",
   "subscription_sharing_workplace_individual_usage_limit_exceeded",
 ]);
-// Codex can stream only ChatGPT's prose for a sharing failure, without its code.
-const proseCodes = [
-  [
-    "has reached their Subscription Sharing usage limit",
-    "subscription_sharing_usage_limit_exceeded",
-  ],
-] as const;
 
 function unwrapError(value: unknown): unknown {
   if (typeof value === "string") {
@@ -96,7 +89,12 @@ export function classifyCodexManagedError(value: unknown) {
   const code =
     sharingCode(error) ??
     messages.map(sharingCode).find((code) => code !== undefined) ??
-    proseCodes.find(([prose]) => messages.some((message) => message.includes(prose)))?.[1];
+    // Codex can stream ChatGPT's sharing-limit prose without its code.
+    (messages.some((message) =>
+      message.includes("has reached their Subscription Sharing usage limit"),
+    )
+      ? "subscription_sharing_usage_limit_exceeded"
+      : undefined);
   if (code === undefined) return undefined;
   const failure = { ...failures[code], code, usageLimit: usageLimitCodes.has(code) };
   const text = messages.join(" ");

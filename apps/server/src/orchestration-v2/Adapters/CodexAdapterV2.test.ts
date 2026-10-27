@@ -1079,6 +1079,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1125,6 +1126,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        ...(onUsageLimits ? { onUsageLimits } : {}),
         crypto: yield* Crypto.Crypto,
         fileSystem,
         idAllocator,
@@ -4571,7 +4573,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       message: CHATGPT_SHARING_LIMIT_MESSAGE,
       notification: true,
       willRetry: true,
-      usedBefore: 0,
+      usedBefore: 100,
       expectedClass: "usage_limit",
       expectedCode: "subscription_sharing_usage_limit_exceeded",
       expectedMessage: "Usage settings",
@@ -4771,12 +4773,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const resetReceipt = yield* Deferred.make<void>();
-        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "error" &&
-          event.turnItem.failure.resetAt === resetAt
-            ? Deferred.succeed(resetReceipt, undefined)
-            : Effect.void,
+        const snapshotReceipt = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.resetAt === resetAt
+              ? Deferred.succeed(resetReceipt, undefined)
+              : Effect.void,
+          undefined,
+          undefined,
+          () => Deferred.succeed(snapshotReceipt, undefined),
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -4796,7 +4804,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
-        if (scenario.name === "late-reset" || "resetAfter" in scenario) {
+        if ("resetAfter" in scenario) {
+          yield* Deferred.await(snapshotReceipt);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.failure.resetAt != null,
+            ),
+          );
+        }
+        if (scenario.name === "late-reset") {
           yield* Deferred.await(resetReceipt);
           const item = harness.events.find(
             (event) =>
@@ -4811,10 +4830,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if ("expectedCode" in scenario && "expectedMessage" in scenario) {
           assert.equal(terminal.failure.code, scenario.expectedCode);
           assert.include(terminal.failure.message, scenario.expectedMessage);
-          assert.equal(
-            terminal.failure.resetAt,
-            "usedBefore" in scenario && scenario.usedBefore >= 100 ? resetAt : null,
-          );
+          assert.equal(terminal.failure.resetAt, null);
         }
       }).pipe(
         Effect.provide(
