@@ -369,11 +369,11 @@ const make = Effect.gen(function* () {
       if (generatedTemporaryBranch) {
         const uuid = yield* randomUuidV4;
         branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
-        const settings = resolveProjectSettings(
-          yield* serverSettings.getSettings,
-          input.projectId,
-        ).settings;
-        if (settings.branchNamingMode === "static") {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => resolveProjectSettings(settings, input.projectId).settings),
+          Effect.orElseSucceed(() => null),
+        );
+        if (settings?.branchNamingMode === "static") {
           branch = formatGeneratedBranchName(branch.slice(-8), {
             mode: "static",
             prefix: settings.branchNamePrefix,
