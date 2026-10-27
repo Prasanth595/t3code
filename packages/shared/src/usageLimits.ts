@@ -726,9 +726,9 @@ export function collectProviderUsageLimits(
       )[0];
     const email =
       provider.auth.email ??
-      sources
-        .flatMap((source) => source.accounts)
-        .find((account) => key !== null && resolveKey(account) === key && account.email)?.email;
+      [...providers.map(nativeReport), ...sources.flatMap((source) => source.accounts)].find(
+        (report) => key !== null && resolveKey(report) === key && report.email,
+      )?.email;
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&

@@ -531,6 +531,16 @@ describe("pools", () => {
         ({ id, email }) => ({ id, email }),
       ),
     ).toEqual([{ id: "codex", email: "me@example.com" }]);
+    const older = provider({
+      instanceId: ProviderInstanceId.make("codex-older"),
+      auth: { status: "authenticated", email: "me@example.com", workspaceId: "ws-plus" },
+      usageLimits: { ...native.usageLimits!, checkedAt: "2026-09-03T10:00:00.000Z" },
+    });
+    expect(
+      collectProviderUsageLimits(native.instanceId, [native, older], [], now)?.accounts.map(
+        ({ id, email }) => ({ id, email }),
+      ),
+    ).toEqual([{ id: "codex", email: "me@example.com" }]);
   });
 
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
