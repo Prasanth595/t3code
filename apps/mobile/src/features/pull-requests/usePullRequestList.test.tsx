@@ -57,7 +57,13 @@ import { usePullRequestList } from "./usePullRequestList";
 function setup(ids: readonly string[]) {
   mocks.failPage = false;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const registry = AtomRegistry.make();
+  // Keep atom work within the microtasks act() drains.
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      queueMicrotask(task);
+      return () => {};
+    },
+  });
   const targets = ids.map((id) => ({
     environmentId: EnvironmentId.make(id),
     input: { state: "open" as const },
