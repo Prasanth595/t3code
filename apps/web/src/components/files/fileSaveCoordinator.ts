@@ -1,9 +1,13 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
+const MAX_CLOSE_RETRIES = 3;
+
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
   readonly canPersist?: () => boolean;
-  readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
+  /** Refuse stale close-time retries after another editor replaces the draft. */
+  readonly shouldRetryAfterClose?: (contents: string) => boolean;
+  readonly persist: (contents: string, retry?: boolean) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
   /** Return false when another editor has newer unsaved contents. */
   readonly onConfirmed: (contents: string) => boolean | void;
@@ -17,6 +21,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private lastChangeAt = 0;
   private saving = false;
   private disposed = false;
+  private closeRetryFailures = 0;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
@@ -55,10 +60,19 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       return;
     }
 
+    if (
+      this.closeRetryFailures > 0 &&
+      this.options.shouldRetryAfterClose?.(this.latestContents) === false
+    ) {
+      return;
+    }
+
     this.saving = true;
     const contents = this.latestContents;
     const revision = this.latestRevision;
-    const result = await this.options.persist(contents);
+    const result = await (this.closeRetryFailures > 0
+      ? this.options.persist(contents, true)
+      : this.options.persist(contents));
     const succeeded = result._tag === "Success";
     let confirmed = false;
     if (succeeded) {
@@ -68,7 +82,13 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
 
     this.saving = false;
     if (revision === this.latestRevision) {
-      if (confirmed) this.options.onPendingChange(false);
+      if (confirmed) {
+        this.options.onPendingChange(false);
+      } else if (!succeeded && this.disposed && this.closeRetryFailures < MAX_CLOSE_RETRIES) {
+        const retryDelay = this.options.debounceMs * 2 ** this.closeRetryFailures;
+        this.closeRetryFailures += 1;
+        this.schedule(retryDelay);
+      }
       return;
     }
 

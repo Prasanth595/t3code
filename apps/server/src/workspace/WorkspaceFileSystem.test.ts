@@ -6,6 +6,8 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -23,7 +25,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, realpath: vi.fn(actual.realpath) };
+  return { ...actual, realpath: vi.fn(actual.realpath), writeFile: vi.fn(actual.writeFile) };
 });
 
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
@@ -181,6 +183,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "# Report\n",
           byteLength: 9,
           truncated: false,
+          supportsConditionalWrite: true,
         });
       }),
     );
@@ -202,6 +205,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "# Notes\n",
           byteLength: 8,
           truncated: false,
+          supportsConditionalWrite: true,
         });
       }),
     );
@@ -369,6 +373,75 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("waits for native writes to settle before cancellation releases the lease", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const started = yield* Deferred.make<void>();
+        let finishWrite!: () => void;
+        vi.mocked(NodeFSP.writeFile).mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finishWrite = resolve;
+              queueMicrotask(() => Deferred.doneUnsafe(started, Effect.void));
+            }),
+        );
+        const write = yield* service
+          .writeFile({ cwd, relativePath: "note.txt", contents: "retired" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const cancelling = yield* Fiber.interrupt(write).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const releasedBeforeNativeWrite = cancelling.pollUnsafe() !== undefined;
+        finishWrite();
+        yield* Fiber.join(cancelling);
+        expect(releasedBeforeNativeWrite).toBe(false);
+      }),
+    );
+
+    it.effect("refuses a retired save after another client has saved newer contents", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "note.txt", "original");
+        yield* service.writeFile({ cwd, relativePath: "note.txt", contents: "newer" });
+        const retry = {
+          cwd,
+          relativePath: "note.txt",
+          contents: "retired",
+          expectedContents: "original",
+        };
+        expect(yield* service.writeFile(retry)).toEqual({
+          relativePath: "note.txt",
+          conflict: true,
+        });
+        expect((yield* service.readFile({ cwd, relativePath: "note.txt" })).contents).toBe("newer");
+      }),
+    );
+
+    it.effect("checks conditional saves in the same critical section as competing writes", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "note.txt", "original");
+        const results = yield* Effect.forEach(
+          ["first", "second"],
+          (contents) => {
+            const input = { cwd, relativePath: "note.txt", contents, expectedContents: "original" };
+            return service.writeFile(input);
+          },
+          { concurrency: "unbounded" },
+        );
+        expect(results).toEqual(
+          expect.arrayContaining([
+            { relativePath: "note.txt" },
+            { relativePath: "note.txt", conflict: true },
+          ]),
+        );
+      }),
+    );
+
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

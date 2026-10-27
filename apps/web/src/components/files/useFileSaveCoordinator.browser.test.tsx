@@ -1,14 +1,16 @@
 import { render, fakeTimers } from "../../../test/render";
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, useEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const { writeFile, confirmFile, readScope, getUnsavedFile } = vi.hoisted(() => ({
+const { writeFile, confirmFile, readScope, getUnsavedFile, getPersistedFile } = vi.hoisted(() => ({
   writeFile: vi.fn(),
   confirmFile: vi.fn(),
   readScope: vi.fn(),
   getUnsavedFile: vi.fn(),
+  getPersistedFile: vi.fn(),
 }));
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
@@ -23,6 +25,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   confirmProjectFileQueryData: confirmFile,
   getUnsavedProjectFileQueryData: getUnsavedFile,
+  getPersistedProjectFileQueryData: getPersistedFile,
 }));
 
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -36,10 +39,13 @@ const defaultProps = {
   onPendingChange,
 };
 function setup() {
-  writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  writeFile.mockReset().mockResolvedValue(AsyncResult.success({ relativePath: "file.txt" }));
   confirmFile.mockReset();
   readScope.mockReset().mockReturnValue(true);
   getUnsavedFile.mockReset().mockReturnValue(null);
+  getPersistedFile
+    .mockReset()
+    .mockReturnValue({ contents: "original", supportsConditionalWrite: true });
   onPendingChange.mockReset();
 }
 
@@ -67,6 +73,128 @@ async function mount(props = defaultProps) {
 }
 
 describe("file-save React lifecycle", () => {
+  it("retries the final draft against its earlier acknowledged save, not the stale query", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    let finishFirst!: (result: ReturnType<typeof AsyncResult.success>) => void;
+    writeFile
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))));
+    screen.changeHandler()("first");
+    await vi.advanceTimersByTimeAsync(500);
+    screen.changeHandler()("final");
+    getUnsavedFile.mockReturnValue({ contents: "final" });
+    confirmFile.mockReturnValueOnce(false);
+    await screen.unmount();
+    finishFirst(AsyncResult.success({ relativePath: "file.txt" }));
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "final",
+        expectedContents: "first",
+      },
+    });
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
+  it("retains the draft and stops when the server refuses a stale retry", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    getUnsavedFile.mockReturnValue({ contents: "pending edit" });
+    writeFile
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))))
+      .mockResolvedValueOnce(AsyncResult.success({ relativePath: "file.txt", conflict: true }));
+    screen.changeHandler()("pending edit");
+    await screen.unmount();
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(confirmFile).not.toHaveBeenCalled();
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
+  });
+
+  it("does not retry against an older server without conditional writes", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    getPersistedFile.mockReturnValue({ contents: "original" });
+    getUnsavedFile.mockReturnValue({ contents: "pending edit" });
+    writeFile.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))));
+    screen.changeHandler()("pending edit");
+    await screen.unmount();
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
+  });
+
+  it("retries a failed final save after unmount and confirms the retained draft", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    getUnsavedFile.mockReturnValue({ contents: "pending edit" });
+    writeFile.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))));
+    screen.changeHandler()("pending edit");
+    await screen.unmount();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "pending edit",
+        expectedContents: "original",
+      },
+    });
+    expect(confirmFile).toHaveBeenCalledExactlyOnceWith(
+      environmentId,
+      "/workspace",
+      "file.txt",
+      "pending edit",
+    );
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
+  it.each([{ contents: "newer edit" }, null])(
+    "cancels a retired retry when its draft is replaced or confirmed: %j",
+    async (draft) => {
+      setup();
+      using _timers = fakeTimers();
+      await using screen = await mount();
+      getUnsavedFile.mockReturnValue({ contents: "pending edit" });
+      writeFile.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("unavailable"))));
+      screen.changeHandler()("pending edit");
+      await screen.unmount();
+      await vi.advanceTimersByTimeAsync(0);
+      getUnsavedFile.mockReturnValue(draft);
+      await vi.runAllTimersAsync();
+      expect(writeFile).toHaveBeenCalledTimes(1);
+      expect(confirmFile).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
+    },
+  );
+
+  it("does not retry a successful final write declined by draft confirmation", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await mount();
+    confirmFile.mockReturnValue(false);
+    screen.changeHandler()("pending edit");
+    await screen.unmount();
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
+  });
+
   it("persists editor model changes after StrictMode setup replay", async () => {
     setup();
     using _timers = fakeTimers();

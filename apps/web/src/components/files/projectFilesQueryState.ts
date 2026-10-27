@@ -131,6 +131,18 @@ export function getUnsavedProjectFileQueryData(
   return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
 }
 
+export function getPersistedProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | undefined {
+  return Option.getOrUndefined(
+    AsyncResult.value(
+      appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+    ),
+  );
+}
+
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
