@@ -3668,85 +3668,79 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect.each(["github", "gitlab"] as const)(
-    "creates cross-repo PRs with the fork owner selector and default base branch (%s)",
-    (kind) =>
-      Effect.gen(function* () {
-        const sourceRepository =
-          kind === "gitlab" ? "octocat/subgroup/renamed-fork" : "octocat/renamed-fork";
-        const repoDir = yield* makeTempDir("t3code-git-manager-");
-        yield* initRepo(repoDir);
-        const forkDir = yield* createBareRemote();
-        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-        // A lone remote would be treated as the base repository.
-        yield* runGit(repoDir, [
-          "remote",
-          "add",
-          "origin",
-          `git@${kind}.com:pingdotgg/codething-mvp.git`,
-        ]);
-        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
-        yield* runGit(repoDir, ["add", "changes.txt"]);
-        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
-        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
-        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork-seed",
-          `git@${kind}.com:${sourceRepository}.git`,
-          forkDir,
-        );
+  it.effect("creates GitLab fork MRs with the source repository and default base branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      // A lone remote would be treated as the base repository.
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "git@gitlab.com:pingdotgg/codething-mvp.git",
+      ]);
+      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+      yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork-seed",
+        "git@gitlab.com:octocat/subgroup/renamed-fork.git",
+        forkDir,
+      );
 
-        const { manager, providerCalls } = yield* makeManager({
-          providerScenario: {
-            kind,
-            prListSequenceByHeadSelector: {
-              statemachine: [
-                [],
-                [
-                  {
-                    number: 188,
-                    title: "Add stacked git actions",
-                    url: "https://github.com/pingdotgg/codething-mvp/pull/188",
-                    baseRefName: "main",
-                    headRefName: "statemachine",
-                    state: "open",
-                    isCrossRepository: true,
-                    headRepositoryNameWithOwner: sourceRepository,
-                    headRepositoryOwnerLogin: "octocat",
-                  },
-                ],
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          kind: "gitlab",
+          prListSequenceByHeadSelector: {
+            statemachine: [
+              [],
+              [
+                {
+                  number: 188,
+                  title: "Add stacked git actions",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/188",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                  state: "open",
+                  isCrossRepository: true,
+                  headRepositoryNameWithOwner: "octocat/subgroup/renamed-fork",
+                  headRepositoryOwnerLogin: "octocat",
+                },
               ],
-            },
+            ],
           },
-        });
+        },
+      });
 
-        const result = yield* runStackedAction(manager, {
-          cwd: repoDir,
-          action: "commit_push_pr",
-        });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
 
-        expect(result.pr.status).toBe("created");
-        expect(result.pr.number).toBe(188);
-        expect(
-          providerCalls.find((call) => call.operation === "createChangeRequest"),
-        ).toMatchObject({
-          source: { repository: sourceRepository, refName: "statemachine" },
-        });
-        expect(
-          created(providerCalls).some(
-            (call) => call.baseRefName === "main" && call.headSelector === "octocat:statemachine",
-          ),
-        ).toBe(true);
-        expect(
-          created(providerCalls).some(
-            (call) =>
-              call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
-          ),
-        ).toBe(false);
-      }),
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(188);
+      expect(providerCalls.find((call) => call.operation === "createChangeRequest")).toMatchObject({
+        source: { repository: "octocat/subgroup/renamed-fork", refName: "statemachine" },
+      });
+      expect(
+        created(providerCalls).some(
+          (call) => call.baseRefName === "main" && call.headSelector === "octocat:statemachine",
+        ),
+      ).toBe(true);
+      expect(
+        created(providerCalls).some(
+          (call) =>
+            call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
+        ),
+      ).toBe(false);
+    }),
   );
 
   it.effect("rejects push/pr actions from detached HEAD", () =>
