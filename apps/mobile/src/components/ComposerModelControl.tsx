@@ -87,7 +87,8 @@ export function ComposerModelControl(props: {
       }
       label={props.modelOption?.shortName ?? label}
       iconOnly={props.iconOnly}
-      suffixFixed={!full && compact}
+      // Only short abbreviations keep their width; an unrecognized effort name truncates.
+      suffixFixed={!full && compact && (traits?.compactEffortLabel?.length ?? 0) <= 4}
       suffix={
         (full ? summary : visibleSummary) ? (
           <Text
