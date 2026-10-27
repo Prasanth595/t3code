@@ -848,7 +848,9 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     ledger.append(moved("building", "stuck") as never, cause);
     const listed = listRuns(dataDir);
     expect(listed).toEqual(readRuns(dataDir).map((read) => read.summary));
-    const [capped, short, open] = listed.map((run) => run.reason ?? "");
+    const reasonOf = (issue: number) =>
+      listed.find((run) => run.id.issue === String(issue))?.reason ?? "";
+    const [capped, short, open] = [reasonOf(1), reasonOf(2), reasonOf(3)];
     for (const reason of [capped, open]) {
       expect(reason.isWellFormed()).toBe(true);
       expect([...reason]).toHaveLength(300);

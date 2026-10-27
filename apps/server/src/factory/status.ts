@@ -67,7 +67,7 @@ export interface StatusReport {
     readonly state: string | null;
     /** The event of the run's last readable ledger line; null for none, or an unreadable file. */
     readonly last_event: string | null;
-    /** The issue title its newest launch recorded; null for a run launched before titles were. */
+    /** The issue title its first launch recorded; null when that launch has none, or there is none. */
     readonly title: string | null;
     /** The GitHub user the run was claimed as, from its `claimed` line. */
     readonly user: string | null;

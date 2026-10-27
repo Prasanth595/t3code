@@ -212,15 +212,15 @@ export interface RunSummary {
   /** The event of the last readable line; null for a file with no readable line. */
   readonly lastEvent: string | null;
   /**
-   * The issue title recorded on the first `session_launched` line that has one (every launch of a
-   * run writes the same title); null for none (a run launched before titles were recorded, or not
-   * yet) and for a file that could not be read.
+   * The issue title recorded on the run's first `session_launched` line; null when that line has
+   * none (a run launched before titles were recorded), when the run has not launched, and for a
+   * file that could not be read.
    */
   readonly title: string | null;
   /**
    * Why the run waits for a person: the `reason` of the newest `stuck` line while its last state
    * is `stuck`, the `questions` of the newest `questions_posted` line while it is `needs-info`;
-   * null otherwise.
+   * null otherwise. Cut to {@link REASON_MAX_CHARS} characters.
    */
   readonly reason: string | null;
   /** The `to` of the last `state_changed`; null before any, or for one this build does not know. */
@@ -284,13 +284,24 @@ const REASON_SOURCE = {
 const reasonSource = (state: State | null) =>
   state === "stuck" || state === "needs-info" ? REASON_SOURCE[state] : null;
 
-const isTitledLaunch = (entry: Entry) =>
-  entry.event === "session_launched" && dataText(entry.data, "title") !== null;
+/** The longest `reason` a summary carries: the rows are polled, and a reader shows a line or two. */
+const REASON_MAX_CHARS = 300;
+
+/** A reason cut to {@link REASON_MAX_CHARS} characters, ending in an ellipsis; never splits a character. */
+const capReason = (reason: string | null): string | null => {
+  if (reason === null || reason.length <= REASON_MAX_CHARS) return reason;
+  const chars = Array.from(reason);
+  return chars.length <= REASON_MAX_CHARS
+    ? reason
+    : `${chars.slice(0, REASON_MAX_CHARS - 1).join("")}\u2026`;
+};
+
+const isLaunch = (entry: Entry) => entry.event === "session_launched";
 
 /** The summary of a run read whole: its progress, plus what the progress does not carry. */
 const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
   const end = record.entries.findLast((entry) => entry.event === "finished");
-  const titled = record.entries.find(isTitledLaunch);
+  const launch = record.entries.find(isLaunch);
   const source = reasonSource(seen.state);
   const reason =
     source === null
@@ -303,8 +314,8 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
     id,
     startedTs: record.entries[0]?.ts ?? null,
     lastEvent: record.entries.at(-1)?.event ?? null,
-    title: dataText(titled?.data, "title"),
-    reason,
+    title: dataText(launch?.data, "title"),
+    reason: capReason(reason),
     state: seen.state,
     step: seen.finished
       ? null
@@ -319,15 +330,14 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
 
 /**
  * The summary of a finished run file without reading it whole, equal to {@link summarise} of the
- * whole read. A finished file is never appended to, so the first line, the `finished` line, the
- * last `state_changed`, the newest line the reason comes from (the scan keeps one of each) and
- * (if `finished` has no PR URL) the last `pr_opened` say everything. The title is read forwards
- * from the start: a launch writes it early, so the backward scan must not go looking for it.
+ * whole read. A finished file is never appended to, so the first line, the first launch, the
+ * `finished` line, the last `state_changed`, the newest reason line and (if `finished` has no PR
+ * URL) the last `pr_opened` say everything. The first launch is read forwards, the rest backwards.
  */
 const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
   withRunFile(path, (fd) => {
     const first = firstEntry(fd);
-    const title = dataText(firstEntry(fd, undefined, isTitledLaunch)?.data, "title");
+    const title = dataText(firstEntry(fd, undefined, isLaunch)?.data, "title");
     let end: Entry | undefined;
     let state: State | null | undefined;
     let prUrl: string | null = null;
@@ -367,12 +377,13 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         startedTs: first?.ts ?? null,
         lastEvent: "finished",
         title,
-        reason:
+        reason: capReason(
           state === "stuck"
             ? (stuckReason ?? null)
             : state === "needs-info"
               ? (questions ?? null)
               : null,
+        ),
         state: state ?? null,
         step: null,
         prUrl,
