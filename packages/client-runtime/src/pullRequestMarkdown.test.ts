@@ -166,6 +166,19 @@ describe("media on custom hosts", () => {
       { id: "attachment:1", kind: "attachment", url: "https://example.com/a.mp4", media: "video" },
     ]);
   });
+
+  it("keeps the caption of a media table instead of dropping it", () => {
+    const segments = splitPullRequestBody(
+      "<table>\n<caption>Before upgrading</caption>\n<tr><td>\n\nhttps://example.com/a.mp4\n\n</td></tr>\n</table>",
+    );
+    expect(segments.some((segment) => segment.kind === "table")).toBe(false);
+    expect(segments).toContainEqual(
+      expect.objectContaining({
+        kind: "markdown",
+        text: expect.stringContaining("Before upgrading"),
+      }),
+    );
+  });
 });
 
 describe("change request reference autolinks", () => {

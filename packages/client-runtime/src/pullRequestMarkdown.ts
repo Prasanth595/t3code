@@ -80,7 +80,7 @@ function mediaTableAt(
   }
   if (!TABLE_END_PATTERN.test(lines[end]!)) return null;
   const html = lines.slice(start, end + 1).join("\n");
-  if ((html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
+  if (/<caption\b/iu.test(html) || (html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
   const rows = Array.from(html.matchAll(TABLE_ROW_PATTERN), ([, row]) =>
     Array.from(row!.matchAll(TABLE_CELL_PATTERN), ([, tag, content]) => ({
       header: tag!.toLowerCase() === "th",
