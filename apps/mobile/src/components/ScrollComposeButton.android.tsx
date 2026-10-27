@@ -3,7 +3,6 @@ import { Box, ExtendedFloatingActionButton, Icon, Text } from "@expo/ui/jetpack-
 import {
   defaultMinSize,
   fillMaxWidth,
-  graphicsLayer,
   height,
   onSizeChanged,
   size,
@@ -37,7 +36,11 @@ export function ScrollComposeButton(props: {
       className={props.className}
       style={[props.style, { left: 20, height: fabSize }]}
     >
-      <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
+      <View
+        pointerEvents="none"
+        importantForAccessibility="no-hide-descendants"
+        style={{ transform: [{ scale }], transformOrigin: "top right" }}
+      >
         <NativeThemeHost
           matchContents={{ vertical: true }}
           ignoreSafeAreaKeyboardInsets
@@ -50,12 +53,6 @@ export function ScrollComposeButton(props: {
               modifiers={[
                 defaultMinSize({ minWidth: nativeSize }),
                 height(nativeSize),
-                graphicsLayer({
-                  scaleX: scale,
-                  scaleY: scale,
-                  transformOriginX: 1,
-                  transformOriginY: 0,
-                }),
                 onSizeChanged(rememberWidth),
               ]}
             >
