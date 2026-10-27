@@ -1,10 +1,9 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { parseGoalCommand, ThreadId } from "@t3tools/contracts";
 import { leadingGrokSkillMention } from "@t3tools/provider-grok/server/skills";
 import { parsePiCompactCommand } from "@t3tools/provider-pi/server/commands";
 import * as Effect from "effect/Effect";
 
-import { parseCodexGoalCommand } from "./Adapters/CodexAdapterV2.ts";
 import { providerTextForTurn } from "./agentSendProvenance.ts";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 
@@ -101,7 +100,7 @@ it.effect("an agent /goal x still routes", () =>
       ...untouched,
     });
 
-    assert.deepEqual(parseCodexGoalCommand(text), { type: "set", objective: "x" });
+    assert.deepEqual(parseGoalCommand({ text }), { type: "set", objective: "x" });
   }),
 );
 
