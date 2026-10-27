@@ -383,6 +383,8 @@ export function markdownWithTableBreaks(markdown: string): string {
   return transformNativeMarkdown(markdown, undefined, true);
 }
 
+const WINDOWS_DESTINATION = /\](?:\(|:)\s*<?(?:[A-Za-z]:[\\/]|\\\\)/;
+
 interface DestinationToken {
   readonly start: { readonly offset: number };
   readonly end: { readonly offset: number };
@@ -392,9 +394,11 @@ interface DestinationToken {
  * Markdown reads `C:\work\.t3` as `C:\work.t3`. Web keeps authored Windows destinations
  * literally (see `remarkKeepWindowsPaths` in shared), so escape their backslashes to give
  * both parsers here the same path. Like web, a destination with `&` keeps standard parsing.
+ * Expects authored Markdown: already escaped output would be escaped twice.
  */
 function markdownWithWindowsPathDestinations(markdown: string): string {
-  if (!markdown.includes("\\")) return markdown;
+  // Skips the extra parse for the common message that has no Windows destination.
+  if (!WINDOWS_DESTINATION.test(markdown)) return markdown;
   const edits: MarkdownEdit[] = [];
   function record(
     this: { resume(): string; sliceSerialize(token: DestinationToken): string },
@@ -404,7 +408,8 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
     const authored = this.sliceSerialize(token);
     if (!isWindowsAbsolutePath(authored) || !authored.includes("\\") || /[&<>]/.test(authored))
       return;
-    const { start, end } = { start: token.start.offset, end: token.end.offset };
+    const start = token.start.offset;
+    const end = token.end.offset;
     const escaped = authored.replaceAll("\\", "\\\\");
     // A bare destination ends at an unescaped `)`, so wrap it to keep `\)` inside.
     const angled = markdown[start - 1] === "<";

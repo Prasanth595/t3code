@@ -60,6 +60,7 @@ describe("parseMarkdownFileLink", () => {
       "pastexam/線性代數/exam_易志偉.pdf",
     );
     expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
   });
 
   it("accepts conventional extensionless names with or without a position", () => {
