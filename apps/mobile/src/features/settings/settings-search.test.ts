@@ -47,7 +47,7 @@ describe("filterSettingsSections", () => {
     { query: "appear", expected: [["Interface", ["Appearance"]]] },
     { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
-    { query: "branch naming", expected: [["Server settings", ["Source control"]]] },
+    { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
     {
       query: "server settings",
       expected: [["Server settings", ["Provider accounts", "Source control"]]],
@@ -64,5 +64,19 @@ describe("filterSettingsSections", () => {
 
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
+  });
+
+  it("finds snooze presets on the General page", () => {
+    const sections = [
+      {
+        rows: [
+          { id: "SettingsOrganization", label: "General" },
+          { id: "SettingsThreads", label: "Threads" },
+        ],
+      },
+    ];
+    expect(filterSettingsSections(sections, "snooze presets")).toEqual([
+      { rows: [{ id: "SettingsOrganization", label: "General" }] },
+    ]);
   });
 });
