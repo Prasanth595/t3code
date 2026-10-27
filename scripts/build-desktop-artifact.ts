@@ -2775,9 +2775,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
-    // Leave electronLanguages unset. Chromium takes navigator.language, the
-    // default Intl locale and date input formats from the shipped locale paks,
-    // so trimming them pins every page in the built-in browser to en-US.
+    // Keep every Chromium locale so browser language and date inputs follow the OS language.
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"

@@ -523,31 +523,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("leaves electronLanguages unset so every Chromium locale pak ships", () =>
+  it.effect.each([
+    ["mac", "dmg"],
+    ["linux", "AppImage"],
+    ["win", "nsis"],
+  ] as const)("ships every Chromium locale for %s", ([platform, target]) =>
     Effect.gen(function* () {
-      for (const [platform, target] of [
-        ["mac", "dmg"],
-        ["linux", "AppImage"],
-        ["win", "nsis"],
-      ] as const) {
-        const config = yield* createBuildConfig(
-          platform,
-          target,
-          "0.0.33",
-          false,
-          false,
-          undefined,
-          undefined,
-        );
-        assert.notProperty(config, "electronLanguages");
-      }
-    }).pipe(
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
-        ),
-      ),
-    ),
+      const config = yield* createBuildConfig(
+        platform,
+        target,
+        "0.0.33-pr.23736.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.notProperty(config, "electronLanguages");
+    }),
   );
 
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a
