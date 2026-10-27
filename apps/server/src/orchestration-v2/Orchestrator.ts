@@ -12473,7 +12473,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId,
               queuedRunId: next.queued.id,
               targetRunId: next.mode.targetRunId,
-            });
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to steer a message queued before the turn started", {
+                  threadId,
+                  queuedRunId: next.queued.id,
+                  cause,
+                }),
+              ),
+            );
           }
         }),
       );
