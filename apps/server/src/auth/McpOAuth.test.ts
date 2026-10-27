@@ -564,3 +564,26 @@ it("matches loopback redirects on everything but the port, and https redirects e
   expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
   expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
 });
+
+it.live("registers a client that presents more than five redirect URIs", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      // Gemini Spark registers six per-environment, user-bound redirect URIs.
+      const redirectUris = Array.from(
+        { length: 6 },
+        (_, index) => `https://oauth-redirect.googleusercontent.com/r/probe-${index}`,
+      );
+      const response = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({ client_name: "Google", redirect_uris: redirectUris }),
+        }),
+      );
+      expect(response.status).toBe(201);
+      expect(yield* json<{ redirect_uris: ReadonlyArray<string> }>(response)).toMatchObject({
+        redirect_uris: redirectUris,
+      });
+    }),
+  ),
+);
