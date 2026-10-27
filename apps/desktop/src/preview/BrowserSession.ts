@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
 import * as Context from "effect/Context";
@@ -173,6 +174,14 @@ const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const platform = yield* HostProcess.Platform;
+  // Electron cannot request macOS location authorization, so a grant reports "granted" and then times out.
+  const allowedPermissions: ReadonlySet<string> =
+    platform === "darwin"
+      ? new Set(
+          [...ALLOWED_PREVIEW_PERMISSIONS].filter((permission) => permission !== "geolocation"),
+        )
+      : ALLOWED_PREVIEW_PERMISSIONS;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let externalPromptOpen = false;
@@ -259,11 +268,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
-              callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
+              callback(allowedPermissions.has(permission));
             },
           );
           browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+            allowedPermissions.has(permission),
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);
