@@ -325,13 +325,10 @@ export function isBackgroundWorkStopPending(
   request: BackgroundWorkStopRequest | null,
   threadKey: string,
   tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
-  nowMs: number,
+  retryExpired: boolean,
 ): boolean {
-  if (request === null || request.threadKey !== threadKey) return false;
-  return (
-    request.retryAt === null ||
-    (nowMs < request.retryAt && tasks.some((task) => request.taskIds.includes(task.taskId)))
-  );
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
 }
 
 export function presentPendingBackgroundWork(

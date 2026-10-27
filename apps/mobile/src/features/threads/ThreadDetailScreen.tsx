@@ -57,7 +57,7 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { useNowAfter } from "../../lib/clock";
+import { useDeadlinePassed } from "../../lib/clock";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -533,7 +533,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     statusRequest,
     selectedThreadKey,
     props.selectedThread.pendingBackgroundTasks,
-    useNowAfter(statusRequest?.retryAt ?? null),
+    useDeadlinePassed(statusRequest?.retryAt ?? null),
   );
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(

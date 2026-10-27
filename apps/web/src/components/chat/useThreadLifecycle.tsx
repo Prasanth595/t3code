@@ -12,7 +12,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { useNowAfter } from "../../hooks/useDeadline";
+import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -382,7 +382,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     backgroundWorkStop,
     `${environmentId}:${activeThreadId}`,
     pendingBackgroundTasks,
-    useNowAfter(backgroundWorkStop?.retryAt ?? null),
+    useDeadlinePassed(backgroundWorkStop?.retryAt ?? null),
   );
   const handleStopBackgroundWork = async () => {
     if (
