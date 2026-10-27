@@ -1468,7 +1468,9 @@ it.effect("MCP replays accepted launches and checks worktree membership", () =>
         clientRequestId: "idle-retry",
         workspaceStrategy: { type: "root" as const },
       };
-      assert.include(yield* launch(idleInput), { runId: null, status: null });
+      const idleLaunch = yield* launch(idleInput);
+      assert.include(idleLaunch, { runId: null, status: null });
+      assert(idleLaunch !== undefined && "threadId" in idleLaunch);
       assert.include(
         yield* launch({
           ...idleInput,
@@ -1478,9 +1480,7 @@ it.effect("MCP replays accepted launches and checks worktree membership", () =>
         refusal,
       );
       const threads = yield* ThreadManagement.ThreadManagementService;
-      const idle = yield* threads.getThreadProjection(
-        ThreadId.make("mcp:launch:client%3Alaunch-retry:idle-retry"),
-      );
+      const idle = yield* threads.getThreadProjection(idleLaunch.threadId);
       assert.equal(idle.messages.length, 0);
       assert.equal(idle.runs.length, 0);
       assert.equal(idle.thread.worktreePath, null);
@@ -1488,7 +1488,7 @@ it.effect("MCP replays accepted launches and checks worktree membership", () =>
       assert.equal(harness.runSetup.mock.calls.length, 0);
 
       const first = yield* launch(input);
-      assert.isDefined(first);
+      assert(first !== undefined && "threadId" in first);
       assert.notProperty(first, "code");
       yield* Deferred.await(setupEntered);
       changed = true;
@@ -1520,7 +1520,7 @@ it.effect("MCP replays accepted launches and checks worktree membership", () =>
         }),
         { code: "invalid_request" },
       );
-      const threadId = ThreadId.make("mcp:launch:client%3Alaunch-retry:lost-response");
+      const threadId = first.threadId;
       assert.equal((yield* threads.getThreadShell(threadId))?.runtimeMode, "approval-required");
       yield* threads.dispatch({
         type: "thread.runtime-mode.set",
