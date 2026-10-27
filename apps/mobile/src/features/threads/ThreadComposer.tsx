@@ -128,7 +128,11 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+export function useCompactComposerEditor(
+  text: ScaledTextRole,
+  value: string,
+  forceExpanded = false,
+) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
@@ -145,9 +149,10 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    forceExpanded ||
+    (value.length > 0 &&
+      (contentHeight > text.lineHeight * 1.5 ||
+        (compactWidth > 0 && contentSize.width > compactWidth)));
   const compactRowHeight = Math.max(44, minimum);
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
@@ -266,6 +271,8 @@ export const COMPOSER_LAYOUT_TRANSITION =
   Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
+// Android types in the expanded editor, so the unfocused row only previews the draft.
+const ANDROID_PREVIEW_EDITOR_MIN_WIDTH = "25%";
 const INLINE_EDITOR_HEIGHT = 36;
 
 const COMPOSER_ATTACHMENT_ENTERING =
@@ -566,7 +573,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  // Android gives focused typing the full-width editor and a toolbar row for the model labels.
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    Platform.OS === "android" && isExpanded,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -776,7 +788,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
+        iconOnly={Platform.OS !== "android" && !compactEditor.isExpanded}
+        hideTraits={!compactEditor.isExpanded}
         onPress={openSettings}
       />
     </View>
@@ -885,10 +898,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onLayout={compactEditor.onEditorLayout}
                 style={[
                   {
-                    minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
-                        ? 0
-                        : INLINE_EDITOR_MIN_WIDTH,
+                    minWidth: compactEditor.isExpanded
+                      ? 0
+                      : Platform.OS === "android"
+                        ? ANDROID_PREVIEW_EDITOR_MIN_WIDTH
+                        : stripAttachments.length > 0
+                          ? 0
+                          : INLINE_EDITOR_MIN_WIDTH,
                   },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
