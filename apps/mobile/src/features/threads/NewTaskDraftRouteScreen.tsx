@@ -117,6 +117,20 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       candidate.environmentId === initialProjectRef.environmentId &&
       candidate.id === initialProjectRef.projectId,
   );
+  // A project can drop out of the list and come back while its catalog stays ready. The checkout
+  // keeps the last project this route resolved, so that gap reads the same checkout.
+  const [resolvedProject, setResolvedProject] = useState<{
+    readonly environmentId: string;
+    readonly workspaceRoot: string;
+  } | null>(null);
+  if (
+    project &&
+    (resolvedProject?.environmentId !== project.environmentId ||
+      resolvedProject.workspaceRoot !== project.workspaceRoot)
+  ) {
+    setResolvedProject({ environmentId: project.environmentId, workspaceRoot: project.workspaceRoot });
+  }
+  const checkoutProject = project ?? resolvedProject;
   const workspaceRoot = project?.workspaceRoot;
   const needsPreparation = Boolean(initialProjectRef.branch && !draftId);
   const waitingForProject =
@@ -134,8 +148,8 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       ? branchCheckoutRequestKey({
           flowKey,
           routeKey: currentRoute.key,
-          environmentId: project?.environmentId ?? null,
-          workspaceRoot: workspaceRoot ?? null,
+          environmentId: checkoutProject?.environmentId ?? null,
+          workspaceRoot: checkoutProject?.workspaceRoot ?? null,
           branch: initialProjectRef.branch,
           worktreePath: initialProjectRef.worktreePath ?? null,
         })

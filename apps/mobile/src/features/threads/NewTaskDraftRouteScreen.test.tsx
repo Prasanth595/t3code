@@ -104,7 +104,13 @@ const connected: Snapshot["catalog"] = {
   connectionError: null,
 };
 
-it("checks the branch out once when a reconnect drops and restores the project", async () => {
+// The project can vanish while the catalog still loads, or while it reports ready.
+it.each([
+  ["while the catalog reloads", { ...connected, isLoadingConnections: true }],
+  ["while the catalog stays ready", connected],
+])("checks the branch out once when a reconnect drops and restores the project %s", async (gap, gapCatalog) => {
+  // Checkouts live in a module table keyed by route, so each case uses its own route.
+  const routeKey = `thread-route ${gap}`;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const firstCheckout = Promise.withResolvers<unknown>();
   harness.checkout.mockReturnValueOnce(firstCheckout.promise);
@@ -113,7 +119,7 @@ it("checks the branch out once when a reconnect drops and restores the project",
   );
   harness.set({ projects: [project], catalog: connected });
   const draft = { environmentId: "env-1", projectId: "project-1", branch: "feature" };
-  harness.route = { key: "thread-route", name: "Thread", params: { draft } };
+  harness.route = { key: routeKey, name: "Thread", params: { draft } };
 
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -121,14 +127,14 @@ it("checks the branch out once when a reconnect drops and restores the project",
   act(() =>
     root.render(
       <NewTaskDraftRouteScreen
-        route={{ key: "thread-route", name: "Thread", params: draft } as never}
+        route={{ key: routeKey, name: "Thread", params: draft } as never}
       />,
     ),
   );
   await vi.waitFor(() => expect(harness.checkout).toHaveBeenCalledTimes(1));
 
   // The connection drops while the checkout runs, then the project comes back.
-  act(() => harness.set({ projects: [], catalog: { ...connected, isLoadingConnections: true } }));
+  act(() => harness.set({ projects: [], catalog: gapCatalog }));
   act(() => harness.set({ projects: [project], catalog: connected }));
   await act(async () => {
     firstCheckout.resolve(
