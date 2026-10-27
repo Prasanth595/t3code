@@ -90,6 +90,7 @@ export function SecretProviderDialog({
         </DialogHeader>
         <DialogPanel>
           <form
+            id="secret-provider-form"
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -157,7 +158,11 @@ export function SecretProviderDialog({
           <Button variant="outline" onClick={close}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={submitted && Result.isFailure(result)}>
+          <Button
+            type="submit"
+            form="secret-provider-form"
+            disabled={submitted && Result.isFailure(result)}
+          >
             {existing ? "Save changes" : "Add provider"}
           </Button>
         </DialogFooter>
