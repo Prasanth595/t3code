@@ -2926,14 +2926,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(free.branch, "t3/feature");
 
         yield* git(cwd, ["branch", "t3/taken"]);
-        yield* git(cwd, ["branch", "t3/taken-1"]);
+        yield* git(cwd, ["branch", "t3/taken-2"]);
         const suffixed = yield* driver.renameBranch({
           cwd,
           oldBranch: "t3/feature",
           newBranch: "t3/taken",
         });
-        assert.equal(suffixed.branch, "t3/taken-2");
-        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3/taken-2");
+        assert.equal(suffixed.branch, "t3/taken-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3/taken-1");
       }),
     );
 
