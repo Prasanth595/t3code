@@ -13,6 +13,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  hasActiveRun: false,
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -70,5 +71,12 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("omits mark unread while the thread is running", () => {
+    const ids = (hasActiveRun: boolean) =>
+      buildThreadActionMenuItems({ ...baseState, hasActiveRun }).map((item) => item.id);
+    expect(ids(false)).toContain("mark-unread");
+    expect(ids(true)).not.toContain("mark-unread");
   });
 });

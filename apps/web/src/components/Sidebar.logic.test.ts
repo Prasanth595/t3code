@@ -6,6 +6,9 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   archiveSelectedThreadEntries,
+  buildBulkMarkUnreadContextMenuItem,
+  buildMultiSelectThreadContextMenuItems,
+  canMarkThreadUnread,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -162,6 +165,55 @@ describe("archiveSelectedThreadEntries", () => {
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+});
+
+describe("bulk mark unread", () => {
+  const runtimeWith = (status: "idle" | "running" | "waiting" | "completed") => ({
+    status,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+  });
+  const markUnreadCount = (threads: readonly Parameters<typeof canMarkThreadUnread>[0][]) =>
+    threads.filter(canMarkThreadUnread).length;
+
+  it("omits mark unread when every selected thread has an active run", () => {
+    const selection = [{ runtime: runtimeWith("running") }, { runtime: runtimeWith("waiting") }];
+    expect(buildBulkMarkUnreadContextMenuItem({ eligibleCount: markUnreadCount(selection) })).toBe(
+      null,
+    );
+    const legacyIds = buildMultiSelectThreadContextMenuItems({
+      count: selection.length,
+      markUnreadCount: markUnreadCount(selection),
+      hasRunningThread: true,
+    }).map((item) => item.id);
+    expect(legacyIds).toEqual(["archive", "delete"]);
+  });
+
+  it("counts only threads without an active run in a mixed selection", () => {
+    const selection = [
+      { runtime: runtimeWith("running") },
+      { runtime: runtimeWith("idle") },
+      { runtime: runtimeWith("completed") },
+      { runtime: null },
+    ];
+    expect(selection.map(canMarkThreadUnread)).toEqual([false, true, true, true]);
+    expect(
+      buildBulkMarkUnreadContextMenuItem({ eligibleCount: markUnreadCount(selection) }),
+    ).toEqual({ id: "mark-unread", label: "Mark unread (3)" });
+    expect(
+      buildMultiSelectThreadContextMenuItems({
+        count: selection.length,
+        markUnreadCount: markUnreadCount(selection),
+        hasRunningThread: true,
+      }),
+    ).toEqual([
+      { id: "mark-unread", label: "Mark unread (3)" },
+      { id: "archive", label: "Archive (4)", disabled: true },
+      { id: "delete", label: "Delete (4)", destructive: true },
+    ]);
   });
 });
 

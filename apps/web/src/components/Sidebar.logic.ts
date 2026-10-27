@@ -1,4 +1,8 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+  type ThreadStructureRuntime,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -541,12 +545,30 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
+// Unread only surfaces as a completion pill, which an active run hides.
+export function canMarkThreadUnread(thread: {
+  readonly runtime: ThreadStructureRuntime | null | undefined;
+}): boolean {
+  return !threadRuntimeIsActive(thread.runtime);
+}
+
+export function buildBulkMarkUnreadContextMenuItem(input: {
+  eligibleCount: number;
+}): ContextMenuItem<"mark-unread"> | null {
+  if (input.eligibleCount === 0) return null;
+  return { id: "mark-unread", label: `Mark unread (${input.eligibleCount})` };
+}
+
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
+  markUnreadCount: number;
   hasRunningThread: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+  const markUnreadItem = buildBulkMarkUnreadContextMenuItem({
+    eligibleCount: input.markUnreadCount,
+  });
   return [
-    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    ...(markUnreadItem ? [markUnreadItem] : []),
     {
       id: "archive",
       label: `Archive (${input.count})`,

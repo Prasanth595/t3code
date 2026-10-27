@@ -75,7 +75,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import {
+  threadRuntimeCanArchive,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -193,6 +196,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canMarkThreadUnread,
   deleteSelectedThreadEntries,
   filterSidebarV2VisibleThreads,
   getSidebarThreadIdsToPrewarm,
@@ -1820,12 +1824,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     const hasRunningThread = selectedThreadEntries.some(
       ({ thread }) => !threadRuntimeCanArchive(thread.runtime),
     );
+    const markUnreadEntries = selectedThreadEntries.filter(({ thread }) =>
+      canMarkThreadUnread(thread),
+    );
     const canOperateSelection = selectedThreadEntries.every(({ threadRef }) =>
       readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
     );
 
     const clicked = await api.contextMenu.show(
-      buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }).map((item) =>
+      buildMultiSelectThreadContextMenuItems({
+        count,
+        markUnreadCount: markUnreadEntries.length,
+        hasRunningThread,
+      }).map((item) =>
         item.id === "archive" || item.id === "delete"
           ? { ...item, disabled: item.disabled || !canOperateSelection }
           : item,
@@ -1834,7 +1845,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     );
 
     if (clicked === "mark-unread") {
-      for (const { threadRef } of selectedThreadEntries) {
+      for (const { threadRef } of markUnreadEntries) {
         markThreadUnread(threadRef);
       }
       clearSelection();
@@ -2178,7 +2189,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(appAtomRegistry.get(canShareWithGuestAtom(thread.environmentId))
             ? [{ id: "share-guest", label: "Share with guest" }]
             : []),
-          { id: "mark-unread", label: "Mark unread" },
+          ...(threadRuntimeIsActive(thread.runtime)
+            ? []
+            : [{ id: "mark-unread", label: "Mark unread" }]),
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "project-settings", label: "Project settings" },
