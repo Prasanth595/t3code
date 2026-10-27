@@ -139,6 +139,7 @@ import {
   type ProjectionCheckpointContext,
   type OlderSettledThreadsListing,
   type OlderSettledThreadsQuery,
+  type ProjectionPullRequestSyncSnapshot,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -390,6 +391,9 @@ export interface OrchestratorV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
+  readonly getPullRequestSyncSnapshot: (
+    options: Parameters<ProjectionStoreV2["Service"]["getPullRequestSyncSnapshot"]>[0],
+  ) => Effect.Effect<ProjectionPullRequestSyncSnapshot, OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     OrchestratorV2Error
@@ -12745,6 +12749,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     getShellSnapshot: Effect.fn("OrchestratorV2.getShellSnapshot")(function (options) {
       return projectionStore.getShellSnapshot(options).pipe(Effect.mapError(shellProjectionError));
     }),
+    getPullRequestSyncSnapshot: Effect.fn("OrchestratorV2.getPullRequestSyncSnapshot")(
+      function (options) {
+        return projectionStore
+          .getPullRequestSyncSnapshot(options)
+          .pipe(Effect.mapError(shellProjectionError));
+      },
+    ),
     listActiveSubagentThreadIds: Effect.fn("OrchestratorV2.listActiveSubagentThreadIds")(
       function () {
         return projectionStore

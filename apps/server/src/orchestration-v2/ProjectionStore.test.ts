@@ -1192,6 +1192,99 @@ it.effect.each([
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("pull request sync reads the shell snapshot's threads and sequence", () =>
+  Effect.gen(function* () {
+    type SyncThread = ProjectionStore.ProjectionPullRequestSyncSnapshot["threads"][number];
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const id = (name: string) => ThreadId.make(`thread:pr-sync:${name}`);
+    const payloadOf = (
+      name: string,
+      state: Partial<Pick<SyncThread, "archivedAt" | "settledOverride" | "settledAt">> = {},
+    ) =>
+      ({
+        createdBy: "user",
+        creationSource: "web",
+        id: id(name),
+        projectId: ProjectId.make("project:pr-sync"),
+        title: name,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: `feature/${name}`,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id(name) },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+        ...state,
+      }) as const;
+    const create = (name: string, state?: Parameters<typeof payloadOf>[1]) =>
+      store.apply({
+        id: EventId.make(`event:pr-sync:${name}`),
+        type: "thread.created",
+        threadId: id(name),
+        occurredAt: now,
+        payload: payloadOf(name, state),
+      });
+    yield* create("open");
+    yield* create("settled", { settledOverride: "settled", settledAt: now });
+    yield* create("auto-settled", { settledAt: now });
+    yield* create("archived", { archivedAt: now });
+    yield* create("deleted");
+    yield* store.apply({
+      id: EventId.make("event:pr-sync:deleted:deleted"),
+      type: "thread.deleted",
+      threadId: id("deleted"),
+      occurredAt: now,
+      payload: { ...payloadOf("deleted"), deletedAt: now },
+    });
+
+    const pick = (thread: SyncThread) => ({
+      id: thread.id,
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      pullRequests: thread.pullRequests,
+      linkedPullRequest: thread.linkedPullRequest,
+      branchPullRequest: thread.branchPullRequest,
+      archivedAt: thread.archivedAt,
+      settledOverride: thread.settledOverride,
+      settledAt: thread.settledAt,
+    });
+    for (const options of [
+      { location: "active" },
+      { location: "active", unsettledOnly: true },
+      { threadIds: [id("archived")] },
+      { threadIds: [id("deleted")] },
+    ] as const) {
+      const shell = yield* store.getShellSnapshot(options);
+      const sync = yield* store.getPullRequestSyncSnapshot(options);
+      assert.deepEqual(
+        { snapshotSequence: sync.snapshotSequence, threads: sync.threads.map(pick) },
+        {
+          snapshotSequence: shell.snapshotSequence,
+          threads: [...shell.threads, ...shell.archivedThreads].map(pick),
+        },
+      );
+    }
+    assert.deepEqual(
+      (yield* store.getPullRequestSyncSnapshot({
+        location: "active",
+        unsettledOnly: true,
+      })).threads.map((thread) => thread.id),
+      [id("open")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],
   ["SQL", layerTest],

@@ -189,6 +189,25 @@ export type ProjectionThreadPullRequests = Pick<
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
 >;
 
+export interface ProjectionPullRequestSyncSnapshot {
+  readonly snapshotSequence: number;
+  readonly threads: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadShell,
+      | "id"
+      | "projectId"
+      | "branch"
+      | "worktreePath"
+      | "pullRequests"
+      | "linkedPullRequest"
+      | "branchPullRequest"
+      | "archivedAt"
+      | "settledOverride"
+      | "settledAt"
+    >
+  >;
+}
+
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
@@ -512,6 +531,12 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /** The shell snapshot's threads and sequence without the run, item and message reads. */
+  readonly getPullRequestSyncSnapshot: (
+    options: Pick<ShellSnapshotOptions, "unsettledOnly" | "threadIds"> & {
+      readonly location?: "active";
+    },
+  ) => Effect.Effect<ProjectionPullRequestSyncSnapshot, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -610,6 +635,10 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
+  readonly getRun: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<OrchestrationV2Run | undefined, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5265,6 +5294,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getRun: ProjectionStoreV2Shape["getRun"] = (threadId, runId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_runs
+          WHERE run_id = ${runId} AND thread_id = ${threadId}`;
+            return rows[0] === undefined
+              ? undefined
+              : yield* decodeRunPayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -6474,6 +6518,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const shellSnapshotReadError = (cause: unknown) =>
       new ProjectionStoreReadError({ threadId: ThreadId.make("thread:shell"), cause });
 
+    const selectSnapshotSequence = sql<{ readonly snapshot_sequence: number | null }>`
+      SELECT MAX(sequence) AS snapshot_sequence
+      FROM orchestration_events
+      WHERE application_event_version = 2
+        AND aggregate_kind = 'thread'
+    `;
+
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
@@ -6515,12 +6566,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readForThreadIds(selectShellRunRows, forkSourceIds),
         readForThreadIds(selectShellRunItemCounts, forkSourceIds),
         readForThreadIds(selectShellItemCounts),
-        sql<{ readonly snapshot_sequence: number | null }>`
-        SELECT MAX(sequence) AS snapshot_sequence
-        FROM orchestration_events
-        WHERE application_event_version = 2
-          AND aggregate_kind = 'thread'
-      `,
+        selectSnapshotSequence,
         readForThreadIds(selectShellProviderThreadRows),
         readForThreadIds((ids) =>
           selectShellPendingTurnItemRows(
@@ -6604,6 +6650,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(readShellSnapshotRows(options))
         .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+
+    const getPullRequestSyncSnapshot: ProjectionStoreV2Shape["getPullRequestSyncSnapshot"] =
+      Effect.fn("ProjectionStore.getPullRequestSyncSnapshot")(function* ({
+        location,
+        unsettledOnly = false,
+        threadIds,
+      }) {
+        const [rows, sequenceRows] = yield* sql.withTransaction(
+          Effect.all([
+            sql<PayloadRow>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_threads
+              WHERE deleted_at IS NULL${location === "active" ? sql` AND archived_at IS NULL` : sql``}${
+                unsettledOnly
+                  ? sql` AND json_extract(payload_json, '$.settledAt') IS NULL AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'`
+                  : sql``
+              }${threadIds === undefined ? sql`` : sql` AND thread_id IN ${sql.in(threadIds)}`}
+              ORDER BY updated_at ASC, thread_id ASC
+            `,
+            selectSnapshotSequence,
+          ]),
+        );
+        const threads = yield* Effect.forEach(rows, (row) =>
+          decodeThreadPayload(row.payload_json).pipe(
+            Effect.map((thread) => ({
+              id: thread.id,
+              projectId: thread.projectId,
+              branch: thread.branch,
+              worktreePath: thread.worktreePath,
+              pullRequests: threadPullRequestsOf(thread),
+              ...(thread.linkedPullRequest === undefined
+                ? {}
+                : { linkedPullRequest: thread.linkedPullRequest }),
+              ...(thread.branchPullRequest === undefined
+                ? {}
+                : { branchPullRequest: thread.branchPullRequest }),
+              archivedAt: thread.archivedAt,
+              settledOverride: thread.settledOverride,
+              settledAt: thread.settledAt,
+            })),
+          ),
+        );
+        return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
+      }, Effect.mapError(shellSnapshotReadError));
 
     const listActiveSubagentThreadIds = Effect.fn("ProjectionStore.listActiveSubagentThreadIds")(
       function* () {
@@ -6780,6 +6870,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
+      getPullRequestSyncSnapshot: readOnReader(getPullRequestSyncSnapshot),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getThreadProjection,
       getTurnStartContext: readOnReader(getTurnStartContext),
@@ -6792,6 +6883,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
+      getRun: readOnReader(getRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
@@ -7059,6 +7151,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 pullRequests: thread.pullRequests ?? [],
               })),
           ),
+        ),
+      getPullRequestSyncSnapshot: (options) =>
+        service.getShellSnapshot(options).pipe(
+          Effect.map((snapshot) => ({
+            snapshotSequence: snapshot.snapshotSequence,
+            threads: [...snapshot.threads, ...snapshot.archivedThreads],
+          })),
         ),
       getLimitRecoveryCandidates: (options) =>
         Ref.get(replayState).pipe(
@@ -7499,6 +7598,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           return yield* new ProjectionStoreThreadNotFoundError({ threadId });
         const run = projection.runs.find((candidate) => candidate.id === runId);
         return projection.messages.find((message) => message.id === run?.userMessageId);
+      }),
+      getRun: Effect.fn("ProjectionStore.getRun")(function* (threadId, runId) {
+        const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+        if (projection === undefined)
+          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+        return projection.runs.find((candidate) => candidate.id === runId);
       }),
       canStartQueuedRun: Effect.fn("ProjectionStore.canStartQueuedRun")(function* (threadId) {
         const projection = (yield* Ref.get(replayState)).projections.get(threadId);
