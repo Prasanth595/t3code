@@ -1,3 +1,4 @@
+import { recordServerClock, toServerClock } from "@t3tools/client-runtime/clock";
 import {
   boundAttachmentIds,
   findRecordedWorktreeSetup,
@@ -128,6 +129,35 @@ describe("deriveComposerSendState", () => {
     expect(state.hasSendableContent).toBe(true);
   });
 });
+
+it.each([true, false])(
+  "counts optimistic sends on the host clock with an existing thread: %s",
+  (hasThread) => {
+    const thread = makeThread();
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    recordServerClock(thread.environmentId, {
+      serverTimeMs: Date.now() + 3_600_000,
+      requestedAtMs: Date.now(),
+      receivedAtMs: Date.now(),
+    });
+    try {
+      const dispatch = createLocalDispatchSnapshot(hasThread ? thread : undefined, {
+        environmentId: thread.environmentId,
+      });
+      expect(
+        toServerClock(thread.environmentId, Date.now() + 2_000) - Date.parse(dispatch.startedAt),
+      ).toBe(2_000);
+    } finally {
+      recordServerClock(thread.environmentId, {
+        serverTimeMs: undefined,
+        requestedAtMs: 0,
+        receivedAtMs: 0,
+      });
+      vi.useRealTimers();
+    }
+  },
+);
 
 describe("hasServerAcknowledgedLocalDispatch", () => {
   it("acknowledges a settled newer background turn", () => {
