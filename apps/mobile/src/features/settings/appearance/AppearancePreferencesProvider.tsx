@@ -95,7 +95,7 @@ const systemColorPalettesAtom = Atom.make((get): MaterialYouPalettes | null => {
     focusSubscription.remove();
   });
   return initial;
-}).pipe(Atom.keepAlive, Atom.withLabel("mobile:system-color-palettes"));
+}).pipe(Atom.withLabel("mobile:system-color-palettes"));
 
 function resolveThemeVariablesByAppearance(
   themeIds: MobileThemeIds,
@@ -161,9 +161,20 @@ function currentRuntimeState() {
   return appliedRuntimeState ?? appAtomRegistry.get(themeRuntimeStateAtom);
 }
 
-/** App-lifetime: applies theme preferences to the native runtime. */
+/**
+ * App-lifetime: applies theme preferences to the native runtime and holds the
+ * system palette listeners. Holding them here instead of `keepAlive` lets the
+ * fast-refresh disposer release the replaced module's AppState listeners.
+ */
 export function installAppearanceRuntime(): () => void {
-  return appAtomRegistry.subscribe(themeRuntimeStateAtom, applyThemeRuntime, { immediate: true });
+  const unsubscribeRuntime = appAtomRegistry.subscribe(themeRuntimeStateAtom, applyThemeRuntime, {
+    immediate: true,
+  });
+  const releasePalettes = appAtomRegistry.mount(systemColorPalettesAtom);
+  return () => {
+    unsubscribeRuntime();
+    releasePalettes();
+  };
 }
 
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
