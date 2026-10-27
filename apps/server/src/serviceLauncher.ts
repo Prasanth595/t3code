@@ -534,7 +534,10 @@ export class Launcher {
 
   async #serviceStartDiskSpaceBlocker(): Promise<string | undefined> {
     try {
-      const databasePath = NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
+      const databasePath =
+        this.#state.update?.status === "pending"
+          ? this.#state.update.dbPath
+          : NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
       const resolvedDatabasePath = await NodeFSP.realpath(databasePath).catch(() => databasePath);
       const [baseFreeBytes, databaseFreeBytes] = await Promise.all([
         filesystemBackupSpaceProbe.readFreeBytes(this.#baseDir),
