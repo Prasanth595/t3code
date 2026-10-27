@@ -944,7 +944,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       } else if (snoozeSelection._tag === "expired") {
         Dialog.alert(
           "Could not snooze thread",
-          "That snooze time has passed. Choose another time.",
+          "That snooze option is no longer available. Choose another time.",
         );
       }
     },

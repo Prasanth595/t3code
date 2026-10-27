@@ -105,7 +105,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
   if (currentPreset) return { _tag: "selected", preset: currentPreset };
 
   const displayedPreset = input.displayedPresets.find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
+    (candidate) => !candidate.id.startsWith("preset-") && input.event === `snooze:${candidate.id}`,
   );
   if (displayedPreset && Date.parse(displayedPreset.snoozedUntil) > input.now.getTime()) {
     return { _tag: "selected", preset: displayedPreset };

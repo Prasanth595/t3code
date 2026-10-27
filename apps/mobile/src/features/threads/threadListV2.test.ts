@@ -60,6 +60,34 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
+  it("rejects a custom preset that becomes a duplicate while the menu is open", () => {
+    const preferences = [...DEFAULT_SNOOZE_PRESETS];
+    preferences[0] = { mode: "absolute", day: "today", time: "09:00" };
+    preferences[1] = { mode: "relative", hours: 3 };
+
+    expect(
+      resolveThreadListV2SnoozeMenuSelection({
+        event: "snooze:preset-1",
+        displayedPresets: resolveSnoozePresets(new Date(2026, 4, 8, 5), preferences),
+        preferences,
+        now: new Date(2026, 4, 8, 6),
+      }),
+    ).toEqual({ _tag: "expired" });
+  });
+
+  it("retains a still-valid default evening preset after the one-hour cutoff", () => {
+    const selected = resolveThreadListV2SnoozeMenuSelection({
+      event: "snooze:evening",
+      displayedPresets: resolveSnoozePresets(new Date(2026, 4, 8, 16, 59)),
+      now: new Date(2026, 4, 8, 17, 1),
+    });
+
+    expect(selected).toMatchObject({
+      _tag: "selected",
+      preset: { snoozedUntil: new Date(2026, 4, 8, 18).toISOString() },
+    });
+  });
+
   it("uses the saved preferences when recomputing a selected snooze", () => {
     const preferences = [...DEFAULT_SNOOZE_PRESETS];
     preferences[0] = { mode: "relative", hours: 168 };

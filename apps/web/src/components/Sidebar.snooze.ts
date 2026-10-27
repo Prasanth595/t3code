@@ -45,6 +45,8 @@ export function resolveSnoozePresetSelection(
   if (currentPreset) return currentPreset;
   return displayedPresets.find(
     (candidate) =>
-      `snooze:${candidate.id}` === action && Date.parse(candidate.snoozedUntil) > now.getTime(),
+      !candidate.id.startsWith("preset-") &&
+      `snooze:${candidate.id}` === action &&
+      Date.parse(candidate.snoozedUntil) > now.getTime(),
   );
 }
