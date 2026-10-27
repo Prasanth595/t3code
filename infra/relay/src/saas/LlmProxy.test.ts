@@ -367,6 +367,42 @@ describe("chat mode search and attachments", () => {
     }),
   );
 
+  it.effect("keeps the search tool declared but unusable on the last round", () =>
+    Effect.gen(function* () {
+      // A model that saw tool results but no tool declaration writes its next call as plain text.
+      const harness = makeHarness({
+        upstream: (request) =>
+          request.url.endsWith("/v1/tools/search")
+            ? Response.json({ results: [] })
+            : sentJson(request)?.tool_choice === "none"
+              ? stream({ choices: [{ delta: { content: "Done." } }] })
+              : stream({
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: `call_${harness.sent.length}`,
+                            function: { name: "web_search", arguments: '{"query":"ai"}' },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                }),
+      });
+      expect(yield* readText(yield* harness.chatMode(device))).toContain("Done.");
+      const turns = harness.sent
+        .filter((request) => !request.url.endsWith("/v1/tools/search"))
+        .map((request) => sentJson(request));
+      expect(turns.slice(0, -1).every((turn) => turn?.tool_choice === "auto")).toBe(true);
+      const last = turns.at(-1);
+      expect(last?.tools).toHaveLength(1);
+      expect(last?.tool_choice).toBe("none");
+    }),
+  );
+
   it.effect("stores a document and reads its text into the conversation", () =>
     Effect.gen(function* () {
       const harness = makeHarness({ upstream: () => stream() });
