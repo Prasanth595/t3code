@@ -440,6 +440,24 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
+  it.effect.each([false, true])(
+    "reuses a runtime published before the first marker read (archive: %s)",
+    (archive) =>
+      Effect.gen(function* () {
+        const script = archive
+          ? yield* captureLauncherFor({ archiveVersion: "1.2.3" })
+          : yield* captureLauncher;
+        const result = runLauncher(script, {
+          archive,
+          marker: { startedAt: 0, expiresAt: 60_000 },
+          publishAfterFirstRuntimeRead: true,
+        });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.equal(result.now, 0);
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
   it.effect("waits across the eight-second installer gap and reuses the replacement server", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {

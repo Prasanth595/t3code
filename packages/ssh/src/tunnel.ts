@@ -747,8 +747,9 @@ if [ -z "$REMOTE_PORT" ]; then
     sleep 1
     UPDATE_WAITED=$((UPDATE_WAITED + 1))
   done
-  # The desktop clears the marker after publishing runtime, so refresh once more before falling back.
-  if [ "$UPDATE_SAW_MARKER" -eq 1 ] && [ -z "$REMOTE_PORT" ] && ! adopt_default_server; then
+  # The desktop clears the marker after publishing runtime, possibly before the first marker read,
+  # so refresh once more before falling back. A cleanly stopped server leaves no runtime file.
+  if { [ "$UPDATE_SAW_MARKER" -eq 1 ] || [ -f "$DEFAULT_RUNTIME_FILE" ]; } && [ -z "$REMOTE_PORT" ] && ! adopt_default_server; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""

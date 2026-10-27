@@ -66,6 +66,8 @@ export function runLauncher(
     readonly clockJump?: number;
     readonly readyAt?: number;
     readonly initialPort?: number;
+    // The desktop publishes runtime and removes the marker right after the first runtime read.
+    readonly publishAfterFirstRuntimeRead?: boolean;
   },
 ) {
   const root = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
@@ -101,7 +103,12 @@ case "\${2:-}" in
   */server-runtime.json)
     NOW="$(cat "$HOME/clock")"
     printf 'runtime %s\\n' "$NOW" >> "$HOME/events"
-    if [ "$NOW" -ge "$TEST_READY_AT" ]; then printf '%s %s' "$TEST_SERVER_PID" 4888
+    if [ "$NOW" -ge "$TEST_READY_AT" ] || [ -e "$2" ]; then printf '%s %s' "$TEST_SERVER_PID" 4888
+    elif [ "$TEST_PUBLISH_AFTER_FIRST_READ" = 1 ]; then
+      mkdir -p "\${2%/*}"
+      printf '{}' > "$2"
+      rm -f "$HOME/.t3/runtime/desktop-update-in-progress"
+      exit 1
     elif [ -n "$TEST_INITIAL_PORT" ]; then printf '%s %s' "$TEST_SERVER_PID" "$TEST_INITIAL_PORT"
     else exit 1; fi ;;
   */port)
@@ -110,7 +117,7 @@ case "\${2:-}" in
   [0-9]*)
     NOW="$(cat "$HOME/clock")"
     printf 'probe %s %s\\n' "$2" "$NOW" >> "$HOME/events"
-    [ "$2" = 5999 ] || { [ "$NOW" -ge "$TEST_READY_AT" ] && [ "$2" = 4888 ]; } ;;
+    [ "$2" = 5999 ] || { [ "$2" = 4888 ] && { [ "$NOW" -ge "$TEST_READY_AT" ] || [ -e "$HOME/.t3/userdata/server-runtime.json" ]; }; } ;;
   */desktop-update-in-progress)
     printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
     exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$@" ;;
@@ -190,6 +197,7 @@ ${script}`,
         TEST_SERVER_PID: String(process.pid),
         TEST_READY_AT: String(options.readyAt ?? 1_000_000),
         TEST_INITIAL_PORT: options.initialPort === undefined ? "" : String(options.initialPort),
+        TEST_PUBLISH_AFTER_FIRST_READ: options.publishAfterFirstRuntimeRead ? "1" : "0",
       },
     });
     if (result.error || result.status !== 0)
