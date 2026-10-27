@@ -18,7 +18,7 @@ import {
 import { Atom } from "effect/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "./EnvironmentBadgeIcon";
 import { useProject } from "../state/entities";
 import {
   pullRequestListLines,
@@ -1002,7 +1002,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <EnvironmentMachineIcon
+            <EnvironmentBadgeIcon
+              environmentId={thread.environmentId}
               kind={remoteMachine}
               className="size-3 text-muted-foreground/60"
             />

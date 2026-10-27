@@ -4,13 +4,18 @@ import {
   connectionRouteLabel,
   connectionRoutes,
 } from "@t3tools/client-runtime/connection";
-import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
+import type {
+  DesktopSshEnvironmentTarget,
+  EnvironmentId,
+  EnvironmentMachineKind,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { EnvironmentBadgeIcon } from "../EnvironmentBadgeIcon";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 
 export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
@@ -49,6 +54,7 @@ export function environmentTransportLabel(
 }
 
 export function EnvironmentRow({
+  environmentId,
   kind,
   label,
   subtitle,
@@ -58,6 +64,7 @@ export function EnvironmentRow({
   className,
   children,
 }: {
+  readonly environmentId?: EnvironmentId;
   readonly kind: EnvironmentMachineKind;
   readonly label: string;
   readonly subtitle: ReactNode;
@@ -75,11 +82,19 @@ export function EnvironmentRow({
       )}
     >
       {/* Dim only identity so switched-off controls remain readable and distinct from disabled controls. */}
-      <EnvironmentMachineIcon
-        aria-hidden
-        kind={kind}
-        className={cn("size-4 text-muted-foreground", dimmed && "opacity-60")}
-      />
+      {environmentId ? (
+        <EnvironmentBadgeIcon
+          environmentId={environmentId}
+          kind={kind}
+          className={cn("size-4 text-muted-foreground", dimmed && "opacity-60")}
+        />
+      ) : (
+        <EnvironmentMachineIcon
+          aria-hidden
+          kind={kind}
+          className={cn("size-4 text-muted-foreground", dimmed && "opacity-60")}
+        />
+      )}
       <div className={cn("min-w-0", dimmed && "opacity-60")}>
         <p className="truncate text-sm font-medium text-foreground">{label}</p>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
