@@ -10,9 +10,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { GlobeIcon, SquareIcon } from "lucide-react";
+import { GlobeIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
 import { useState } from "react";
 
+import { cn } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { useEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
@@ -82,43 +83,72 @@ export function ThreadServersPanel(props: {
   return (
     <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
       <ul className="m-0 list-none p-0">
-        {servers.map((server) => (
-          <li key={serverKey(server)} className="flex items-center gap-1">
-            <ThreadDetailsControl
-              className="flex-1"
-              disabled={!canOpen}
-              aria-label={`Open localhost:${server.port} in the browser`}
-              onClick={() => void open(server)}
-            >
-              <GlobeIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span className="shrink-0">localhost:{server.port}</span>
-              <span className="ms-auto min-w-0 truncate text-2xs text-muted-foreground">
-                {[server.terminal === null ? "Agent" : "Terminal", server.processName]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            </ThreadDetailsControl>
-            {canStop && supportsStop && server.pid !== null ? (
+        {servers.map((server) => {
+          const key = serverKey(server);
+          const stoppable = canStop && supportsStop && server.pid !== null;
+          return (
+            <li key={key} className="group relative flex h-8 items-center rounded-lg">
               <Tooltip>
                 <TooltipTrigger
+                  delay={200}
                   render={
                     <ThreadDetailsControl
-                      size="icon-xs"
+                      size="sm"
                       variant="ghost"
-                      part="icon"
-                      aria-label={`Stop localhost:${server.port}`}
-                      disabled={stoppingKey !== null}
-                      onClick={() => void stop(server)}
-                    >
-                      <SquareIcon className="size-3.5" />
-                    </ThreadDetailsControl>
+                      part="row"
+                      disabled={!canOpen}
+                      onClick={() => void open(server)}
+                    />
                   }
-                />
-                <TooltipPopup>Stop server</TooltipPopup>
+                >
+                  <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  <span className="shrink-0 text-sm font-medium leading-4 text-foreground/85">
+                    localhost:{server.port}
+                  </span>
+                  {/* The stop button covers this while it shows. */}
+                  <span
+                    className={cn(
+                      "ms-auto min-w-0 truncate text-2xs font-normal text-muted-foreground",
+                      stoppable &&
+                        "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0",
+                    )}
+                  >
+                    {[server.terminal === null ? "Agent" : "Terminal", server.processName]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="left">Open in the browser panel</TooltipPopup>
               </Tooltip>
-            ) : null}
-          </li>
-        ))}
+              {stoppable ? (
+                <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <ThreadDetailsControl
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          tone="destructive"
+                          aria-label={`Stop localhost:${server.port}`}
+                          disabled={stoppingKey !== null}
+                          onClick={() => void stop(server)}
+                        />
+                      }
+                    >
+                      {stoppingKey === key ? (
+                        <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                      ) : (
+                        <SquareIcon aria-hidden className="size-3 fill-current" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipPopup side="left">Stop server</TooltipPopup>
+                  </Tooltip>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
     </ThreadDetailsSection>
   );
