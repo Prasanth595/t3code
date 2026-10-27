@@ -1441,6 +1441,41 @@ describe("tile motion", () => {
     expect(tile.classList.contains("factory-tile-glow")).toBe(false);
   });
 
+  it("flies each of two runs that left one lane in the same poll from where it stood", async () => {
+    using _state = await setup();
+    const rows = [
+      recentRow(2, { started_ts: iso(at(12)) }),
+      recentRow(3, { started_ts: iso(at(11)) }),
+    ];
+    await using page = await render(
+      createElement(FactoryBelt, world([statusRun(2), statusRun(3)], rows)),
+    );
+    const stood = new Map(
+      tilesOf(lane(page, "building")).map((tile) => [
+        tile.textContent,
+        tile.getBoundingClientRect(),
+      ]),
+    );
+    expect(stood.size).toBe(2);
+    await page.rerender(createElement(FactoryBelt, world([gateRun(2), gateRun(3)], rows)));
+    const ghosts = ghostsOf(page);
+    expect(ghosts).toHaveLength(2);
+    for (const ghost of ghosts) {
+      // Where a ghost starts: its laid-out box in the layer, displaced by the transition's first
+      // transform. Neither moves while it flies.
+      const flight = ghost
+        .getAnimations()
+        .find((animation) => (animation as CSSTransition).transitionProperty === "transform")!;
+      const [first] = (flight.effect as KeyframeEffect).getKeyframes();
+      const start = new DOMMatrixReadOnly(String(first!.transform));
+      const layer = ghost.offsetParent!.getBoundingClientRect();
+      const from = stood.get(ghost.textContent)!;
+      // Offsets are whole pixels; a tile measured late would be a whole tile off.
+      expect(Math.abs(layer.left + ghost.offsetLeft + start.m41 - from.left)).toBeLessThan(2);
+      expect(Math.abs(layer.top + ghost.offsetTop + start.m42 - from.top)).toBeLessThan(2);
+    }
+  });
+
   it("holds Done's count until the run that finished has slid into it", async () => {
     using _state = await setup();
     const open = statusRun(4, { state: "pr-open" });
