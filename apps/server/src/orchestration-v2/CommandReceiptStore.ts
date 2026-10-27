@@ -1,4 +1,10 @@
-import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2AppThread,
+  CommandId,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -31,9 +37,19 @@ export class CommandReceiptStoreReadError extends Schema.TaggedError<CommandRece
   }
 }
 
+class CommandReceiptStoreLifecycleReadError extends Schema.TaggedError<CommandReceiptStoreLifecycleReadError>()(
+  "CommandReceiptStoreLifecycleReadError",
+  { threadId: ThreadId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read orchestration V2 lifecycle receipt for thread ${this.threadId}.`;
+  }
+}
+
 export const CommandReceiptStoreV2Error = Schema.Union([
   CommandReceiptStoreWriteError,
   CommandReceiptStoreReadError,
+  CommandReceiptStoreLifecycleReadError,
 ]);
 export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
@@ -65,6 +81,9 @@ export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
+  readonly getLatestLifecycle: (
+    threadId: ThreadId,
+  ) => Effect.Effect<CommandReceiptV2 | null, CommandReceiptStoreV2Error>;
   readonly insertIfAbsent: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
@@ -137,6 +156,15 @@ const layerBase: Layer.Layer<
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
 
     return CommandReceiptStoreV2.of({
+      getLatestLifecycle: (threadId) =>
+        receipts.getLatestLifecycle({ threadId }).pipe(
+          Effect.flatMap((receipt) =>
+            Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
+          ),
+          Effect.mapError(
+            (cause) => new CommandReceiptStoreLifecycleReadError({ threadId, cause }),
+          ),
+        ),
       insertIfAbsent: (receipt) =>
         receipts.insertIfAbsent(toApplicationReceipt(receipt)).pipe(
           Effect.mapError(
@@ -200,3 +228,57 @@ const layerBase: Layer.Layer<
 export const layer = layerBase.pipe(Layer.provide(OrchestrationCommandReceipts.layer));
 
 export const layerFromApplicationReceipts = layerBase;
+
+export const lifecycleOwnedByAncestor = Effect.fn("CommandReceiptStore.lifecycleOwnedByAncestor")(
+  function* <E>(
+    lifecycle: CommandReceiptV2,
+    thread: OrchestrationV2AppThread,
+    ancestorThreadId: ThreadId,
+    commandReceipts: CommandReceiptStoreV2Shape,
+    getThread: (threadId: ThreadId) => Effect.Effect<OrchestrationV2AppThread, E>,
+  ) {
+    const commandType = lifecycle.commandType;
+    const throughSequence = lifecycle.resultSequence;
+    const visited = new Set<ThreadId>();
+    // Follow retained receipts along actual subagent edges, stopping at an
+    // independent action. An ID suffix alone does not establish ownership.
+    while (thread.id !== ancestorThreadId) {
+      if (visited.has(thread.id)) return false;
+      visited.add(thread.id);
+      const parentId = thread.lineage.parentThreadId;
+      if (parentId === null || thread.lineage.relationshipToParent !== "subagent") return false;
+      const suffix = `:subagent:${thread.id}`;
+      let sourceCommandId: CommandId | undefined;
+      for (let retry = 0; retry < 32; retry++) {
+        const ending = retry === 0 ? suffix : `${suffix}:retry:${retry}`;
+        if (lifecycle.commandId.length > ending.length && lifecycle.commandId.endsWith(ending)) {
+          sourceCommandId = CommandId.make(lifecycle.commandId.slice(0, -ending.length));
+          const derived = `${sourceCommandId}${suffix}`;
+          for (let earlier = 0; earlier < retry; earlier++) {
+            const rejected = yield* commandReceipts.getByCommandId(
+              CommandId.make(earlier === 0 ? derived : `${derived}:retry:${earlier}`),
+            );
+            if (Option.isNone(rejected) || rejected.value.status !== "rejected") return false;
+          }
+          break;
+        }
+      }
+      if (sourceCommandId === undefined) return false;
+      const source = yield* commandReceipts.getByCommandId(sourceCommandId);
+      if (
+        Option.isNone(source) ||
+        source.value.status !== "accepted" ||
+        source.value.threadId !== parentId ||
+        (source.value.commandType !== commandType &&
+          source.value.commandType !== "subagent-threads.cascade") ||
+        source.value.resultSequence > throughSequence
+      )
+        return false;
+      const parent = yield* getThread(parentId);
+      if (parent.projectId !== thread.projectId) return false;
+      lifecycle = source.value;
+      thread = parent;
+    }
+    return lifecycle.commandType === commandType;
+  },
+);
