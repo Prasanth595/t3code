@@ -5,10 +5,12 @@ import { useMemo, useSyncExternalStore } from "react";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useWorkspaceEnvironments } from "../../state/workspace";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  isThreadListV2EnvironmentDisconnected,
   threadListInboxReturns,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
@@ -66,6 +68,13 @@ export function useThreadListV2(input: {
     // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
     [threads, workingShelfEnabled, inboxVersion],
   );
+  const disconnectedEnvironmentIds = useKeySet(
+    useWorkspaceEnvironments()
+      .filter((environment) => isThreadListV2EnvironmentDisconnected(environment.connectionState))
+      .map((environment) => environment.environmentId)
+      .sort()
+      .join("\n"),
+  );
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -107,6 +116,7 @@ export function useThreadListV2(input: {
     matchedThreadKeys: new Set(input.searchMatches.keys()),
     settlementEnvironmentIds: input.settlementEnvironmentIds,
     snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+    disconnectedEnvironmentIds,
     queuedThreadKeys: input.queuedThreadKeys,
     settledLimit: input.settledLimit,
     now: input.now,
