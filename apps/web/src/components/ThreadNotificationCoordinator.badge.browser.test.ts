@@ -261,15 +261,14 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
       },
     };
     state.shells.set("one", shell({ id: "working" }, { id: "asking" }, { id: "offline" }, done));
-    await app.render();
+    app.start();
     using _timers = fakeTimers();
     state.shells.set("one", shell({ id: "working" }, asking, { id: "offline" }, done));
-    await app.render();
     state.shells.set("one", {
       ...shell({ id: "working" }, asking, { id: "offline" }, done),
       status: "cached",
     });
-    await app.render();
+
     const completed = {
       id: "working",
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
@@ -278,18 +277,15 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
       ...shell(completed, asking, offline, done),
       status: "synchronizing",
     });
-    await app.render();
     state.shells.set("one", shell(completed, asking, offline, done));
-    await app.render();
+
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
     ]);
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
-    await app.render();
     state.shells.set("one", shell(completed, asking, offline, done));
-    await app.render();
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
@@ -303,19 +299,16 @@ it.each([false, true])(
   "rechecks a pending completion after reconnect (continued: %s)",
   async (continued) => {
     await using app = setup();
-    await app.render();
+    app.start();
     using _timers = fakeTimers();
     const completed = shell({
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
     });
     state.shells.set("one", completed);
-    await app.render();
     state.shells.set("one", { ...completed, status: "cached" });
-    await app.render();
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent).toEqual([]);
     state.shells.set("one", continued ? shell() : completed);
-    await app.render();
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(
       continued ? [] : ["Thread completed"],
