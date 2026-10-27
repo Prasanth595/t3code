@@ -75,8 +75,8 @@ export const cooldownKey = (model: Model): string => `${model.instanceId} ${mode
  * Records that a session on `model` ended on a rate limit at `endedMs`, seen at `nowMs`. A session
  * that ended inside the current window is part of the burst that opened it and changes nothing.
  * Otherwise a window opens from now: the provider's retry-after, else 5 minutes doubling each
- * window in a row up to `COOLDOWN_CAP_MS`. A model gone quiet starts a new streak, whether or not
- * a pass has forgotten it yet.
+ * window in a row up to `COOLDOWN_CAP_MS`. A session that ended after the model went quiet starts
+ * a new streak, whether or not a pass has forgotten the model yet.
  */
 export const recordRateLimit = (
   cooldowns: Map<string, Cooldown>,
@@ -88,7 +88,7 @@ export const recordRateLimit = (
 ): void => {
   const known = cooldowns.get(key);
   const current =
-    known !== undefined && nowMs >= known.untilMs + COOLDOWN_QUIET_MS ? undefined : known;
+    known !== undefined && endedMs >= known.untilMs + COOLDOWN_QUIET_MS ? undefined : known;
   if (current !== undefined && endedMs < current.untilMs) return;
   const windows = (current?.windows ?? 0) + 1;
   const backoff = Math.min(COOLDOWN_FIRST_MS * 2 ** (windows - 1), COOLDOWN_CAP_MS);
