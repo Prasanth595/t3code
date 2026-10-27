@@ -60,7 +60,6 @@ type HookResult = ReturnType<typeof useReviewFilePatches>;
 
 function Harness(props: {
   source: ReviewDiffPreviewSource;
-  revision: string;
   onResult: (result: HookResult) => void;
 }) {
   const result = useReviewFilePatches({
@@ -70,7 +69,7 @@ function Harness(props: {
     baseRef: null,
     ignoreWhitespace: false,
     theme: "dark",
-    revision: props.revision,
+    previewInput: { cwd: "/repo" },
     preview: null,
   });
   props.onResult(result);
@@ -92,12 +91,13 @@ function setup(paths = ["a.ts"]) {
   const source = previewSource(paths);
   const results: HookResult[] = [];
   return {
-    ui: (revision = "first") => (
+    ui: () => (
       <RegistryContext.Provider value={registry}>
-        <Harness source={source} revision={revision} onResult={(result) => results.push(result)} />
+        <Harness source={source} onResult={(result) => results.push(result)} />
       </RegistryContext.Provider>
     ),
     latest: () => results.at(-1)!,
+    refresh: (path: string) => registry.refresh(patchQuery(path)),
     requestsFor: (path: string) => mocks.requests.filter((request) => request === path).length,
     complete(path: string, contents: string) {
       registry.set(
@@ -118,7 +118,7 @@ new file mode 100644
   };
 }
 
-it("reopening keeps the parse while mount and preview refreshes revalidate", async () => {
+it("reopening keeps the parse while source queries revalidate", async () => {
   const h = setup();
   {
     await using screen = await render(h.ui());
@@ -128,10 +128,10 @@ it("reopening keeps the parse while mount and preview refreshes revalidate", asy
   const parsed = h.latest().renderableFiles[0];
   await using screen = await render(h.ui());
   expect(h.latest().renderableFiles[0]).toBe(parsed);
-  expect(mocks.requests).toEqual(["a.ts", "a.ts"]);
+  expect(mocks.requests).toEqual(["a.ts"]);
 
-  await screen.rerender(h.ui("refreshed"));
-  expect(mocks.requests).toEqual(["a.ts", "a.ts", "a.ts"]);
+  h.refresh("a.ts");
+  expect(mocks.requests).toEqual(["a.ts", "a.ts"]);
   await vi.waitFor(() => expect(h.latest().isPending).toBe(true));
   expect(h.latest().renderableFiles[0]).toBe(parsed);
   h.complete("a.ts", "first");
@@ -139,42 +139,25 @@ it("reopening keeps the parse while mount and preview refreshes revalidate", asy
   expect(h.latest().renderableFiles[0]).toBe(parsed);
   expect(mocks.parses).toHaveLength(1);
 
-  await screen.rerender(h.ui("changed"));
+  h.refresh("a.ts");
   h.complete("a.ts", "changed");
   await expect.element(screen.getByText("a.ts changed")).toBeInTheDocument();
   expect(mocks.parses).toHaveLength(2);
 });
 
-it("revalidates a cached file requested after the preview refreshes", async () => {
+it("keeps a later file's parse while its source query refreshes", async () => {
   const h = setup(["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]);
-  {
-    await using screen = await render(h.ui());
-    h.latest().requestFile(4);
-    await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(1));
-    h.complete("e.ts", "first");
-    await expect.element(screen.getByText("e.ts first")).toBeInTheDocument();
-  }
   await using screen = await render(h.ui());
-  await screen.rerender(h.ui("refreshed"));
   h.latest().requestFile(4);
+  await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(1));
+  h.complete("e.ts", "first");
+  await expect.element(screen.getByText("e.ts first")).toBeInTheDocument();
+  const parsed = h.latest().renderableFiles[4];
+
+  h.refresh("e.ts");
   await vi.waitFor(() => expect(h.requestsFor("e.ts")).toBe(2));
-  await screen.rerender(h.ui("refreshed"));
-  expect(h.requestsFor("e.ts")).toBe(2);
-
-  // e.ts is still loading from the previous revision, so the next refresh restarts it.
-  await screen.rerender(h.ui("focused"));
-  expect(h.requestsFor("e.ts")).toBe(3);
-});
-
-it("restarts an in-flight file load on the first preview refresh", async () => {
-  const h = setup();
-  await using screen = await render(h.ui());
-  expect(h.requestsFor("a.ts")).toBe(1);
-  await screen.rerender(h.ui("refreshed"));
-  expect(h.requestsFor("a.ts")).toBe(2);
-  await screen.rerender(h.ui("refreshed"));
-  expect(h.requestsFor("a.ts")).toBe(2);
-  h.complete("a.ts", "fresh");
-  await expect.element(screen.getByText("a.ts fresh")).toBeInTheDocument();
-  await vi.waitFor(() => expect(h.latest().isPending).toBe(false));
+  expect(h.latest().renderableFiles[4]).toBe(parsed);
+  h.complete("e.ts", "changed");
+  await expect.element(screen.getByText("e.ts changed")).toBeInTheDocument();
+  expect(h.latest().renderableFiles[4]).not.toBe(parsed);
 });
