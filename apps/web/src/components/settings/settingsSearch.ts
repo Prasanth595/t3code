@@ -129,6 +129,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/agents",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -537,7 +538,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "ultracode",
     title: "Ultracode",
-    to: "/settings/general",
+    to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: ["workflow orchestration multi agent keyword parallel subagents"],
   },
