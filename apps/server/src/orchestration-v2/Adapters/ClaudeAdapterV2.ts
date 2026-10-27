@@ -503,7 +503,8 @@ export interface ClaudeAgentSdkQuerySession {
   readonly offer: (
     message: SDKUserMessage,
     onQueued?: () => void,
-  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+    beforeAdmission?: () => boolean,
+  ) => Effect.Effect<void | boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,
@@ -1120,22 +1121,26 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
-            offer: (message, onQueued) =>
-              Effect.uninterruptibleMask((restore) =>
-                restore(Queue.offer(promptQueue, message)).pipe(
-                  Effect.tap(() => Effect.sync(() => onQueued?.())),
-                ),
-              ).pipe(
-                Effect.asVoid,
-                Effect.tap(() =>
-                  logProtocolEvent({
-                    direction: "outgoing",
-                    stage: "decoded",
-                    payload: {
-                      type: "prompt.offer",
-                      message,
-                    },
-                  }),
+            offer: (message, onQueued, beforeAdmission) =>
+              Effect.try({
+                try: () => {
+                  if (beforeAdmission?.() === false) return false;
+                  if (!Queue.offerUnsafe(promptQueue, message)) {
+                    throw new Error("Claude prompt queue is closed.");
+                  }
+                  onQueued?.();
+                  return true;
+                },
+                catch: (cause) => queryRunnerError(cause, "offer"),
+              }).pipe(
+                Effect.tap((queued) =>
+                  queued
+                    ? logProtocolEvent({
+                        direction: "outgoing",
+                        stage: "decoded",
+                        payload: { type: "prompt.offer", message },
+                      })
+                    : Effect.void,
                 ),
               ),
             setModel: (model) =>
@@ -3860,6 +3865,16 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  readonly steers: {
+    readonly pending: Array<ProviderAdapter.ProviderAdapterV2SteerInput>;
+    readonly registered: Set<string>;
+    readonly wake: Queue.Queue<void>;
+    changed: Deferred.Deferred<void>;
+    drain: Fiber.Fiber<void> | null;
+    bound: boolean;
+    gate: "open" | "compacting" | "continuation";
+    closed: boolean;
+  };
 }
 
 interface ActiveClaudeProviderRetry {
@@ -7103,6 +7118,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          input.context.steers.closed = true;
+          Deferred.doneUnsafe(input.context.steers.changed, Effect.void);
+          if (input.context.steers.drain !== null) {
+            yield* Fiber.interrupt(input.context.steers.drain);
+          }
+          const unoffered = input.context.steers.pending.splice(0);
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -7377,6 +7398,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerThread,
                 });
               }),
+              Effect.forEach(unoffered, (steer) =>
+                emitSteerOutcome(
+                  input.context,
+                  steer,
+                  input.status === "completed"
+                    ? "completed"
+                    : input.status === "failed"
+                      ? "failed"
+                      : "cancelled",
+                ),
+              ),
               emitProviderEvent(terminalEvent),
             ],
             { concurrency: 1 },
@@ -9205,6 +9237,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
+          if (context !== null && liveQuery?.query === input.query && !context.steers.closed) {
+            const steers = context.steers;
+            if (message.type === "system" && message.subtype === "status") {
+              if (message.status === "compacting") {
+                steers.gate = "compacting";
+                Deferred.doneUnsafe(steers.changed, Effect.void);
+                steers.changed = Deferred.makeUnsafe<void>();
+              } else if (message.compact_result === "success") {
+                steers.gate = "open";
+              } else if (
+                message.compact_result === "failed" ||
+                (message.status === null && message.permissionMode === undefined)
+              ) {
+                steers.gate = "continuation";
+              }
+            }
+            const realRoot =
+              (message.type === "assistant" &&
+                message.parent_tool_use_id === null &&
+                message.message.model !== "<synthetic>" &&
+                message.error === undefined) ||
+              (message.type === "stream_event" &&
+                message.parent_tool_use_id === null &&
+                message.event.type === "message_start" &&
+                message.event.message.model !== "<synthetic>");
+            const echoed = claudeEchoedPromptUuids(message);
+            if (
+              realRoot &&
+              (echoed.length > 0
+                ? context.promptUuid !== null && echoed.includes(context.promptUuid)
+                : steers.bound || liveQuery.promptEchoMode !== "early")
+            ) {
+              steers.bound = true;
+              if (steers.gate === "continuation") steers.gate = "open";
+            }
+            if (steers.bound && steers.gate === "open" && steers.pending.length > 0) {
+              Queue.offerUnsafe(steers.wake, undefined);
+            }
+          }
           if (
             context?.promptUuid === null &&
             liveQuery?.query === input.query &&
@@ -10062,6 +10133,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              steers: {
+                pending: [],
+                registered: new Set(),
+                wake: yield* Queue.unbounded<void>(),
+                changed: yield* Deferred.make<void>(),
+                drain: null,
+                bound: promptUuid === null,
+                gate: "open",
+                closed: false,
+              },
             };
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
@@ -10317,6 +10398,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            currentTurn.steers.closed = true;
+            Deferred.doneUnsafe(currentTurn.steers.changed, Effect.void);
             yield* existing.query.interrupt;
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
@@ -10425,85 +10508,134 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Fiber.joinAll(moves).pipe(Effect.timeoutOption(Math.max(0, remaining)));
         });
 
+        const emitSteerOutcome = Effect.fn("ClaudeAdapterV2.emitSteerOutcome")(function* (
+          context: ActiveClaudeTurnContext,
+          input: ProviderAdapter.ProviderAdapterV2SteerInput,
+          outcome: Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "steer.settled" }
+          >["outcome"],
+        ) {
+          yield* emitProviderEvent({
+            type: "steer.settled",
+            driver: CLAUDE_PROVIDER,
+            threadId: input.threadId,
+            runId: context.input.runId,
+            attemptId: context.input.attemptId,
+            providerTurnId: context.providerTurnId,
+            messageId: input.message.messageId,
+            outcome,
+          });
+        });
+
+        const drainSteers = Effect.fn("ClaudeAdapterV2.drainSteers")(function* (
+          context: ActiveClaudeTurnContext,
+          live: ClaudeLiveQueryContext,
+        ) {
+          const steers = context.steers;
+          const eligible = () =>
+            !steers.closed &&
+            steers.bound &&
+            steers.gate === "open" &&
+            Ref.getUnsafe(activeTurn) === context &&
+            Ref.getUnsafe(queryContext) === live &&
+            !live.stopping &&
+            !Ref.getUnsafe(interruptedTurns).has(context.providerTurnId);
+          while (!steers.closed) {
+            yield* Queue.take(steers.wake);
+            while (steers.pending.length > 0 && eligible()) {
+              const head = steers.pending[0]!;
+              const generation = steers.changed;
+              let admitted = false;
+              yield* Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  const sent = yield* restore(
+                    Effect.gen(function* () {
+                      const backgroundDeadline =
+                        (yield* Clock.currentTimeMillis) + BACKGROUND_MOVE_TIMEOUT_MS;
+                      const pdfReservation = yield* reserveClaudePdfBudget(
+                        pdfBudgets.get(live.nativeThreadId) ??
+                          makeClaudeAttachmentBudget({
+                            pagesUsed: CLAUDE_ATTACHMENT_MAX_PAGES,
+                            bytesUsed: CLAUDE_ATTACHMENT_MAX_BYTES,
+                          }),
+                        persistAttachmentBudget(live.nativeThreadId),
+                      );
+                      const userMessage = yield* makeClaudeUserMessageWithAttachments({
+                        text: applyClaudePromptEffortPrefix(
+                          head.message.text,
+                          compileClaudeModelSelection(context.input.modelSelection).promptEffort,
+                        ),
+                        attachments: head.message.attachments,
+                        priority: "now",
+                        attachmentsDir,
+                        fileSystem,
+                        pdfReservation,
+                        skills: yield* userInvocableSkills(context.input.runtimePolicy.cwd),
+                      }).pipe(
+                        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                        Effect.provideService(Path.Path, path),
+                      );
+                      if (!eligible() || steers.changed !== generation) return;
+                      yield* backgroundForegroundSubagents(live, backgroundDeadline);
+                      yield* live.query.offer(
+                        userMessage,
+                        () => {
+                          admitted = true;
+                          pdfReservation.commit();
+                          Ref.getUnsafe(steeredTurns).add(context.providerTurnId);
+                        },
+                        () => eligible() && steers.changed === generation,
+                      );
+                    }).pipe(Effect.scoped, Effect.raceFirst(Deferred.await(generation))),
+                  ).pipe(Effect.exit);
+                  if (admitted) {
+                    yield* emitSteerOutcome(context, head, "offered");
+                    steers.pending.shift();
+                  } else if (sent._tag === "Failure" && !Cause.hasInterrupts(sent.cause)) {
+                    yield* emitSteerOutcome(context, head, "failed");
+                    steers.pending.shift();
+                  }
+                }),
+              );
+              if (steers.pending[0] === head) break;
+            }
+          }
+        });
+
         const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
-            // Measured from the request, not from when the moves are forked:
-            // building the message and the moves can take clock time a timer
-            // started later would not count, and the steer would wait past it.
-            const backgroundDeadline =
-              (yield* Clock.currentTimeMillis) + BACKGROUND_MOVE_TIMEOUT_MS;
             const existing = yield* Ref.get(queryContext);
-            if (existing === null) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: CLAUDE_PROVIDER,
-                detail: `Claude provider thread ${turnInput.providerThread.id} has no live query.`,
-              });
-            }
-            const currentTurn = yield* Ref.get(activeTurn);
-            if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
+            const context = yield* Ref.get(activeTurn);
+            if (
+              existing === null ||
+              existing.stopping ||
+              context === null ||
+              context.steers.closed ||
+              context.providerTurnId !== turnInput.providerTurnId ||
+              context.input.runId !== turnInput.runId ||
+              Ref.getUnsafe(interruptedTurns).has(turnInput.providerTurnId)
+            ) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
-            const pdfReservation = yield* reserveClaudePdfBudget(
-              pdfBudgets.get(existing.nativeThreadId) ??
-                makeClaudeAttachmentBudget({
-                  pagesUsed: CLAUDE_ATTACHMENT_MAX_PAGES,
-                  bytesUsed: CLAUDE_ATTACHMENT_MAX_BYTES,
-                }),
-              persistAttachmentBudget(existing.nativeThreadId),
-            );
-            const userMessage = yield* makeClaudeUserMessageWithAttachments({
-              text: applyClaudePromptEffortPrefix(
-                turnInput.message.text,
-                compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
-              ),
-              attachments: turnInput.message.attachments,
-              priority: "now",
-              attachmentsDir,
-              fileSystem,
-              pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
-            }).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(Path.Path, path),
-            );
-            yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            // The turn can end while the moves are answered. A steer offered
-            // then would start a new turn the orchestrator never asked for, so
-            // the steer fails and the orchestrator starts the follow-up turn.
-            if (
-              (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
-              (yield* Ref.get(queryContext)) !== existing
-            ) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: CLAUDE_PROVIDER,
-                detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
-              });
+            if (context.steers.registered.has(turnInput.message.messageId))
+              return { deferred: true } as const;
+            context.steers.registered.add(turnInput.message.messageId);
+            context.steers.pending.push(turnInput);
+            if (context.steers.drain === null) {
+              context.steers.drain = yield* drainSteers(context, existing).pipe(
+                Effect.forkIn(sessionScope),
+              );
             }
-            yield* Ref.update(steeredTurns, (current) => {
-              const next = new Set(current);
-              next.add(turnInput.providerTurnId);
-              return next;
-            });
-            yield* Effect.uninterruptibleMask((restore) =>
-              restore(
-                existing.query.offer(userMessage, () => {
-                  pdfReservation.commit();
-                }),
-              ).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    pdfReservation.commit();
-                  }),
-                ),
-              ),
-            );
+            Queue.offerUnsafe(context.steers.wake, undefined);
+            return { deferred: true } as const;
           },
           (effect, turnInput) =>
             effect.pipe(
-              Effect.scoped,
+              Effect.uninterruptible,
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterSteerRunError({

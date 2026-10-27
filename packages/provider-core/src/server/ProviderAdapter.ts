@@ -75,7 +75,19 @@ export const ProviderAdapterV2SessionStatus = Schema.Literals([
 ]);
 export type ProviderAdapterV2SessionStatus = typeof ProviderAdapterV2SessionStatus.Type;
 
+export type ProviderAdapterV2SteerResult = void | { readonly deferred: true };
+
 export const ProviderAdapterV2Event = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("steer.settled"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    runId: RunId,
+    attemptId: RunAttemptId,
+    providerTurnId: ProviderTurnId,
+    messageId: MessageId,
+    outcome: Schema.Literals(["offered", "failed", "cancelled", "completed"]),
+  }),
   Schema.Struct({
     type: Schema.Literal("app_thread.created"),
     driver: ProviderDriverKind,
@@ -583,7 +595,7 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
-  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  ) => Effect.Effect<ProviderAdapterV2SteerResult, ProviderAdapterV2Error>;
   readonly stopTask?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskId: string;

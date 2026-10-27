@@ -14,6 +14,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  RunAttemptId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -1062,4 +1063,317 @@ it.effect("startup ends the provider turn of a native child root it cancels", ()
       "a root startup recovery cancelled left its provider turn running",
     );
   }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
+it.effect.each([false, true])(
+  "recovers unresolved Claude message ownership with superseded=%s",
+  (superseded) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const expected: Array<{
+        threadId: ThreadId;
+        messageId: MessageId;
+        itemId: TurnItemId;
+        known: boolean;
+        active: boolean;
+      }> = [];
+      for (const active of [true, false])
+        for (const converted of [true, false])
+          for (const known of [true, false]) {
+            const key = `${active}:${converted}:${known}`;
+            const threadId = yield* createThread(`claude-steer-${key}`);
+            const providerThreadId = ProviderThreadId.make(`provider:${key}`);
+            const providerTurnId = ProviderTurnId.make(`turn:${key}`);
+            const attemptId = RunAttemptId.make(`attempt:${key}`);
+            const nodeId = NodeId.make(`root:${key}`);
+            const runId = yield* createRun(threadId, active ? "running" : "completed", {
+              activeAttemptId: attemptId,
+              rootNodeId: nodeId,
+              providerThreadId,
+            });
+            // A newer settled run must not hide the unresolved older owner.
+            if (!active) yield* createRun(threadId, "completed", { ordinal: 2 });
+            const messageId = MessageId.make(`message:steer:${key}`);
+            const itemId = IdAllocator.derive.userTurnItem({ messageId });
+            expected.push({ threadId, messageId, itemId, known, active });
+            yield* projections.apply({
+              id: EventId.make(`provider:${key}`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerThreadId,
+                driver: ProviderDriverKind.make("claudeAgent"),
+                providerInstanceId,
+                providerSessionId: null,
+                appThreadId: threadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: 1,
+                lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            });
+            yield* projections.apply({
+              id: EventId.make(`attempt:${key}`),
+              type: "run-attempt.created",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: attemptId,
+                runId,
+                attemptOrdinal: 1,
+                rootNodeId: nodeId,
+                providerInstanceId,
+                providerThreadId,
+                providerTurnId,
+                reason: "initial",
+                status: active ? "running" : "completed",
+                startedAt: now,
+                completedAt: active ? null : now,
+              },
+            });
+            yield* projections.apply({
+              id: EventId.make(`turn:${key}`),
+              type: "provider-turn.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: providerTurnId,
+                providerThreadId,
+                nodeId,
+                runAttemptId: attemptId,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: active ? "running" : "completed",
+                startedAt: now,
+                completedAt: active ? null : now,
+              },
+            });
+            yield* projections.apply({
+              id: EventId.make(`message:${key}`),
+              type: "message.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: messageId,
+                threadId,
+                runId,
+                nodeId,
+                role: "user",
+                text: "Held input",
+                attachments: [],
+                createdBy: converted ? "agent" : "user",
+                creationSource: converted ? "server" : "mcp",
+                ...(converted
+                  ? {
+                      delegatedCompletion: {
+                        parentRunId: runId,
+                        generation: 1,
+                        taskIds: [NodeId.make("task")],
+                      },
+                    }
+                  : {}),
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+              },
+            });
+            const base = {
+              id: itemId,
+              threadId,
+              runId,
+              nodeId,
+              providerThreadId,
+              providerTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: known ? ("completed" as const) : ("pending" as const),
+              title: null,
+              startedAt: now,
+              completedAt: known ? now : null,
+              updatedAt: now,
+            };
+            yield* projections.apply({
+              id: EventId.make(`item:${key}`),
+              type: "turn-item.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: converted
+                ? {
+                    ...base,
+                    type: "notification",
+                    source: { kind: "delegated_task", taskIds: [NodeId.make("task")] },
+                    outcome: "completed",
+                    summary: "Task finished",
+                  }
+                : {
+                    ...base,
+                    type: "user_message",
+                    messageId,
+                    inputIntent: "steer",
+                    createdBy: "user",
+                    creationSource: "mcp",
+                    text: "Held input",
+                    attachments: [],
+                  },
+            });
+            yield* projections.apply({
+              id: EventId.make(`unrelated:${key}`),
+              type: "turn-item.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                ...base,
+                id: TurnItemId.make(`unrelated:${key}`),
+                ordinal: 2,
+                status: "pending",
+                completedAt: null,
+                type: "notification",
+                source: { kind: "monitor" },
+                outcome: "completed",
+                summary: "Unrelated notice",
+              },
+            });
+            if (known)
+              yield* outbox.enqueue([
+                {
+                  id: `effect:steer-settle:${providerTurnId}:${messageId}`,
+                  commandId: CommandId.make(`outcome:${key}`),
+                  threadId,
+                  request: {
+                    type: "message.steer.settle",
+                    messageId,
+                    runId,
+                    attemptId,
+                    providerTurnId,
+                    outcome: "offered",
+                  },
+                },
+              ]);
+            if (superseded) {
+              const projection = yield* projections.getThreadProjection(threadId);
+              const run = projection.runs.find((row) => row.id === runId)!;
+              const oldAttempt = projection.attempts.find((row) => row.id === attemptId)!;
+              const oldTurn = projection.providerTurns.find((row) => row.id === providerTurnId)!;
+              const nextAttemptId = RunAttemptId.make(`${attemptId}:replacement`);
+              const nextNodeId = NodeId.make(`${nodeId}:replacement`);
+              const nextTurnId = ProviderTurnId.make(`${providerTurnId}:replacement`);
+              yield* projections.apply({
+                id: EventId.make(`superseded:${key}`),
+                type: "run-attempt.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: { ...oldAttempt, status: "superseded", completedAt: now },
+              });
+              yield* projections.apply({
+                id: EventId.make(`replacement-attempt:${key}`),
+                type: "run-attempt.created",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...oldAttempt,
+                  id: nextAttemptId,
+                  attemptOrdinal: 2,
+                  rootNodeId: nextNodeId,
+                  providerTurnId: nextTurnId,
+                  reason: "steering_restart",
+                },
+              });
+              yield* projections.apply({
+                id: EventId.make(`replacement-turn:${key}`),
+                type: "provider-turn.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...oldTurn,
+                  id: nextTurnId,
+                  nodeId: nextNodeId,
+                  runAttemptId: nextAttemptId,
+                  ordinal: 2,
+                },
+              });
+              yield* projections.apply({
+                id: EventId.make(`replacement-run:${key}`),
+                type: "run.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: { ...run, activeAttemptId: nextAttemptId, rootNodeId: nextNodeId },
+              });
+            }
+          }
+      const candidates = yield* projections.getRecoveryThreadIds("runtime");
+      for (const entry of expected.filter((entry) => !entry.known)) {
+        assert.include(candidates, entry.threadId);
+        const loaded = yield* projections.getRuntimeRecoveryProjection(entry.threadId);
+        assert.equal(ProjectionStore.pendingClaudeSteers(loaded).length, 1);
+      }
+      yield* recovery.reconcile("startup");
+      for (const entry of expected) {
+        const projection = yield* projections.getThreadProjection(entry.threadId);
+        assert.equal(
+          projection.turnItems.find((row) => row.id === entry.itemId)?.status,
+          entry.known ? "completed" : "failed",
+        );
+        const notices = projection.turnItems.filter(
+          (row) => row.type === "system_notice" && row.message.includes(entry.messageId),
+        );
+        assert.lengthOf(notices, entry.known ? 0 : 1);
+        if (!entry.known && notices[0]?.type === "system_notice")
+          assert.include(notices[0].message, "may already have been sent");
+        if (!entry.active)
+          assert.equal(
+            projection.turnItems.find((row) => row.id.startsWith("unrelated:"))?.status,
+            "pending",
+          );
+        assert.lengthOf(projection.messages, 1);
+      }
+      yield* recovery.reconcile("startup");
+      for (const entry of expected) {
+        const projection = yield* projections.getThreadProjection(entry.threadId);
+        assert.lengthOf(
+          projection.turnItems.filter(
+            (row) => row.type === "system_notice" && row.message.includes(entry.messageId),
+          ),
+          entry.known ? 0 : 1,
+        );
+        assert.lengthOf(projection.messages, 1);
+      }
+    }).pipe(
+      Effect.provide(
+        ProviderRuntimeRecovery.layer.pipe(
+          Layer.provideMerge(
+            EventSink.layer.pipe(
+              Layer.provideMerge(
+                Layer.mergeAll(
+                  EventStore.layer,
+                  ProjectionStore.layer,
+                  EffectOutbox.layer,
+                  IdAllocator.layer,
+                ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+              ),
+            ),
+          ),
+          Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
+        ),
+      ),
+    ),
 );

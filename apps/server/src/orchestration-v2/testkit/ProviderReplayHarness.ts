@@ -276,6 +276,7 @@ export function layerWithRegistry<Error>(
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
+  | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder,
   Error | MigrationError | PlatformError.PlatformError | SqlError
@@ -514,6 +515,7 @@ export function layerWithRegistry<Error>(
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
+    layerProviderEventIngestorProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
   ).pipe(Layer.provide(ProviderTurnStartServiceTestkit.layer), Layer.provide(NodeServices.layer));

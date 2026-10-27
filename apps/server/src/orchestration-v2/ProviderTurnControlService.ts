@@ -65,7 +65,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<ProviderAdapter.ProviderAdapterV2SteerResult, ProviderTurnControlError>;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -336,10 +336,21 @@ export const layer: Layer.Layer<
               cohort.delivery.generation !== ownership.generation ||
               cohort.delivery.taskIds.length === 0
             )
-              return;
+              return yield* new ProviderTurnControlError({
+                threadId: input.threadId,
+                operation: "steer",
+                providerTurnId: input.providerTurnId,
+                cause: "Delegated steering ownership is no longer current.",
+              });
           }
           const loaded = yield* load({ ...input, operation: "steer" });
-          if (Option.isNone(loaded.session)) return;
+          if (Option.isNone(loaded.session))
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "steer",
+              providerTurnId: input.providerTurnId,
+              cause: "The steering session is no longer available.",
+            });
           const { message, run } = loaded.context;
           if (message === undefined || run === undefined) {
             return yield* new ProviderTurnControlError({
@@ -349,7 +360,7 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          yield* loaded.session.value
+          return yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
               runId: run.id,

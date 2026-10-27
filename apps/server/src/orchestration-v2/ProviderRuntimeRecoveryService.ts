@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadProjection,
   isOrchestrationV2WorkActive,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -284,6 +285,59 @@ export const make = Effect.gen(function* () {
           ),
         );
       const events: Array<OrchestrationV2DomainEvent> = [];
+      const unresolvedSteers = ProjectionStore.pendingClaudeSteers(projection);
+      const unresolvedSteerIds = new Set(unresolvedSteers.map(({ item }) => item.id));
+      let noticeOrdinal =
+        unresolvedSteers.length === 0
+          ? 0
+          : yield* projections.getNextTurnItemOrdinal(projection.thread.id).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderRuntimeRecoveryError({
+                    operation: "read-projections",
+                    threadId: projection.thread.id,
+                    cause,
+                  }),
+              ),
+            );
+      for (const { item, message, run } of unresolvedSteers) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...item, status: "failed", completedAt: now, updatedAt: now },
+        });
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            type: "system_notice",
+            id: TurnItemId.make(`${item.id}:steer-outcome`),
+            threadId: item.threadId,
+            runId: item.runId,
+            nodeId: item.nodeId,
+            providerThreadId: item.providerThreadId ?? null,
+            providerTurnId: item.providerTurnId ?? null,
+            nativeItemRef: null,
+            parentItemId: item.id,
+            ordinal: noticeOrdinal++,
+            status: "completed",
+            title: "Steering delivery unconfirmed",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            message: `Delivery of input ${message.id} to Claude could not be confirmed after the server ${trigger === "startup" ? "restarted" : "shut down"}. It may already have been sent.`,
+          },
+        });
+      }
+
       const cancelledBackgroundWork = new Map<
         ProviderThreadId,
         Array<OrchestrationV2RestartCancelledBackgroundWork>
@@ -466,6 +520,7 @@ export const make = Effect.gen(function* () {
         for (const item of projection.turnItems.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !unresolvedSteerIds.has(candidate.id) &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
             // A link card waits on the user, not the run, and answers by message.

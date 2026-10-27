@@ -1,3 +1,9 @@
+import { vi } from "vite-plus/test";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -11,18 +17,24 @@ import {
   ProviderTurnId,
   ThreadId,
   TurnItemId,
+  RunId,
+  RunAttemptId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import type * as Context from "effect/Context";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -43,6 +55,35 @@ it.effect.each(
       [true, "with interrupting native steering"],
       [true, "settled only"],
       [false, "during continuation"],
+      [false, "deferred-offered"],
+      [false, "deferred-completed"],
+      [true, "deferred-completed"],
+      [false, "deferred-failed"],
+      [true, "deferred-failed"],
+      [true, "deferred-successor"],
+      [true, "deferred-replay"],
+      [true, "deferred-replay-stop"],
+      [false, "deferred-stop"],
+      [false, "deferred-disabled"],
+      [true, "deferred-offered-disabled"],
+      [false, "deferred-child"],
+      [false, "deferred-parent-stop"],
+      [false, "deferred-unregistered-stop"],
+      [false, "deferred-stop-held"],
+      [true, "deferred-known-offered"],
+      [false, "deferred-rejected"],
+      [true, "deferred-obsolete"],
+      [false, "deferred-restart-cancelled"],
+      [true, "deferred-restart-cancelled"],
+      [false, "deferred-restart-offered"],
+      [true, "deferred-restart-offered"],
+      [false, "deferred-restart-failed"],
+      [true, "deferred-restart-failed"],
+      [false, "deferred-restart-completed"],
+      [false, "deferred-restart-internal-cancelled"],
+      [true, "deferred-restart-internal-offered"],
+      [false, "deferred-restart-terminal"],
+      [true, "deferred-restart-terminal"],
     ] as const
   ).map(([mailbox, timing]) => ({
     mailbox,
@@ -52,6 +93,24 @@ it.effect.each(
 )("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
   Effect.scoped(
     Effect.gen(function* () {
+      let continuationRequests:
+        | Context.Service.Shape<typeof ProviderContinuationRequests.ProviderContinuationRequests>
+        | undefined;
+      let settings: ServerSettings.ServerSettingsService["Service"] | undefined;
+      if (timing.includes("disabled")) {
+        const original = ServerSettings.layerTest();
+        const shared = Layer.effect(
+          ServerSettings.ServerSettingsService,
+          Effect.gen(function* () {
+            settings = yield* ServerSettings.ServerSettingsService;
+            return settings;
+          }),
+        ).pipe(Layer.provide(original));
+        const spy = vi.spyOn(ServerSettings, "layerTest").mockReturnValue(shared);
+        yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+      }
+      const deferred = timing.startsWith("deferred-");
+      const driver = ProviderDriverKind.make(deferred ? "claudeAgent" : "codex");
       const cwd = yield* checkpointWorkspace(`steering-completion-${timing.replaceAll(" ", "-")}`);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
@@ -136,6 +195,14 @@ it.effect.each(
               steerTurn: (turn) =>
                 Effect.gen(function* () {
                   steerCalls += 1;
+                  if (timing === "deferred-rejected")
+                    return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
+                      driver,
+                      providerThreadId: turn.providerThread.id,
+                      providerTurnId: turn.providerTurnId,
+                      cause: "Registration rejected",
+                    });
+                  if (deferred) return { deferred: true } as const;
                   if (timing === "after delivery" || timing === "during continuation") return;
                   yield* Deferred.succeed(steerEntered, undefined);
                   yield* Deferred.await(rejectSteer);
@@ -254,6 +321,140 @@ it.effect.each(
             ],
           });
         }
+        const childFollowup = timing === "deferred-child" || timing === "deferred-parent-stop";
+        const parentThreadId = ThreadId.make("parent:steering-completion");
+        const parentRunId = RunId.make("parent:run");
+        if (childFollowup) {
+          const current = yield* orchestrator.getThreadProjection(threadId);
+          const sink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const parentNodeId = NodeId.make("parent:root");
+          const parentProviderThreadId = ProviderThreadId.make("parent:provider-thread");
+          const parentAttemptId = RunAttemptId.make("parent:attempt");
+          const parentTurnId = ProviderTurnId.make("parent:turn");
+          const originalTask = NodeId.make("parent:original-task");
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("parent:created"),
+                type: "thread.created",
+                threadId: parentThreadId,
+                occurredAt: now,
+                payload: {
+                  ...current.thread,
+                  id: parentThreadId,
+                  activeProviderThreadId: parentProviderThreadId,
+                  lineage: {
+                    parentThreadId: null,
+                    rootThreadId: parentThreadId,
+                    relationshipToParent: null,
+                  },
+                },
+              },
+              {
+                id: EventId.make("child:lineage"),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...current.thread,
+                  lineage: {
+                    parentThreadId,
+                    rootThreadId: parentThreadId,
+                    relationshipToParent: "subagent",
+                  },
+                  forkedFrom: { type: "node", nodeId: originalTask },
+                },
+              },
+              {
+                id: EventId.make("parent:provider"),
+                type: "provider-thread.updated",
+                threadId: parentThreadId,
+                occurredAt: now,
+                payload: {
+                  ...current.providerThreads[0]!,
+                  id: parentProviderThreadId,
+                  appThreadId: parentThreadId,
+                  providerSessionId: null,
+                },
+              },
+              {
+                id: EventId.make("parent:run"),
+                type: "run.created",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: {
+                  ...current.runs[0]!,
+                  id: parentRunId,
+                  threadId: parentThreadId,
+                  rootNodeId: parentNodeId,
+                  activeAttemptId: parentAttemptId,
+                  providerThreadId: parentProviderThreadId,
+                },
+              },
+              {
+                id: EventId.make("parent:attempt"),
+                type: "run-attempt.created",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: {
+                  ...current.attempts[0]!,
+                  id: parentAttemptId,
+                  runId: parentRunId,
+                  rootNodeId: parentNodeId,
+                  providerThreadId: parentProviderThreadId,
+                  providerTurnId: parentTurnId,
+                },
+              },
+              {
+                id: EventId.make("parent:turn"),
+                type: "provider-turn.updated",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: {
+                  ...current.providerTurns[0]!,
+                  id: parentTurnId,
+                  nodeId: parentNodeId,
+                  providerThreadId: parentProviderThreadId,
+                  runAttemptId: parentAttemptId,
+                },
+              },
+              {
+                id: EventId.make("parent:task"),
+                type: "subagent.updated",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: {
+                  id: originalTask,
+                  threadId: parentThreadId,
+                  runId: parentRunId,
+                  parentNodeId,
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerThreadId: first.providerThread.id,
+                  childThreadId: threadId,
+                  nativeTaskRef: null,
+                  prompt: "Original task",
+                  title: "Child",
+                  model: null,
+                  completionWake: "always",
+                  completionDelivery: { state: "delivered", observedByRunId: null },
+                  status: "completed",
+                  result: "Done",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+        }
         const dispatchSteer = orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("steer"),
@@ -272,8 +473,9 @@ it.effect.each(
           dispatchMode: mailbox
             ? { type: "queue_after_active" }
             : { type: "steer_active", targetRunId: first.runId },
-          createdBy: mailbox ? "agent" : "user",
-          creationSource: mailbox ? "server" : "web",
+          createdBy: mailbox || childFollowup ? "agent" : "user",
+          creationSource: mailbox ? "server" : childFollowup ? "mcp" : "web",
+          ...(childFollowup ? { senderThreadId: parentThreadId } : {}),
           ...(mailbox
             ? {
                 delegatedCompletion: {
@@ -308,6 +510,602 @@ it.effect.each(
           );
           return;
         }
+        if (deferred) {
+          const itemId = IdAllocator.derive.userTurnItem({ messageId });
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const turn = before.providerTurns[0]!;
+          assert.equal(before.turnItems.find((row) => row.id === itemId)?.status, "pending");
+          if (timing === "deferred-rejected" || timing === "deferred-obsolete") {
+            if (timing === "deferred-obsolete") {
+              const sink = yield* EventSink.EventSinkV2;
+              const run = before.runs.find((row) => row.id === first.runId)!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("obsolete-cohort"),
+                    type: "run.updated",
+                    threadId,
+                    runId: run.id,
+                    occurredAt: yield* DateTime.now,
+                    payload: {
+                      ...run,
+                      delegatedCompletion: {
+                        ...run.delegatedCompletion!,
+                        disposition: "disposed",
+                        delivery: null,
+                      },
+                    },
+                  },
+                ],
+              });
+            }
+            yield* worker.drain();
+            for (const delay of [100, 200, 400, 800]) {
+              yield* TestClock.adjust(delay);
+              yield* worker.drain();
+            }
+            const refused = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(refused.turnItems.find((row) => row.id === itemId)?.status, "failed");
+            assert.equal(steerCalls, timing === "deferred-obsolete" ? 0 : 5);
+            assert.equal(started.length, 1);
+            assert.isTrue(
+              refused.turnItems.some(
+                (row) => row.type === "system_notice" && row.message.includes(messageId),
+              ),
+            );
+            return;
+          }
+          if (timing !== "deferred-unregistered-stop") yield* worker.drain();
+          assert.equal(steerCalls, timing === "deferred-unregistered-stop" ? 0 : 1);
+          const held = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(held.turnItems.find((row) => row.id === itemId)?.status, "pending");
+          if (mailbox) assert.equal(held.subagents[0]?.completionDelivery?.state, "claimed");
+          if (timing.startsWith("deferred-restart-")) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("replace-attempt"),
+              threadId,
+              messageId: MessageId.make("replacement-input"),
+              text: "Restart with B",
+              attachments: [],
+              dispatchMode: { type: "restart_active", targetRunId: first.runId },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const replacement = yield* orchestrator.getThreadProjection(threadId);
+            assert.notEqual(replacement.runs[0]?.activeAttemptId, first.attemptId);
+            const outcome = timing.endsWith("offered")
+              ? "offered"
+              : timing.endsWith("failed")
+                ? "failed"
+                : timing.endsWith("completed")
+                  ? "completed"
+                  : "cancelled";
+            const settlement = {
+              threadId,
+              runId: first.runId,
+              attemptId: first.attemptId,
+              providerTurnId: turn.id,
+              messageId,
+              outcome,
+            } as const;
+            const terminalStatus = outcome === "completed" ? "completed" : "interrupted";
+            const processed = yield* watch(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.id === turn.id &&
+                event.payload.status === terminalStatus,
+            );
+            if (timing.includes("internal")) {
+              yield* orchestrator.dispatch({
+                ...settlement,
+                type: "message.steer.settle",
+                commandId: CommandId.make("old-attempt-direct"),
+              });
+            } else if (!timing.endsWith("terminal")) {
+              yield* Queue.offer(events, { ...settlement, type: "steer.settled", driver });
+            }
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: terminalStatus, completedAt: yield* DateTime.now },
+            });
+            yield* Fiber.join(processed);
+            if (timing.endsWith("terminal")) {
+              const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+              yield* ingestor.ingestNormalized({
+                threadId,
+                runId: first.runId,
+                nodeId: first.rootNodeId,
+                providerSessionId: before.providerSessions[0]!.id,
+                providerInstanceId: instanceId,
+                event: {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: turn.providerThreadId,
+                  providerTurnId: turn.id,
+                  runOrdinal: first.runOrdinal,
+                  status: "interrupted",
+                  failure: null,
+                  threadDisposition: "reusable",
+                },
+              });
+            }
+            if ((mailbox && outcome === "offered") || outcome === "completed") {
+              yield* orchestrator.dispatch({
+                ...settlement,
+                type: "message.steer.settle",
+                commandId: CommandId.make("settle-old-outcome"),
+              });
+            }
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            const marker = after.turnItems.find((row) => row.id === itemId);
+            assert.equal(
+              marker?.status,
+              outcome === "offered"
+                ? "completed"
+                : outcome === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            );
+            assert.equal(marker?.providerTurnId, turn.id);
+            assert.lengthOf(
+              after.turnItems.filter(
+                (row) => row.type === "system_notice" && row.message.includes(messageId),
+              ),
+              outcome === "offered" ? 0 : 1,
+            );
+            if (mailbox && outcome === "offered")
+              assert.equal(after.subagents[0]?.completionDelivery?.state, "delivered");
+            assert.equal(after.runs[0]?.activeAttemptId, replacement.runs[0]?.activeAttemptId);
+            assert.lengthOf(after.runs, 1);
+            assert.equal(started.length, 1);
+            assert.equal(steerCalls, 1);
+            return;
+          }
+          if (timing === "deferred-stop-held") {
+            for (const index of [2, 3, 4])
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`held:${index}`),
+                threadId,
+                messageId: MessageId.make(`held:${index}`),
+                text: `Held ${index}`,
+                attachments: [],
+                dispatchMode: { type: "steer_active", targetRunId: first.runId },
+                createdBy: "agent",
+                creationSource: "mcp",
+              });
+            yield* worker.drain();
+            assert.equal(steerCalls, 4);
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("stop-held"),
+              threadId,
+            });
+            yield* worker.drain();
+            const cancelled = yield* watch(
+              (event) =>
+                event.type === "turn-item.updated" &&
+                event.payload.id ===
+                  IdAllocator.derive.userTurnItem({ messageId: MessageId.make("held:4") }) &&
+                event.payload.status === "cancelled",
+            );
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: "cancelled", completedAt: yield* DateTime.now },
+            });
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal: first.runOrdinal,
+              status: "cancelled",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(cancelled);
+            const stopped = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(
+              stopped.turnItems.filter(
+                (row) => row.type === "user_message" && row.status === "cancelled",
+              ).length,
+              4,
+            );
+            assert.equal(started.length, 1);
+            return;
+          }
+          if (timing === "deferred-unregistered-stop") {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("stop-unregistered"),
+              threadId,
+            });
+            const cancelled = yield* watch(
+              (event) =>
+                event.type === "turn-item.updated" &&
+                event.payload.id === itemId &&
+                event.payload.status === "cancelled",
+            );
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: "cancelled", completedAt: yield* DateTime.now },
+            });
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal: first.runOrdinal,
+              status: "cancelled",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(cancelled);
+            yield* worker.drain();
+            assert.equal(steerCalls, 0);
+            assert.equal(started.length, 1);
+            return;
+          }
+
+          const successor = timing === "deferred-successor" || timing.startsWith("deferred-replay");
+          const sink = yield* EventSink.EventSinkV2;
+          const taskB = NodeId.make("task:mailbox-B");
+          if (successor)
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("task:B:completed"),
+                  type: "subagent.updated",
+                  threadId,
+                  runId: first.runId,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...held.subagents[0]!,
+                    id: taskB,
+                    completionDelivery: { state: "pending", observedByRunId: null },
+                  },
+                },
+              ],
+            });
+          const outcome =
+            timing === "deferred-completed" ||
+            timing === "deferred-disabled" ||
+            timing === "deferred-stop" ||
+            childFollowup
+              ? "completed"
+              : timing === "deferred-failed"
+                ? "failed"
+                : "offered";
+          if (timing.includes("disabled")) {
+            if (settings === undefined) throw new Error("Missing shared test settings");
+            const current = yield* settings.getSettings;
+            yield* settings.updateSettings({
+              providerInstances: {
+                ...current.providerInstances,
+                [instanceId]: { driver, ...current.providerInstances[instanceId], enabled: false },
+              },
+            });
+          }
+          if (outcome !== "offered" || timing === "deferred-known-offered") {
+            const updated = yield* watch(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.id === turn.id &&
+                event.payload.status !== "running",
+            );
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: {
+                ...turn,
+                status: outcome === "failed" ? "failed" : "completed",
+                completedAt: yield* DateTime.now,
+              },
+            });
+            yield* Fiber.join(updated);
+          }
+          const settled = yield* watch(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.id === itemId &&
+              event.payload.status !== "pending",
+          );
+          yield* Queue.offer(events, {
+            type: "steer.settled",
+            driver,
+            threadId,
+            runId: first.runId,
+            attemptId: first.attemptId,
+            providerTurnId: turn.id,
+            messageId,
+            outcome,
+          });
+          yield* Fiber.join(settled);
+          const settlement = {
+            type: "message.steer.settle" as const,
+            commandId: CommandId.make(`command:effect:steer-settle:${turn.id}:${messageId}`),
+            threadId,
+            messageId,
+            runId: first.runId,
+            attemptId: first.attemptId,
+            providerTurnId: turn.id,
+            outcome,
+          } as const;
+          if (timing === "deferred-known-offered") {
+            const requests = continuationRequests;
+            if (requests === undefined) throw new Error("Missing shared continuation requests");
+            const offered = vi.spyOn(requests, "offer");
+            yield* Effect.addFinalizer(() => Effect.sync(() => offered.mockRestore()));
+            yield* orchestrator.recoverDelegatedTasks;
+            assert.equal(offered.mock.calls.length, 0);
+            const rejected = yield* Deferred.make<void>();
+            const commitRejected = sink.commitRejectedCommand;
+            const rejection = vi
+              .spyOn(sink, "commitRejectedCommand")
+              .mockImplementation((input) =>
+                commitRejected(input).pipe(
+                  Effect.tap(() =>
+                    input.commandType === "message.dispatch"
+                      ? Deferred.succeed(rejected, undefined)
+                      : Effect.void,
+                  ),
+                ),
+              );
+            yield* Effect.addFinalizer(() => Effect.sync(() => rejection.mockRestore()));
+            yield* requests.offer({
+              threadId,
+              providerThreadId: turn.providerThreadId,
+              driver,
+              detail: null,
+              delivery: "message_text",
+              delegatedCompletion: { parentRunId: first.runId, generation: 1, messageId },
+            });
+            yield* Deferred.await(rejected);
+            assert.equal(steerCalls, 1);
+            assert.equal(started.length, 1);
+            yield* worker.drain();
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).subagents[0]?.completionDelivery
+                ?.state,
+              "delivered",
+            );
+            return;
+          }
+          if (childFollowup) {
+            const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+            const original = locks.withLock;
+            const acquired: Array<ThreadId> = [];
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            let holdParent = timing === "deferred-parent-stop";
+            const spy = vi
+              .spyOn(locks, "withLock")
+              .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) => {
+                const locked = original(
+                  key,
+                  Effect.sync(() => {
+                    acquired.push(key);
+                  }).pipe(Effect.andThen(effect)),
+                );
+                if (key !== parentThreadId || !holdParent) return locked;
+                holdParent = false;
+                return Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(locked),
+                );
+              });
+            yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+            if (timing === "deferred-parent-stop") {
+              const fallback = yield* orchestrator.dispatch(settlement).pipe(Effect.forkScoped);
+              yield* Deferred.await(entered);
+              yield* orchestrator.dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make("stop-parent"),
+                threadId: parentThreadId,
+              });
+              yield* Deferred.succeed(release, undefined);
+              yield* Fiber.join(fallback);
+              assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+              assert.lengthOf(
+                (yield* orchestrator.getThreadProjection(parentThreadId)).subagents,
+                1,
+              );
+            } else {
+              yield* orchestrator.dispatch(settlement);
+              assert.deepEqual(acquired.slice(0, 2), [parentThreadId, threadId]);
+              const child = yield* orchestrator.getThreadProjection(threadId);
+              const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+              const followup = child.runs.find((row) => row.id !== first.runId);
+              assert.isDefined(followup?.delegatedTaskId);
+              const task = parent.subagents.find((row) => row.id === followup?.delegatedTaskId);
+              assert.equal(task?.childThreadId, threadId);
+              assert.equal(task?.runId, parentRunId);
+            }
+            return;
+          }
+          if (timing === "deferred-stop") {
+            const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+            const original = locks.withLock;
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const spy = vi
+              .spyOn(locks, "withLock")
+              .mockImplementationOnce(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+                Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(original(key, effect)),
+                ),
+              );
+            yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+            const fallback = yield* orchestrator.dispatch(settlement).pipe(Effect.forkScoped);
+            yield* Deferred.await(entered);
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("stop-before-fallback"),
+              threadId,
+            });
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(fallback);
+            assert.equal(started.length, 1);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+            return;
+          }
+          if (successor) {
+            const nextMessage = yield* watch(
+              (event) =>
+                event.type === "message.updated" &&
+                event.payload.delegatedCompletion?.generation === 2,
+            );
+            if (timing.startsWith("deferred-replay")) {
+              const requests = continuationRequests;
+              if (requests === undefined) throw new Error("Missing shared continuation requests");
+              const entered = yield* Deferred.make<void>();
+              const spy = vi
+                .spyOn(requests, "offer")
+                .mockImplementationOnce(() =>
+                  Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+                );
+              yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+              const accepting = yield* orchestrator.dispatch(settlement).pipe(Effect.forkScoped);
+              yield* Deferred.await(entered);
+              yield* Fiber.interrupt(accepting);
+              spy.mockRestore();
+              if (timing === "deferred-replay-stop") {
+                yield* orchestrator.dispatch({
+                  type: "thread.stop",
+                  commandId: CommandId.make("stop-before-replay"),
+                  threadId,
+                });
+                yield* orchestrator.dispatch(settlement);
+                const stopped = yield* orchestrator.getThreadProjection(threadId);
+                assert.equal(
+                  stopped.subagents.find((row) => row.id === taskB)?.completionDelivery?.state,
+                  "disposed",
+                );
+                assert.equal(steerCalls, 1);
+                return;
+              }
+              yield* orchestrator.dispatch(settlement);
+            } else yield* worker.drain();
+            yield* Fiber.join(nextMessage);
+            yield* worker.drain();
+            const delivered = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(delivered.runs.find((row) => row.id === first.runId)?.status, "running");
+            assert.equal(
+              delivered.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+              "delivered",
+            );
+            assert.equal(
+              delivered.subagents.find((row) => row.id === taskB)?.completionDelivery?.state,
+              "claimed",
+            );
+            assert.equal(steerCalls, 2);
+            yield* orchestrator.dispatch(settlement);
+            yield* worker.drain();
+            assert.equal(steerCalls, 2);
+            assert.equal(started.length, 1);
+            return;
+          }
+          yield* worker.drain();
+          if (timing === "deferred-disabled") {
+            const refused = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(refused.runs, 1);
+            assert.equal(started.length, 1);
+            assert.isTrue(
+              refused.turnItems.some(
+                (row) =>
+                  row.type === "system_notice" && row.message.includes("provider is disabled"),
+              ),
+            );
+            return;
+          }
+          if (outcome === "offered") {
+            assert.equal(started.length, 1);
+            const accepted = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(accepted.turnItems.find((row) => row.id === itemId)?.status, "completed");
+            if (mailbox)
+              assert.equal(accepted.subagents[0]?.completionDelivery?.state, "delivered");
+            return;
+          }
+          if (outcome === "failed") {
+            assert.equal(started.length, 1);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+                (row) => row.id === first.runId,
+              )?.status,
+              "running",
+            );
+          }
+          const terminal = yield* watch(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              (event.payload.status === "waiting" || event.payload.status === "failed"),
+          );
+          const redelivered =
+            mailbox && outcome === "failed"
+              ? yield* watch(
+                  (event) =>
+                    event.type === "message.updated" &&
+                    event.payload.id === messageId &&
+                    event.payload.runId !== first.runId,
+                )
+              : null;
+          yield* Queue.offer(
+            events,
+            outcome === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: turn.providerThreadId,
+                  providerTurnId: turn.id,
+                  runOrdinal: first.runOrdinal,
+                  failureItemOrdinal: 99,
+                  status: "failed",
+                  failure: makeProviderFailure({ class: "provider_error" }),
+                  threadDisposition: "reusable",
+                }
+              : {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: turn.providerThreadId,
+                  providerTurnId: turn.id,
+                  runOrdinal: first.runOrdinal,
+                  status: "completed",
+                  failure: null,
+                  threadDisposition: "reusable",
+                },
+          );
+          yield* Fiber.join(terminal);
+          if (redelivered !== null) yield* Fiber.join(redelivered);
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          const final = yield* orchestrator.getThreadProjection(threadId);
+          if (outcome === "failed" && !mailbox) {
+            assert.equal(started.length, 1);
+            assert.equal(final.messages.find((row) => row.id === messageId)?.runId, first.runId);
+            assert.isTrue(
+              final.turnItems.some(
+                (row) => row.type === "system_notice" && row.message.includes(messageId),
+              ),
+            );
+          } else {
+            assert.equal(started.length, 2);
+            assert.equal(started[1]?.message.messageId, messageId);
+            const stale = { ...settlement, commandId: CommandId.make("stale-settlement") };
+            yield* orchestrator.dispatch(stale);
+            yield* orchestrator.dispatch(stale);
+            yield* worker.drain();
+            assert.equal(started.length, 2);
+          }
+          return;
+        }
+
         if (timing === "after delivery") yield* worker.drain();
         const delivery =
           timing === "during delivery" ? yield* worker.runOnce.pipe(Effect.forkScoped) : null;
@@ -408,10 +1206,20 @@ it.effect.each(
         assert.equal(started.length, 2);
       }).pipe(
         Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: `steering-completion-${timing}` },
-            ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
+          Layer.merge(
+            ThreadCommandExecutor.layer,
+            ProviderReplayHarness.layerWithRegistry(
+              { name: `steering-completion-${timing}` },
+              Layer.effect(
+                ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+                Effect.gen(function* () {
+                  continuationRequests =
+                    yield* ProviderContinuationRequests.ProviderContinuationRequests;
+                  return yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+                }),
+              ).pipe(Layer.provide(ProviderAdapterRegistry.layerSingle(adapter))),
+              { runEffectWorker: false, runContinuationWorker: deferred },
+            ),
           ),
         ),
       );

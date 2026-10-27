@@ -140,6 +140,86 @@ const resumedMcpQueryInput = {
   },
 } satisfies ClaudeAgentSdkQueryOpenInput;
 
+it.effect.each(["closed", "gate", "log"] as const)(
+  "acknowledges actual prompt admission: %s",
+  (failure) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let prompts: AsyncIterable<ClaudeSdk.SDKUserMessage> | undefined;
+        let queued = 0;
+        const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ prompt }) => {
+          if (typeof prompt === "string") throw new Error("Expected streaming input");
+          prompts = prompt;
+          return {
+            setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
+            close: () => {},
+            [Symbol.asyncDispose]: async () => {},
+          } as unknown as ClaudeSdk.Query;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+        const runner = yield* ClaudeAgentSdkQueryRunner;
+        const session = yield* runner.open(resumedMcpQueryInput);
+        if (failure === "closed") yield* session.close;
+        const message = {
+          type: "user",
+          message: { role: "user", content: "Steer" },
+          parent_tool_use_id: null,
+          session_id: FORK_SESSION_ID,
+        } satisfies ClaudeSdk.SDKUserMessage;
+        const result = yield* session
+          .offer(
+            message,
+            () => {
+              queued += 1;
+            },
+            () => failure !== "gate",
+          )
+          .pipe(Effect.exit);
+        if (failure === "gate") {
+          assert.isTrue(Exit.isSuccess(result));
+          if (Exit.isSuccess(result)) assert.equal(result.value, false);
+          assert.equal(queued, 0);
+        } else {
+          assert.isTrue(Exit.isFailure(result));
+          assert.equal(queued, failure === "log" ? 1 : 0);
+        }
+        if (failure === "log") {
+          if (prompts === undefined) throw new Error("Missing prompt iterator");
+          const delivered = yield* Effect.promise(() => prompts![Symbol.asyncIterator]().next());
+          assert.deepEqual(delivered.value, message);
+        }
+        yield* session.close;
+      }).pipe(
+        Effect.provide(
+          layerQueryRunner.pipe(
+            Layer.provide(PortScanner.layerTest),
+            Layer.provide(
+              Layer.succeed(ProviderEventLoggers, {
+                canonical: undefined,
+                native:
+                  failure === "log"
+                    ? {
+                        filePath: "unused",
+                        close: () => Effect.void,
+                        write: (event) => {
+                          const protocol = event as {
+                            event?: { direction?: string; payload?: { type?: string } };
+                          };
+                          return protocol.event?.payload?.type === "prompt.offer"
+                            ? Effect.die(new Error("Log unavailable"))
+                            : Effect.void;
+                        },
+                      }
+                    : undefined,
+              }),
+            ),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
+);
+
 it.effect("reopens a stalled MCP registration before delivering the resumed prompt", () =>
   Effect.scoped(
     Effect.gen(function* () {

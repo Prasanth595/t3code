@@ -9,16 +9,20 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -988,6 +992,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
     { command: "acknowledge", before: "running", after: "failed", capture: false },
     { command: "acknowledge", before: "waiting", after: "completed", capture: true },
     { command: "accept", before: "waiting", after: "completed", capture: true },
+    { command: "settle", before: "waiting", after: "completed", capture: true },
   ] as const)(
     "keeps a $after run that settled between $command's read and commit",
     ({ command, before, after, capture }) =>
@@ -1001,17 +1006,93 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const taskId = NodeId.make(`node:${race}-task`);
         const checkpointId = CheckpointId.make(`checkpoint:${race}`);
         const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+        const rootNodeId = NodeId.make(`node:${race}-root`);
+        const attemptId = RunAttemptId.make(`attempt:${race}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:${race}`);
         yield* seedParentWithTerminalTask({
           threadId,
           projectId: ProjectId.make(`project:${race}`),
           runId,
-          rootNodeId: NodeId.make(`node:${race}-root`),
+          rootNodeId,
           taskId,
           deliveryState: "claimed",
           deliveryTaskIds: [taskId],
           now,
         });
-        const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const seeded = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        // A held Claude steer settles against the attempt and provider turn it was offered to.
+        const parent = command === "settle" ? { ...seeded, activeAttemptId: attemptId } : seeded;
+        const providerThreadId = parent.providerThreadId!;
+        const offeredTo: ReadonlyArray<OrchestrationV2DomainEvent> =
+          command === "settle"
+            ? [
+                {
+                  id: EventId.make(`event:${race}-attempt`),
+                  type: "run-attempt.created",
+                  threadId,
+                  runId,
+                  occurredAt: now,
+                  payload: {
+                    id: attemptId,
+                    runId,
+                    attemptOrdinal: 1,
+                    rootNodeId: rootNodeId,
+                    providerInstanceId: modelSelection.instanceId,
+                    providerThreadId,
+                    providerTurnId,
+                    reason: "initial",
+                    status: "completed",
+                    startedAt: now,
+                    completedAt: now,
+                  },
+                },
+                {
+                  id: EventId.make(`event:${race}-turn`),
+                  type: "provider-turn.updated",
+                  threadId,
+                  runId,
+                  occurredAt: now,
+                  payload: {
+                    id: providerTurnId,
+                    providerThreadId,
+                    nodeId: rootNodeId,
+                    runAttemptId: attemptId,
+                    nativeTurnRef: null,
+                    ordinal: 1,
+                    status: "completed",
+                    startedAt: now,
+                    completedAt: now,
+                  },
+                },
+                {
+                  id: EventId.make(`event:${race}-item`),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId,
+                  occurredAt: now,
+                  payload: {
+                    id: IdAllocator.derive.userTurnItem({ messageId }),
+                    threadId,
+                    runId,
+                    nodeId: rootNodeId,
+                    providerThreadId,
+                    providerTurnId,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    type: "notification",
+                    source: { kind: "delegated_task", taskIds: [taskId] },
+                    outcome: "completed",
+                    summary: "Background task finished",
+                    status: "pending",
+                    title: null,
+                    startedAt: now,
+                    completedAt: null,
+                    updatedAt: now,
+                  },
+                },
+              ]
+            : [];
         yield* sink.write({
           events: [
             {
@@ -1022,6 +1103,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
               occurredAt: now,
               payload: { ...parent, status: before },
             },
+            ...offeredTo,
             {
               id: EventId.make(`event:${race}-message`),
               type: "message.updated",
@@ -1058,7 +1140,9 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
                   input.commandType ===
                     (command === "accept"
                       ? "notification.delivery.accept"
-                      : "delegated_task.completion-delivery.acknowledge")
+                      : command === "settle"
+                        ? "message.steer.settle"
+                        : "delegated_task.completion-delivery.acknowledge")
                 ) {
                   settled = true;
                   // The provider turn ends (or its checkpoint lands) after the command read the run.
@@ -1098,13 +1182,24 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
                     threadId,
                     messageId,
                   }
-                : {
-                    type: "delegated_task.completion-delivery.acknowledge",
-                    commandId: CommandId.make(`command:${race}:task-status`),
-                    parentThreadId: threadId,
-                    taskId,
-                    observedByRunId: runId,
-                  },
+                : command === "settle"
+                  ? {
+                      type: "message.steer.settle",
+                      commandId: CommandId.make(`command:${race}:settle`),
+                      threadId,
+                      messageId,
+                      runId,
+                      attemptId,
+                      providerTurnId,
+                      outcome: "offered",
+                    }
+                  : {
+                      type: "delegated_task.completion-delivery.acknowledge",
+                      commandId: CommandId.make(`command:${race}:task-status`),
+                      parentThreadId: threadId,
+                      taskId,
+                      observedByRunId: runId,
+                    },
             ),
           (spy) => Effect.sync(() => spy.mockRestore()),
         );
@@ -1112,7 +1207,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const finished = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(
           finished.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
-          command === "accept" ? "delivered" : "acknowledged",
+          command === "acknowledge" ? "acknowledged" : "delivered",
         );
         const run = finished.runs.find((candidate) => candidate.id === runId)!;
         assert.deepEqual(
