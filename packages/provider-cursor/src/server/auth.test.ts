@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { makeCursorAuth, type CursorAuthOptions } from "./auth.ts";
-import { InMemoryCredentialStore } from "./sdk.ts";
+import { AuthenticationError, InMemoryCredentialStore } from "./sdk.ts";
 
 const instanceId = ProviderInstanceId.make("cursor-personal");
 const owner = "owner-client";
@@ -212,6 +212,21 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
       yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "succeeded");
       expect(yield* harness.auth.requireApiKey).toBe("browser-key");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows why the Cursor SDK rejected the sign-in", () =>
+    Effect.gen(function* () {
+      const sdkMessage = "Login failed or timed out. Please try again.";
+      const { auth } = yield* makeHarness({
+        login: () =>
+          Promise.reject(
+            new AuthenticationError(sdkMessage, { code: "unauthenticated", isRetryable: true }),
+          ),
+      });
+      yield* auth.controller.start(owner);
+      const failed = yield* phase(auth, "failed");
+      expect(failed.message).toBe(`Cursor sign-in failed: ${sdkMessage}`);
     }).pipe(Effect.scoped),
   );
 

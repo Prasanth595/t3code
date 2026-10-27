@@ -18,7 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { Cursor, InMemoryCredentialStore } from "./sdk.ts";
+import { Cursor, CursorSdkError, InMemoryCredentialStore } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 const AUTH_TIMEOUT_MS = 300_000;
@@ -194,7 +194,10 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "start",
-            detail: "Cursor sign-in failed. Start sign-in again.",
+            detail:
+              cause instanceof CursorSdkError
+                ? `Cursor sign-in failed: ${cause.message}`
+                : "Cursor sign-in failed. Start sign-in again.",
             cause,
           }),
       });
@@ -264,6 +267,8 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         Effect.flatMap((result) =>
           lock.withPermits(1)(
             Effect.gen(function* () {
+              if (Exit.isFailure(result))
+                yield* Effect.logWarning("Cursor sign-in failed", result.cause);
               if (active !== flow) return;
               active = undefined;
               operation = "idle";
