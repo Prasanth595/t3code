@@ -23,6 +23,7 @@ import type {
   OrchestrationV2ExecutionNode,
   OrchestrationV2PlanArtifact,
   OrchestrationV2PendingRuntimeRequestSummary,
+  OrchestrationV2RuntimeRequest,
   PlanId,
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
@@ -74,6 +75,7 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  ProviderRequestKind,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -310,10 +312,21 @@ export type ProjectionRuntimeRecoveryState = Pick<
   | "turnItems"
 >;
 
-export type ProjectionPendingUserInputs = Pick<
+export type ProjectionPendingNativeRequests = Pick<
   OrchestrationV2ThreadProjection,
   "runtimeRequests" | "nodes" | "turnItems"
 >;
+
+const isApprovalRequestKind = Schema.is(ProviderRequestKind);
+
+function isPendingNativeRequest(
+  request: OrchestrationV2RuntimeRequest,
+  includeApprovals: boolean,
+): boolean {
+  return request.kind === "user_input"
+    ? request.responseCapability.type !== "message"
+    : includeApprovals && isApprovalRequestKind(request.kind);
+}
 
 export type ProjectionThreadProviderContext = Pick<
   OrchestrationV2ThreadProjection,
@@ -550,10 +563,11 @@ export interface ProjectionStoreV2Shape {
   readonly getRuntimeRecoveryProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionRuntimeRecoveryState, ProjectionStoreV2Error>;
-  readonly getPendingNativeUserInputs: (
+  readonly getPendingNativeRequests: (
     threadId: ThreadId,
     providerTurnId: ProviderTurnId,
-  ) => Effect.Effect<ProjectionPendingUserInputs, ProjectionStoreV2Error>;
+    options: { readonly includeApprovals: boolean },
+  ) => Effect.Effect<ProjectionPendingNativeRequests, ProjectionStoreV2Error>;
   readonly getPlan: (
     threadId: ThreadId,
     planId: PlanId,
@@ -4753,9 +4767,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ? cause
         : new ProjectionStoreReadError({ threadId, cause });
 
-    const getPendingNativeUserInputs: ProjectionStoreV2Shape["getPendingNativeUserInputs"] = (
+    const getPendingNativeRequests: ProjectionStoreV2Shape["getPendingNativeRequests"] = (
       threadId,
       providerTurnId,
+      { includeApprovals },
     ) =>
       sql
         .withTransaction(
@@ -4763,12 +4778,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_runtime_requests
           WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
-            AND kind = 'user_input' AND status = 'pending'
+            AND status = 'pending'
         `;
             const runtimeRequests = (yield* decodeRows(
               decodeRuntimeRequestPayload,
               threadId,
-            )(rows)).filter((request) => request.responseCapability.type !== "message");
+            )(rows)).filter((request) => isPendingNativeRequest(request, includeApprovals));
             if (runtimeRequests.length === 0) return { runtimeRequests, nodes: [], turnItems: [] };
             const nodeRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_nodes
@@ -4780,14 +4795,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const itemRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
-            AND type = 'user_input_request'
+            AND type IN ('user_input_request', 'approval_request')
         `;
             const requestIds = new Set(runtimeRequests.map((request) => request.id));
             return {
               runtimeRequests,
               nodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               turnItems: (yield* decodeRows(decodeTurnItemPayload, threadId)(itemRows)).filter(
-                (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
+                (item) =>
+                  (item.type === "user_input_request" || item.type === "approval_request") &&
+                  requestIds.has(item.requestId),
               ),
             };
           }),
@@ -6793,7 +6810,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
-      getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
+      getPendingNativeRequests: readOnReader(getPendingNativeRequests),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
@@ -7123,28 +7140,31 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           .map((projection) => projection.thread.id);
       }),
       getUnreadableThreadIds: () => Effect.succeed([]),
-      getPendingNativeUserInputs: Effect.fn("ProjectionStore.getPendingNativeUserInputs")(
-        function* (threadId, providerTurnId) {
-          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
-          if (projection === undefined) return { runtimeRequests: [], nodes: [], turnItems: [] };
-          const runtimeRequests = projection.runtimeRequests.filter(
-            (request) =>
-              request.providerTurnId === providerTurnId &&
-              request.kind === "user_input" &&
-              request.status === "pending" &&
-              request.responseCapability.type !== "message",
-          );
-          const requestIds = new Set(runtimeRequests.map((request) => request.id));
-          const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));
-          return {
-            runtimeRequests,
-            nodes: projection.nodes.filter((node) => nodeIds.has(node.id)),
-            turnItems: projection.turnItems.filter(
-              (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
-            ),
-          };
-        },
-      ),
+      getPendingNativeRequests: Effect.fn("ProjectionStore.getPendingNativeRequests")(function* (
+        threadId,
+        providerTurnId,
+        { includeApprovals },
+      ) {
+        const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+        if (projection === undefined) return { runtimeRequests: [], nodes: [], turnItems: [] };
+        const runtimeRequests = projection.runtimeRequests.filter(
+          (request) =>
+            request.providerTurnId === providerTurnId &&
+            request.status === "pending" &&
+            isPendingNativeRequest(request, includeApprovals),
+        );
+        const requestIds = new Set(runtimeRequests.map((request) => request.id));
+        const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));
+        return {
+          runtimeRequests,
+          nodes: projection.nodes.filter((node) => nodeIds.has(node.id)),
+          turnItems: projection.turnItems.filter(
+            (item) =>
+              (item.type === "user_input_request" || item.type === "approval_request") &&
+              requestIds.has(item.requestId),
+          ),
+        };
+      }),
       getPlan: Effect.fn("ProjectionStore.getPlan")(function* (threadId, planId) {
         const projection = (yield* Ref.get(replayState)).projections.get(threadId);
         if (projection === undefined)
