@@ -965,6 +965,7 @@ it.effect.each([WS_METHODS.terminalOpen, WS_METHODS.terminalAttach, WS_METHODS.t
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           pruneWorktrees: () => Effect.void,
+          listLocalBranchNames: () => Effect.succeed(["feature"]),
           createWorktree: () =>
             Effect.gen(function* () {
               created.push(cwd);
