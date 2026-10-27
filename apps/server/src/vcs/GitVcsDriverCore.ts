@@ -1225,14 +1225,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    return yield* new GitCommandError({
-      ...gitCommandContext({
-        operation: "GitVcsDriver.renameBranch",
-        cwd,
-        args: ["branch", "-m", "--", desiredBranch],
-      }),
-      detail: `Could not find an available branch name for '${desiredBranch}'.`,
-    });
+    // Every numeric suffix is taken: fall back to a random one so the rename still lands.
+    while (true) {
+      const candidate = yield* crypto.randomBytes(4).pipe(
+        Effect.map((bytes) => `${desiredBranch}-${Hex.encode(bytes)}`),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.renameBranch",
+              command: "crypto.randomBytes",
+              cwd,
+              detail: "Failed to generate a unique branch suffix.",
+              cause,
+            }),
+        ),
+      );
+      if (!(yield* branchExists(cwd, candidate))) {
+        return candidate;
+      }
+    }
   });
 
   const readCurrentUpstreamRef = Effect.fn("readCurrentUpstreamRef")(function* (cwd: string) {
