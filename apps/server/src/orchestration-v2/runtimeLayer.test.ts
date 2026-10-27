@@ -5782,6 +5782,18 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         projection.thread.lastVisitedAt,
         DateTime.subtract(turnCompletedAt, { milliseconds: 1 }),
       );
+      const shell = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(shell!.latestRunCompletedAt, turnCompletedAt);
+      assert.deepEqual(shell!.lastVisitedAt, projection.thread.lastVisitedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make(`${threadId}:visit`),
+        threadId,
+        visitedAt: DateTime.formatIso(turnCompletedAt),
+      });
+      const revisited = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(revisited!.lastVisitedAt, turnCompletedAt);
     }),
   );
 });
