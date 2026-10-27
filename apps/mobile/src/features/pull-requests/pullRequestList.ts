@@ -7,6 +7,7 @@ import {
   type PullRequestListEntry,
   type PullRequestListInput,
   type PullRequestListResult,
+  type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -50,20 +51,27 @@ export const pullRequestStatKey = (
   row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
 ) => `${row.projectId}:${row.repository}:${row.number}`;
 
-/** Diff stats an environment has answered, and each row's `updatedAt` as its list last answered it. */
+/**
+ * Diff stats an environment has answered, the stats query that answered each, and each row's
+ * `updatedAt` as its list last answered it.
+ */
 export interface PullRequestStatsCache {
   readonly stats: ReadonlyMap<string, PullRequestDiffStat>;
+  readonly answeredBy: ReadonlyMap<string, PullRequestListStatsInput>;
   readonly updatedAt: ReadonlyMap<string, string>;
 }
 
 export const EMPTY_PULL_REQUEST_STATS_CACHE: PullRequestStatsCache = {
   stats: new Map(),
+  answeredBy: new Map(),
   updatedAt: new Map(),
 };
 
 /**
  * Records the rows a list answered. Stats carry no head, so a row whose `updatedAt` moved (a push,
- * among other changes) drops its cached stat and the list asks for it again.
+ * among other changes) drops its cached stat, and the stats queries that answered it are returned
+ * to refresh: one can still be fresh and would otherwise answer the row's next read with the old
+ * counts.
  */
 export function withListedPullRequests(
   cache: PullRequestStatsCache,
@@ -71,27 +79,41 @@ export function withListedPullRequests(
     PullRequestListEntry,
     "projectId" | "repository" | "number" | "updatedAt"
   >[],
-): PullRequestStatsCache {
+): {
+  readonly cache: PullRequestStatsCache;
+  readonly refresh: readonly PullRequestListStatsInput[];
+} {
   const moved = entries.filter(
     (entry) => cache.updatedAt.get(pullRequestStatKey(entry)) !== entry.updatedAt,
   );
-  if (!moved.length) return cache;
+  if (!moved.length) return { cache, refresh: [] };
   const stats = new Map(cache.stats);
+  const answeredBy = new Map(cache.answeredBy);
   const updatedAt = new Map(cache.updatedAt);
+  const refresh = new Set<PullRequestListStatsInput>();
   for (const entry of moved) {
-    stats.delete(pullRequestStatKey(entry));
-    updatedAt.set(pullRequestStatKey(entry), entry.updatedAt);
+    const key = pullRequestStatKey(entry);
+    const query = answeredBy.get(key);
+    if (query) refresh.add(query);
+    stats.delete(key);
+    answeredBy.delete(key);
+    updatedAt.set(key, entry.updatedAt);
   }
-  return { stats, updatedAt };
+  return { cache: { stats, answeredBy, updatedAt }, refresh: [...refresh] };
 }
 
 export function withAnsweredPullRequestStats(
   cache: PullRequestStatsCache,
+  input: PullRequestListStatsInput,
   answered: readonly PullRequestDiffStat[],
 ): PullRequestStatsCache {
   const stats = new Map(cache.stats);
-  for (const row of answered) stats.set(pullRequestStatKey(row), row);
-  return { ...cache, stats };
+  const answeredBy = new Map(cache.answeredBy);
+  for (const row of answered) {
+    stats.set(pullRequestStatKey(row), row);
+    answeredBy.set(pullRequestStatKey(row), input);
+  }
+  return { ...cache, stats, answeredBy };
 }
 
 /**

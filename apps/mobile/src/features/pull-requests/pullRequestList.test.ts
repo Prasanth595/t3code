@@ -448,20 +448,27 @@ describe("cached PR diff stats", () => {
     deletions: 0,
   });
 
-  it("drops a row's stat when a list answers it with a new updatedAt", () => {
-    const answered = withAnsweredPullRequestStats(
-      withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]),
-      [stat(1, 5), stat(2, 7)],
-    );
-    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toBe(answered);
+  it("drops a row's stat and refreshes its stats query when its updatedAt moves", () => {
+    const query = {
+      refs: [1, 2].map((number) => ({
+        projectId: stat(number, 0).projectId,
+        repository: "org/repo",
+        number,
+      })),
+    };
+    const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]);
+    expect(listed.refresh).toEqual([]);
+    const answered = withAnsweredPullRequestStats(listed.cache, query, [stat(1, 5), stat(2, 7)]);
+    expect(withListedPullRequests(answered, [entry(1), entry(2)])).toEqual({
+      cache: answered,
+      refresh: [],
+    });
 
     const pushed = withListedPullRequests(answered, [
       entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
       entry(2),
     ]);
-    expect([...pushed.stats.values()]).toEqual([stat(2, 7)]);
-    expect(
-      withAnsweredPullRequestStats(pushed, [stat(1, 9)]).stats.get("project:org/repo:1"),
-    ).toEqual(stat(1, 9));
+    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7)]);
+    expect(pushed.refresh).toEqual([query]);
   });
 });

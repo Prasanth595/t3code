@@ -44,9 +44,13 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
     }),
   list: (target, value, registry) =>
     Effect.sync(() => {
-      registry.update(pullRequestListStatsFamily(target.environmentId), (previous) =>
-        withListedPullRequests(previous, value.entries),
-      );
+      const statsAtom = pullRequestListStatsFamily(target.environmentId);
+      const { cache, refresh } = withListedPullRequests(registry.get(statsAtom), value.entries);
+      registry.set(statsAtom, cache);
+      for (const input of refresh)
+        registry.refresh(
+          composerPullRequests.listStats({ environmentId: target.environmentId, input }),
+        );
       if (target.input.cursors === undefined)
         registry.update(pullRequestListPagesFamily(pullRequestListPagesKey(target)), (previous) =>
           pullRequestListHead(previous, value),
@@ -55,7 +59,7 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
   listStats: (target, value, registry) =>
     Effect.sync(() =>
       registry.update(pullRequestListStatsFamily(target.environmentId), (previous) =>
-        withAnsweredPullRequestStats(previous, value.stats),
+        withAnsweredPullRequestStats(previous, target.input, value.stats),
       ),
     ),
 });
