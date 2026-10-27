@@ -255,6 +255,27 @@ describe("deriveBelt rail", () => {
     expect(two.startedMs).toBeNaN();
   });
 
+  it("takes the title and pull request from the recent row when the status run has none", () => {
+    const belt = deriveBelt(
+      [
+        environment(ENV_A, {
+          active: [
+            active({ id: id(1), state: "pr-open" }),
+            active({ id: id(2), state: "pr-open", title: "From status", pr_url: "https://s/2" }),
+          ],
+          recent: [
+            row({ id: id(1), title: "From the list", pr_url: "https://l/1" }),
+            row({ id: id(2), title: "From the list", pr_url: "https://l/2" }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    const byId = (issue: number) => belt.runs.pr.find((run) => run.id === id(issue))!;
+    expect(byId(1)).toMatchObject({ title: "From the list", prUrl: "https://l/1" });
+    expect(byId(2)).toMatchObject({ title: "From status", prUrl: "https://s/2" });
+  });
+
   it("can stop exactly the runs the run page can: building and not finished", () => {
     const belt = deriveBelt(
       [
@@ -317,6 +338,21 @@ describe("deriveBelt done", () => {
     );
     expect(belt.runs.done.map((run) => run.issue)).toEqual(["#1"]);
     expect(belt.done.merged).toBe(1);
+  });
+
+  it("counts a finish at today's first moment, and not one at the next midnight", () => {
+    const belt = deriveBelt(
+      [
+        environment(ENV_A, {
+          recent: [
+            finished(1, "merged", at(0, 0, 0) - 3_600_000, 3_600_000),
+            finished(2, "merged", at(0, 0, 1) - 3_600_000, 3_600_000),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(belt.runs.done.map((run) => run.issue)).toEqual(["#1"]);
   });
 
   it("leaves out a run that is not finished, ended without a pull request end, or lacks times", () => {
@@ -496,6 +532,30 @@ describe("deriveBelt newest station", () => {
       NOW,
     );
     expect(withoutDone.newest).toBe("gate");
+  });
+
+  it("lets the later of two runs that began together be the newest", () => {
+    const together = iso(at(10));
+    const belt = deriveBelt(
+      [
+        environment(ENV_A, {
+          active: [
+            active({ id: id(1), state: "pr-open" }),
+            active({ id: id(2), last_event: "gate_command" }),
+          ],
+          recent: [
+            row({ id: id(1), started_ts: together }),
+            row({ id: id(2), started_ts: together }),
+          ],
+        }),
+        environment(ENV_B, {
+          active: [active({ id: id(3), state: "triage", last_event: "claimed" })],
+          recent: [row({ id: id(3), started_ts: together })],
+        }),
+      ],
+      NOW,
+    );
+    expect(belt.newest).toBe("claimed");
   });
 
   it("ignores stuck runs and yesterday's done runs", () => {

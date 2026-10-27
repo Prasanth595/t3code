@@ -532,6 +532,26 @@ describe("stopping a run from the readout", () => {
     expect(belt.environments[0]!.status.refresh).not.toHaveBeenCalled();
   });
 
+  it("disables the Stop of the run being stopped and no other", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(api({ stopRun: () => new Promise(() => {}) }));
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    await page.click(station(page, "building"));
+    const stops = () =>
+      rowsOf(page).map(
+        (row) =>
+          Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!
+            .disabled,
+      );
+    expect(stops()).toEqual([false, false]);
+    await page.click(
+      Array.from(rowsOf(page)[0]!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Stop",
+      )!,
+    );
+    expect(stops()).toEqual([true, false]);
+  });
+
   it("shows the message of a stop that fails", async () => {
     using _state = await setup();
     __setFactoryApiForTests(
@@ -587,6 +607,10 @@ describe("the control bar", () => {
       `claims paused by hand since ${clock(since)}`,
     );
     expect(Number(getComputedStyle(lane(page, "pr")).opacity)).toBeLessThan(1);
+    expect(Number(getComputedStyle(station(page, "pr")).opacity)).toBeLessThan(1);
+    expect(Number(getComputedStyle(station(page, "building")).opacity)).toBeLessThan(1);
+    // The Claimed post carries the pause note, so it stays readable.
+    expect(Number(getComputedStyle(station(page, "claimed")).opacity)).toBe(1);
     expect(station(page, "claimed").textContent).not.toContain("factory:triage");
   });
 
@@ -643,6 +667,15 @@ describe("the control bar", () => {
       [DESKTOP, [...belt.recent.get(DESKTOP)!.data!.runs, stuck]],
       [STUDIO, belt.recent.get(STUDIO)!.data!.runs],
     );
+    // Studio has its own slots, so the bar can only be showing the selected environment's.
+    const studio = belt.environments[1]!;
+    belt.environments = [
+      belt.environments[0]!,
+      {
+        ...studio,
+        status: resource({ data: { ...studio.status.data!, slots: { used: 0, max: 3 } } }),
+      },
+    ];
     await using page = await render(createElement(FactoryBelt, belt));
     expect(stat(page, "Slots")).toBe("1/2");
     // Started today: #1 #2 #3 #4 #5 #6 #7 and the four done runs of today (#14 began yesterday).
@@ -650,6 +683,8 @@ describe("the control bar", () => {
     expect(stat(page, "Merged today")).toBe("3");
     expect(stat(page, "Stuck")).toBe("1");
     await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
+    expect(stat(page, "Slots")).toBe("0/3");
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Desktop"))!);
     expect(stat(page, "Slots")).toBe("1/2");
   });
 });
@@ -933,6 +968,18 @@ describe("the belt's layout", () => {
     expect(document.body.textContent).toContain(`#${100 + shown}`);
   });
 
+  it("opens that post's readout from its +N tile", async () => {
+    using _state = await setup(1440);
+    await using page = await render(createElement(FactoryBelt, crowded(12)));
+    await page.click(station(page, "claimed"));
+    expect(readout(page)!.getAttribute("aria-label")).toBe("Claimed readout");
+    const prLane = lane(page, "pr");
+    await expect.poll(() => prLane.querySelector("button")).not.toBeNull();
+    await page.click(prLane.querySelector("button")!);
+    expect(readout(page)!.getAttribute("aria-label")).toBe("PR open readout");
+    expect(rowsOf(page)).toHaveLength(12);
+  });
+
   it("fits a lane to its width: no +N when every run has a slot", async () => {
     using _state = await setup(1440);
     await using page = await render(createElement(FactoryBelt, crowded(3)));
@@ -1023,5 +1070,110 @@ describe("the belt's layout", () => {
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     );
+  });
+});
+
+describe("the belt in both themes", () => {
+  type Rgba = readonly [number, number, number, number];
+  /** Any CSS colour the browser computed, as sRGB, by painting it. */
+  const rgbaOf = (css: string): Rgba => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true })!;
+    context.fillStyle = css;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+    return [r!, g!, b!, a! / 255];
+  };
+  const over = (top: Rgba, below: Rgba): Rgba => [
+    top[0] * top[3] + below[0] * (1 - top[3]),
+    top[1] * top[3] + below[1] * (1 - top[3]),
+    top[2] * top[3] + below[2] * (1 - top[3]),
+    1,
+  ];
+  /** What an element's background really is: its own layer and its ancestors' until one is opaque. */
+  const backgroundOf = (element: Element): Rgba => {
+    const layers: Array<Rgba> = [];
+    for (let node: Element | null = element; node !== null; node = node.parentElement) {
+      const layer = rgbaOf(getComputedStyle(node).backgroundColor);
+      if (layer[3] > 0) layers.push(layer);
+      if (layer[3] === 1) break;
+    }
+    return layers.reduceRight<Rgba>((below, layer) => over(layer, below), [255, 255, 255, 1]);
+  };
+  const luminance = ([r, g, b]: Rgba) => {
+    const [lr, lg, lb] = [r, g, b].map((channel) => {
+      const c = channel / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * lr! + 0.7152 * lg! + 0.0722 * lb!;
+  };
+  /** WCAG contrast of an element's text on the background it sits on. */
+  const contrastOf = (element: Element) => {
+    const background = backgroundOf(element);
+    const text = over(rgbaOf(getComputedStyle(element).color), background);
+    const [high, low] = [luminance(text), luminance(background)].toSorted((a, b) => b - a);
+    return (high! + 0.05) / (low! + 0.05);
+  };
+  const withText = (root: Element, text: string | RegExp) =>
+    Array.from(root.querySelectorAll("*")).find(
+      (node) =>
+        node.getClientRects().length > 0 &&
+        node.children.length === 0 &&
+        (typeof text === "string" ? node.textContent === text : text.test(node.textContent ?? "")),
+    )!;
+  const stationVar = (page: Page, name: string) =>
+    getComputedStyle(station(page, name)).getPropertyValue("--factory-station").trim();
+
+  async function inBothThemes(check: (theme: "light" | "dark") => void | Promise<void>) {
+    const root = document.documentElement;
+    try {
+      root.classList.remove("dark");
+      await check("light");
+      root.classList.add("dark");
+      await check("dark");
+    } finally {
+      root.classList.remove("dark");
+    }
+  }
+
+  it("changes the station colours with the theme", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    const seen = new Map<string, Array<string>>();
+    await inBothThemes(async (theme) => {
+      for (const name of ["claimed", "building", "gate", "pr", "done"]) {
+        const values = seen.get(name) ?? [];
+        // A theme change may still be transitioning the colour when it is first read.
+        await expect
+          .poll(() => stationVar(page, name))
+          .not.toBe(theme === "light" ? "" : values[0]);
+        values.push(stationVar(page, name));
+        seen.set(name, values);
+      }
+    });
+    for (const [name, [light, dark]] of seen) {
+      expect(light, name).not.toBe("");
+      expect(dark, name).not.toBe(light);
+    }
+  });
+
+  it("keeps the text of posts, tiles and readout rows at 4.5:1 in light and dark", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    await page.click(station(page, "gate"));
+    const texts = () => [
+      withText(station(page, "gate"), "Gate"),
+      withText(station(page, "gate"), "gate-sending"),
+      withText(station(page, "gate"), "checks before the pull request"),
+      withText(tilesOf(lane(page, "gate"))[0]!, "#3"),
+      withText(tilesOf(lane(page, "gate"))[0]!, "14m"),
+      withText(readout(page)!, "Title of 3"),
+      withText(readout(page)!, "gate-sending"),
+    ];
+    await inBothThemes(async () => {
+      await expect.poll(() => Math.min(...texts().map(contrastOf))).toBeGreaterThanOrEqual(4.5);
+    });
   });
 });

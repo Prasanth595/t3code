@@ -717,6 +717,14 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       finishedRun(dataDir, rid(4), [moved("ready", "launching"), opened(7)], "stuck", null),
       // No state change at all.
       finishedRun(dataDir, rid(5), [], "needs-info", null),
+      // Stuck, the finished line carrying a pull request, and the stuck line before the state change.
+      finishedRun(
+        dataDir,
+        rid(6),
+        [opened(8), stuckLine("gate failed"), moved("building", "stuck")],
+        "stuck",
+        PR_URL,
+      ),
     ];
     const whole = readRuns(dataDir).map((read) => read.summary);
     vi.mocked(NodeFS.readFileSync).mockClear();
@@ -731,6 +739,15 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       ["stuck", "https://example.test/pull/6", null, true, "finished"],
       [null, "https://example.test/pull/7", null, true, "finished"],
       [null, null, null, true, "finished"],
+      ["stuck", PR_URL, "merged", true, "finished"],
+    ]);
+    expect(summaries.map((run) => run.reason)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      "gate failed",
     ]);
     expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
     expect(summaries.every((run) => run.step === null)).toBe(true);

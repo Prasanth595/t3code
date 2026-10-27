@@ -249,6 +249,27 @@ describe("FactoryPage", () => {
     expect(runLinks()).toHaveLength(1);
   });
 
+  it("keeps a run stuck for more than a week out of the Stuck bin when every run is shown", async () => {
+    using _state = setup();
+    const old = runRow({
+      id: "o__r__1__1",
+      started_ts: "2026-09-01T10:00:00.000Z",
+      finished: true,
+      state: "stuck",
+      reason: "gate failed long ago",
+    });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({ data: { runs: [runRow(), old] } });
+    await using page = await render(createElement(FactoryPage));
+    const stuck = () =>
+      page.all("section").find((node) => node.getAttribute("aria-label") === "Stuck")!;
+    expect(stuck().textContent).toContain("Nothing is stuck");
+    await page.click(page.button("Show all runs")!);
+    expect(page.text()).toContain("o__r__1__1");
+    expect(stuck().textContent).toContain("Nothing is stuck");
+    expect(stuck().textContent).not.toContain("gate failed long ago");
+  });
+
   it("says when the week holds no runs and still offers every run", async () => {
     using _state = setup();
     await using page = await render(createElement(FactoryPage));
