@@ -1114,7 +1114,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "secret-providers",
     title: "Secret providers",
     to: "/settings/secrets",
-    searchTerms: ["1password openbao vault aws secrets manager credentials api key"],
+    searchTerms: ["1password vault credentials api key"],
+    secretsFeatureOnly: true,
+  },
+  {
+    id: "secret-providers-add",
+    title: "Add secret provider",
+    to: "/settings/secrets",
+    targetId: "secret-providers",
+    searchTerms: ["new 1password vault op cli account"],
     secretsFeatureOnly: true,
   },
   {
