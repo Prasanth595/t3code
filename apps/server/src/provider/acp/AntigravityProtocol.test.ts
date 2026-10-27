@@ -227,6 +227,42 @@ describe("Antigravity permissions and questions", () => {
     expect(extractAntigravityUserInputQuestion(permissionRequest)).toBeUndefined();
   });
 
+  it("routes a mode switch to approval even under a native-question id", () => {
+    const modeSwitch = {
+      ...questionRequest,
+      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+      options: [
+        { optionId: "switch-to-build", name: "Yes", kind: "allow_once" as const },
+        { optionId: "stay-in-plan", name: "No", kind: "reject_once" as const },
+      ],
+    };
+    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(false);
+    expect(extractAntigravityUserInputQuestion(modeSwitch)).toBeUndefined();
+    expect(
+      makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: "switch-to-build" }),
+    ).toBeUndefined();
+    expect(antigravityApprovalOptions(modeSwitch)).toEqual([
+      { decision: "accept", label: "Allow once" },
+      { decision: "decline", label: "Deny" },
+      { decision: "cancel", label: "Cancel" },
+    ]);
+  });
+
+  it("keeps a mode switch as a question when it offers no allow option", () => {
+    const modeSwitch = {
+      ...questionRequest,
+      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+      options: [
+        { optionId: "proceed", name: "Yes", kind: "other" as const },
+        { optionId: "stay", name: "No", kind: "other" as const },
+      ],
+    };
+    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
+    expect(
+      extractAntigravityUserInputQuestion(modeSwitch)?.options.map((option) => option.value),
+    ).toEqual(["proceed", "stay"]);
+  });
+
   it("returns exact opaque IDs and accepts a unique label from an older client", () => {
     for (const answer of ["1", ["1"], "Verified"]) {
       expect(

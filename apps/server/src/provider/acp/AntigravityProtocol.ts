@@ -43,7 +43,19 @@ const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallC
 export function isAntigravityUserInputRequest(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): boolean {
-  return request.toolCall.toolCallId.startsWith("interaction_");
+  if (!request.toolCall.toolCallId.startsWith("interaction_")) return false;
+  // A mode switch is approval-gated even under a native-question id, unless the
+  // agent offered no allow option for the approval card to answer with.
+  if (request.toolCall.kind === "switch_mode") return !hasAntigravityApprovalOption(request);
+  return true;
+}
+
+function hasAntigravityApprovalOption(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  return request.options.some(
+    (option) =>
+      (option.kind === "allow_once" || option.kind === "allow_always") &&
+      option.optionId.trim().length > 0,
+  );
 }
 
 export function selectAntigravityPermissionOptionId(
