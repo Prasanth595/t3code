@@ -244,17 +244,18 @@ const make = Effect.gen(function* () {
   const probeEndpoint = Effect.fn("ConnectReachability.probeEndpoint")(
     function* (hostname: string) {
       const response = yield* httpClient
-        .get(`https://${hostname}/.well-known/t3/environment`)
+        .get(`https://${hostname}/.well-known/t3/environment`, { acceptJson: true })
         .pipe(Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT));
       if (Option.isNone(response)) return { kind: "timeout" } satisfies EndpointProbe;
       const { status } = response.value;
       if (status !== 530) return { kind: "status", status } satisfies EndpointProbe;
-      // Non-browser clients get a plain-text body such as `error code: 1033`.
+      // Cloudflare's error page is HTML unless the client accepts JSON, which carries
+      // `"error_code":1033`. Clients that send no User-Agent get `error code: 1033`.
       const body = yield* response.value.text.pipe(
         Effect.timeoutOption(ERROR_BODY_READ_TIMEOUT),
         Effect.orElseSucceed(() => Option.none<string>()),
       );
-      const code = /error code:\s*(\d{4})/i.exec(Option.getOrElse(body, () => ""))?.[1];
+      const code = /error[_ ]code"?:\s*(\d{4})/i.exec(Option.getOrElse(body, () => ""))?.[1];
       return (
         code === undefined
           ? { kind: "status", status }

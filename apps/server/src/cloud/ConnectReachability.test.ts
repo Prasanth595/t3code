@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
@@ -99,8 +99,14 @@ describe("classifyReachability", () => {
 
 interface ServedResponse {
   readonly status: number;
-  readonly body: string | ReadableStream<Uint8Array>;
+  readonly body: string | ReadableStream<Uint8Array> | { readonly cloudflareError: number };
 }
+
+// What Cloudflare serves for its 530 page: HTML unless the client accepts JSON.
+const cloudflareErrorPage = (request: HttpClientRequest.HttpClientRequest, code: number) =>
+  request.headers.accept === "application/json"
+    ? JSON.stringify({ status: 530, error_code: code, error_name: "tunnel_error" })
+    : `<!doctype html><h1><span>Error</span> <span>${code}</span></h1>`;
 
 const reachabilityLayer = (
   respond: Effect.Effect<ServedResponse>,
@@ -122,7 +128,15 @@ const reachabilityLayer = (
           HttpClient.make((request) =>
             respond.pipe(
               Effect.map(({ status, body }) =>
-                HttpClientResponse.fromWeb(request, new Response(body, { status })),
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    typeof body === "object" && "cloudflareError" in body
+                      ? cloudflareErrorPage(request, body.cloudflareError)
+                      : body,
+                    { status },
+                  ),
+                ),
               ),
             ),
           ),
@@ -149,7 +163,7 @@ describe("ConnectReachability stale connector recovery", () => {
       const restarts = yield* Queue.unbounded<number>();
       // Cloudflare answers 530 while cloudflared still reports four ready connections.
       let status = 530;
-      let body = "error code: 1033";
+      let body = { cloudflareError: 1033 };
       const layer = reachabilityLayer(
         Effect.sync(() => ({ status, body })),
         (pid, stillDead) =>
@@ -177,12 +191,12 @@ describe("ConnectReachability stale connector recovery", () => {
         status = 200;
         expect(yield* reachability.check).toMatchObject({ status: "reachable" });
         status = 530;
-        body = "error code: 1016";
+        body = { cloudflareError: 1016 };
         expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.size(restarts)).toBe(0);
 
-        body = "error code: 1033";
+        body = { cloudflareError: 1033 };
         yield* reachability.check;
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.take(restarts)).toBe(connected.pid);
@@ -204,7 +218,7 @@ describe("ConnectReachability stale connector recovery", () => {
             yield* Deferred.succeed(healthyRequested, undefined);
             yield* Deferred.await(healthyAnswer);
           }
-          return { status: served, body: "error code: 1033" };
+          return { status: served, body: { cloudflareError: 1033 } };
         }),
         (_pid, stillDead) =>
           stillDead.pipe(
@@ -258,7 +272,7 @@ describe("ConnectReachability stale connector recovery", () => {
             yield* Deferred.succeed(healthyRequested, undefined);
             yield* Deferred.await(healthyAnswer);
           }
-          return { status: served, body: "error code: 1033" };
+          return { status: served, body: { cloudflareError: 1033 } };
         }),
         (_pid, stillDead) =>
           Effect.gen(function* () {
@@ -304,7 +318,7 @@ describe("ConnectReachability stale connector recovery", () => {
       const layer = reachabilityLayer(
         Effect.sync(() => {
           requests += 1;
-          return { status, body: "error code: 1033" };
+          return { status, body: { cloudflareError: 1033 } };
         }),
         (pid, stillDead) =>
           stillDead.pipe(Effect.tap((dead) => (dead ? Queue.offer(restarts, pid) : Effect.void))),
