@@ -30,9 +30,9 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
-import { KeyboardController, KeyboardEvents } from "react-native-keyboard-controller";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
+import { useKeyboardShowing } from "../../lib/keyboardShowing";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import {
   composerAttachmentUploadBlockReason,
@@ -108,10 +108,8 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import {
   compactSlotAfterRowLayout,
-  composerModelIconOnly,
-  composerOpensCardOnFocus,
-  isCompactComposerExpanded,
   isWideComposerRow,
+  resolveCompactComposerLayout,
 } from "./compactComposerLayout";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
@@ -121,6 +119,9 @@ import {
 } from "./use-thread-settings-sheet-presentation";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
+
+// Only Android gates focus on the keyboard, so iOS never subscribes.
+const useAndroidKeyboardShowing = Platform.OS === "android" ? useKeyboardShowing : () => false;
 
 const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
 // iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
@@ -139,11 +140,15 @@ function collapsedEditorInset(text: ScaledTextRole): number {
 export function useCompactComposerEditor(
   text: ScaledTextRole,
   value: string,
-  opensOnFocus: boolean,
+  state: {
+    readonly isFocused: boolean;
+    readonly keepsSettingsOpen: boolean;
+    readonly rowAttachmentCount: number;
+  },
 ) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactWidth, setCompactWidth] = useState(0);
-  const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
+  const [slot, setSlot] = useState({ rowWidth: 0, compactWidth: 0 });
+  const keyboardShowing = useAndroidKeyboardShowing();
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -151,11 +156,13 @@ export function useCompactComposerEditor(
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const isExpanded = isCompactComposerExpanded({
-    opensOnFocus,
+  const { isExpanded, modelIconOnly } = resolveCompactComposerLayout({
+    ...state,
+    slot,
+    isAndroid: Platform.OS === "android",
+    keyboardShowing,
     value,
     contentSize,
-    compactWidth,
     lineHeight: text.lineHeight,
     fontSize: text.fontSize,
   });
@@ -175,16 +182,14 @@ export function useCompactComposerEditor(
   }));
   return {
     isExpanded,
+    modelIconOnly,
+    rowWidth: slot.rowWidth,
     containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       const width = event.nativeEvent.layout.width;
       rowWidth.set(width);
-      const slot = compactSlotAfterRowLayout({ rowWidth: measuredRowWidth, compactWidth }, width);
-      if (slot.rowWidth !== measuredRowWidth) {
-        setMeasuredRowWidth(slot.rowWidth);
-        setCompactWidth(slot.compactWidth);
-      }
+      setSlot((current) => compactSlotAfterRowLayout(current, width));
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
       // The expanded toolbar gives this slot to the model control. Keep the
@@ -193,7 +198,10 @@ export function useCompactComposerEditor(
         const { x, width } = event.nativeEvent.layout;
         editorX.set(x);
         editorWidth.set(width);
-        setCompactWidth(Math.max(0, width - 8));
+        const compactWidth = Math.max(0, width - 8);
+        setSlot((current) =>
+          current.compactWidth === compactWidth ? current : { ...current, compactWidth },
+        );
       }
     },
     editorProps: {
@@ -413,20 +421,6 @@ export function ComposerSurface(props: {
   );
 }
 
-function useKeyboardShowing() {
-  const [showing, setShowing] = useState(KeyboardController.isVisible);
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to native keyboard show/hide events
-  useEffect(() => {
-    const show = KeyboardEvents.addListener("keyboardWillShow", () => setShowing(true));
-    const hide = KeyboardEvents.addListener("keyboardWillHide", () => setShowing(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-  return showing;
-}
-
 /** Space below the composer pill, inside the bottom inset it is given. */
 export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
@@ -440,7 +434,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
-  const keyboardVisible = useKeyboardShowing();
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
@@ -600,19 +593,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
-  const [compactRowWidth, setCompactRowWidth] = useState(0);
-  const compactAttachmentLimit = isWideComposerRow(compactRowWidth) ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(
-    bodyText,
-    draftMessage,
-    composerOpensCardOnFocus({
-      rowWidth: compactRowWidth,
-      isFocused,
-      isAndroid: Platform.OS === "android",
-      keyboardVisible,
-      keepsSettingsOpen: settingsSheetPresentation.keepsComposerExpanded,
-    }),
-  );
+  const compactEditor = useCompactComposerEditor(bodyText, draftMessage, {
+    isFocused,
+    keepsSettingsOpen: settingsSheetPresentation.keepsComposerExpanded,
+    rowAttachmentCount: isExpanded ? 0 : stripAttachments.length,
+  });
+  const compactAttachmentLimit = isWideComposerRow(compactEditor.rowWidth) ? 3 : 1;
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -822,11 +808,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={composerModelIconOnly({
-          isExpanded: compactEditor.isExpanded,
-          rowWidth: compactRowWidth,
-          attachmentCount: stripAttachments.length,
-        })}
+        iconOnly={compactEditor.modelIconOnly}
         onPress={openSettings}
       />
     </View>
@@ -910,12 +892,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           }}
         >
           {isExpanded ? editingAttachments : null}
-          <View
-            onLayout={(event) => {
-              compactEditor.onRowLayout(event);
-              setCompactRowWidth(event.nativeEvent.layout.width);
-            }}
-          >
+          <View onLayout={compactEditor.onRowLayout}>
             <ComposerDictationDraftContent
               className="flex-row items-end"
               compact

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  compactSlotAfterRowLayout,
-  composerModelIconOnly,
-  composerOpensCardOnFocus,
-  isCompactComposerExpanded,
-} from "./compactComposerLayout";
+import { compactSlotAfterRowLayout, resolveCompactComposerLayout } from "./compactComposerLayout";
 
 const LINE_HEIGHT = 22;
 const FONT_SIZE = 16;
@@ -25,29 +20,18 @@ function composer(
     readonly attachmentCount?: number;
   } = {},
 ) {
-  const rowWidth = input.rowWidth ?? NARROW;
-  const isExpanded = isCompactComposerExpanded({
-    opensOnFocus: composerOpensCardOnFocus({
-      rowWidth,
-      isFocused: input.isFocused ?? false,
-      isAndroid: input.isAndroid ?? false,
-      keyboardVisible: input.keyboardVisible ?? false,
-      keepsSettingsOpen: input.keepsSettingsOpen ?? false,
-    }),
+  return resolveCompactComposerLayout({
+    slot: { rowWidth: input.rowWidth ?? NARROW, compactWidth: input.compactWidth ?? 200 },
+    isFocused: input.isFocused ?? false,
+    isAndroid: input.isAndroid ?? false,
+    keyboardShowing: input.keyboardVisible ?? false,
+    keepsSettingsOpen: input.keepsSettingsOpen ?? false,
     value: input.value ?? "",
     contentSize: input.contentSize ?? { width: 0, height: LINE_HEIGHT },
-    compactWidth: input.compactWidth ?? 200,
     lineHeight: LINE_HEIGHT,
     fontSize: FONT_SIZE,
+    rowAttachmentCount: input.attachmentCount ?? 0,
   });
-  return {
-    isExpanded,
-    modelIconOnly: composerModelIconOnly({
-      isExpanded,
-      rowWidth,
-      attachmentCount: input.attachmentCount ?? 0,
-    }),
-  };
 }
 
 describe("compact composer layout", () => {
