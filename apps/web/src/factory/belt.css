@@ -1,3 +1,5 @@
+@reference "../index.css";
+
 /*
  * The belt's station colours: one fork-owned set, a light and a dark value each. They paint borders,
  * swatches, dots and the readout's notch, never body text, which stays on the theme's foreground
@@ -12,16 +14,16 @@
   --factory-done: #2f9e44;
   --factory-stuck: #d6453d;
   --factory-info: #c77d00;
-}
 
-.dark {
-  --factory-claimed: #f0b04a;
-  --factory-building: #2dd4bf;
-  --factory-gate: #a98bf0;
-  --factory-pr: #6ea8fe;
-  --factory-done: #5ed17a;
-  --factory-stuck: #f27a73;
-  --factory-info: #e0a030;
+  @variant dark {
+    --factory-claimed: #f0b04a;
+    --factory-building: #2dd4bf;
+    --factory-gate: #a98bf0;
+    --factory-pr: #6ea8fe;
+    --factory-done: #5ed17a;
+    --factory-stuck: #f27a73;
+    --factory-info: #e0a030;
+  }
 }
 
 [data-station="claimed"] {
