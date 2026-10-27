@@ -1,23 +1,16 @@
-// @effect-diagnostics nodeBuiltinImport:off - exercises the hook with Metro's release transform.
-import * as NodeModule from "node:module";
-import * as NodeVM from "node:vm";
 import {
   EnvironmentId,
   ProjectListEntriesError,
   type ProjectEntry,
   type ProjectListEntriesResult,
 } from "@t3tools/contracts";
-import * as fileTree from "./fileTree";
 import * as Cause from "effect/Cause";
-import * as React from "react";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
+import { AsyncResult } from "effect/reactivity";
+import { act, useLayoutEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-type Hook = typeof import("./useFileTreeEntries").useFileTreeEntries;
-type Input = Parameters<Hook>[0];
 type Query = {
   readonly environmentId: EnvironmentId;
   readonly input: {
@@ -33,165 +26,176 @@ type Result =
       readonly timestamp: number;
     }
   | { readonly _tag: "Failure"; readonly cause: Cause.Cause<Error> };
+type QueryState = {
+  success: AsyncResult.Success<ProjectListEntriesResult, Error> | null;
+  data: ProjectListEntriesResult;
+  error: string | null;
+  failure: ProjectListEntriesError | null;
+  isPending: boolean;
+  refresh: () => void;
+};
 
-const require = NodeModule.createRequire(import.meta.url);
-const babel: {
-  transformFileSync(file: string, options: Record<string, unknown>): { code: string };
-} = require("@babel/core");
-const sourcePath = require.resolve("./useFileTreeEntries.ts");
 const rootEntries: ProjectEntry[] = [{ kind: "directory", path: "src" }];
 const firstTarget = { cwd: "/first", environmentId: EnvironmentId.make("first") };
 
-function compileModule(sourcePath: string) {
-  const { code } = babel.transformFileSync(sourcePath, {
-    babelrc: false,
-    configFile: false,
-    presets: [[require.resolve("babel-preset-expo"), { unstable_transformImportMeta: true }]],
-    caller: {
-      name: "metro",
-      bundler: "metro",
-      platform: "ios",
-      isDev: false,
-      isServer: false,
-      isNodeModule: false,
-      supportsStaticESM: false,
-      supportsReactCompiler: true,
-    },
+const mocks = vi.hoisted(() => {
+  const createState = () => ({
+    requests: [] as {
+      readonly query: Query;
+      readonly signal?: AbortSignal;
+      readonly resolve: (result: Result) => void;
+    }[],
+    responseTimestamp: 0,
+    rootQuery: null as unknown as QueryState,
+    searchQuery: null as unknown as QueryState,
+    results: new WeakMap<
+      object,
+      {
+        data: ProjectListEntriesResult;
+        error: string | null;
+        pending: boolean;
+        result: AsyncResult.AsyncResult<ProjectListEntriesResult, Error>;
+      }
+    >(),
   });
+  return { createState, state: createState() };
+});
 
-  return NodeVM.compileFunction(code, ["require", "exports"], { filename: sourcePath });
-}
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  executeAtomQuery: (_registry: unknown, query: Query, options: { signal?: AbortSignal }) =>
+    new Promise<Result>((resolve) =>
+      mocks.state.requests.push({ query, signal: options.signal, resolve }),
+    ),
+}));
+vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { refresh: () => {} } }));
+vi.mock("../../state/projects", () => ({
+  projectEnvironment: {
+    listEntries: (query: Query) => query,
+    searchEntries: (query: Query) => query,
+  },
+}));
+vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: Partial<Query>) => {
+    const state = mocks.state;
+    const query = atom.input?.query === undefined ? state.rootQuery : state.searchQuery;
+    if (query.success) return query.success;
+    const cached = state.results.get(query);
+    if (
+      cached &&
+      cached.data === query.data &&
+      cached.error === query.error &&
+      cached.pending === query.isPending
+    ) {
+      return cached.result;
+    }
+    const result = query.error
+      ? AsyncResult.fail(query.failure ?? new Error(query.error), {
+          previousSuccess: Option.some(AsyncResult.success(query.data)),
+        })
+      : AsyncResult.success(query.data, {
+          waiting: query.isPending,
+          timestamp: ++state.responseTimestamp,
+        });
+    state.results.set(query, {
+      data: query.data,
+      error: query.error,
+      pending: query.isPending,
+      result,
+    });
+    return result;
+  },
+  useAtomRefresh: () => mocks.state.rootQuery.refresh,
+}));
+
+const { Children, Nothing } = vi.hoisted(() => ({
+  Children: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Nothing: () => null,
+}));
+vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
+  View: Children,
+  RefreshControl: Nothing,
+  Pressable: ({
+    children,
+    onPress,
+    accessibilityLabel,
+  }: {
+    children?: ReactNode;
+    onPress: () => void;
+    accessibilityLabel?: string;
+  }) => (
+    <button aria-label={accessibilityLabel} onClick={onPress}>
+      {children}
+    </button>
+  ),
+}));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: Nothing }));
+vi.mock("../../native/native-layout-metrics", () => ({ useNativeColumnLayoutMetrics: () => null }));
+vi.mock("@legendapp/list/react-native", () => ({
+  LegendList: <T,>(props: {
+    data: ReadonlyArray<T>;
+    keyExtractor: (item: T) => string;
+    renderItem: (info: { item: T }) => ReactNode;
+    ListHeaderComponent?: ReactNode;
+    ListEmptyComponent?: ReactNode;
+  }) => (
+    <div>
+      {props.ListHeaderComponent}
+      {props.data.length === 0
+        ? props.ListEmptyComponent
+        : props.data.map((item) => (
+            <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+          ))}
+    </div>
+  ),
+}));
+vi.mock("../../components/ui/Button", () => ({
+  Button: ({
+    label,
+    onPress,
+    disabled,
+  }: {
+    label: string;
+    onPress: () => void;
+    disabled?: boolean;
+  }) => (
+    <button aria-label={label} disabled={disabled} onClick={onPress}>
+      {label}
+    </button>
+  ),
+}));
+vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: Nothing }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: Nothing }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: Nothing }));
+vi.mock("../../lib/cn", () => ({ cn: () => "" }));
+
+import { FileTreeBrowser } from "./FileTreeBrowser";
+import { useFileTreeEntries } from "./useFileTreeEntries";
+
+type Hook = typeof useFileTreeEntries;
+type Input = Parameters<Hook>[0];
 
 function setup(withBrowser = false) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const requests: {
-    readonly query: Query;
-    readonly signal?: AbortSignal;
-    readonly resolve: (result: Result) => void;
-  }[] = [];
-  let responseTimestamp = 0;
-  const rootQuery = {
-    success: null as AsyncResult.Success<ProjectListEntriesResult, Error> | null,
+  const state = mocks.createState();
+  mocks.state = state;
+  const rootQuery: QueryState = {
+    success: null,
     data: { entries: rootEntries, truncated: false },
-    error: null as string | null,
-    failure: null as ProjectListEntriesError | null,
+    error: null,
+    failure: null,
     isPending: false,
     refresh: vi.fn(),
   };
-  const searchQuery = {
-    ...rootQuery,
-    data: { entries: [] as ReadonlyArray<ProjectEntry>, truncated: false },
-  };
-  const modules: Record<string, unknown> = {
-    "@t3tools/contracts": { ProjectListEntriesError },
-    react: React,
-    "react/compiler-runtime": require("react/compiler-runtime"),
-    "effect/Cause": Cause,
-    "@t3tools/client-runtime/state/runtime": {
-      executeAtomQuery: (_registry: unknown, query: Query, options: { signal?: AbortSignal }) =>
-        new Promise<Result>((resolve) => requests.push({ query, signal: options.signal, resolve })),
-    },
-    "../../state/atom-registry": { appAtomRegistry: { refresh: vi.fn() } },
-    "../../state/projects": {
-      projectEnvironment: {
-        listEntries: (query: Query) => query,
-        searchEntries: (query: Query) => query,
-      },
-    },
-    "../../state/queries": { useDebouncedValue: (value: string) => value },
-  };
-  const queryExports = {} as typeof import("../../state/query");
-  const results = new WeakMap<
-    object,
-    {
-      data: ProjectListEntriesResult;
-      error: string | null;
-      pending: boolean;
-      result: AsyncResult.AsyncResult<ProjectListEntriesResult, Error>;
-    }
-  >();
-  const queryModules: Record<string, unknown> = {
-    "react/compiler-runtime": require("react/compiler-runtime"),
-    "@effect/atom-react": {
-      useAtomValue: (atom: Query) => {
-        const result = atom.input?.query === undefined ? rootQuery : searchQuery;
-        if (result.success) return result.success;
-        const cached = results.get(result);
-        if (
-          cached &&
-          cached.data === result.data &&
-          cached.error === result.error &&
-          cached.pending === result.isPending
-        ) {
-          return cached.result;
-        }
-        const value = result.error
-          ? AsyncResult.fail(result.failure ?? new Error(result.error), {
-              previousSuccess: Option.some(AsyncResult.success(result.data)),
-            })
-          : AsyncResult.success(result.data, {
-              waiting: result.isPending,
-              timestamp: ++responseTimestamp,
-            });
-        results.set(result, {
-          data: result.data,
-          error: result.error,
-          pending: result.isPending,
-          result: value,
-        });
-        return value;
-      },
-      useAtomRefresh: () => rootQuery.refresh,
-    },
-    "effect/Cause": Cause,
-    "effect/Option": Option,
-    "effect/reactivity": { AsyncResult, Atom },
-  };
-  compileModule(require.resolve("../../state/query.ts"))((name: string) => {
-    if (name.startsWith("@babel/runtime/"))
-      return NodeModule.createRequire(require.resolve("babel-preset-expo"))(name);
-    if (!(name in queryModules)) throw new Error(`Unexpected query dependency: ${name}`);
-    return queryModules[name];
-  }, queryExports);
-  modules["../../state/query"] = queryExports;
-  const exports = {} as { useFileTreeEntries: Hook };
-  compileModule(sourcePath)((name: string) => {
-    if (name.startsWith("@babel/runtime/"))
-      return NodeModule.createRequire(require.resolve("babel-preset-expo"))(name);
-    if (!(name in modules)) throw new Error(`Unexpected hook dependency: ${name}`);
-    return modules[name];
-  }, exports);
-  const browserExports = {} as typeof import("./FileTreeBrowser");
-  const empty = () => null;
-  const browserModules: Record<string, unknown> = {
-    ...modules,
-    "react/jsx-runtime": require("react/jsx-runtime"),
-    "react-native": {
-      Platform: { OS: "ios" },
-      View: empty,
-      Pressable: empty,
-      RefreshControl: empty,
-    },
-    "react-native-safe-area-context": { useSafeAreaInsets: () => ({ top: 0 }) },
-    "../../native/NativeScrollViewMarker": { NativeScrollView: empty },
-    "../../native/native-layout-metrics": { useNativeColumnLayoutMetrics: () => null },
-    "@legendapp/list/react-native": { LegendList: empty },
-    "../../components/ui/Button": { Button: empty },
-    "../../components/ui/AppActivityIndicator": { AppActivityIndicator: empty },
-    "../../components/ui/AppSymbol": { SymbolView: empty },
-    "../../components/ui/AppText": { AppText: empty },
-    "../../components/PierreEntryIcon": { PierreEntryIcon: empty },
-    "../../lib/cn": { cn: () => "" },
-    "./fileTree": fileTree,
-  };
-  compileModule(require.resolve("./FileTreeBrowser.tsx"))((name: string) => {
-    if (name.startsWith("@babel/runtime/"))
-      return NodeModule.createRequire(require.resolve("babel-preset-expo"))(name);
-    if (!(name in browserModules)) throw new Error(`Unexpected browser dependency: ${name}`);
-    return browserModules[name];
-  }, browserExports);
-  const useFileTreeEntries = exports.useFileTreeEntries;
-  const root = createRoot(document.createElement("div"));
+  state.rootQuery = rootQuery;
+  const searchQuery: QueryState = { ...rootQuery, data: { entries: [], truncated: false } };
+  state.searchQuery = searchQuery;
+  const { requests } = state;
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
   let current: ReturnType<Hook>;
   let renders = 0;
   let controlledSelection: string | undefined;
@@ -202,7 +206,7 @@ function setup(withBrowser = false) {
       current = result;
     });
     return withBrowser ? (
-      <browserExports.FileTreeBrowser
+      <FileTreeBrowser
         key={JSON.stringify([input.environmentId, input.cwd])}
         {...result}
         selectedPath={controlledSelection ?? result.selectedPath}
@@ -213,18 +217,21 @@ function setup(withBrowser = false) {
       />
     ) : null;
   }
-  const unmount = () => act(() => root.unmount());
+  const unmount = () => {
+    act(() => root.unmount());
+    container.remove();
+  };
   return {
     requests,
     rootQuery,
     searchQuery,
     get searchSuccess() {
-      const result = searchQuery.success ?? results.get(searchQuery)?.result;
+      const result = searchQuery.success ?? state.results.get(searchQuery)?.result;
       if (result?._tag !== "Success") throw new Error("Search has not succeeded");
       return result;
     },
     get responseTimestamp() {
-      return responseTimestamp;
+      return state.responseTimestamp;
     },
     controlSelection(path: string) {
       controlledSelection = path;
@@ -239,6 +246,17 @@ function setup(withBrowser = false) {
     unmount,
     get current() {
       return current;
+    },
+    get rows() {
+      return [...container.querySelectorAll("button")].map((button) =>
+        button.getAttribute("aria-label"),
+      );
+    },
+    press(label: string) {
+      renders = 0;
+      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      if (!button) throw new Error(`No row labelled ${label}`);
+      act(() => button.click());
     },
     render(target: Partial<Input> = {}) {
       renders = 0;
@@ -257,7 +275,7 @@ function setup(withBrowser = false) {
         requests[index]!.resolve({
           _tag: "Success",
           value: { entries, truncated: false },
-          timestamp: ++responseTimestamp,
+          timestamp: ++state.responseTimestamp,
         });
       });
     },
@@ -356,59 +374,79 @@ describe("file tree workspace state", () => {
     expect(screen.current.isPending).toBe(false);
     expect([...screen.current.loadingDirectories]).toEqual([]);
   });
-  it("evicts the least recently visited workspace instead of retaining unbounded history", async () => {
-    using screen = setup(true);
+
+  it("retains recent listings and expansion when leaving a large workspace", async () => {
+    using screen = setup();
     screen.render();
-    screen.updateView(["src"], "src/first.ts");
-    const nested = Array.from({ length: 66 }, (_, index) => `src/directory-${index}`);
-    await screen.succeed(0, [
-      { kind: "file", path: "src/first.ts" },
-      ...nested.map((path) => ({ kind: "directory" as const, path })),
-    ]);
-    for (const path of nested) {
-      const retained = [...screen.current.expandedPaths];
-      screen.updateView([...retained, path], "src/first.ts");
-      await screen.succeed(screen.requests.length - 1, [
-        { kind: "directory", path: `${path}/child` },
-      ]);
-      screen.updateView([...retained, path, `${path}/child`], "src/first.ts");
-      await screen.succeed(screen.requests.length - 1);
+    const paths = Array.from({ length: 70 }, (_, index) => `src/directory-${index}`);
+    screen.load();
+    await screen.succeed(
+      0,
+      paths.map((path) => ({ kind: "directory", path })),
+    );
+    for (const path of paths) {
+      screen.load(path);
+      await screen.succeed(screen.requests.length - 1, [{ kind: "file", path: `${path}/file.ts` }]);
     }
-    expect(screen.requests).toHaveLength(133);
-    expect(screen.current.isPending).toBe(false);
-    expect(screen.current.loadedDirectories.size).toBe(133);
-    expect(screen.current.expandedPaths.size).toBe(133);
-    const activeView = screen.current;
+    screen.updateView(["src", ...paths], `${paths[69]}/file.ts`);
     screen.render({ cwd: "/other" });
     screen.render();
-    expect(screen.current.loadedDirectories.size).toBeLessThanOrEqual(64);
-    expect(screen.current.expandedPaths.size).toBeLessThanOrEqual(64);
-    const retainedPaths = new Set([
-      ...screen.current.loadedDirectories,
-      ...screen.current.expandedPaths,
-    ]);
-    expect(retainedPaths.size).toBeLessThanOrEqual(64);
-    for (const path of nested) {
-      if (!screen.current.expandedPaths.has(path)) {
-        expect(screen.current.expandedPaths.has(`${path}/child`)).toBe(false);
-        expect(screen.current.loadedDirectories.has(`${path}/child`)).toBe(false);
-      }
-    }
-    expect(activeView.loadedDirectories.size).toBe(133);
-    expect(activeView.expandedPaths.size).toBe(133);
-    expect(screen.current.selectedPath).toBe("src/first.ts");
-    const returnRequests = screen.requests.length;
-    for (let index = 133; index < returnRequests; index++) {
-      await screen.succeed(index);
-    }
-    expect(screen.current.isPending).toBe(false);
-    screen.render();
-    expect(screen.requests).toHaveLength(returnRequests);
+    expect(screen.current.loadedDirectories.size).toBe(64);
+    expect(screen.current.loadedDirectories.has(paths[69]!)).toBe(true);
+    expect(screen.current.expandedPaths.size).toBe(71);
+    expect(screen.current.selectedPath).toBe(`${paths[69]}/file.ts`);
     for (let index = 1; index <= 8; index++) screen.render({ cwd: `/workspace-${index}` });
     screen.render();
-    expect([...screen.current.loadedDirectories]).toEqual([]);
-    expect([...screen.current.expandedPaths]).toEqual([]);
+    expect(screen.current.loadedDirectories.size).toBe(0);
+    expect(screen.current.expandedPaths.size).toBe(0);
     expect(screen.current.selectedPath).toBeNull();
+  });
+
+  it("retries a failed folder only when the user expands it again", async () => {
+    using screen = setup(true);
+    screen.render();
+    expect(screen.rows).toEqual(["src"]);
+    expect(screen.requests).toHaveLength(0);
+
+    screen.press("src");
+    expect(screen.requests).toHaveLength(1);
+    await screen.fail(0);
+    expect(screen.current.error).toBe("Directory unavailable");
+    // Re-rendering and the browser's passive expansion effect never retry a failed listing.
+    screen.render();
+    screen.render();
+    expect(screen.requests).toHaveLength(1);
+    expect(screen.rows).toEqual(["src"]);
+
+    screen.press("src");
+    expect([...screen.current.expandedPaths]).toEqual([]);
+    expect(screen.requests).toHaveLength(1);
+    screen.press("src");
+    expect([...screen.current.expandedPaths]).toEqual(["src"]);
+    expect(screen.requests).toHaveLength(2);
+    await screen.succeed(1, [{ kind: "file", path: "src/file.ts" }]);
+    expect(screen.current.error).toBeNull();
+    expect(screen.rows).toEqual(["src", "src/file.ts"]);
+
+    // A loaded folder serves from cache on collapse and expand.
+    screen.press("src");
+    screen.press("src");
+    expect(screen.rows).toEqual(["src", "src/file.ts"]);
+    expect(screen.requests).toHaveLength(2);
+  });
+
+  it("reveals a controlled leaf-only search result after search clears", () => {
+    using screen = setup(true);
+    screen.render();
+    screen.searchQuery.data = {
+      entries: [{ kind: "file", path: "src/new/file.ts" }],
+      truncated: false,
+    };
+    screen.controlSelection("src/new/file.ts");
+    screen.render({ searchQuery: "file" });
+    expect([...screen.current.expandedPaths]).toEqual(["src", "src/new"]);
+    screen.render();
+    expect(screen.current.entries.map((entry) => entry.path)).toContain("src/new/file.ts");
   });
 
   it.each(["collapse", "delete"])("settles controlled selection after %s", async (action) => {
@@ -549,8 +587,21 @@ describe("file tree workspace state", () => {
       for (const equalContents of [false, true]) {
         // A later parent listing wins over retained discovery evidence.
         if (path.includes("/")) {
-          screen.load("src", true);
-          await screen.succeed(screen.requests.length - 1, []);
+          // Refresh re-lists the root and every reachable folder; the empty parent prunes the child.
+          const refreshed = screen.requests.length;
+          act(() => {
+            void screen.current.refresh();
+          });
+          expect(screen.requests.slice(refreshed).map((request) => request.query.input)).toEqual([
+            { cwd: "/first", directoryPath: "" },
+            { cwd: "/first", query: "new", limit: 200 },
+            { cwd: "/first", directoryPath: "src" },
+            { cwd: "/first", directoryPath: path },
+          ]);
+          // The parent settles last so its listing carries the newest response timestamp.
+          for (const index of [refreshed, refreshed + 1, refreshed + 3, refreshed + 2]) {
+            await screen.succeed(index, []);
+          }
         } else {
           const cachedData = screen.rootQuery.data;
           screen.rootQuery.isPending = true;

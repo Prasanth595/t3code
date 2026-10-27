@@ -452,7 +452,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { canReadFiles } = fileAccess;
   const entriesQuery = useFileTreeEntries({
     environmentId,
-    cwd: canReadFiles ? cwd : null,
+    cwd: canReadFiles && !hasFileInspector ? cwd : null,
     searchQuery,
   });
   const handleReturnToThread = () => {

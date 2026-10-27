@@ -112,7 +112,7 @@ export function FileTreeBrowser(props: {
   readonly searchTruncated: boolean;
   readonly selectedPath: string | null;
   readonly loadingDirectories: ReadonlySet<string>;
-  readonly onLoadDirectory: (path: string) => void;
+  readonly onLoadDirectory: (path: string, retry?: boolean) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
@@ -171,7 +171,7 @@ export function FileTreeBrowser(props: {
   );
 
   const toggleDirectory = (path: string, expand: boolean) => {
-    if (expand) onLoadDirectory(path);
+    if (expand) onLoadDirectory(path, true);
     setExpandedPaths((current) => {
       const next = new Set(current);
       if (next.has(path)) {

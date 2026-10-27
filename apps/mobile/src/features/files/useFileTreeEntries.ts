@@ -33,9 +33,9 @@ function boundDirectories(current: ReturnType<typeof createDirectories>, preserv
       current.expandedPaths.has(parts.slice(0, index + 1).join("/")),
     );
   };
-  const inactive = [
-    ...new Set([...current.entries.keys(), ...current.errors.keys(), ...current.expandedPaths]),
-  ].filter((path) => !preserveVisible || !visible(path));
+  const inactive = [...new Set([...current.entries.keys(), ...current.errors.keys()])].filter(
+    (path) => !preserveVisible || !visible(path),
+  );
   const ownedPaths = [
     ...current.entries.keys(),
     ...current.expandedPaths,
@@ -49,24 +49,20 @@ function boundDirectories(current: ReturnType<typeof createDirectories>, preserv
   if (inactive.length <= 64)
     return discoveries.size === current.discoveries.size ? current : { ...current, discoveries };
   const evicted = new Set(inactive.slice(0, -64));
-  const isEvicted = (path: string) => {
-    const parts = path.split("/");
-    return parts.some((_, index) => evicted.has(parts.slice(0, index + 1).join("/")));
-  };
+  // Evict listing data, not the user's expansion and selection. A missing parent reloads on return.
   return {
     ...current,
-    discoveries: new Map([...discoveries].filter(([path]) => !isEvicted(path))),
-    expandedPaths: new Set([...current.expandedPaths].filter((path) => !isEvicted(path))),
-    entries: new Map([...current.entries].filter(([path]) => !isEvicted(path))),
-    errors: new Map([...current.errors].filter(([path]) => !isEvicted(path))),
+    discoveries,
+    entries: new Map([...current.entries].filter(([path]) => !evicted.has(path))),
+    errors: new Map([...current.errors].filter(([path]) => !evicted.has(path))),
     completeDirectories: new Set(
-      [...current.completeDirectories].filter((path) => !isEvicted(path)),
+      [...current.completeDirectories].filter((path) => !evicted.has(path)),
     ),
     validatedDirectories: new Set(
-      [...current.validatedDirectories].filter((path) => !isEvicted(path)),
+      [...current.validatedDirectories].filter((path) => !evicted.has(path)),
     ),
     listingCompletedAt: new Map(
-      [...current.listingCompletedAt].filter(([path]) => !isEvicted(path)),
+      [...current.listingCompletedAt].filter(([path]) => !evicted.has(path)),
     ),
   };
 }
@@ -504,11 +500,22 @@ export function useFileTreeEntries(input: {
         .filter(
           (ancestor) =>
             !handled.has(ancestor) &&
-            snapshot.entries.some((entry) => entry.kind === "directory" && entry.path === ancestor),
+            snapshot.entries.some(
+              (entry) =>
+                (entry.kind === "directory" && entry.path === ancestor) ||
+                (entry.path === path && entry.path.startsWith(`${ancestor}/`)),
+            ),
         );
       if (previous.path === path && ancestors.length === 0) return current;
       return {
         ...current,
+        discoveries: new Map([
+          ...current.discoveries,
+          ...snapshot.entries
+            .filter((entry) => entry.path === path)
+            .map((entry) => [entry.path, entry] as const),
+        ]),
+        selectedPath: path,
         revealedSelection: { path, ancestors: new Set([...handled, ...ancestors]) },
         expandedPaths: new Set([...current.expandedPaths, ...ancestors]),
       };
@@ -549,7 +556,8 @@ export function useFileTreeEntries(input: {
     searchTruncated: !missingRoot && searching && (search.data?.truncated ?? false),
     loadedDirectories: new Set(directories.entries.keys()),
     loadingDirectories: directories.loading,
-    loadDirectory,
+    loadDirectory: (path: string, retry = false) =>
+      loadDirectory(path, retry && directories.errors.has(path)),
     refresh,
   };
 }
