@@ -392,6 +392,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     readonly reference: PullRequestRef;
     readonly result: PullRequestActionResult;
     readonly epoch: number;
+    readonly refreshStats: boolean;
   };
   const cachedQueries = new WeakMap<AtomRegistry.AtomRegistry, Map<object, CachedActionQuery>>();
   const confirmedActions = new WeakMap<
@@ -455,6 +456,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       reference,
       result,
       epoch: ++actionEpoch,
+      refreshStats: result.headSha === undefined || result.headSha !== previous?.result.headSha,
     };
     for (const [alias] of matches) actions.delete(alias);
     actions.set(key, confirmed);
@@ -846,7 +848,23 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       persistence: persistPullRequestStats(),
       tag: WS_METHODS.pullRequestsListStats,
       staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => fieldRefreshes(environmentId),
+      refreshTrigger: ({ environmentId, input }) =>
+        Atom.make((get) => {
+          const revision = get(fieldRefreshes(environmentId));
+          const action = get(actionRefresh);
+          const previous = Option.getOrUndefined(
+            get.self<{ revision: number | undefined; epoch: number | undefined }>(),
+          );
+          const epoch =
+            action?.environmentId === environmentId &&
+            action.refreshStats &&
+            input.refs.some((reference) => sameActionReference(reference, action.reference))
+              ? action.epoch
+              : previous?.epoch;
+          return previous?.revision === revision && previous?.epoch === epoch
+            ? previous
+            : { revision, epoch };
+        }),
       ...(onAnswer.listStats === undefined ? {} : { onAnswer: onAnswer.listStats }),
     }),
     filterOptions: createEnvironmentRpcQueryAtomFamily(runtime, {

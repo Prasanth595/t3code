@@ -1222,12 +1222,13 @@ it.effect(
 );
 
 it.effect.each([false, true])(
-  "refreshes head-dependent detail after an action, pending=%s",
+  "refreshes head-dependent detail and stats after an action, pending=%s",
   (pending) =>
     Effect.scoped(
       Effect.gen(function* () {
         let headSha = "old-head";
         let reads = 0;
+        const statsReads = new Map<number, number>();
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const client = actionResultClient({
@@ -1248,7 +1249,22 @@ it.effect.each([false, true])(
               }
               return snapshot;
             }),
-          [WS_METHODS.pullRequestsRunActionWithResult]: () =>
+          [WS_METHODS.pullRequestsListStats]: (input: {
+            refs: ReadonlyArray<{ number: number }>;
+          }) =>
+            Effect.sync(() => ({
+              stats: input.refs.map(({ number }) => {
+                statsReads.set(number, (statsReads.get(number) ?? 0) + 1);
+                return {
+                  projectId: actionReference.projectId,
+                  repository: actionReference.repository,
+                  number,
+                  additions: headSha === "old-head" ? 1 : 2,
+                  deletions: 0,
+                };
+              }),
+            })),
+          [WS_METHODS.pullRequestsRunActionWithResult]: (input: { action: string }) =>
             Effect.sync(() => {
               headSha = "new-head";
               return {
@@ -1257,7 +1273,7 @@ it.effect.each([false, true])(
                 mergedAt: null,
                 closedAt: null,
                 headSha,
-                observedAt: 400,
+                observedAt: input.action === "update-branch" ? 400 : 600,
               };
             }),
         });
@@ -1267,6 +1283,15 @@ it.effect.each([false, true])(
         registry.mount(detail);
         if (pending) yield* Deferred.await(started);
         else yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+        const stats = atoms.listStats({ ...target, input: { refs: [actionReference] } });
+        const unrelated = atoms.listStats({
+          ...target,
+          input: { refs: [{ ...actionReference, number: 2 }] },
+        });
+        for (const atom of [stats, unrelated]) {
+          registry.mount(atom);
+          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        }
         yield* Effect.promise(() =>
           atoms.runAction.run(registry, {
             ...target,
@@ -1278,6 +1303,29 @@ it.effect.each([false, true])(
           (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).additions,
         ).toBe(2);
         expect(reads).toBe(2);
+        expect(
+          (yield* AtomRegistry.getResult(registry, stats, { suspendOnWaiting: true })).stats[0]
+            ?.additions,
+        ).toBe(2);
+        expect(statsReads).toEqual(
+          new Map([
+            [1, 2],
+            [2, 1],
+          ]),
+        );
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "ready" },
+          }),
+        );
+        yield* AtomRegistry.getResult(registry, stats, { suspendOnWaiting: true });
+        expect(statsReads).toEqual(
+          new Map([
+            [1, 2],
+            [2, 1],
+          ]),
+        );
       }),
     ),
 );
