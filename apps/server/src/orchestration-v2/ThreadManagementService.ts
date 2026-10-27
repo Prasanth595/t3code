@@ -873,8 +873,9 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(loadError));
     const fields = input.terminalOnly
       ? (["runs"] as const)
-      : (["runs", "nodes", "runtimeRequests"] as const);
-    const target = yield* getProjectThreadRecords(input, fields);
+      : (["runs", "nodes", "runtimeRequests", "turnItems"] as const);
+    const filter = { turnItemTypes: ["secret_request"] } as const;
+    const target = yield* getProjectThreadRecords(input, fields, filter);
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
@@ -898,7 +899,10 @@ const make = Effect.gen(function* () {
     // so a cut run is not the answer while its continuation is pending.
     // Runs per matching event and is already covered by the waitForThread span.
     const outcome = Effect.fnUntraced(function* (
-      projection: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+      projection: Pick<
+        OrchestrationV2ThreadProjection,
+        "runs" | "nodes" | "runtimeRequests" | "turnItems"
+      >,
     ) {
       const { runs } = projection;
       const current = runs.find((candidate) => candidate.id === selectedRun.id);
@@ -926,6 +930,14 @@ const make = Effect.gen(function* () {
             .map((candidate) => candidate.id),
         );
         const nodeRuns = new Map(projection.nodes.map((node) => [node.id, node.runId]));
+        hasPendingQuestion = projection.turnItems.some(
+          (item) =>
+            item.type === "secret_request" &&
+            item.status === "waiting" &&
+            item.nodeId !== null &&
+            item.runId !== null &&
+            blockingRuns.has(item.runId),
+        );
         for (const request of projection.runtimeRequests) {
           if (request.status !== "pending" || request.responseCapability.type !== "live") continue;
           const requestRunId = nodeRuns.get(request.nodeId);
@@ -984,6 +996,21 @@ const make = Effect.gen(function* () {
                 afterSequence,
                 eventType: "runtime-request.updated",
               }),
+          input.terminalOnly
+            ? Stream.empty
+            : orchestrator
+                .streamStoredEventsFrom({
+                  threadId: input.threadId,
+                  afterSequence,
+                  eventType: "turn-item.updated",
+                })
+                .pipe(
+                  Stream.filter(
+                    (stored) =>
+                      stored.event.type === "turn-item.updated" &&
+                      stored.event.payload.type === "secret_request",
+                  ),
+                ),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -999,7 +1026,9 @@ const make = Effect.gen(function* () {
         ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
         : Stream.empty,
     ).pipe(
-      Stream.mapEffect(() => getProjectThreadRecords(input, fields).pipe(Effect.flatMap(outcome))),
+      Stream.mapEffect(() =>
+        getProjectThreadRecords(input, fields, filter).pipe(Effect.flatMap(outcome)),
+      ),
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
@@ -1017,7 +1046,7 @@ const make = Effect.gen(function* () {
     // The run may have reached a terminal status while the timeout was
     // winning the race; the final projection read decides what actually
     // happened, so only a still-active run counts as timed out.
-    const final = yield* outcome(yield* getProjectThreadRecords(input, fields));
+    const final = yield* outcome(yield* getProjectThreadRecords(input, fields, filter));
     return {
       threadId: input.threadId,
       run: final.run,

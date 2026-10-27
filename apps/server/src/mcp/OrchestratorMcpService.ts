@@ -502,12 +502,12 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
-function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+function activeTaskRunIds(
+  child: Pick<OrchestrationV2ThreadProjection, "runs">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
-  const taskRunIds = new Set(
+  return new Set(
     child.runs
       .filter(
         (run) =>
@@ -518,6 +518,12 @@ function pendingTaskApproval(
       )
       .map((run) => run.id),
   );
+}
+
+function pendingTaskApproval(
+  child: Pick<OrchestrationV2ThreadProjection, "nodes" | "runtimeRequests">,
+  taskRunIds: ReadonlySet<RunId>,
+) {
   let approval: OrchestratorMcpDelegateTaskResult["pendingApproval"] = null;
   let oldestCreatedAt = Infinity;
   for (const request of child.runtimeRequests) {
@@ -1504,8 +1510,13 @@ const make = Effect.gen(function* () {
           "providerThreads",
           "runtimeRequests",
           "nodes",
+          "turnItems",
         ],
-        { messageRoles: ["user"], omitSettledLeafNodes: true },
+        {
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          turnItemTypes: ["secret_request"],
+        },
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
@@ -1598,6 +1609,7 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    const taskRunIds = activeTaskRunIds(childControls, task.id, childRun);
     const result = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1622,16 +1634,24 @@ const make = Effect.gen(function* () {
           : latestTerminalResultContextTransferId,
       hasPendingQuestion:
         !isTerminalTaskStatus(status) &&
-        childControls.runtimeRequests.some(
-          (request) =>
-            request.kind === "user_input" &&
-            request.status === "pending" &&
-            request.responseCapability.type === "live",
-        ),
+        (childControls.turnItems.some(
+          (item) =>
+            item.type === "secret_request" &&
+            item.status === "waiting" &&
+            item.nodeId !== null &&
+            item.runId !== null &&
+            taskRunIds.has(item.runId),
+        ) ||
+          childControls.runtimeRequests.some(
+            (request) =>
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type === "live",
+          )),
       pendingApproval:
         isTerminalTaskStatus(status) || task.completionDelivery?.state === "disposed"
           ? null
-          : pendingTaskApproval(childControls, task.id, childRun),
+          : pendingTaskApproval(childControls, taskRunIds),
       waitTimedOut,
     } satisfies OrchestratorMcpDelegateTaskResult;
     const response: OrchestratorMcpDelegateTaskResult =

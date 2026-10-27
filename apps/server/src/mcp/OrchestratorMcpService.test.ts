@@ -112,6 +112,7 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       const layerDependencies = Layer.mergeAll(
@@ -300,6 +301,9 @@ describe("OrchestratorMcpService", () => {
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
       let pendingRequest = false;
+      let pendingSecret = false;
+      let secretCompleted = false;
+      let secretOwner: "task" | "finished" | "unrelated" = "task";
       const parentProjection = () =>
         ({
           thread: { id: parentThreadId },
@@ -328,14 +332,28 @@ describe("OrchestratorMcpService", () => {
       const childProjection = () =>
         ({
           thread: { id: childThreadId, title: "Child task" },
-          runs: [childRun()],
+          runs: [
+            childRun(),
+            { id: "run:finished", ordinal: 0, status: "completed" },
+            { id: "run:unrelated", ordinal: 2, status: "running" },
+          ],
           contextTransfers: [],
           messages: [],
           subagents: [],
           providerThreads: [],
           runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
           nodes: [],
-          turnItems: [],
+          turnItems: pendingSecret
+            ? [
+                {
+                  type: "secret_request",
+                  runId: secretOwner === "task" ? childRun().id : `run:${secretOwner}`,
+                  nodeId: "node:secret",
+                  status: secretCompleted ? "completed" : "waiting",
+                  label: "Private credential request",
+                },
+              ]
+            : [],
         }) as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -392,9 +410,29 @@ describe("OrchestratorMcpService", () => {
         assert.notProperty(asking, "next");
         pendingRequest = false;
 
+        pendingSecret = true;
+        const secret = yield* service.taskStatus(scope, taskId);
+        assert.isTrue(secret.hasPendingQuestion);
+        assert.notProperty(secret, "next");
+        assert.notInclude(JSON.stringify(secret), "Private credential request");
+        secretCompleted = true;
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+        secretCompleted = false;
+        for (const owner of ["finished", "unrelated"] as const) {
+          secretOwner = owner;
+          const unrelated = yield* service.taskStatus(scope, taskId);
+          assert.isFalse(unrelated.hasPendingQuestion);
+          assert.equal(unrelated.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+        }
+        secretOwner = "task";
+        pendingSecret = false;
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+
         finished = true;
+        pendingSecret = true;
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
+        assert.isFalse(completed.hasPendingQuestion);
         assert.notProperty(completed, "next");
         const waited = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.equal(waited.status, "completed");
@@ -434,6 +472,7 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -621,6 +660,7 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -701,6 +741,7 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -787,6 +828,7 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -884,6 +926,7 @@ describe("OrchestratorMcpService", () => {
             ],
             providerThreads: [],
             runtimeRequests: [],
+            turnItems: [],
           },
         ],
         [
@@ -896,6 +939,7 @@ describe("OrchestratorMcpService", () => {
             subagents: [],
             providerThreads: [],
             runtimeRequests: [],
+            turnItems: [],
           },
         ],
       ]) as unknown as ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
