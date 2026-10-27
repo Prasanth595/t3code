@@ -607,7 +607,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const usesLargeControls =
     useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage, {
-    isFocused,
+    // Dictation hides the editor and keeps focus, so the card would be an empty band.
+    isFocused: isFocused && !isVoiceInputPresented,
     keepsSettingsOpen: settingsSheetPresentation.keepsComposerExpanded,
     rowAttachmentCount: isExpanded ? 0 : stripAttachments.length,
   });
