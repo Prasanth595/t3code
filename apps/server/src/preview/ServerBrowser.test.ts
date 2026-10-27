@@ -437,7 +437,7 @@ it.live("preview_open reports its navigation timeout instead of the request budg
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("an unanswered viewer still releases the capture lock and same-tab automation", () =>
+it.effect("an unanswered viewer still releases the capture lock and same-tab automation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, broker, tabId } = yield* ready;
@@ -502,7 +502,7 @@ it.live("an unanswered viewer still releases the capture lock and same-tab autom
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("reports a stalled snapshot capture without losing the tab or its control queue", () =>
+it.effect("reports a stalled snapshot capture without losing the tab or its control queue", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
