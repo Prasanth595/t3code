@@ -1,111 +1,36 @@
-import { RegistryContext } from "@effect/atom-react";
 import {
+  DEFAULT_UNIFIED_SETTINGS,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
-  type ScheduledTaskListResult,
 } from "@t3tools/contracts";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import type { ReactNode } from "react";
-import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-
-const state = vi.hoisted(() => ({
-  tasks: null as unknown as Atom.Writable<AsyncResult.AsyncResult<ScheduledTaskListResult>>,
-}));
-
-vi.mock(import("../../state/server"), async (original) => {
-  const actual = await original();
-  const { Atom, AsyncResult } = await import("effect/reactivity");
-  const allowed = Atom.make(true);
-  return {
-    ...actual,
-    serverEnvironment: {
-      ...actual.serverEnvironment,
-      scheduledTasksLive: (() => state.tasks) as never,
-      upsertScheduledTask: {
-        ...actual.serverEnvironment.upsertScheduledTask,
-        permissionAtom: () => allowed,
-      },
-      deleteScheduledTask: {
-        ...actual.serverEnvironment.deleteScheduledTask,
-        run: async (registry, { input }) => {
-          const current = registry.get(state.tasks);
-          if (current._tag !== "Success") throw new Error("Missing task list");
-          registry.set(
-            state.tasks,
-            AsyncResult.success({
-              tasks: current.value.tasks.filter((task) => task.id !== input.id),
-            }),
-          );
-          return AsyncResult.success({ id: input.id });
-        },
-      },
-    },
-  };
-});
-vi.mock(import("../../state/session"), async (original) => ({
-  ...(await original()),
-  readEnvironmentScope: () => true,
-}));
-vi.mock(import("./SettingsScopeContext"), async (original) => ({
-  ...(await original()),
-  useSettingsScope: (() => {
-    const environment = {
-      environmentId: "env",
-      label: "Local environment",
-      connection: { phase: "connected" },
-      serverConfig: { environment: { platform: "linux" } },
-    };
-    return {
-      scope: { kind: "all", environmentIds: ["env"] },
-      environments: [environment],
-      connectedEnvironments: [environment],
-      environment,
-    };
-  }) as never,
-}));
-// Rows otherwise subscribe to unrelated settings write permissions and overrides.
-vi.mock(import("./settingsLayout"), async (original) => ({
-  ...(await original()),
-  SettingsPageContainer: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SettingsRow: ({ title, control }: { title: ReactNode; control?: ReactNode }) => (
-    <div>
-      {title}
-      {control}
-    </div>
-  ),
-}));
-
-import { ConfirmDialogHost } from "../ConfirmDialogHost";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 
-function setup(tasks: ScheduledTaskListResult["tasks"]) {
-  state.tasks = Atom.make<AsyncResult.AsyncResult<ScheduledTaskListResult>>(
-    AsyncResult.success({ tasks }),
-  );
-}
-
+const environmentId = EnvironmentId.make("laptop");
+const projectId = ProjectId.make("project");
 const task: ScheduledTask = {
-  id: ScheduledTaskId.make("task"),
-  title: "Daily summary",
-  prompt: "Summarize the project",
-  enabled: false,
+  id: ScheduledTaskId.make("nightly"),
+  title: "Review issues",
+  prompt: "Review open issues",
+  enabled: true,
   schedule: { type: "interval", everyMs: 60_000 },
-  projectId: ProjectId.make("project"),
+  projectId,
   threadId: null,
   workspaceStrategy: { type: "root" },
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "example" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
   interactionMode: "default",
   createdBy: "user",
   creationSource: "web",
-  createdAt: "2026-10-20T00:00:00.000Z",
-  updatedAt: "2026-10-20T00:00:00.000Z",
+  createdAt: "2026-09-17T00:00:00.000Z",
+  updatedAt: "2026-09-17T00:00:00.000Z",
   nextRunAt: null,
   lastRunAt: null,
   lastRunStatus: "never",
@@ -113,28 +38,104 @@ const task: ScheduledTask = {
   runCount: 0,
 };
 
-it("keeps a scheduled task until deletion is confirmed, including after cancelling", async () => {
-  setup([task]);
-  using resources = new DisposableStack();
-  const registry = AtomRegistry.make();
-  resources.defer(() => registry.dispose());
-  await using screen = await render(
-    <RegistryContext.Provider value={registry}>
-      <ScheduledTasksSettings />
-      <ConfirmDialogHost />
-    </RegistryContext.Provider>,
-  );
+const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true }));
 
-  await screen.getByRole("button", { name: "Actions for Daily summary" }).click();
-  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
-  expect(registry.get(state.tasks)).toMatchObject({ value: { tasks: [task] } });
-  await expect.element(page.getByRole("alertdialog")).toBeVisible();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  expect(registry.get(state.tasks)).toMatchObject({ value: { tasks: [task] } });
+function environment() {
+  return {
+    environmentId,
+    label: "Laptop",
+    connection: { phase: state.connected ? "connected" : "disconnected" },
+    serverConfig: state.connected ? { environment: { platform: "linux" } } : null,
+  };
+}
 
-  await screen.getByRole("button", { name: "Actions for Daily summary" }).click();
-  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await expect.element(screen.getByText("No scheduled tasks", { exact: true })).toBeVisible();
-  expect(registry.get(state.tasks)).toMatchObject({ value: { tasks: [] } });
+vi.mock(import("./SettingsScopeContext"), async (original) => {
+  const scope = () => {
+    const entry = environment();
+    return {
+      scope: { kind: "all", label: "All", members: [], environmentIds: [environmentId] },
+      environments: [entry],
+      connectedEnvironments: state.connected ? [entry] : [],
+      environment: entry,
+      target: null,
+      targets: [],
+    };
+  };
+  return {
+    ...(await original()),
+    useSettingsScope: scope as never,
+  };
+});
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const allowed = Atom.make(true);
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      upsertScheduledTask: {
+        ...actual.serverEnvironment.upsertScheduledTask,
+        permissionAtom: () => allowed,
+      },
+    },
+  };
+});
+// Mirrors the real query: a null request (disconnected environment) has no data.
+vi.mock(import("../../state/query"), async (original) => ({
+  ...(await original()),
+  useEnvironmentQuery: ((request: unknown) => ({
+    data: request === null ? null : { tasks: state.tasksLoaded ? [task] : [] },
+    error: null,
+    isPending: false,
+    refresh: vi.fn(),
+  })) as never,
+}));
+vi.mock(import("../../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => environment()) as never,
+}));
+vi.mock(import("../../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: (() => [{ id: projectId, environmentId, title: "Project" }]) as never,
+}));
+vi.mock(import("../../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
+}));
+
+describe("ScheduledTasksSettings", () => {
+  it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
+    state.connected = true;
+    state.tasksLoaded = true;
+    await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
+    await expect.element(name).toHaveValue("Review issues");
+    await userEvent.fill(name, "Review stale issues");
+
+    state.connected = false;
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+
+    await expect.element(name).toHaveValue("Review stale issues");
+
+    state.connected = true;
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(name).toHaveValue("Review stale issues");
+  });
+
+  it("keeps an editor the user opened when the linked task loads later", async () => {
+    state.connected = true;
+    state.tasksLoaded = false;
+    await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    const dialog = page.getByRole("dialog");
+    const name = dialog.getByRole("textbox", { name: "Name" });
+    await userEvent.fill(name, "My draft");
+
+    state.tasksLoaded = true;
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+
+    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
+    await expect.element(name).toHaveValue("My draft");
+  });
 });
