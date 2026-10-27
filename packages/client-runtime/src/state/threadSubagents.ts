@@ -53,7 +53,17 @@ export function deriveThreadTurnSubagents(
     first,
   );
   const runId = activeRun?.id ?? latestUpdated.runId;
-  const latestRunId = projection.runs.findLast((run) => !rolledBackRunIds.has(run.id))?.id ?? null;
+  // Ordinal, not array position: a reordered queue can leave the projection's runs out of order.
+  // Queued and never-started runs have not replaced anything yet.
+  const latestStartedRun = projection.runs.reduce<Projection["runs"][number] | null>(
+    (latest, run) =>
+      run.startedAt !== null &&
+      !rolledBackRunIds.has(run.id) &&
+      (latest === null || run.ordinal > latest.ordinal)
+        ? run
+        : latest,
+    null,
+  );
   const subagents = copySorted(
     eligible.filter(
       (subagent) => subagent.runId === runId || isActiveSubagentStatus(subagent.status),
@@ -71,7 +81,7 @@ export function deriveThreadTurnSubagents(
   return {
     runId,
     turnActive: activeRun !== null,
-    latestTurn: runId === null || runId === latestRunId,
+    latestTurn: runId === null || latestStartedRun === null || runId === latestStartedRun.id,
     subagents,
     liveCount,
     settledCount,

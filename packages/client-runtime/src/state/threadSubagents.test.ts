@@ -41,8 +41,17 @@ function subagent(
   };
 }
 
-const run = (id: string, status: "running" | "completed" | "rolled_back") =>
-  ({ id: RunId.make(id), status }) as never;
+const run = (
+  id: string,
+  status: "queued" | "running" | "completed" | "cancelled" | "rolled_back",
+  overrides: { readonly ordinal?: number; readonly started?: boolean } = {},
+) =>
+  ({
+    id: RunId.make(id),
+    status,
+    ordinal: overrides.ordinal ?? Number(id.slice("run-".length)),
+    startedAt: overrides.started === false ? null : at("2026-06-20T00:00:00.000Z"),
+  }) as never;
 const activeRun = run("run-1", "running");
 const finishedRun = run("run-1", "completed");
 
@@ -192,6 +201,29 @@ describe("deriveThreadTurnSubagents", () => {
   it("shows finished agents again when the later turn was rolled back", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [finishedRun, run("run-2", "rolled_back")],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
+  it("keeps finished agents while a later turn is only queued or was cancelled before starting", () => {
+    for (const later of [
+      run("run-2", "queued", { started: false }),
+      run("run-2", "cancelled", { started: false }),
+    ]) {
+      const turn = deriveThreadTurnSubagents({
+        runs: [finishedRun, later],
+        subagents: [subagent({ id: "a", status: "completed" })],
+      });
+
+      expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+    }
+  });
+
+  it("finds the latest turn by ordinal when a reordered queue left runs out of order", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [run("run-1", "completed", { ordinal: 3 }), run("run-2", "completed", { ordinal: 2 })],
       subagents: [subagent({ id: "a", status: "completed" })],
     });
 
