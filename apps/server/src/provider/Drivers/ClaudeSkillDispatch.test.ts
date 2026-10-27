@@ -73,6 +73,22 @@ describe("planClaudeSkillDispatch", () => {
     }
   });
 
+  it.each(["goal", "review"])("keeps user-only skills available after /%s", (command) => {
+    const skills = new Map([
+      ["review", { path: skillPath("review"), userInvocationOnly: true }],
+      ["implement", { path: skillPath("implement"), userInvocationOnly: true }],
+    ]);
+    const reviewNote =
+      command === "review"
+        ? ""
+        : ` [The user invoked this skill. Follow the instructions at: ${skillPath("review")}]`;
+    expect(planClaudeSkillDispatch(`/${command} use $review then $implement`, skills)).toEqual({
+      leadingText: undefined,
+      commandText: `/${command} use /review${reviewNote} then /implement [The user invoked this skill. Follow the instructions at: ${skillPath("implement")}]`,
+      skillName: "implement",
+    });
+  });
+
   it("bounds notes for repeated user-only skills and leaves the native dispatch unannotated", () => {
     const skills = new Map([
       ["interrogate", { path: skillPath("interrogate"), userInvocationOnly: true }],

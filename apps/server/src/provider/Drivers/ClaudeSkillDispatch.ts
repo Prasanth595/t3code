@@ -10,12 +10,14 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
+const LEADING_SLASH_COMMAND_PATTERN = /^\/([^\s/]+)(?=\s|$)/u;
+
 export type ClaudeSkillTarget = Pick<ServerProviderSkill, "path" | "userInvocationOnly">;
 
 export interface ClaudeSkillDispatch {
-  /** The whole prompt with mentions as `/name`, or `undefined` when the mention opens it. */
+  /** The whole rewritten prompt when dispatching a skill from within the request. */
   readonly leadingText: string | undefined;
-  /** `/name` plus the trailing text, ready to be the message's last text block. */
+  /** The leading command or last skill invocation, sent as the last text block. */
   readonly commandText: string;
   readonly skillName: string;
 }
@@ -36,9 +38,12 @@ export function planClaudeSkillDispatch(
     return undefined;
   }
 
-  // Only the final skill gets native expansion. Earlier user-only skills need
-  // a fallback to their raw file because Claude's Skill tool refuses them.
-  const annotated = new Set([last.name]);
+  // Root paths must not take precedence over skill dispatch.
+  const leadingCommand = LEADING_SLASH_COMMAND_PATTERN.exec(prompt)?.[1];
+  const preserveCommand =
+    leadingCommand !== undefined && (leadingCommand === "goal" || skills.has(leadingCommand));
+  // User-only skills that will not expand natively need their raw file path.
+  const annotated = new Set([preserveCommand ? leadingCommand : last.name]);
   let promptWithInlineSlashes = "";
   let cursor = 0;
   for (const mention of mentions) {
@@ -53,8 +58,12 @@ export function planClaudeSkillDispatch(
 
   return {
     leadingText:
-      prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
-    commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
+      !preserveCommand && prompt.slice(0, last.start).trim().length > 0
+        ? promptWithInlineSlashes
+        : undefined,
+    commandText: preserveCommand
+      ? promptWithInlineSlashes
+      : `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
     skillName: last.name,
   };
 }
