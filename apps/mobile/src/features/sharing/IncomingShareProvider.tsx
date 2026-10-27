@@ -22,6 +22,7 @@ import { createIncomingSharePayloadReader } from "./incoming-share-native";
 import { IncomingShareInbox } from "./incoming-share-inbox";
 import { persistComposerAttachmentFile } from "../../lib/composerImages";
 import { subscribeAppActive } from "../../lib/appState";
+import { coalescedRun } from "../../lib/coalescedRun";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
 import { isDraftThreadRoute } from "../threads/thread-route-state";
@@ -196,7 +197,6 @@ interface IncomingShareSnapshot {
 
 let snapshot: IncomingShareSnapshot = { drafts: [], isLoading: true };
 const snapshotListeners = new Set<() => void>();
-let refreshInFlight: Promise<void> | null = null;
 let presentation = EMPTY_INCOMING_SHARE_PRESENTATION_STATE;
 
 function publish(drafts: ReadonlyArray<IncomingShareDraft>) {
@@ -224,22 +224,18 @@ function reportRefreshFailure(cause: unknown) {
   ]);
 }
 
-function refreshIncomingShares(): Promise<void> {
-  if (refreshInFlight) return refreshInFlight;
+// A resume while a refresh runs may carry a native handoff that refresh already
+// passed, so it queues one more refresh instead of joining the running one.
+const refreshIncomingShares = coalescedRun(async () => {
   const enabled = receiveSharingEnabled();
-  refreshInFlight = (async () => {
-    try {
-      publish(await incomingShareInbox.refresh({ ingestNative: enabled }));
-    } catch (cause) {
-      const persisted = await incomingShareInbox.refresh({ ingestNative: false }).catch(() => null);
-      publish(persisted ?? snapshot.drafts);
-      reportRefreshFailure(cause);
-    }
-  })().finally(() => {
-    refreshInFlight = null;
-  });
-  return refreshInFlight;
-}
+  try {
+    publish(await incomingShareInbox.refresh({ ingestNative: enabled }));
+  } catch (cause) {
+    const persisted = await incomingShareInbox.refresh({ ingestNative: false }).catch(() => null);
+    publish(persisted ?? snapshot.drafts);
+    reportRefreshFailure(cause);
+  }
+});
 
 /**
  * Opens the oldest pending share as a new-task draft unless the user already
