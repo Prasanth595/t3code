@@ -36,6 +36,7 @@ const testState = vi.hoisted(() => {
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
+    setPrompt: vi.fn(),
   };
 
   return {
@@ -79,6 +80,7 @@ const testState = vi.hoisted(() => {
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
+      draftStore.setPrompt.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -244,6 +246,25 @@ describe.each([
     expect(testState.router.state.location.href).toBe("/usage");
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("sets the prompt before the draft shows", async () => {
+    testState.reset(draft);
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+      opened?.draftId,
+      "Read the playbook. ",
+    );
+    expect(testState.draftStore.setPrompt.mock.invocationCallOrder[0]).toBeLessThan(
+      testState.router.navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("abandons a delayed draft open when the project is removed meanwhile", async () => {

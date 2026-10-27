@@ -81,6 +81,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      /** Composer text for the draft, set before it shows. Drafts are reused only while empty. */
+      prompt?: string;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -98,7 +100,11 @@ export function createNewThreadHandler(router: AnyRouter) {
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
       setModelSelection,
+      setPrompt,
     } = useComposerDraftStore.getState();
+    const seedPrompt = (draftId: DraftId) => {
+      if (options?.prompt !== undefined) setPrompt(draftId, options.prompt);
+    };
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
@@ -286,6 +292,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           draftId: emptyStoredDraftThread.draftId,
           threadId: emptyStoredDraftThread.threadId,
         };
+        seedPrompt(emptyStoredDraftThread.draftId);
         const routeTargetAfterWrites = getCurrentRouteTarget();
         if (
           routeTargetAfterWrites?.kind === "draft" &&
@@ -352,6 +359,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           interactionMode: racedDraft.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        seedPrompt(racedDraft.draftId);
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId: racedDraft.draftId },
@@ -379,6 +387,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
+      seedPrompt(draftId);
       await router.navigate({
         to: "/draft/$draftId",
         params: { draftId },

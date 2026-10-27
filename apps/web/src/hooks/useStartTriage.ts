@@ -8,7 +8,6 @@ import { type EnvironmentId, TRIAGE_PROMPT_FILE_NAME } from "@t3tools/contracts"
 import { useRouter } from "@tanstack/react-router";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { useComposerDraftStore } from "~/composerDraftStore";
 import { currentClientMetadata } from "~/connection/platform";
 import { projectEnvironment } from "~/state/projects";
 import { serverEnvironment } from "~/state/server";
@@ -46,6 +45,8 @@ export function useStartTriage() {
         description: `${description} Run ${TRIAGE_CLI_COMMAND} in a terminal on that machine instead.`,
         timeout: 0,
         actionProps: { children: "Copy command", onClick: () => void copyTriageCliCommand() },
+        // "Copy command" is the copy that helps here, not the error text.
+        data: { hideCopyButton: true },
       }),
     );
   const failWith = (
@@ -67,23 +68,15 @@ export function useStartTriage() {
     const project = await openScratch({ environmentId, input: {} });
     if (project._tag === "Failure") return failWith(project);
     if (routeChanged()) return;
-    const opened = await handleNewThread(
-      scopeProjectRef(project.value.environmentId, project.value.id),
-    ).then(
-      (draft) => ({ draft }),
-      () => null,
-    );
-    if (opened === null) {
-      fail("T3 Code could not open a new thread.");
-      return;
-    }
-    if (opened.draft === null) return;
-    useComposerDraftStore.getState().setPrompt(opened.draft.draftId, prepared.value.prompt);
+    // A null result means the user went elsewhere; only a throw is a failure.
+    await handleNewThread(scopeProjectRef(project.value.environmentId, project.value.id), {
+      prompt: prepared.value.prompt,
+    }).catch(() => fail("T3 Code could not open a new thread."));
   };
 
   return async (environmentId: EnvironmentId) => {
     if (scratchWorkspaceRootFor(environmentId) === null) {
-      fail("This environment cannot start threads without a project.");
+      fail("This machine cannot start threads without a project.");
       return;
     }
     const requestingRouteHref = router.state.location.href;
@@ -95,7 +88,6 @@ export function useStartTriage() {
         type: "loading",
         title: "Starting triage…",
         timeout: 0,
-        data: { hideCopyButton: true },
       });
     }, 400);
     await openTriageDraft(

@@ -3,6 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useNavigation } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 
@@ -25,6 +26,7 @@ const CLI_COMMAND = "npx t3 triage";
  * clones the matching source, then a No project draft opens with the prompt.
  */
 export function useStartTriage() {
+  const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -41,7 +43,17 @@ export function useStartTriage() {
   const errorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
 
+  const activeRoute = () => {
+    const state = navigation.getState();
+    return state?.routes[state.index];
+  };
+
   return async (environmentId: EnvironmentId) => {
+    // If the user goes elsewhere while this waits, the draft stays closed
+    // instead of pulling them away. Split view changes params, not the route.
+    const startRoute = activeRoute();
+    const routeChanged = () =>
+      activeRoute()?.key !== startRoute?.key || activeRoute()?.params !== startRoute?.params;
     const scratch = await openScratch({ environmentId, input: {} });
     if (scratch._tag === "Failure") {
       if (!isAtomCommandInterrupted(scratch)) {
@@ -70,6 +82,7 @@ export function useStartTriage() {
       fail("Drafts could not be loaded.");
       return;
     }
+    if (routeChanged()) return;
     const draftId = createNewTaskDraft({
       environmentId,
       projectId: scratch.value.id,
