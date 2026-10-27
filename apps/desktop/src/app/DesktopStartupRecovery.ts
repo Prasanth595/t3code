@@ -275,7 +275,7 @@ export const listen: Effect.Effect<
       yield* logInfo("startup recovery window shown");
     },
     Effect.catch((error) =>
-      logWarning("could not show startup recovery", { error: error.message }),
+      logWarning("could not show startup recovery", { errorTag: error._tag }),
     ),
   );
 
@@ -317,7 +317,11 @@ export const listen: Effect.Effect<
         }
       }),
     ),
-    Effect.catchCause((cause) => logWarning("startup recovery stopped", { cause })),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("startup recovery stopped", cause).pipe(
+        Effect.annotateLogs({ component: "desktop-startup-recovery" }),
+      ),
+    ),
     Effect.forkScoped,
   );
 
