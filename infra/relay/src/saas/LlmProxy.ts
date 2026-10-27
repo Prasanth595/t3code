@@ -6,6 +6,7 @@ import {
   type SaasReasoningEffort,
 } from "@t3tools/contracts/saas";
 import { RelayApi } from "@t3tools/contracts/relay";
+import { CHAT_VISUAL_GUIDE } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -40,8 +41,9 @@ import * as SaasChat from "./SaasChat.ts";
 export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_CHAT_MESSAGES = 200;
-const CHAT_SYSTEM_PROMPT =
-  "You are Mira, a friendly and helpful assistant. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.";
+const CHAT_SYSTEM_PROMPT = `You are Mira, a friendly and helpful assistant. Always answer in the language of the user's latest message. Answer clearly. When you use web search results, mention the sources.
+
+${CHAT_VISUAL_GUIDE}`;
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 export interface TokenUsage {

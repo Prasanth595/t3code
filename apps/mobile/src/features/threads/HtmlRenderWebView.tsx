@@ -27,7 +27,7 @@ export function htmlRenderRowHeight(frameHeight: number) {
   return frameHeight + ROW_BOTTOM_MARGIN;
 }
 
-function useHtmlRenderTheme() {
+export function useHtmlRenderTheme() {
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
   return useMemo(
@@ -43,7 +43,7 @@ function useHtmlRenderTheme() {
   );
 }
 
-function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
+export function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
   view?.injectJavaScript(
     `window.postMessage(${JSON.stringify(htmlRenderThemeMessage(theme))}, "*"); true;`,
   );

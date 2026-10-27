@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  htmlRenderTheme,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  splitChatVisuals,
 } from "./htmlRender.ts";
+import { T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
@@ -60,6 +63,38 @@ describe("injectHtmlRenderBootstrap", () => {
       injected.indexOf("<html><head>"),
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
+  });
+});
+
+describe("injectHtmlRenderBootstrap with a host theme", () => {
+  it("uses only the given theme instead of following the system scheme", () => {
+    const theme = htmlRenderTheme(T3_CODE_LIGHT_THEME_COLORS, "light");
+    const injected = injectHtmlRenderBootstrap("<p>x</p>", theme);
+    expect(injected).toContain(":root{color-scheme:light;");
+    expect(injected).not.toContain("prefers-color-scheme");
+  });
+});
+
+describe("splitChatVisuals", () => {
+  it("separates visual blocks from the markdown around them", () => {
+    const text = ["Intro", "", "```visual", "<div>chart</div>", "```", "", "Outro"].join("\n");
+    expect(splitChatVisuals(text)).toEqual([
+      { kind: "markdown", text: "Intro\n" },
+      { kind: "visual", html: "<div>chart</div>", complete: true },
+      { kind: "markdown", text: "\nOutro" },
+    ]);
+  });
+
+  it("marks a visual still streaming as incomplete", () => {
+    expect(splitChatVisuals(["Hi", "```visual", "<div>"].join("\n"))).toEqual([
+      { kind: "markdown", text: "Hi" },
+      { kind: "visual", html: "<div>", complete: false },
+    ]);
+  });
+
+  it("keeps visual fences quoted inside another code block as markdown", () => {
+    const text = ["````md", "```visual", "<div/>", "```", "````"].join("\n");
+    expect(splitChatVisuals(text)).toEqual([{ kind: "markdown", text }]);
   });
 });
 
