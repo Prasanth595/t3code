@@ -1,16 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import { AtomRegistry } from "effect/reactivity";
 
 import {
-  nextThreadChangeRequestSnapshot,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
-  resolveThreadPr,
-  threadChangeRequestSnapshotsEqual,
-  threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
 } from "./ThreadStatusIndicators";
 import { newestPullRequestSummary } from "../state/pullRequests";
@@ -91,18 +85,7 @@ describe("shared pull request state", () => {
   });
 });
 
-describe("resolveThreadPr", () => {
-  it("hides PR indicators when a dedicated worktree has switched away from the thread branch", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: "stack/base",
-        gitStatus: status(),
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
+describe("resolveDisplayedThreadPr", () => {
   const featureBranch = "feature/current";
   const mergedPr = mergedFeaturePr();
   const linkedPullRequest = {
@@ -143,21 +126,6 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         linkedPullRequestStatus,
       }),
     ).toEqual(provider);
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: "feature/other",
-        gitStatus: status({ refName: "feature/other", pr: null }),
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: false,
-        linkedPullRequest,
-        linkedPullRequestStatus,
-      }),
-    ).toEqual({
-      branch: "feature/other",
-      pr: mergedPr,
-      sourceControlProvider: provider,
-      linkedPullRequest,
-    });
   });
 
   it("keeps a matching linked pull request snapshot while its status reloads", () => {
@@ -176,34 +144,6 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         linkedPullRequestStatus: null,
       }),
     ).toEqual(mergedPr);
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: null,
-        gitStatus: null,
-        snapshot,
-        retainTerminalOnBranchMismatch: false,
-        linkedPullRequest,
-        linkedPullRequestStatus: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("clears an old snapshot when a different pull request is linked", () => {
-    const snapshot = {
-      ...snapshotFor(featureBranch, mergedPr, provider),
-      linkedPullRequest: { ...linkedPullRequest, number: 41 },
-    };
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: null,
-        snapshot,
-        retainTerminalOnBranchMismatch: true,
-        linkedPullRequest,
-        linkedPullRequestStatus: null,
-      }),
-    ).toBeNull();
   });
 
   it("removes a linked pull request snapshot after the link is cleared", () => {
@@ -220,29 +160,10 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: null,
-        snapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
   });
 
-  it("after caching a merged PR, resolves main status back to the cached feature PR", () => {
-    const matchingStatus = status({
-      refName: featureBranch,
-      pr: mergedPr,
-      sourceControlProvider: provider,
-    });
-    const cached = nextThreadChangeRequestSnapshot({
-      threadBranch: featureBranch,
-      gitStatus: matchingStatus,
-      snapshot: undefined,
-      retainTerminalOnBranchMismatch: true,
-    });
-    expect(cached).toEqual(snapshotFor(featureBranch, mergedPr, provider));
+  it("resolves main status back to the cached feature PR", () => {
+    const cached = snapshotFor(featureBranch, mergedPr, provider);
 
     const mainStatus = status({
       refName: "main",
@@ -262,7 +183,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       resolveDisplayedThreadPr({
         threadBranch: featureBranch,
         gitStatus: mainStatus,
-        snapshot: cached as ThreadChangeRequestSnapshot,
+        snapshot: cached,
         retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(mergedPr);
@@ -270,7 +191,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       resolveDisplayedThreadPrProvider({
         threadBranch: featureBranch,
         gitStatus: mainStatus,
-        snapshot: cached as ThreadChangeRequestSnapshot,
+        snapshot: cached,
         retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(provider);
@@ -287,14 +208,6 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     };
     expect(
       resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: mainPr }),
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-    expect(
-      nextThreadChangeRequestSnapshot({
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: mainPr }),
         snapshot: undefined,
@@ -354,27 +267,11 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         retainTerminalOnBranchMismatch: false,
       }),
     ).toBeUndefined();
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: mismatchedStatus,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: false,
-      }),
-    ).toBeNull();
   });
 
   it("retains a terminal snapshot when a local thread and status move to a branch with no PR", () => {
     const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
 
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: "main",
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeUndefined();
     expect(
       resolveDisplayedThreadPr({
         threadBranch: "main",
@@ -385,30 +282,9 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     ).toEqual(mergedPr);
   });
 
-  it("clears an open snapshot when a local thread moves to a branch with no PR", () => {
-    const openSnapshot = snapshotFor(featureBranch, { ...mergedPr, state: "open" });
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: "main",
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: openSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-  });
-
   it("clears a retained snapshot when the thread branch is cleared", () => {
     const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
 
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: null,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
     expect(
       resolveDisplayedThreadPr({
         threadBranch: null,
@@ -430,14 +306,6 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
   it("does not erase a terminal snapshot when VCS data is missing", () => {
     const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
 
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: null,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeUndefined();
     expect(
       resolveDisplayedThreadPr({
         threadBranch: featureBranch,
@@ -466,38 +334,4 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       }),
     ).toBeNull();
   });
-
-  it("refreshes a cached snapshot when a pull request becomes ready", () => {
-    const readyPr = { ...mergedPr, state: "open" as const };
-    const draftPr = { ...readyPr, isDraft: true };
-
-    expect(
-      threadChangeRequestSnapshotsEqual(
-        snapshotFor(featureBranch, draftPr),
-        snapshotFor(featureBranch, readyPr),
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("threadChangeRequestSnapshotsAtom", () => {
-  it.effect("retains snapshots while sidebar and chat consumers are unmounted", () =>
-    Effect.gen(function* () {
-      const registry = AtomRegistry.make();
-      const threadKey = "environment-1:thread-1";
-      const snapshot = snapshotFor("feature/current", mergedFeaturePr());
-
-      const unmount = registry.mount(threadChangeRequestSnapshotsAtom);
-      registry.set(threadChangeRequestSnapshotsAtom, new Map([[threadKey, snapshot]]));
-      unmount();
-
-      yield* Effect.yieldNow;
-
-      const remount = registry.mount(threadChangeRequestSnapshotsAtom);
-      expect(registry.get(threadChangeRequestSnapshotsAtom).get(threadKey)).toEqual(snapshot);
-
-      remount();
-      registry.dispose();
-    }),
-  );
 });
