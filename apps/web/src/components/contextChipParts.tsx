@@ -58,7 +58,7 @@ export function ContextChipPopover(props: {
   kind: ContextChipKind;
   icon: ReactNode;
   label: string;
-  copyMarkdown?: string;
+  copyMarkdown?: string | undefined;
   accessibleLabel: string;
   children: ReactNode;
 }) {
