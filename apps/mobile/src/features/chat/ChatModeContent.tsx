@@ -269,7 +269,7 @@ function MessageAttachments(props: { readonly attachments: ReadonlyArray<SaasCha
             <Image
               source={{ uri: chatAttachmentUrl(relayUrl, attachment.id) }}
               contentFit="cover"
-              className="aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
+              className="aspect-[1.3] w-[240px] max-w-full rounded-[14px] bg-user-bubble-foreground/15"
             />
           </Pressable>
         ) : (
