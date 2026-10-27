@@ -489,7 +489,7 @@ export function installAppUpdateChecks(
   deferral: AppUpdateDeferral = appUpdateDeferral,
 ): () => void {
   if (!isAppUpdateCheckAvailable(client)) return () => undefined;
-  void runAppUpdateCheck({ client });
+  void runAppUpdateCheck({ client, deferral });
   let backgroundedAtMs: number | null = null;
   const subscription = AppState.addEventListener("change", (state) => {
     if (state === "background") {
