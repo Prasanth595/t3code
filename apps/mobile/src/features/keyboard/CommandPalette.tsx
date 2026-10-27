@@ -273,7 +273,8 @@ export function CommandPalette(props: {
   const draftEnvironmentId =
     useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
   const triageEnvironmentId = pickTriageEnvironment({
-    onScreen: activeThread?.environmentId ?? draftEnvironmentId,
+    // The route names the machine even before the thread shell loads.
+    onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,
     connected: searchEnvironmentIds,
     supportsTriage: (environmentId) =>
       serverConfigs.get(environmentId)?.environment.capabilities.triage === true,

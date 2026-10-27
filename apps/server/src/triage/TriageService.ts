@@ -18,8 +18,13 @@ import { triageSourceCacheDir, writeTriageSession } from "./triageSession.ts";
 
 const T3CODE_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
 
-// No tty: a credential prompt would hang forever, so git must fail instead.
-const GIT_ENV = { GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" } satisfies NodeJS.ProcessEnv;
+// No tty: a credential prompt would hang until the timeout, so git must fail
+// instead. An empty GIT_ASKPASS also skips core.askPass and SSH_ASKPASS helpers.
+const GIT_ENV = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: "",
+  LC_ALL: "C",
+} satisfies NodeJS.ProcessEnv;
 
 /** Starts in-app triage sessions: the same files `t3 triage` writes, plus a source clone. */
 export class TriageService extends Context.Service<
