@@ -343,3 +343,91 @@ describe("openCodeUsageReader", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("readOpenCodeUsage cache", () => {
+  it.effect("re-reads only appended, updated, and resized rows, and keeps older rows", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-cache-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+      );
+      const sinceMs = 1780000000000;
+      const data = (input: number) =>
+        JSON.stringify({ role: "assistant", modelID: "m", tokens: { input, output: 1 } });
+      const insert = (id: string, created: number, input: number) =>
+        db.unsafe("INSERT INTO message VALUES (?, 's', ?, ?, ?)", [
+          id,
+          created,
+          created,
+          data(input),
+        ]);
+      yield* insert("old", sinceMs - 86_400_000, 1);
+      yield* insert("a", sinceMs, 2);
+      yield* insert("b", sinceMs + 1, 3);
+      let dataRows = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            const rows = originalAll.apply(this, params);
+            dataRows += rows.filter((row) => "data" in row).length;
+            return rows;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const cache = { rows: new Map(), retentionCutoffMs: sinceMs - 10 * 86_400_000 };
+      const read = (windowStartMs: number) =>
+        Effect.gen(function* () {
+          dataRows = 0;
+          const cached = yield* readOpenCodeUsage(dir, windowStartMs, cache);
+          const fetched = dataRows;
+          assert.deepStrictEqual(cached, yield* readOpenCodeUsage(dir, windowStartMs));
+          const inputs = cached.files
+            .flatMap((file) => file.records)
+            .map((record) => `${record.dedupeKey}=${record.totals.uncachedInputTokens}`);
+          return [fetched, ...inputs];
+        });
+
+      assert.deepStrictEqual(yield* read(sinceMs - 2 * 86_400_000), [
+        3,
+        "opencode:old=1",
+        "opencode:a=2",
+        "opencode:b=3",
+      ]);
+      // A narrower window leaves "old" unchecked but cached for wider windows.
+      assert.deepStrictEqual(yield* read(sinceMs), [0, "opencode:a=2", "opencode:b=3"]);
+      yield* insert("c", sinceMs + 2, 4);
+      assert.deepStrictEqual(yield* read(sinceMs), [
+        1,
+        "opencode:a=2",
+        "opencode:b=3",
+        "opencode:c=4",
+      ]);
+      yield* db.unsafe(
+        "UPDATE message SET data = ?, time_updated = time_updated + 1 WHERE id = 'a'",
+        [data(5)],
+      );
+      // Same time_updated, different length: the byte count still invalidates the row.
+      yield* db.unsafe("UPDATE message SET data = ? WHERE id = 'b'", [data(30)]);
+      yield* db.unsafe("DELETE FROM message WHERE id = 'c'");
+      assert.deepStrictEqual(yield* read(sinceMs), [2, "opencode:a=5", "opencode:b=30"]);
+      assert.deepStrictEqual(yield* read(sinceMs - 2 * 86_400_000), [
+        0,
+        "opencode:old=1",
+        "opencode:a=5",
+        "opencode:b=30",
+      ]);
+      // Past retention, unchecked rows are dropped and read again when a window needs them.
+      cache.retentionCutoffMs = sinceMs;
+      yield* read(sinceMs);
+      assert.strictEqual((yield* read(sinceMs - 2 * 86_400_000))[0], 1);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});

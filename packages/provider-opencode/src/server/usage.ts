@@ -75,6 +75,20 @@ function parseOpenCodeMessage(
   };
 }
 
+export interface CachedOpenCodeRow {
+  readonly fingerprint: string | null;
+  readonly created: number | null;
+  readonly record: UsageRecord | null;
+}
+
+/** Parsed rows by `${databasePath}\0${table}`, then rowid; changed tables get new maps. */
+export type OpenCodeUsageCache = Map<string, ReadonlyMap<number, CachedOpenCodeRow>>;
+
+interface ListedRow {
+  readonly row_id: number;
+  readonly fingerprint: string | null;
+}
+
 export interface OpenCodeUsageReadResult {
   readonly files: readonly { readonly path: string; readonly records: readonly UsageRecord[] }[];
   readonly missing: boolean;
@@ -104,6 +118,7 @@ const LEGACY_STAT_BATCH = 256;
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   root: string,
   sinceMs: number,
+  cache?: { readonly rows: OpenCodeUsageCache; readonly retentionCutoffMs: number },
 ): Effect.fn.Return<OpenCodeUsageReadResult, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -170,43 +185,72 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        // Select ids first so time indexes bound the scan to the window; a rowid sweep (or ORDER BY
-        // rowid) reads every row. One statement also excludes mid-scan appends.
-        const rowIds = (yield* sql.unsafe<{ readonly row_id: number }>(
-          `SELECT rowid AS row_id FROM ${table}
-           ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
+        const key = `${file.path}\0${table}`;
+        const previous = cache?.rows.get(key);
+        const hit = (row: ListedRow) =>
+          row.fingerprint !== null && previous?.get(row.row_id)?.fingerprint === row.fingerprint;
+        // Select ids through time indexes; a rowid sweep (or ORDER BY rowid) reads every row. One
+        // statement also excludes mid-scan appends. octet_length reads the record header only;
+        // the length guards writers that keep time_updated.
+        const listed = (yield* sql.unsafe<ListedRow>(
+          `SELECT rowid AS row_id, ${columns.has("time_updated") ? "time_updated || ':' || octet_length(data)" : "NULL"} AS fingerprint
+           FROM ${table} ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
           timestamp === "NULL" ? [] : [sinceMs],
-        ))
-          .map((row) => row.row_id)
-          .sort((a, b) => a - b);
+        )).toSorted((a, b) => a.row_id - b.row_id);
+        const misses = listed.filter((row) => !hit(row));
+        const fetched = new Map<number, Omit<CachedOpenCodeRow, "fingerprint">>();
         // StatementSync.all materializes results; fetch the large data column in pages.
         // Omit tracing because large histories require thousands of statements.
-        for (let start = 0; start < rowIds.length; start += MESSAGE_PAGE_SIZE) {
-          const page = rowIds.slice(start, start + MESSAGE_PAGE_SIZE);
+        for (let start = 0; start < misses.length; start += MESSAGE_PAGE_SIZE) {
+          const page = misses.slice(start, start + MESSAGE_PAGE_SIZE);
           const rows = yield* sql
             .unsafe<{
+              readonly row_id: number;
               readonly id: unknown;
               readonly session_id: unknown;
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT id, session_id, data, ${timestamp} AS created
-               FROM ${table} WHERE rowid IN (${page.map(() => "?").join(", ")}) ORDER BY rowid`,
-              page,
+              `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
+               FROM ${table} WHERE rowid IN (${page.map(() => "?").join(", ")})`,
+              page.map((row) => row.row_id),
             )
             .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
-            append(
-              file.records,
-              parseOpenCodeMessage(text(row.data), {
+            fetched.set(row.row_id, {
+              created: typeof row.created === "number" ? row.created : null,
+              record: parseOpenCodeMessage(text(row.data), {
                 id: text(row.id),
                 sessionId: text(row.session_id),
                 ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
               }),
-            );
+            });
           }
           yield* Effect.yieldNow;
         }
+        const next = new Map<number, CachedOpenCodeRow>();
+        for (const row of listed) {
+          // The listed fingerprint is never newer than fetched data, so a race only re-reads.
+          const parsed = fetched.get(row.row_id);
+          const entry = parsed
+            ? { fingerprint: row.fingerprint, ...parsed }
+            : hit(row)
+              ? previous?.get(row.row_id)
+              : undefined;
+          if (entry === undefined) continue;
+          append(file.records, entry.record);
+          if (entry.fingerprint !== null) next.set(row.row_id, entry);
+        }
+        if (cache === undefined) continue;
+        // Rows before this window went unchecked; keep them for wider windows until retention.
+        for (const [rowId, entry] of previous ?? []) {
+          const created = entry.created ?? -Infinity;
+          if (!next.has(rowId) && created < sinceMs && created >= cache.retentionCutoffMs) {
+            next.set(rowId, entry);
+          }
+        }
+        // Without new rows, an equally large table only holds unchanged previous entries.
+        if (fetched.size > 0 || next.size !== (previous?.size ?? 0)) cache.rows.set(key, next);
       }
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
@@ -316,10 +360,17 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
 
 export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 
+// Refreshes re-read only rows whose time_updated or size changed.
+const rowCache: OpenCodeUsageCache = new Map();
+
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({
+    instances,
+    windowStartMs,
+    retentionCutoffMs,
+  }) {
     const roots = new Set<string>();
     for (const instance of instances) {
       for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
@@ -327,7 +378,7 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
     return yield* Effect.forEach(
       roots,
       (dir) =>
-        readOpenCodeUsage(dir, windowStartMs).pipe(
+        readOpenCodeUsage(dir, windowStartMs, { rows: rowCache, retentionCutoffMs }).pipe(
           Effect.map((result) => ({
             dir,
             files: result.missing && !result.error ? null : result.files,
