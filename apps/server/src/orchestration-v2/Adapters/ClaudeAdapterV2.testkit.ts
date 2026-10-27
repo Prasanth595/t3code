@@ -811,9 +811,11 @@ function makeReplayQueryRunner(
         messages: Stream.fromAsyncIterable(replayMessagesWithGateCleanup(input.options), (cause) =>
           replayQueryRunnerError(transcript, cause),
         ),
-        offer: (message) =>
+        offer: (message, onQueued, canQueue) =>
           replayEffect(() => {
+            if (canQueue?.() === false) throw new Error("Input is no longer eligible.");
             assertNextOutboundFrame(makeClaudePromptOfferFrame(message));
+            onQueued?.();
           }),
         setModel: (model) =>
           replayEffect(() => {
