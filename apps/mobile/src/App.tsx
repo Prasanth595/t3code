@@ -76,6 +76,7 @@ import {
   rootNavigationRef,
 } from "./lib/rootNavigation";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
+import { installAppUpdateChecks } from "./features/updates/app-updates";
 
 import "../global.css";
 
@@ -160,6 +161,7 @@ const appServiceDisposers = [
   startIncomingShareInbox(),
   installAgentNotificationNavigation(linkToAppPath),
   installAppShortcuts(linkToAppPath),
+  installAppUpdateChecks(),
 ];
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
   for (const dispose of appServiceDisposers) dispose();
