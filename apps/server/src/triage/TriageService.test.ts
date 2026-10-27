@@ -114,7 +114,9 @@ it.effect("reuses a finished clone without fetching", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
-    yield* fs.makeDirectory(`${config.baseDir}/source/${RELEASE_COMMIT}`, { recursive: true });
+    yield* fs.makeDirectory(`${config.baseDir}/source/${RELEASE_COMMIT}/.git`, {
+      recursive: true,
+    });
     const { triage, commands } = yield* makeTriage();
 
     yield* triage.prepare({ client: {} });

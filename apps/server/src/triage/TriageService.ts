@@ -153,16 +153,19 @@ const make = Effect.gen(function* () {
     if (yield* fs.exists(directory)) {
       // Our clones appear only when complete, but an agent may have cloned
       // here by hand and stopped partway.
-      const head = yield* runGit("checkSource", directory, ["rev-parse", "HEAD"], 10_000).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.orElseSucceed(() => ""),
-      );
+      // Without its own .git, rev-parse would read a parent repository.
+      const head = (yield* fs.exists(path.join(directory, ".git")))
+        ? yield* runGit("checkSource", directory, ["rev-parse", "HEAD"], 10_000).pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.orElseSucceed(() => ""),
+          )
+        : "";
       return head === source.commit
         ? ({ _tag: "cloned", directory, serverVersion, ...source } as const)
         : ({
             _tag: "failed",
             serverVersion,
-            reason: `${directory} exists but is not a complete checkout of ${source.commit}.`,
+            reason: `${directory} exists but is not a complete checkout of ${source.commit}. Remove it first.`,
           } satisfies TriageSourceClone);
     }
     if (!cloning.has(source.commit)) {

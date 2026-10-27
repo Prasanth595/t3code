@@ -635,10 +635,9 @@ function OpenCommandPaletteDialog(props: {
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
-  // Triage the machine the user is looking at. Not limited to environments that
-  // offer No project threads: when that is missing, the action explains the
-  // terminal fallback instead of hiding.
-  // With nothing on screen and no primary, a single capable machine is unambiguous.
+  // Triage the machine the user is looking at, else the primary, else the only
+  // capable machine. Not limited to machines that offer No project threads:
+  // when that is missing, the action explains the terminal fallback.
   const triageCapableEnvironments = environments.filter(
     (environment) => environment.serverConfig?.environment.capabilities.triage === true,
   );
