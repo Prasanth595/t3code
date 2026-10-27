@@ -25,7 +25,7 @@ export const timed = <A, E, R>(call: Effect.Effect<A, E, R>) =>
 export const reportWall = (name: string, wallMs: number) =>
   console.log(`bench: ${name}: wall ${wallMs.toFixed(1)} ms`);
 
-export const measure = <A, E, R>(call: Effect.Effect<A, E, R>) =>
+const measure = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     let last = performance.now();
     let blockMs = 0;

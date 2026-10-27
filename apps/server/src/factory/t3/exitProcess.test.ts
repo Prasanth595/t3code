@@ -7,7 +7,7 @@ import { assert } from "@effect/vitest";
 import { describe, it } from "vite-plus/test";
 
 const exitModule = NodeURL.pathToFileURL(
-  NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "exit.ts"),
+  NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "exitProcess.ts"),
 ).href;
 
 /**

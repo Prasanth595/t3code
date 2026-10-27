@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { exitProcess } from "./exitProcess.ts";
+
 /**
  * The restart behind `POST /api/factory/restart` (`http.ts`): `request` begins it once and
  * answers `pending` to every later call, because this process is on its way out. `make` takes
@@ -19,10 +21,7 @@ export class ServerExit extends Context.Service<
  * process begins to close, so the caller always receives the response; the restart itself takes
  * launchd about 10 seconds either way.
  */
-export const RESTART_GRACE = "500 millis";
-
-/** How long the normal shutdown gets before `process.exit(0)` ends the process regardless. */
-export const EXIT_FALLBACK_MS = 10_000;
+const RESTART_GRACE = "500 millis";
 
 /**
  * The first `request` forks a detached fiber that waits out the grace, logs the line that tells a
@@ -46,24 +45,6 @@ export const make = (
       return "started";
     }),
   };
-};
-
-/**
- * Ends the process the way `t3 serve` handles a stop: SIGTERM to itself, which `runMain` turns
- * into an interrupt, so the scope closes as for `launchctl stop`. The `exit` listener turns
- * runMain's 130 into 0 (a requested restart is clean to launchd) and leaves other codes alone. A
- * hung shutdown is cut short by `process.exit(0)` after `fallbackMs`, with a line on stderr.
- */
-export const exitProcess = (fallbackMs = EXIT_FALLBACK_MS): void => {
-  process.once("exit", (code) => {
-    if (code === 130) process.exitCode = 0;
-  });
-  // @effect-diagnostics-next-line globalTimers:off - must fire while the Effect runtime is shutting down or stuck.
-  setTimeout(() => {
-    process.stderr.write(`factory restart: shutdown did not finish in ${fallbackMs}ms, exiting\n`);
-    process.exit(0);
-  }, fallbackMs).unref();
-  process.kill(process.pid, "SIGTERM");
 };
 
 export const layer = Layer.sync(ServerExit, () => make(Effect.sync(() => exitProcess())));

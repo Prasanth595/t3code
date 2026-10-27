@@ -35,7 +35,7 @@ export const FORK_BOOT_SERVICE_LAUNCHD_LABEL = `${FORK_DESKTOP_APP_ID}.service`;
 // One id serves iOS and Android: Android package names cannot contain the hyphens in
 // FORK_DESKTOP_APP_ID. apps/mobile/src/factory/mobileIdentity.ts applies these to app.config.ts.
 
-export const FORK_MOBILE_APP_ID = "au.com.originalsolutions.t3codefactory";
+const FORK_MOBILE_APP_ID = "au.com.originalsolutions.t3codefactory";
 
 export const FORK_MOBILE_VARIANTS = {
   development: {

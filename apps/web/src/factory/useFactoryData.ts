@@ -17,7 +17,7 @@ import {
 } from "./api";
 
 /** How often an open page or badge reads again, while the window shows and the reader is about. */
-export const POLL_MS = 30_000;
+const POLL_MS = 30_000;
 
 /** How often the Factory page reads status while it is open and the window shows. */
 export const STATUS_POLL_MS = 5_000;

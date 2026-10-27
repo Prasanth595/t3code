@@ -19,7 +19,7 @@ export interface TrackedSpanReport {
 }
 
 /** Longest statement text kept per SQL span. */
-export const QUERY_TEXT_MAX = 160;
+const QUERY_TEXT_MAX = 160;
 
 interface Entry {
   readonly id: number;

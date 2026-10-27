@@ -60,14 +60,14 @@ export const SIMPLE_TRANSCRIPT = new URL(
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 
 export const projectId = ProjectId.make("project:factory-contract");
-export const createdAt = "2026-10-15T00:00:00.000Z";
+const createdAt = "2026-10-15T00:00:00.000Z";
 /** The T3 settings default model of the kit's server: what a factory session runs on, as the kit's project names none. */
 export const SETTINGS_MODEL = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
 };
 
-export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
+const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
   "completed",
   "interrupted",
   "failed",

@@ -405,7 +405,7 @@ const commentDroppedId = (step: string): string | null => {
 };
 
 /** The `gate-sending <attempt> <ordinal>` step's numbers, or null for text that breaks the rules. */
-export const parseGateSending = (
+const parseGateSending = (
   step: string,
 ): { readonly attempt: number; readonly runOrdinal: number } | null => {
   if (!step.startsWith(`${GATE_SENDING} `)) return null;
@@ -417,9 +417,7 @@ export const parseGateSending = (
 };
 
 /** The `gate-passed <sha> <n>` step's commit (lower case) and count, or null for text that breaks the rules. */
-export const parseGatePassed = (
-  step: string,
-): { readonly sha: string; readonly count: number } | null => {
+const parseGatePassed = (step: string): { readonly sha: string; readonly count: number } | null => {
   if (!step.startsWith(`${GATE_PASSED} `)) return null;
   const parts = step.slice(GATE_PASSED.length + 1).split(" ");
   if (parts.length !== 2) return null;

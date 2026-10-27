@@ -18,7 +18,7 @@ let restoreViewport: (() => void) | null = null;
  * `viewport`, which restores first). The code under test asks `matchMedia` for its breakpoints, and
  * the browser's own window is whatever size the runner gave it.
  */
-export function viewport(widthPx: number): Disposable {
+function viewport(widthPx: number): Disposable {
   restoreViewport?.();
   const own = Object.getOwnPropertyDescriptor(window, "matchMedia");
   Object.defineProperty(window, "matchMedia", {

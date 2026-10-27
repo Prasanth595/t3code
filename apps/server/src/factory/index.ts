@@ -1102,7 +1102,7 @@ export const factoryRuntime = (options: RuntimeOptions = {}) =>
     Layer.provideMerge(AttentionService.layer()),
   );
 
-export const FactoryRuntime = factoryRuntime();
+const FactoryRuntime = factoryRuntime();
 
 /** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
 export const FactoryLayer = FactoryRuntime.pipe(

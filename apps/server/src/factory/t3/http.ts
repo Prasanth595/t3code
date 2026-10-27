@@ -33,21 +33,21 @@ import { ServerExit } from "./exit.ts";
 import { FactoryPaths } from "./paths.ts";
 
 export const STATUS_PATH = "/api/factory/status";
-export const RUNS_PATH = "/api/factory/runs";
-export const RUN_PATH = "/api/factory/runs/:id";
-export const STOP_PATH = "/api/factory/runs/:id/stop";
-export const PAUSE_PATH = "/api/factory/claims/pause";
-export const RESUME_PATH = "/api/factory/claims/resume";
+const RUNS_PATH = "/api/factory/runs";
+const RUN_PATH = "/api/factory/runs/:id";
+const STOP_PATH = "/api/factory/runs/:id/stop";
+const PAUSE_PATH = "/api/factory/claims/pause";
+const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
 export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
 
 /** What the restart's 202 tells the caller to expect. */
-export const RESTART_MESSAGE =
+const RESTART_MESSAGE =
   "the server is exiting; when it runs as the LaunchAgent, launchd starts it again in about 10 seconds";
 
 /** How far back `GET /api/factory/runs` lists finished runs unless asked for `?all=1`. */
-export const RECENT_FINISHED_MS = 7 * 86_400_000;
+const RECENT_FINISHED_MS = 7 * 86_400_000;
 
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
