@@ -1250,14 +1250,13 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
   )
   .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
-/**
- * Where the mobile app's `expo-observe` sends OTLP/JSON. Observe appends
- * `<easProjectId>/v1/<signal>` to its configured endpoint URL and sends no
- * credentials, so the endpoint is public and raw; the relay forwards to Axiom.
- */
+export const RelayMobileTelemetrySignal = Schema.Literals(["logs", "metrics", "traces"]);
+export type RelayMobileTelemetrySignal = typeof RelayMobileTelemetrySignal.Type;
+
+// expo-observe appends `<easProjectId>/v1/<signal>` to its endpoint URL and cannot send credentials.
 const RelayMobileTelemetryParams = Schema.Struct({
-  projectId: Schema.String,
-  signal: Schema.Literals(["logs", "metrics", "traces"]),
+  projectId: Schema.String.check(Schema.isGUID()),
+  signal: RelayMobileTelemetrySignal,
 });
 const RelayMobileTelemetryGroup = HttpApiGroup.make("mobileTelemetry")
   .add(

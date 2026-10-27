@@ -1,11 +1,5 @@
-/**
- * Source map lookups for mobile JavaScript stacks, sized for a Worker.
- *
- * A production Hermes map is one generated line with over a million
- * segments. General-purpose decoders hold each segment as its own array,
- * which costs more than a Worker isolate's whole memory budget, so this
- * decodes the mappings straight into typed arrays (about 20 bytes a segment).
- */
+// A production Hermes map has over a million segments. General-purpose decoders hold
+// each as its own array, past a Worker isolate's memory budget; typed arrays fit.
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_VALUES = new Int8Array(128).fill(-1);
@@ -14,12 +8,7 @@ for (let index = 0; index < BASE64.length; index += 1) {
 }
 const COMMA = 44;
 const SEMICOLON = 59;
-/**
- * A decoded map holds 16 bytes per possible segment, 4 per line and its
- * source paths, all known before any segment is read. The relay caches two
- * decoded maps in a 128 MB isolate, so each may take 32 MB, about 1.7 times a
- * production map today.
- */
+/** The relay caches two decoded maps in a 128 MB isolate. */
 const MAX_DECODED_BYTES = 32 * 1024 * 1024;
 
 export interface CompactSourceMap {
@@ -33,7 +22,7 @@ export interface CompactSourceMap {
   readonly originalColumns: Int32Array;
 }
 
-export interface OriginalPosition {
+interface OriginalPosition {
   readonly source: string;
   /** 1-based. */
   readonly line: number;
@@ -44,10 +33,7 @@ export interface OriginalPosition {
 const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-/**
- * Decodes a version 3 source map, or returns `undefined` for anything else,
- * including index maps with `sections`, which no React Native build emits.
- */
+/** Undefined for anything but a version 3 map, including index maps, which React Native never emits. */
 export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const version = Reflect.get(raw, "version");
@@ -81,8 +67,7 @@ export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
   const originalLines = new Int32Array(capacity);
   const originalColumns = new Int32Array(capacity);
 
-  // Names are decoded to keep the running offsets right, but not stored:
-  // they name the identifier at a position, not the enclosing function.
+  // Names keep the running offsets right but are not stored: they name an identifier, not the function.
   const fields = [0, 0, 0, 0, 0];
   let segmentCount = 0;
   let line = 0;
@@ -154,12 +139,8 @@ export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
   };
 }
 
-/**
- * The original position of the closest segment at or before a generated
- * position. `line` is 1-based and `column` 0-based, the same convention as
- * `originalPositionFor` in `@jridgewell/trace-mapping`.
- */
-export function originalPositionFor(
+/** `line` is 1-based and `column` 0-based, as in `@jridgewell/trace-mapping`. */
+function originalPositionFor(
   map: CompactSourceMap,
   line: number,
   column: number,
@@ -167,10 +148,8 @@ export function originalPositionFor(
   const lineIndex = line - 1;
   if (lineIndex < 0 || lineIndex >= map.lineStarts.length - 1) return undefined;
   const lineStart = map.lineStarts[lineIndex]!;
-  // Columns within a line are sorted. Find the first segment at or after
-  // `column`: an exact hit takes it, since Hermes maps a function's first
-  // instruction twice (the declaration, then the first statement) and other
-  // source map libraries take the first; otherwise the segment before wins.
+  // An exact hit takes the first segment at `column`: Hermes maps a function's first
+  // instruction twice (declaration, then first statement), and other libraries take the first.
   let low = lineStart;
   let high = map.lineStarts[lineIndex + 1]!;
   while (low < high) {
@@ -192,16 +171,12 @@ export function originalPositionFor(
 }
 
 /**
- * A Hermes frame in the app bundle, such as
- * `at render (address at index.android.bundle:1:48213)`. Hermes prints the
- * bytecode offset as the column, which is exactly the generated column in the
- * composed Hermes source map. Native frames have no `address at`, and Hermes
- * prints its own runtime as `address at InternalBytecode.js:...`, whose
- * offsets are not in the app's map; both are left alone.
+ * `at render (address at index.android.bundle:1:48213)`: Hermes prints the bytecode offset,
+ * the composed map's generated column. `InternalBytecode.js` is Hermes's own runtime, not in the map.
  */
 const BUNDLE_FRAME = /address at (?!InternalBytecode\.js:)([^\s()]+):(\d+):(\d+)/u;
 
-export interface SymbolicatedStack {
+interface SymbolicatedStack {
   readonly stack: string;
   /** Frames in the app bundle. */
   readonly bundleFrames: number;
@@ -211,13 +186,7 @@ export interface SymbolicatedStack {
   readonly growth: number;
 }
 
-/**
- * Rewrites each bundle frame's location to its original file, line and
- * column (1-based, as JavaScript stacks print them), keeping the frame's
- * function name and every other line as it was. Source paths are longer than
- * the offsets they replace, so once the stack would grow by more than
- * `maxGrowth` the remaining frames keep their offsets.
- */
+/** Once the stack would grow by more than `maxGrowth`, the remaining frames keep their offsets. */
 export function symbolicateStack(
   stack: string,
   map: CompactSourceMap,
@@ -235,7 +204,6 @@ export function symbolicateStack(
     const position = originalPositionFor(map, Number(match[2]), Number(match[3]));
     if (!position) return line;
     const lineAndColumn = `:${position.line}:${position.column + 1}`;
-    // Checked before the location string exists, so a long path costs nothing once over.
     const added = position.source.length + lineAndColumn.length - match[0].length;
     if (growth + added > maxGrowth) {
       exhausted = true;

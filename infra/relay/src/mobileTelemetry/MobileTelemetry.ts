@@ -1,10 +1,3 @@
-/**
- * Receives the OTLP/JSON that `expo-observe` sends from the mobile app and
- * forwards it to Axiom. The app points Observe's `endpointUrl` here because
- * Observe cannot add auth headers and prefixes every path with the EAS
- * project id. On the way through, JavaScript exception stacks are
- * symbolicated with the bundle's source map from R2.
- */
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -21,7 +14,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RelayApi, type RelayMobileTelemetrySignal } from "@t3tools/contracts/relay";
 
 import { applySymbolication, bundleSourceMapKey, collectJsExceptions } from "./otlpLogs.ts";
 import { decodeSourceMap, type CompactSourceMap } from "./sourceMap.ts";
@@ -30,34 +23,16 @@ import { decodeSourceMap, type CompactSourceMap } from "./sourceMap.ts";
 export const MOBILE_TELEMETRY_MAX_BODY_BYTES = 2 * 1024 * 1024;
 /** Per client IP. An app flushes a few batches per launch and background. */
 export const MOBILE_TELEMETRY_RATE_LIMIT = { limit: 120, periodSeconds: 60 } as const;
-/**
- * Inside the relay's 9 s request deadline (`RELAY_REQUEST_DEADLINE_MS`), with
- * room left for reading the body and symbolicating, so a slow Axiom answers as
- * `upstream_timeout` rather than the generic deadline error.
- */
+/** Inside the relay's 9 s request deadline, so a slow Axiom answers as `upstream_timeout`. */
 const UPSTREAM_TIMEOUT = Duration.seconds(7);
 const MAX_UPSTREAM_RESPONSE_BYTES = 64 * 1024;
-/**
- * A decoded production Hermes map is about 20 MB and `decodeSourceMap` refuses
- * one over 32 MB, so a Worker isolate keeps two: enough for the current iOS
- * and Android bundles.
- */
+/** A decoded production map is about 20 MB; two fit an isolate and cover iOS and Android. */
 const SOURCE_MAP_CACHE_CAPACITY = 2;
-/**
- * About twice a stripped production map today. A larger object, such as one
- * written with a leaked upload token, is skipped unread rather than decoded
- * past the isolate's memory.
- */
-export const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
-/**
- * How much symbolication may lengthen one request. A request can carry
- * thousands of frames, each rewritten to a longer source path.
- */
+/** About twice a stripped production map; a larger object is skipped unread. */
+const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
+/** A request can carry thousands of frames, each rewritten to a longer source path. */
 const MAX_SYMBOLICATION_GROWTH = 1024 * 1024;
-/**
- * One app sends a request, so it names one bundle, or two across an OTA
- * update. Each further id would be an R2 read that evicts a cached map.
- */
+/** One app names one bundle, or two across an OTA update; more would evict cached maps. */
 const MAX_SOURCE_MAPS_PER_REQUEST = 2;
 /** A map can land in R2 a moment after its update ships, so a miss is retried. */
 const MISSING_SOURCE_MAP_TTL = Duration.minutes(5);
@@ -68,12 +43,7 @@ const decodeJson = Schema.decodeUnknownOption(UnknownFromJsonString);
 const encodeJson = Schema.encodeSync(UnknownFromJsonString);
 const parseJson = (text: string): unknown => Option.getOrUndefined(decodeJson(text));
 
-/** `<endpointUrl>/<easProjectId>/v1/<signal>`, as Observe builds it. */
-const INGEST_PATH = /^\/v1\/mobile\/observe\/([0-9A-Fa-f-]{36})\/v1\/(logs|metrics|traces)$/u;
-
-export type OtlpSignal = "logs" | "metrics" | "traces";
-
-export interface AxiomDestination {
+interface AxiomDestination {
   /** Axiom's OTLP/HTTP endpoint for the signal, such as `.../v1/logs`. */
   readonly url: string;
   readonly dataset: string;
@@ -82,9 +52,8 @@ export interface AxiomDestination {
 export class MobileTelemetrySettings extends Context.Service<
   MobileTelemetrySettings,
   {
-    /** Ingest-only token for the three datasets. */
     readonly axiomToken: Redacted.Redacted<string>;
-    readonly destinations: Readonly<Record<OtlpSignal, AxiomDestination>>;
+    readonly destinations: Readonly<Record<RelayMobileTelemetrySignal, AxiomDestination>>;
   }
 >()("t3code-relay/mobileTelemetry/MobileTelemetry/MobileTelemetrySettings") {}
 
@@ -99,30 +68,26 @@ export class SourceMapObjectError extends Schema.TaggedError<SourceMapObjectErro
 ) {}
 
 /** An object in the source maps bucket, read only once its size is known to fit. */
-export interface StoredSourceMap {
+interface StoredSourceMap {
   readonly size: number;
   readonly text: Effect.Effect<string, SourceMapObjectError>;
 }
 
-export interface FoundSourceMap {
+interface FoundSourceMap {
   readonly key: string;
   readonly map: CompactSourceMap;
 }
 
-/** Decoded source maps, by the key `bundleSourceMapKey` gives for a bundle. */
 export class SourceMaps extends Context.Service<
   SourceMaps,
   {
-    /** Undefined when no map is stored under `key` or it cannot be read. */
     readonly find: (key: string) => Effect.Effect<FoundSourceMap | undefined>;
   }
 >()("t3code-relay/mobileTelemetry/MobileTelemetry/SourceMaps") {}
 
-/** The source maps bucket. */
 export class SourceMapObjects extends Context.Service<
   SourceMapObjects,
   {
-    /** Undefined when nothing is stored under `key`. */
     readonly get: (key: string) => Effect.Effect<StoredSourceMap | undefined, SourceMapObjectError>;
   }
 >()("t3code-relay/mobileTelemetry/MobileTelemetry/SourceMapObjects") {}
@@ -168,10 +133,7 @@ const makeSourceMaps = Effect.gen(function* () {
   });
 });
 
-/**
- * Source map lookups over stored map text, cached. Build it once per Worker
- * isolate, not per request: decoding a production map costs ~150 ms.
- */
+/** Build once per Worker isolate, not per request: decoding a production map costs ~150 ms. */
 export const layerSourceMaps = Layer.effect(SourceMaps, makeSourceMaps);
 
 export class MobileTelemetry extends Context.Service<
@@ -179,6 +141,7 @@ export class MobileTelemetry extends Context.Service<
   {
     readonly handle: (
       request: HttpServerRequest.HttpServerRequest,
+      params: { readonly projectId: string; readonly signal: RelayMobileTelemetrySignal },
     ) => Effect.Effect<HttpServerResponse.HttpServerResponse>;
   }
 >()("t3code-relay/mobileTelemetry/MobileTelemetry") {}
@@ -220,7 +183,6 @@ const make = Effect.gen(function* () {
   const sourceMaps = yield* SourceMaps;
   const httpClient = yield* HttpClient.HttpClient;
 
-  /** Symbolicates JS exceptions in a logs request; undefined when nothing changed. */
   const symbolicateLogs = Effect.fn("relay.mobile_telemetry.symbolicate")(function* (
     body: Uint8Array,
   ) {
@@ -239,7 +201,7 @@ const make = Effect.gen(function* () {
         growthLeft,
       );
       growthLeft -= outcome.growth;
-      if (outcome.status === "symbolicated") symbolicated += 1;
+      if (outcome.symbolicated) symbolicated += 1;
     }
     yield* Effect.annotateCurrentSpan({
       "relay.mobile_telemetry.exceptions": exceptions.length,
@@ -261,7 +223,6 @@ const make = Effect.gen(function* () {
       }).pipe(HttpClientRequest.bodyUint8Array(body, "application/json")),
     );
     const responseBody = yield* readCapped(response.stream, MAX_UPSTREAM_RESPONSE_BYTES).pipe(
-      // A response without a body has no stream at all.
       Effect.catchIf(
         (error) => error._tag === "HttpClientError" && error.reason._tag === "EmptyBodyError",
         () => Effect.succeed(new Uint8Array(0)),
@@ -272,17 +233,15 @@ const make = Effect.gen(function* () {
 
   const handle = Effect.fn("relay.mobile_telemetry.ingest")(function* (
     request: HttpServerRequest.HttpServerRequest,
+    {
+      projectId,
+      signal,
+    }: { readonly projectId: string; readonly signal: RelayMobileTelemetrySignal },
   ) {
     const outcome = (value: string) =>
       Effect.annotateCurrentSpan({ "relay.mobile_telemetry.outcome": value });
-    const match = INGEST_PATH.exec(new URL(request.url, "http://relay").pathname);
-    if (!match) {
-      yield* outcome("invalid_path");
-      return errorResponse(404, "not_found");
-    }
-    const signal = match[2] as OtlpSignal;
     yield* Effect.annotateCurrentSpan({
-      "relay.mobile_telemetry.project_id": match[1],
+      "relay.mobile_telemetry.project_id": projectId,
       "relay.mobile_telemetry.signal": signal,
     });
 
@@ -306,8 +265,7 @@ const make = Effect.gen(function* () {
     }
     yield* Effect.annotateCurrentSpan({ "relay.mobile_telemetry.bytes": read.success.length });
 
-    // Forwarding matters more than symbolication: on any defect there, the
-    // original payload goes through untouched.
+    // Forwarding matters more than symbolication: on any defect the payload goes through as sent.
     const body =
       signal === "logs"
         ? ((yield* symbolicateLogs(read.success).pipe(
@@ -333,8 +291,7 @@ const make = Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({
       "relay.mobile_telemetry.upstream_status": response.status,
     });
-    // Status, content type and Retry-After drive Observe's retry and
-    // partial-success handling; nothing else from Axiom is passed on.
+    // Observe's retry and partial-success handling reads only these from Axiom's answer.
     const contentType = response.headers["content-type"];
     const retryAfter = response.headers["retry-after"];
     const headers = retryAfter === undefined ? undefined : { "retry-after": retryAfter };
@@ -353,12 +310,12 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(MobileTelemetry, make);
 
-/** Implements the RelayApi `mobileTelemetry` group; raw so the body is read once, capped. */
+/** Raw so the body is read once, capped. */
 export const layerApi = HttpApiBuilder.group(
   RelayApi,
   "mobileTelemetry",
   Effect.fnUntraced(function* (handlers) {
     const telemetry = yield* MobileTelemetry;
-    return handlers.handleRaw("ingest", ({ request }) => telemetry.handle(request));
+    return handlers.handleRaw("ingest", ({ request, params }) => telemetry.handle(request, params));
   }),
 );

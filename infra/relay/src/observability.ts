@@ -61,9 +61,7 @@ export const RelayObservability = Effect.gen(function* () {
     })),
   });
 
-  // `expo-observe` data from the mobile app, which reaches Axiom through the
-  // relay's mobile telemetry route (src/mobileTelemetry). Spans share the
-  // relay traces dataset; crash and error logs and startup metrics get their own.
+  // expo-observe data, forwarded by src/mobileTelemetry. Mobile spans share the traces dataset.
   const mobileLogs = yield* Axiom.Dataset("MobileLogsDataset", {
     name: relayResourceNameForStage("t3-code-mobile-logs", stage),
     kind: "otel:logs:v1",
@@ -88,11 +86,9 @@ export const RelayObservability = Effect.gen(function* () {
     ),
   });
 
-  // Mobile JavaScript source maps, read by the relay to symbolicate stacks.
   const mobileSourceMaps = yield* Cloudflare.R2.Bucket("MobileSourceMapsBucket", {
     name: mobileSourceMapsBucketName(stage),
-    // R2 refuses to delete a non-empty bucket, which would leave every
-    // destroyed preview or personal stage half torn down.
+    // R2 refuses to delete a non-empty bucket, which would half tear down every non-prod stage.
     forceDestroy: stage !== "prod",
   });
 
@@ -121,12 +117,8 @@ const mobileSourceMapsBucketName = (stage: string) =>
   relayResourceNameForStage("t3-code-mobile-sourcemaps", stage);
 
 /**
- * S3 credentials that can only write objects to the source maps bucket, for
- * the `MOBILE_SOURCEMAPS_R2` secret CI and EAS Build upload maps with. One
- * JSON value so it is one secret to copy. R2 derives S3 credentials from an
- * API token: the access key id is the token id, the secret the SHA-256 of
- * the token value. Deploy-time only; the Worker reads the bucket through its
- * own binding.
+ * Write-only S3 credentials for the source maps bucket: the `MOBILE_SOURCEMAPS_R2` secret.
+ * R2's S3 access key id is the API token's id and the secret the SHA-256 of its value.
  */
 export const MobileSourceMapsUploadCredentials = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;

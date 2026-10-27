@@ -1,5 +1,8 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import * as Exit from "effect/Exit";
+import { AsyncResult } from "effect/reactivity";
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
@@ -13,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { loadPreferences, savePreferencesPatch } from "../../persistence/imperative";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { crashReportingAvailable, setCrashReportsEnabled } from "../observability/observe";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -137,41 +140,27 @@ export function SettingsDiagnosticsRouteScreen() {
 }
 
 function CrashReportsSetting() {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  // One change at a time, so a failed save never rolls back a later choice.
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promiseExit" });
+  // One change at a time, so a slow save never turns sending back on after a later opt-out.
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadPreferences()
-      .then((preferences) => {
-        if (!cancelled) setEnabled(preferences.crashReportsEnabled !== false);
-      })
-      .catch((error: unknown) => {
-        console.warn("[diagnostics] could not read the crash report setting", error);
-        // The choice is unknown, so sending stays off until it is set here.
-        void setCrashReportsEnabled(false);
-        if (!cancelled) setEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
+  const enabled = AsyncResult.isSuccess(preferences)
+    ? preferences.value.crashReportsEnabled !== false
+    : true;
 
   const change = (value: boolean) => {
-    setEnabled(value);
     setSaving(true);
     // Sending stops before the save and starts only after it.
     if (!value) void setCrashReportsEnabled(false);
-    savePreferencesPatch({ crashReportsEnabled: value })
-      .then(
-        () => (value ? setCrashReportsEnabled(true) : undefined),
-        (error: unknown) => {
-          console.warn("[diagnostics] could not save the crash report setting", error);
-          setEnabled(!value);
+    savePreferences({ crashReportsEnabled: value })
+      .then((exit) => {
+        if (Exit.isFailure(exit)) {
+          console.warn("[diagnostics] could not save the crash report setting", exit.cause);
           return value ? undefined : setCrashReportsEnabled(true);
-        },
-      )
+        }
+        return value ? setCrashReportsEnabled(true) : undefined;
+      })
       .catch((error: unknown) => {
         console.warn("[diagnostics] could not apply the crash report setting", error);
       })
@@ -184,8 +173,8 @@ function CrashReportsSetting() {
         <SettingsSwitchRow
           icon="tray.and.arrow.up"
           label="Send crash reports"
-          disabled={enabled === null || saving}
-          value={enabled ?? true}
+          disabled={!ready || saving}
+          value={enabled}
           onValueChange={change}
         />
       </SettingsSection>

@@ -341,8 +341,7 @@ export const layer = Api.make(
       Layer.provideMerge(layerWebcrypto),
     );
 
-    // Fails open: a limiter outage must not drop webhooks the environment
-    // would accept, or app telemetry Axiom would.
+    // Fails open: a limiter outage must not drop webhooks or app telemetry.
     const allowWith =
       (
         limiter: typeof hookRateLimit,
@@ -354,7 +353,6 @@ export const layer = Api.make(
           Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
           Effect.catch((error) =>
             Effect.logWarning("Rate limiter unavailable", { error: error.message }).pipe(
-              // Visible on the request span, so an outage that disables limits shows up.
               Effect.andThen(Effect.annotateCurrentSpan({ [failedOpenAttribute]: true })),
               Effect.as(true),
             ),
@@ -365,8 +363,7 @@ export const layer = Api.make(
       allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
-    // `fetch` below rebuilds its layers for every request, so the source map
-    // cache is built here, once per isolate, for decoded maps to outlive one.
+    // `fetch` rebuilds its layers per request; the source map cache must outlive one.
     const mobileSourceMapLookups = yield* MobileTelemetry.SourceMaps.pipe(
       Effect.provide(MobileTelemetry.layerSourceMaps),
       Effect.provideService(MobileTelemetry.SourceMapObjects, {

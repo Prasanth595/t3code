@@ -1,17 +1,7 @@
-/**
- * Finds the JavaScript source maps for a published OTA update or a finished
- * EAS build and uploads them to the relay's R2 bucket, where the relay reads
- * them to symbolicate crash stacks (infra/relay/src/mobileTelemetry).
- */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { mobileSourceMapKey, type MobilePlatform } from "@t3tools/shared/mobileSourceMaps";
 import { AwsClient } from "aws4fetch";
-
-export type MobilePlatform = "ios" | "android";
-
-/** Must match `sourceMapKey` in infra/relay/src/mobileTelemetry/otlpLogs.ts. */
-export const sourceMapKey = (platform: MobilePlatform, kind: "ota" | "build", id: string) =>
-  `${platform}/${kind}/${id}.map`;
 
 export interface SourceMapUpload {
   readonly key: string;
@@ -19,7 +9,7 @@ export interface SourceMapUpload {
 }
 
 /** The `MOBILE_SOURCEMAPS_R2` secret: the relay stack's `mobileSourceMapsUploadCredentials`. */
-export interface UploadCredentials {
+interface UploadCredentials {
   readonly endpoint: string;
   readonly bucketName: string;
   readonly accessKeyId: string;
@@ -52,11 +42,7 @@ export function parseCredentials(value: string | undefined): UploadCredentials |
   return { endpoint, bucketName, accessKeyId, secretAccessKey };
 }
 
-/**
- * The maps for the updates `eas update --emit-metadata` just published, one
- * per update. Expo's `metadata.json` names each platform's bundle, and the
- * export writes the map next to it.
- */
+/** One map per update `eas update --emit-metadata` published, next to the bundle `metadata.json` names. */
 export function otaSourceMapUploads(distDir: string): ReadonlyArray<SourceMapUpload> {
   const metadata = readJson(NodePath.join(distDir, "metadata.json"));
   const easMetadata = readJson(NodePath.join(distDir, "eas-update-metadata.json"));
@@ -74,18 +60,14 @@ export function otaSourceMapUploads(distDir: string): ReadonlyArray<SourceMapUpl
     if (typeof bundle !== "string") return [];
     return [
       {
-        key: sourceMapKey(update.platform, "ota", update.id),
+        key: mobileSourceMapKey(update.platform, "ota", update.id),
         path: NodePath.join(distDir, `${bundle}.map`),
       },
     ];
   });
 }
 
-/**
- * The embedded bundle's map for the EAS build this runs in. React Native's
- * Gradle plugin writes Android's composed Hermes map under the release
- * variant; iOS writes it to `SOURCEMAP_FILE`, set in eas.json.
- */
+/** Android's Gradle plugin writes the map under the release variant; iOS to `SOURCEMAP_FILE` (eas.json). */
 export function buildSourceMapUpload(
   env: Readonly<Record<string, string | undefined>>,
   projectDir: string,
@@ -97,7 +79,7 @@ export function buildSourceMapUpload(
   }
   if (platform === "ios") {
     if (!env.SOURCEMAP_FILE) throw new Error("SOURCEMAP_FILE is not set for this iOS build.");
-    return { key: sourceMapKey("ios", "build", buildId), path: env.SOURCEMAP_FILE };
+    return { key: mobileSourceMapKey("ios", "build", buildId), path: env.SOURCEMAP_FILE };
   }
   const variantsDir = NodePath.join(projectDir, "android/app/build/generated/sourcemaps/react");
   const variant = NodeFS.existsSync(variantsDir)
@@ -105,13 +87,13 @@ export function buildSourceMapUpload(
     : undefined;
   if (!variant) throw new Error(`No release source map under ${variantsDir}.`);
   return {
-    key: sourceMapKey("android", "build", buildId),
+    key: mobileSourceMapKey("android", "build", buildId),
     path: NodePath.join(variantsDir, variant, "index.android.bundle.map"),
   };
 }
 
 /** Source text stays out of the bucket; positions and file names are enough. */
-export function stripSourcesContent(text: string): string {
+function stripSourcesContent(text: string): string {
   const map: unknown = JSON.parse(text);
   if (!isRecord(map)) throw new Error("Source map is not a JSON object.");
   const { sourcesContent: _sourcesContent, ...rest } = map;
