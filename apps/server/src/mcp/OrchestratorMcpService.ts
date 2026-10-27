@@ -251,6 +251,20 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   );
 });
 
+/** An instance that advertises no models accepts any slug. */
+export const assertModelAdvertised = (
+  provider: Pick<ServerProvider, "instanceId" | "models">,
+  model: string,
+): Effect.Effect<void, OrchestratorMcpFailure> =>
+  provider.models.length === 0 || provider.models.some((candidate) => candidate.slug === model)
+    ? Effect.void
+    : Effect.fail(
+        failure(
+          "model_unavailable",
+          `Model ${model} is not advertised by provider ${provider.instanceId}.`,
+        ),
+      );
+
 function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
@@ -1421,17 +1435,7 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (
-      requestedModel !== undefined &&
-      provider !== undefined &&
-      provider.models.length > 0 &&
-      !provider.models.some((candidate) => candidate.slug === requestedModel)
-    ) {
-      return yield* failure(
-        "model_unavailable",
-        `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-      );
-    }
+    if (requestedModel !== undefined) yield* assertModelAdvertised(provider, requestedModel);
 
     const requestedOptions = input.target?.options;
     if (requestedOptions !== undefined) {

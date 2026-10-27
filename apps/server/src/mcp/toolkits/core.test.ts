@@ -72,6 +72,9 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+  ),
 );
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -571,6 +574,77 @@ it.effect("a read-only client reads threads and is refused every write before it
   ),
 );
 const dispatched: Array<string> = [];
+
+it.effect("t3_thread_configure refuses a model that delegate_task would refuse", () => {
+  // The caller's thread runs codex on gpt-5 (McpToolAccessTestkit.liveThreadShell), which codex no longer advertises.
+  const providers = [
+    { instanceId: "codex", models: [{ slug: "gpt-5.5", name: "gpt-5.5" }] },
+    { instanceId: "claude", models: [] },
+  ];
+  const configured: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const configure = (modelSelection: Record<string, unknown>) =>
+      server
+        .callTool({ name: "t3_thread_configure", arguments: { modelSelection } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const refused = yield* configure({ instanceId: "codex", model: "gpt-6" });
+    expect(declaredFailure(refused)).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code: "model_unavailable",
+      message: "Model gpt-6 is not advertised by provider codex.",
+    });
+    expect(configured).toEqual([]);
+
+    expect((yield* configure({ instanceId: "codex", model: "gpt-5.5" })).isError).toBe(false);
+    expect((yield* configure({ instanceId: "claude", model: "any-slug" })).isError).toBe(false);
+    const optionsOnly = {
+      instanceId: "codex",
+      model: "gpt-5",
+      options: [{ id: "effort", value: "high" }],
+    };
+    expect((yield* configure(optionsOnly)).isError).toBe(false);
+    expect(configured).toEqual([
+      { instanceId: "codex", model: "gpt-5.5" },
+      { instanceId: "claude", model: "any-slug" },
+      optionsOnly,
+    ]);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed(providers as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(id),
+                ) as never,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if ("modelSelection" in command) configured.push(command.modelSelection);
+                return { sequence: 7 } as never;
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
