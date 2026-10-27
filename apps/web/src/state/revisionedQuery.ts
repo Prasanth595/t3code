@@ -26,7 +26,13 @@ const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
             : // A reader without a revision may have cached it before the latest
               // workspace change; a query nobody has read yet fetches fresh anyway.
               revision !== null && get.registry.getNodes().has(queryKey(query));
-          if (stale) get.refresh(query);
+          // A node first builds while React renders its reader, and a refresh synchronously
+          // notifies the query's other readers, such as the same component still subscribed
+          // under the old revision: React rejects that as an update during render.
+          if (stale) {
+            const registry = get.registry;
+            queueMicrotask(() => registry.refresh(query));
+          }
           revisions.set(query, revision);
         }
         return get(query);
