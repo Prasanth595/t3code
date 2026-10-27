@@ -15,7 +15,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   slug: string;
   name: string;
-  shortName?: string | undefined;
   subProvider?: string | undefined;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
@@ -35,7 +34,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   const model = {
     slug: props.slug,
     name: props.name,
-    shortName: props.shortName,
     subProvider: props.subProvider,
   };
   const providerLabel = getProviderRowLabel(props.providerDisplayName, props.subProvider);

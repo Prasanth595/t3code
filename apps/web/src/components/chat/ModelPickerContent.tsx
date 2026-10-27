@@ -999,7 +999,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     index={index}
                     slug={model.slug}
                     name={model.name}
-                    shortName={model.shortName}
                     subProvider={model.subProvider}
                     instanceId={model.instanceId}
                     driverKind={model.driverKind}
