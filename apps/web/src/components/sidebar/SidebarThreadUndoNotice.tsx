@@ -11,7 +11,7 @@ import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { InlineButton } from "../ui/button";
 
-export function SidebarThreadUndoNotice({ className }: { className?: string }) {
+export function SidebarThreadUndoNotice() {
   const notice = useThreadUndoNotice((state) => state.notice);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const summary = notice ? threadUndoNoticeSummary(notice) : null;
@@ -33,7 +33,6 @@ export function SidebarThreadUndoNotice({ className }: { className?: string }) {
       className={cn(
         "flex gap-1 px-2 text-2xs leading-6 text-sidebar-muted-foreground transition-opacity duration-200 ease-out starting:opacity-0",
         !summary && "opacity-0",
-        className,
       )}
     >
       <span className="min-w-0 truncate">{text},</span>

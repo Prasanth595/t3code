@@ -108,6 +108,7 @@ import {
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import { useThreadUndoNotice } from "../hooks/showThreadUndoNotice";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -219,6 +220,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarThreadUndoNotice } from "./sidebar/SidebarThreadUndoNotice";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -1752,11 +1754,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       cancelThreadDrag();
     }
   }, [cancelThreadDrag, dragState, sidebarListItems]);
-  // Only order, section, or draft changes need layout reads and motion.
+  // The undo notice row lands when the server confirms, a render after its thread row leaves, so it
+  // needs its own motion pass to slide the shelves.
+  const undoNoticeShown = useThreadUndoNotice((state) => state.notice !== null);
+  // Only order, section, draft, or undo notice changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
+    undoNoticeShown,
   ].join("\0");
   const listMotionAnimate =
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
@@ -3070,6 +3076,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      // Sits above the first shelf and takes over its mt-auto.
+                      // List motion fades this row; the notice's own fade would replay on motion's exit copy.
+                      const undoNoticeRow = undoNoticeShown ? (
+                        <li
+                          key="undo-notice"
+                          data-thread-selection-safe
+                          className="mt-auto list-none [&_*]:transition-none"
+                        >
+                          <SidebarThreadUndoNotice />
+                        </li>
+                      ) : null;
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
@@ -3117,14 +3134,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "working-header":
+                            if (undoNoticeRow) items.push(undoNoticeRow);
                             items.push(
                               <SidebarSectionHeader
                                 key="working-shelf-header"
                                 marker="working-header"
-                                className="mt-auto"
+                                className={cn(!undoNoticeRow && "mt-auto")}
                                 label="Working"
                                 count={workingThreads.length}
-                                hostsUndoNotice
                                 toggle={{
                                   expanded: workingShelfExpanded,
                                   onToggle: toggleWorkingShelf,
@@ -3132,15 +3149,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
-                          case "snoozed-header":
+                          case "snoozed-header": {
+                            const firstShelf = workingThreads.length === 0;
+                            if (firstShelf && undoNoticeRow) items.push(undoNoticeRow);
                             items.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                className={cn(firstShelf && !undoNoticeRow && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
-                                hostsUndoNotice={workingThreads.length === 0}
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
                                   onToggle: toggleSnoozedShelf,
@@ -3148,19 +3166,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
-                          case "settled-header":
+                          }
+                          case "settled-header": {
+                            const firstShelf = workingThreads.length + snoozedThreads.length === 0;
+                            if (firstShelf && undoNoticeRow) items.push(undoNoticeRow);
                             items.push(
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
-                                className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
-                                )}
+                                className={cn(firstShelf && !undoNoticeRow && "mt-auto")}
                                 label="Settled"
                                 count={settledCount}
-                                hostsUndoNotice={
-                                  workingThreads.length + snoozedThreads.length === 0
-                                }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
@@ -3170,6 +3186,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
+                          }
                           case "settled-placeholder":
                             items.push(
                               <SidebarSectionPlaceholder
