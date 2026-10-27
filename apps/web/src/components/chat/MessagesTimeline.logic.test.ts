@@ -800,6 +800,55 @@ describe("deriveMessagesTimelineRows", () => {
     );
   });
 
+  it("shows a skipped compaction as stopped, without a separate interrupted divider", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const [history0, history1, history2, liveUser, , liveAssistant] = fixture.visibleTurnItems;
+    if (liveUser?.item.type !== "user_message" || liveAssistant?.item.type !== "assistant_message")
+      throw new Error("Expected live fixture items");
+    const prompt = {
+      ...liveUser,
+      item: { ...liveUser.item, text: "/compact", idleCompaction: "onReturn" as const },
+    };
+    const compaction = {
+      ...liveAssistant,
+      item: {
+        ...liveAssistant.item,
+        type: "compaction" as const,
+        status: "interrupted" as const,
+        driver: null,
+      },
+    };
+    const interruptResult = {
+      ...liveAssistant,
+      item: {
+        ...liveAssistant.item,
+        id: TurnItemId.make("interrupt-result"),
+        type: "run_interrupt_result" as const,
+        status: "interrupted" as const,
+        message: "Skipped compaction to send a queued message",
+      },
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [history0!, history1!, history2!, prompt, compaction, interruptResult],
+        optimisticMessages: [],
+      }),
+      isWorking: false,
+      latestRun: {
+        runId: fixture.runId,
+        status: "interrupted",
+        startedAt: fixture.time(5),
+        completedAt: fixture.time(9),
+      },
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(
+      rows.slice(rows.findIndex((row) => row.id.includes("history-assistant")) + 1),
+    ).toMatchObject([{ kind: "context-compaction", label: "Context compaction stopped" }]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
