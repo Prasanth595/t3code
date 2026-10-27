@@ -41,8 +41,10 @@ const issued = {
   expiresAt: "2030-01-01T00:00:00Z",
 } satisfies Record<keyof AuthPairingCredentialResult, unknown>;
 
+const encodeScopeRequired = Schema.encodeSync(Schema.fromJsonString(EnvironmentScopeRequiredError));
+
 const scopeRequired = (requiredPermission: string) =>
-  Schema.encodeSync(Schema.fromJsonString(EnvironmentScopeRequiredError))(
+  encodeScopeRequired(
     new EnvironmentScopeRequiredError({
       code: "insufficient_scope",
       requiredScope: "access:write",

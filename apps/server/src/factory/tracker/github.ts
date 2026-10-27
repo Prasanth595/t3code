@@ -1882,7 +1882,7 @@ export const makeGitHub = (options: GitHubOptions) => {
   ): GitHubGen<Array<FeedbackReviewNode>> {
     const total = first.totalCount ?? 0;
     let cursor: string | null = first.pageInfo?.startCursor ?? null;
-    let reviews = [...first.nodes];
+    const reviews = [...first.nodes];
     let pages = 1;
     while (total > reviews.length) {
       // The oldest review read is proven old only by a submission time at or before `floor`.
@@ -1935,7 +1935,7 @@ export const makeGitHub = (options: GitHubOptions) => {
           `a new cursor for the reviews before ${before}, got the same one again`,
         );
       }
-      reviews = [...pull.reviews.nodes, ...reviews];
+      reviews.unshift(...pull.reviews.nodes);
     }
     return reviews;
   });

@@ -1193,7 +1193,7 @@ const workRuns = Effect.fn("Pass.workRuns")(function* (
 ) {
   // The runs whose session `advance` found ended badly: they are decided together below.
   const ended: Array<EndedBadly> = [];
-  for (const info of [...known.infos]) {
+  for (const info of known.infos) {
     if (info.unreadable || !info.confirmed) continue;
     // A pull request that waits for a person is gated again after the others (`prOpenRuns`).
     if (info.state === "pr-open") continue;
@@ -1348,7 +1348,7 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
   pass: Pass,
 ) {
   const failed = new Set<string>();
-  for (const info of [...known.infos]) {
+  for (const info of known.infos) {
     if (info.unreadable || info.state !== "pr-open") continue;
     const loaded = repos.find(
       (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),

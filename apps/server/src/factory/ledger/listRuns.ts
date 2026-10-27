@@ -98,6 +98,8 @@ interface FileRead<T> {
   readonly read: T;
 }
 
+const isLedgerNotFound = Schema.is(LedgerNotFoundError);
+
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Issues that are both numbers compare as numbers (`9` before `10`), else as text. */
@@ -189,7 +191,7 @@ const scanRuns = <T>(
     } catch (error) {
       // Gone between the listing and the read (the lstat's ENOENT, or the read's not-found): not
       // a run any more.
-      if (errnoCode(error) === "ENOENT" || Schema.is(LedgerNotFoundError)(error)) continue;
+      if (errnoCode(error) === "ENOENT" || isLedgerNotFound(error)) continue;
       runs.push({ id, firstMs: null, read: null });
     }
   }

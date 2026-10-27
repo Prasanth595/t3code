@@ -1526,27 +1526,25 @@ describe("FactorySessions.removeWorktree", () => {
   );
 
   it.effect("counts a git that cannot start in a directory that is gone as removed", () =>
-    Effect.gen(function* () {
-      yield* removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
-        Effect.provide(
-          layerSessions(
-            noThreadsOnWorktrees,
-            {},
-            {},
-            recordingGit([], () =>
-              Effect.fail(
-                new GitCommandError({
-                  operation: "factory.sessions.removeWorktree",
-                  command: "git worktree remove",
-                  cwd: "/tmp/factory-sessions-test-no-such-dir/wt",
-                  detail: "spawn git ENOENT",
-                }),
-              ),
+    removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
+      Effect.provide(
+        layerSessions(
+          noThreadsOnWorktrees,
+          {},
+          {},
+          recordingGit([], () =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "factory.sessions.removeWorktree",
+                command: "git worktree remove",
+                cwd: "/tmp/factory-sessions-test-no-such-dir/wt",
+                detail: "spawn git ENOENT",
+              }),
             ),
           ),
         ),
-      );
-    }),
+      ),
+    ),
   );
 
   it.effect("removes the directory itself after a wait when git leaves it not empty", () =>

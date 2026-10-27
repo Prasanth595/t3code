@@ -307,13 +307,12 @@ export const saveMachineConfig = Effect.fn("FactorySettings.saveMachineConfig")(
   ) {
     if (!isJsonObject(body)) return { kind: "invalid-body" } as const;
     const fs = yield* FileSystem.FileSystem;
-    const existing = yield* fs
-      .readFileString(file)
-      .pipe(
-        Effect.catch((cause) =>
-          cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause),
-        ),
-      );
+    const existing = yield* fs.readFileString(file).pipe(
+      Effect.catchIf(
+        (cause) => cause.reason._tag === "NotFound",
+        () => Effect.succeed(null),
+      ),
+    );
     const edited = editMachineConfig(existing, body, file);
     if (Result.isFailure(edited)) return { kind: "invalid", errors: edited.failure } as const;
     yield* writeFileAtomically(file, edited.success);

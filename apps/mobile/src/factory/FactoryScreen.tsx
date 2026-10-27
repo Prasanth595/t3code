@@ -110,8 +110,24 @@ type Phase =
 
 function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   const { httpBaseUrl, bearerToken } = props.connection;
-  const [phase, setPhase] = useState<Phase>({ kind: "probing" });
   const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  // A retry or a changed server starts a fresh page: probing again, signed out.
+  return (
+    <FactoryPage
+      key={`${attempt}\n${httpBaseUrl}\n${bearerToken}`}
+      connection={props.connection}
+      onRetry={retry}
+    />
+  );
+}
+
+function FactoryPage(props: {
+  readonly connection: SavedRemoteConnection;
+  readonly onRetry: () => void;
+}) {
+  const { httpBaseUrl, bearerToken } = props.connection;
+  const [phase, setPhase] = useState<Phase>({ kind: "probing" });
   const webViewRef = useRef<WebView<object>>(null);
   const signInRef = useRef<SignInState>("idle");
   // Bumped on every open and on unmount, so a mint that outlives its open is dropped.
@@ -120,8 +136,6 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   useEffect(() => {
     let cancelled = false;
     const generation = ++generationRef.current;
-    signInRef.current = "idle";
-    setPhase({ kind: "probing" });
     void probeFactory({ httpBaseUrl, bearerToken }, fetch).then((result) => {
       if (!cancelled)
         setPhase(result.ok ? { kind: "ready" } : { kind: "error", reason: result.reason });
@@ -130,9 +144,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
       cancelled = true;
       if (generationRef.current === generation) generationRef.current += 1;
     };
-  }, [httpBaseUrl, bearerToken, attempt]);
-
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  }, [httpBaseUrl, bearerToken]);
 
   const onMessage = useCallback(
     async (event: WebViewMessageEvent) => {
@@ -167,7 +179,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   );
 
   if (phase.kind === "error") {
-    return <Message title="Factory unavailable" detail={phase.reason} onRetry={retry} />;
+    return <Message title="Factory unavailable" detail={phase.reason} onRetry={props.onRetry} />;
   }
   if (phase.kind === "probing") {
     return (

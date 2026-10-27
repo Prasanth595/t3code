@@ -2577,9 +2577,7 @@ describe("reloading the machine config", () => {
             yield* Deferred.succeed(hold.entered, undefined);
             yield* Deferred.await(hold.release);
           }
-          return yield* Effect.fail(
-            new RunSpawnError({ shell: false, cause: new Error("gh not found") }),
-          );
+          return yield* new RunSpawnError({ shell: false, cause: new Error("gh not found") });
         }),
     });
     const first = holds.get(repos[0]!)!;

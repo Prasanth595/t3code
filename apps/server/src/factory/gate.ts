@@ -1017,6 +1017,10 @@ export const layer: Layer.Layer<FactoryGate, never, FactoryProcess> = Layer.effe
   FactoryGate,
   Effect.gen(function* () {
     const runner = yield* FactoryProcess;
-    return FactoryGate.of({ run: (input) => runGate(runner, input) });
+    return FactoryGate.of({
+      run: Effect.fn("FactoryGate.run")(function (input) {
+        return runGate(runner, input);
+      }),
+    });
   }),
 );
