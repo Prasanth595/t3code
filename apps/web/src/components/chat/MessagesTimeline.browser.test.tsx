@@ -1,5 +1,6 @@
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
+import { cdp } from "vite-plus/test/browser";
 import { stubGlobal } from "../../../test/render";
 import {
   EnvironmentId,
@@ -384,6 +385,57 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+describe("MessagesTimeline live follow", () => {
+  it("is at the end when the zoom changes during a streamed follow scroll", async () => {
+    setup();
+    const session = cdp();
+    onTestFinished(async () => {
+      await session.send("Emulation.clearDeviceMetricsOverride");
+    });
+    const paragraphs = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, i) => `Paragraph ${i} ${"streamed words ".repeat(30)}`,
+      ).join("\n\n");
+    const entries = (live: number) => [
+      ...Array.from({ length: 20 }, (_, i) =>
+        message(paragraphs(3), { role: i % 2 ? "assistant" : "user" }, `history-${i}`),
+      ),
+      message(paragraphs(live), { role: "assistant", streaming: true }, "live"),
+    ];
+    const props = { ...baseProps(), isWorking: true, activeTurnInProgress: true };
+    await using screen = await renderTimeline(entries(1), props);
+    const scrollNode = props.listRef.current?.getScrollableNode() as HTMLElement;
+    const fromEnd = () => scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop;
+    await vi.waitFor(() => expect(fromEnd()).toBeLessThanOrEqual(1));
+
+    let lastTop = scrollNode.scrollTop;
+    const followScrolling = new Promise<void>((resolve) =>
+      scrollNode.addEventListener("scroll", () => {
+        if (scrollNode.scrollTop > lastTop && fromEnd() > 100) resolve();
+        lastTop = scrollNode.scrollTop;
+      }),
+    );
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(6) as Entry[]} />);
+    await followScrolling;
+    // Created after the timeline's own query, so its change fires second and reads the result.
+    const fromEndAfterZoom = new Promise<number>((resolve) =>
+      matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener(
+        "change",
+        () => resolve(fromEnd()),
+        { once: true },
+      ),
+    );
+    await session.send("Emulation.setDeviceMetricsOverride", {
+      width: 0,
+      height: 0,
+      deviceScaleFactor: devicePixelRatio * 1.1,
+      mobile: false,
+    });
+    expect(await fromEndAfterZoom).toBeLessThanOrEqual(1);
   });
 });
 
