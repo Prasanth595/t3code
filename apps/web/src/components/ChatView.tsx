@@ -985,11 +985,15 @@ export default function ChatView(props: ChatViewProps) {
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
+  const threadDetailsOpenByDefault = useClientSettings(
+    (settings) => settings.threadDetailsOpenByDefault,
+  );
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,
       activeThreadRef,
       threadPanelPresentation,
+      threadDetailsOpenByDefault,
     ),
   );
 
