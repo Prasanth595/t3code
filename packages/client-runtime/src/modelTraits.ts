@@ -179,3 +179,60 @@ export function buildTraitsTriggerDisplay(input: {
   }
   return { label: labels.join(" · ") };
 }
+
+function getTraitsSpeedDisplay(
+  provider: ProviderDriverKind,
+  descriptor: ProviderOptionDescriptor,
+): { label: string; speedIcon: "fast" | "ultrafast" | null } | null {
+  if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
+    return {
+      label: descriptor.currentValue === true ? "Fast" : "Normal",
+      speedIcon: descriptor.currentValue === true ? "fast" : null,
+    };
+  }
+  if (provider !== "codex" || descriptor.id !== "serviceTier" || descriptor.type !== "select") {
+    return null;
+  }
+  const currentValue = getProviderOptionCurrentValue(descriptor);
+  const fastTier = descriptor.options.find(({ label }) => label === "Fast");
+  const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
+  if (
+    ((fastTier || ultrafastTier) && currentValue === "default") ||
+    (fastTier && currentValue === fastTier.id) ||
+    (ultrafastTier && currentValue === ultrafastTier.id)
+  ) {
+    return {
+      label: descriptor.options.find(({ id }) => id === currentValue)?.label ?? "Normal",
+      speedIcon:
+        ultrafastTier && currentValue === ultrafastTier.id
+          ? "ultrafast"
+          : fastTier && currentValue === fastTier.id
+            ? "fast"
+            : null,
+    };
+  }
+  return null;
+}
+
+export function getSelectionSpeedIcon(
+  provider: ProviderDriverKind,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  selection: ModelSelection | undefined,
+): "fast" | "ultrafast" | null {
+  for (const descriptor of descriptors) {
+    const saved = selection?.options?.find((option) => option.id === descriptor.id)?.value;
+    const savedDescriptor =
+      descriptor.id === "fastMode" && descriptor.type === "boolean" && typeof saved === "boolean"
+        ? { ...descriptor, currentValue: saved }
+        : provider === "codex" &&
+            descriptor.id === "serviceTier" &&
+            descriptor.type === "select" &&
+            typeof saved === "string" &&
+            descriptor.options.some((option) => option.id === saved)
+          ? { ...descriptor, currentValue: saved }
+          : null;
+    const display = savedDescriptor && getTraitsSpeedDisplay(provider, savedDescriptor);
+    if (display) return display.speedIcon;
+  }
+  return null;
+}

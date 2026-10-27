@@ -2,8 +2,18 @@ import {
   formatSubagentDisplayTitle,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
+import { getSelectionSpeedIcon } from "@t3tools/client-runtime/model-traits";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { OrchestrationV2Subagent } from "@t3tools/contracts";
+import {
+  formatModelSelectionEffort,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadShell,
+  ServerProvider,
+} from "@t3tools/contracts";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 
 const PROMPT_TITLE_LIMIT = 80;
 
@@ -69,5 +79,54 @@ export function resolveSubagentRowPresentation(
     tone: rowTone(subagent.status),
     live,
     canOpenThread: subagent.childThreadId !== null,
+  };
+}
+
+export interface SubagentTraits {
+  readonly effort: string | null;
+  readonly speedIcon: "fast" | "ultrafast" | null;
+}
+
+/** Labels the selection the agent ran with, only when it matches the agent's model and instance. */
+export function resolveSubagentTraits(input: {
+  readonly subagent: Pick<
+    OrchestrationV2Subagent,
+    "model" | "providerInstanceId" | "origin" | "modelSelection"
+  >;
+  readonly provider?: Pick<ServerProvider, "driver" | "models"> | undefined;
+  readonly childThread?:
+    | Pick<OrchestrationV2ThreadShell, "providerInstanceId" | "modelSelection">
+    | undefined;
+}): SubagentTraits {
+  const { subagent, provider } = input;
+  const selection =
+    subagent.modelSelection ??
+    (subagent.origin === "app_owned" ? input.childThread?.modelSelection : undefined);
+  const model = provider
+    ? resolveSelectableModel(provider.driver, subagent.model, provider.models)
+    : null;
+  if (
+    !provider ||
+    !selection ||
+    !model ||
+    selection.instanceId !== subagent.providerInstanceId ||
+    resolveSelectableModel(provider.driver, selection.model, provider.models) !== model
+  ) {
+    return { effort: null, speedIcon: null };
+  }
+  const resolved = { ...selection, model };
+  return {
+    effort: resolved.options?.some(
+      (option) =>
+        REASONING_EFFORT_OPTION_IDS.includes(option.id) && typeof option.value === "string",
+    )
+      ? formatModelSelectionEffort(resolved, provider.models)
+      : null,
+    speedIcon: getSelectionSpeedIcon(
+      provider.driver,
+      provider.models.find((candidate) => candidate.slug === model)?.capabilities
+        ?.optionDescriptors ?? [],
+      resolved,
+    ),
   };
 }

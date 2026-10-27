@@ -4,6 +4,8 @@ import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { View } from "react-native";
+import Svg, { Path } from "react-native-svg";
+import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -12,13 +14,21 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
-import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+import {
+  resolveSubagentRowPresentation,
+  resolveSubagentTraits,
+  type SubagentTraits,
+} from "./threadAgentsPresentation";
+
+const ThemedPath = withUniwind(Path);
 
 type SubagentRowSubagent = Pick<
   OrchestrationV2Subagent,
   | "threadId"
   | "childThreadId"
   | "model"
+  | "modelSelection"
+  | "origin"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -112,6 +122,7 @@ function SubagentMetadata(props: {
     parentProject,
     childProject,
   });
+  const traits = resolveSubagentTraits({ subagent, provider, childThread: child });
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       <ProviderIcon
@@ -123,6 +134,7 @@ function SubagentMetadata(props: {
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
       </Text>
+      <SubagentTraitsLabel traits={traits} />
       {workspace.map(({ label, value }) => (
         // Preserve the label against flattening without making it a separate accessibility stop.
         <View
@@ -143,5 +155,63 @@ function SubagentMetadata(props: {
         </View>
       ))}
     </View>
+  );
+}
+
+function SubagentTraitsLabel(props: { readonly traits: SubagentTraits }) {
+  const { effort, speedIcon } = props.traits;
+  if (!effort && !speedIcon) return null;
+  const speedLabel =
+    speedIcon === "ultrafast" ? "Ultrafast mode on" : speedIcon ? "Fast mode on" : null;
+  return (
+    <View
+      accessible
+      collapsable={false}
+      accessibilityLabel={[speedLabel, effort].filter(Boolean).join(", ")}
+      className="min-w-0 shrink flex-row items-center gap-1"
+    >
+      <Text
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        className="shrink-0 text-xs text-foreground-muted"
+      >
+        ·
+      </Text>
+      {speedIcon ? <SpeedIcon speedIcon={speedIcon} /> : null}
+      {effort ? (
+        <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+          {effort}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+// Same glyphs as the desktop composer's speed icons.
+function SpeedIcon(props: { readonly speedIcon: "fast" | "ultrafast" }) {
+  return (
+    <Svg width={11} height={11} viewBox="0 0 24 24" opacity={0.8}>
+      {props.speedIcon === "ultrafast" ? (
+        <>
+          <ThemedPath
+            d="m17 2-10 12h7l-1 8 10-12h-7l1-8Z"
+            colorClassName="accent-foreground-muted"
+            fill="currentColor"
+            opacity={0.4}
+          />
+          <ThemedPath
+            d="m11 2-10 12h7l-1 8 10-12h-7l1-8Z"
+            colorClassName="accent-foreground-muted"
+            fill="currentColor"
+          />
+        </>
+      ) : (
+        <ThemedPath
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
+          colorClassName="accent-foreground-muted"
+          fill="currentColor"
+        />
+      )}
+    </Svg>
   );
 }

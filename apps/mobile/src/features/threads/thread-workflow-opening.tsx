@@ -63,6 +63,8 @@ function memberRowSubagent(
     threadId: coordinatorThreadId,
     childThreadId: member.childThreadId as ThreadId | null,
     model: member.model,
+    // Workflow members save no selection, as on desktop, so they show no effort or speed.
+    origin: "provider_native" as const,
     driver: opening.driver!,
     providerInstanceId: opening.providerInstanceId!,
     title: member.title,
