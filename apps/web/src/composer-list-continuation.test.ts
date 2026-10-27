@@ -72,6 +72,8 @@ describe("composer list indentation", () => {
   it.each([
     ["1. parent\n2. child", "1. parent\n   1. child"],
     ["10. parent\n11. child", "10. parent\n    1. child"],
+    ["1.\tparent\n2. child", "1.\tparent\n    1. child"],
+    ['1. @"file\n   9. name"\n2. child', '1. @"file\n   9. name"\n   1. child'],
   ])("nests %j as a first child and keeps the caret on its text", (value, expected) => {
     const cursor = value.lastIndexOf("child") + 2;
     const edit = listIndentForTab(value, cursor, cursor)!;
