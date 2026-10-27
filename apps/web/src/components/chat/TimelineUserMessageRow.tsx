@@ -491,7 +491,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   "mb-2 grid gap-2 last:mb-0",
                   // One tile keeps its size without leaving an empty second column in the bubble.
                   regularImages.length + userVideos.length === 1 &&
-                    regularImages[0]?.source?.kind !== "snap-shot"
+                    !(regularImages[0]?.source?.kind === "snap-shot" && regularImages[0].previewUrl)
                     ? "w-[101px] grid-cols-1"
                     : "max-w-[210px] grid-cols-2",
                 )}
