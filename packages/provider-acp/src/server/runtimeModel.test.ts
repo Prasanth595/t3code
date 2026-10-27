@@ -1184,6 +1184,19 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("ignores an unqualified rawInput.toolName such as a ToolSearch query", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-1",
+      kind: "search",
+      title: "ToolSearch",
+      status: "in_progress",
+      rawInput: { toolName: "html_render", query: "render html" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+  });
+
   it("recovers T3 identity from Devin's namespaced inference tool name", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",

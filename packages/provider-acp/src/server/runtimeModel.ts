@@ -1130,8 +1130,10 @@ export function extractMcpToolCallIdentity(
     claudeCode?.toolName,
     gooseToolCall?.toolName,
     meta?.["cognition.ai/inferenceToolName"],
-    // CodeBuddy keeps the qualified `mcp__<server>__<tool>` name here.
-    rawInput?.toolName,
+    // CodeBuddy keeps the qualified `mcp__<server>__<tool>` name here; built-ins such as ToolSearch put bare names here.
+    typeof rawInput?.toolName === "string" && /^mcp__.+?__.+$/i.test(rawInput.toolName.trim())
+      ? rawInput.toolName
+      : undefined,
     toolCall.data.title,
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {

@@ -2672,7 +2672,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input: merged.data.rawInput ?? null,
-              output: merged.data.rawOutput ?? merged.data.content ?? null,
+              output:
+                (mcpIdentity === undefined
+                  ? merged.data.rawOutput
+                  : acpMcpToolCallOutput(merged.data.rawOutput)) ??
+                merged.data.content ??
+                null,
             },
           });
         });
