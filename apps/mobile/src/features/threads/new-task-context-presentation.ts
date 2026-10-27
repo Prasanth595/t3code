@@ -151,3 +151,31 @@ export function fillNewTaskWorkspaceBranch(input: {
     ? selection
     : { ...selection, branch: local.branch, worktreePath: local.worktreePath };
 }
+
+/**
+ * The workspace a new-task draft starts in: its own selection, else the
+ * project's default mode, with the branch filled in as above. The new-task
+ * flow, its send path and the home pending-drafts list all resolve through
+ * this, so what each shows is what is sent.
+ */
+export function resolveNewTaskDraftWorkspace(input: {
+  readonly selection: ComposerDraftWorkspaceSelection | undefined;
+  readonly canChooseWorkspace: boolean;
+  readonly defaultMode: WorkspaceMode;
+  readonly defaultModeSettled: boolean;
+  readonly isGitRepo: boolean;
+  readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
+  readonly projectCwd: string | null;
+}): ComposerDraftWorkspaceSelection {
+  const selection = input.canChooseWorkspace ? input.selection : undefined;
+  return fillNewTaskWorkspaceBranch({
+    selection: resolveNewTaskWorkspaceSelection({
+      selection,
+      fallback: { mode: input.defaultMode, branch: null, worktreePath: null },
+      isGitRepo: input.isGitRepo,
+    }),
+    branches: input.branches,
+    projectCwd: input.projectCwd,
+    worktreeDefaultSettled: selection?.mode !== undefined || input.defaultModeSettled,
+  });
+}

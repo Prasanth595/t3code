@@ -4,7 +4,7 @@ import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
 import { isNewTaskDraftKey } from "./new-task-draft-key";
 import type { ComposerDraft } from "./use-composer-drafts";
-import { fillNewTaskWorkspaceBranch } from "../features/threads/new-task-context-presentation";
+import { resolveNewTaskDraftWorkspace } from "../features/threads/new-task-context-presentation";
 
 export type PendingNewTask = PendingQueuedTask | PendingDraftTask;
 
@@ -47,28 +47,41 @@ function draftTitle(draft: ComposerDraft): string {
   return count === 1 ? "1 attachment" : `${count} attachments`;
 }
 
+/** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
+export interface PendingDraftProjectDefaults {
+  readonly canChooseWorkspace: boolean;
+  readonly defaultMode: "local" | "worktree";
+  readonly defaultModeSettled: boolean;
+}
+
 /**
  * True when the draft's branch is derived from refs rather than stored, so the list must load
  * refs to show it.
  */
-export function pendingDraftBranchNeedsRefs(draft: ComposerDraft): boolean {
-  return draft.workspaceSelection !== undefined && draft.workspaceSelection.branch === null;
+export function pendingDraftBranchNeedsRefs(
+  draft: ComposerDraft,
+  defaults: PendingDraftProjectDefaults,
+): boolean {
+  const selection = defaults.canChooseWorkspace ? draft.workspaceSelection : undefined;
+  return selection === undefined ? defaults.defaultMode === "worktree" : selection.branch === null;
 }
 
 /** The branch a draft will start on, derived the same way the new-task flow and send path do. */
 export function resolvePendingDraftBranch(input: {
   readonly draft: ComposerDraft;
-  readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
+  readonly defaults: PendingDraftProjectDefaults;
+  readonly isGitRepo: boolean;
+  readonly branches: Parameters<typeof resolveNewTaskDraftWorkspace>[0]["branches"];
   readonly projectCwd: string | null;
 }): string | null {
-  const selection = input.draft.workspaceSelection;
-  if (selection === undefined) return null;
-  return fillNewTaskWorkspaceBranch({
-    selection,
+  return resolveNewTaskDraftWorkspace({
+    selection: input.draft.workspaceSelection,
+    canChooseWorkspace: input.defaults.canChooseWorkspace,
+    defaultMode: input.defaults.defaultMode,
+    defaultModeSettled: input.defaults.defaultModeSettled,
+    isGitRepo: input.isGitRepo,
     branches: input.branches,
     projectCwd: input.projectCwd,
-    // The draft names its mode, so no provisional t3.json default can replace it.
-    worktreeDefaultSettled: true,
   }).branch;
 }
 

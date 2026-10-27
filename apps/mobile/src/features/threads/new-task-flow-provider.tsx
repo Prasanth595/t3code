@@ -1,14 +1,10 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
-import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
-import { useEnvironmentPresentation } from "../../state/presentation";
-import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
   ModelSelection,
-  ProjectReadFileResult,
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
@@ -17,24 +13,15 @@ import type {
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_SERVER_SETTINGS,
   MessageId,
   repositoryGroupingKeyOf,
-  T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
-import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import {
-  useEnvironmentServerConfig,
-  useProjects,
-  useServerConfigs,
-  useThreadShells,
-} from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
@@ -84,7 +71,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -99,14 +85,13 @@ import {
 } from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
-  fillNewTaskWorkspaceBranch,
+  resolveNewTaskDraftWorkspace,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
-  resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { useOlderSettledCount } from "../../state/olderSettledShelf";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -265,12 +250,9 @@ export function NewTaskFlowProvider(
     projectsForEnvironment[0] ??
     null;
 
-  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
-    selectedProject?.environmentId ?? null,
-  );
-  const isScratchDraft =
-    selectedProject !== null &&
-    isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
+  const projectDefaults = useNewTaskProjectDefaults(selectedProject);
+  const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
+  const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const scratchEnvironments = connectedEnvironments.filter(
@@ -378,68 +360,9 @@ export function NewTaskFlowProvider(
   });
   const knownIsGitRepo = projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null;
   const isGitRepo = knownIsGitRepo ?? true;
-  const fileAccessSession = useEnvironmentQuery(
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
-      ? environmentSession.sessionStateAtom(selectedProject.environmentId)
-      : null,
-  );
-  const fileEnvironment = useEnvironmentPresentation(selectedProject?.environmentId ?? null);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
-  const { canReadFiles } = fileAccess;
-  const fileAccessPending =
-    selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
-  const t3ProjectFileQuery = useEnvironmentQuery(
-    canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
-      ? projectEnvironment.readFile({
-          environmentId: selectedProject.environmentId,
-          input: {
-            cwd: selectedProject.workspaceRoot,
-            relativePath: T3_PROJECT_FILE_NAME,
-            allowMissing: true,
-          },
-        })
-      : null,
-  );
-  const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
-  const t3ProjectFile =
-    t3ProjectFileData === null || t3ProjectFileData.exists === false || t3ProjectFileData.truncated
-      ? null
-      : parseT3ProjectFile(t3ProjectFileData.contents);
-  const projectSettings = resolveProjectSettings(
-    selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-    selectedProject?.id ?? null,
-    selectedProject,
-    t3ProjectFile,
-  );
+  const projectSettings = projectDefaults.projectSettings;
   const canChooseWorkspace = !isScratchDraft;
-  const selectedProjectOlderSettledCount = useOlderSettledCount(selectedProject);
-  const selectedProjectHasThreads =
-    selectedProject !== null &&
-    (selectedProjectOlderSettledCount > 0 ||
-      threads.some(
-        (thread) =>
-          thread.environmentId === selectedProject.environmentId &&
-          thread.projectId === selectedProject.id,
-      ));
-  const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
-    ? resolveNewThreadEnvMode({
-        projectSettings,
-        workspaceRoot: selectedProject?.workspaceRoot ?? null,
-        newProjectsRoot: selectedEnvironmentServerConfig?.newProjectsRoot,
-        projectHasThreads: selectedProjectHasThreads,
-      })
-    : "local";
-  // Do not persist the provisional workspace default while t3.json is loading; it would override
-  // the file's eventual default.
-  const defaultWorkspaceModeSettled =
-    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
-    projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    (!t3ProjectFileQuery.isPending && !fileAccessPending);
+  const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
   const branchState = usePaginatedBranches({
     environmentId: selectedProject?.environmentId ?? null,
     cwd: selectedProject?.workspaceRoot || null,
@@ -452,15 +375,14 @@ export function NewTaskFlowProvider(
   );
 
   const resolveWorkspaceSelection = (selection: ComposerDraftWorkspaceSelection | undefined) =>
-    fillNewTaskWorkspaceBranch({
-      selection: resolveNewTaskWorkspaceSelection({
-        selection: canChooseWorkspace ? selection : undefined,
-        fallback: { mode: defaultWorkspaceMode, branch: null, worktreePath: null },
-        isGitRepo,
-      }),
+    resolveNewTaskDraftWorkspace({
+      selection,
+      canChooseWorkspace,
+      defaultMode: defaultWorkspaceMode,
+      defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
+      isGitRepo,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
-      worktreeDefaultSettled: defaultWorkspaceModeSettled,
     });
   const workspaceSelection = resolveWorkspaceSelection(selectedProjectDraft.workspaceSelection);
   const workspaceMode = workspaceSelection.mode;
