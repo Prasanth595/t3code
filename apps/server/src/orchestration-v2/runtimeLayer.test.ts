@@ -66,6 +66,7 @@ import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryServic
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
+import { makeBackgroundReadFixture } from "./testkit/pullRequestFixtures.ts";
 import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -3382,44 +3383,56 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const incomplete = mode !== "single page" && mode !== "paginated";
       let recovering = false;
       let pagesRead = 0;
+      const commentAdmission = mode === "paginated" ? yield* makeBackgroundReadFixture : null;
+      const admissionReads = new Set<string>();
+      const proveAdmission = <A, E, R>(name: string, read: Effect.Effect<A, E, R>) => {
+        if (commentAdmission === null || admissionReads.has(name)) return read;
+        admissionReads.add(name);
+        return commentAdmission.proveBackgroundRead(name, read);
+      };
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.succeed(detail),
+              watchFingerprint: () => proveAdmission("fingerprint", Effect.succeed(null)),
+              detail: () => proveAdmission("detail", Effect.succeed(detail)),
               activity: () =>
-                Effect.succeed({
-                  comments:
-                    mode === "single page"
-                      ? [remark]
-                      : [...firstTen, { ...remark, kind: "issue-comment" }],
-                  commentCount: mode === "single page" ? 1 : 13,
-                  commentsTruncated: mode !== "single page",
-                  reviewThreadsTruncated: mode === "thread list truncated" && !recovering,
-                  reviewThreads:
-                    mode === "single page"
-                      ? []
-                      : [
-                          {
-                            id: "review-thread",
-                            path: "src/index.ts",
-                            line: 1,
-                            side: "right",
-                            isResolved: false,
-                            isOutdated: false,
-                            comments: firstTen,
-                            commentCount: 12,
-                            nextCommentsCursor: "after-10",
-                          },
-                        ],
-                  commits: [],
-                }),
+                proveAdmission(
+                  "activity",
+                  Effect.succeed({
+                    comments:
+                      mode === "single page"
+                        ? [remark]
+                        : [...firstTen, { ...remark, kind: "issue-comment" }],
+                    commentCount: mode === "single page" ? 1 : 13,
+                    commentsTruncated: mode !== "single page",
+                    reviewThreadsTruncated: mode === "thread list truncated" && !recovering,
+                    reviewThreads:
+                      mode === "single page"
+                        ? []
+                        : [
+                            {
+                              id: "review-thread",
+                              path: "src/index.ts",
+                              line: 1,
+                              side: "right",
+                              isResolved: false,
+                              isOutdated: false,
+                              comments: firstTen,
+                              commentCount: 12,
+                              nextCommentsCursor: "after-10",
+                            },
+                          ],
+                    commits: [],
+                  }),
+                ),
               threadComments: (input) => {
                 pagesRead += 1;
                 assert.equal(input.threadId, "review-thread");
                 if (input.cursor === "after-10") {
-                  return Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                  const page = Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                  return proveAdmission("thread-comments", page);
                 }
                 assert.equal(input.cursor, "after-11");
                 if (!recovering && mode === "page failure") {
@@ -3460,6 +3473,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const pagesBefore = pagesRead;
       yield* reactor.sweep;
       assert.equal(pagesRead, pagesBefore);
+      if (mode === "paginated") {
+        assert.deepEqual([...admissionReads].sort(), [
+          "activity",
+          "detail",
+          "fingerprint",
+          "thread-comments",
+        ]);
+      }
 
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(

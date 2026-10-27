@@ -46,6 +46,10 @@
     "./server/SourceControlRateLimit": {
       "types": "./src/server/SourceControlRateLimit.ts",
       "import": "./src/server/SourceControlRateLimit.ts"
+    },
+    "./server/SourceControlReadContext": {
+      "types": "./src/server/SourceControlReadContext.ts",
+      "import": "./src/server/SourceControlReadContext.ts"
     }
   },
   "scripts": {

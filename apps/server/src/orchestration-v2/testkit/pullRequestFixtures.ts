@@ -8,6 +8,19 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as NodeAssert from "node:assert";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
+
+export const makeBackgroundReadFixture = Effect.succeed({
+  proveBackgroundRead: Effect.fnUntraced(function* <A, E, R>(
+    _name: string,
+    answer: Effect.Effect<A, E, R>,
+  ) {
+    NodeAssert.strict.equal(yield* SourceControlReadContext.Background, true);
+    return yield* answer;
+  }),
+});
 
 export interface PullRequestTestThread {
   readonly id: ThreadId;
