@@ -372,6 +372,23 @@ export function PullRequestPrimaryAction({
                 : selectedMergeMethodLabel}
           </TooltipPopup>
         </Tooltip>
+      ) : primaryAction === "blocked" ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex shrink-0">
+                <Button size="xs" variant="default" disabled aria-label="Merge blocked">
+                  <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                  <span className="@max-[30rem]/pr-header:hidden">Merge blocked</span>
+                </Button>
+              </span>
+            }
+          />
+          <TooltipPopup side="top">
+            The repository's rules block merging until their requirements are met, such as resolving
+            conversations
+          </TooltipPopup>
+        </Tooltip>
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
         statePresentation !== null ? (
         <Badge size="control" variant="outline">

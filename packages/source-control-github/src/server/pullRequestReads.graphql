@@ -113,6 +113,7 @@ query PullRequestCore(
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
+      viewerCanMergeAsAdmin
       baseRef {
         compare(headRef: $headRef) {
           behindBy

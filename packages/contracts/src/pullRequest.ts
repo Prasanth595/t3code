@@ -589,6 +589,11 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /**
+   * The host would refuse an immediate merge by this viewer over rules beyond conflicts and draft
+   * state, such as unresolved conversations. Absent means the host does not report it.
+   */
+  mergeBlocked: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
