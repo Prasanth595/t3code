@@ -1,3 +1,6 @@
+import { useContext } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import {
@@ -20,7 +23,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
-  persistScopedSettingsPatch,
+  createScopedSettingsWriter,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -29,6 +32,11 @@ import {
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+
+const scopedSettingsWriters = new WeakMap<
+  AtomRegistry.AtomRegistry,
+  ReturnType<typeof createScopedSettingsWriter>
+>();
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
@@ -48,8 +56,19 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 }
 
 function useRunScopedPlan() {
+  const registry = useContext(RegistryContext);
+  let writer = scopedSettingsWriters.get(registry);
+  if (!writer) {
+    writer = createScopedSettingsWriter();
+    scopedSettingsWriters.set(registry, writer);
+  }
+  const readServer = useAtomCommand(serverEnvironment.getSettings, { reportFailure: false });
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+  return (
+    environments: Parameters<typeof planScopedSettingsPatch>[1],
+    planner: Parameters<typeof writer>[1],
+  ) => {
+    const plan = planner(environments);
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
@@ -58,8 +77,10 @@ function useRunScopedPlan() {
       });
       return;
     }
-    void persistScopedSettingsPatch(
-      plan,
+    void writer(
+      environments,
+      planner,
+      (environmentId) => readServer({ environmentId, input: {} }),
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
           (scope) => !readEnvironmentScope(request.environmentId, scope),
@@ -98,7 +119,8 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch));
+  return (patch: ScopedSettingsPatch) =>
+    run(environments, (current) => planScopedSettingsPatch(scope, current, patch));
 }
 
 export function useClearScopedSettings() {
@@ -106,7 +128,7 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
   };
 }
 
@@ -118,7 +140,7 @@ export function useClearProjectOverrides() {
     keys: readonly ProjectScopedServerSettingKey[],
   ) => {
     if (context === null) return;
-    run(planProjectOverridesClear(context.environments, entries, keys));
+    run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
   };
 }
 
