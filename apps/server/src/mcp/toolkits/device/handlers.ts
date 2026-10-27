@@ -1,6 +1,7 @@
 import {
   type DeviceError,
   type DeviceHostId,
+  type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
   type DeviceSummary,
@@ -72,6 +73,26 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
   ),
 );
 
+export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
+  hosts: ReadonlyArray<DeviceHostSummary>,
+  hostId: string | undefined,
+): Effect.fn.Return<DeviceHostId | undefined, DeviceToolUnavailableError> {
+  if (!hostId) return undefined;
+  const exact = hosts.find((host) => host.id === hostId);
+  if (exact) return exact.id;
+  const labelMatches = hosts.filter((host) => host.label.toLowerCase() === hostId.toLowerCase());
+  if (labelMatches.length === 1) return labelMatches[0]!.id;
+  const listed = (labelMatches.length > 1 ? labelMatches : hosts)
+    .map((host) => `${host.label} (${host.id})`)
+    .join(", ");
+  return yield* new DeviceToolUnavailableError({
+    reason:
+      labelMatches.length > 1
+        ? `Several device hosts are named ${hostId}; pass one id: ${listed}.`
+        : `No device host ${hostId}. Known hosts: ${listed || "none"}.`,
+  });
+});
+
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   devices: ReadonlyArray<DeviceSummary>,
   input: {
@@ -126,7 +147,7 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const hostId = input?.hostId;
+      const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
         .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
@@ -153,7 +174,8 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const target = yield* pickDevice(state.devices, input);
+      const hostId = yield* resolveHostId(state.hosts, input.hostId);
+      const target = yield* pickDevice(state.devices, { ...input, hostId });
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
         return yield* new DeviceToolUnavailableError({
@@ -221,8 +243,9 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const sessions = yield* devices.sessionsForThread(scope.thread.threadId);
+      const inputHostId = yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       const hostId =
-        input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
+        input.deviceId === undefined ? inputHostId : (inputHostId ?? LOCAL_DEVICE_HOST_ID);
       const target = sessions.findLast(
         (session) =>
           (hostId === undefined || session.hostId === hostId) &&
@@ -251,9 +274,10 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
+      const hostId = yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       yield* devices.close({
         threadId: scope.thread.threadId,
-        ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
+        ...(hostId === undefined ? {} : { hostId }),
         ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
         ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
       });
