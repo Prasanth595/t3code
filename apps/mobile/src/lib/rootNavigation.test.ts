@@ -10,7 +10,12 @@ vi.mock("@react-navigation/native", () => ({
   }),
 }));
 
-const { attachRootNavigation, rootNavigationRef } = await import("./rootNavigation");
+const {
+  attachRootNavigation,
+  flushRootNavigationQueue,
+  rootNavigationRef,
+  whenRootNavigationReady,
+} = await import("./rootNavigation");
 
 function fakeContainer() {
   return { isReady: () => true } as NavigationContainerRef<ReactNavigation.RootParamList>;
@@ -28,4 +33,27 @@ it("keeps the newer container when an older root unmounts after it attached", ()
 
   detachCurrent();
   expect(rootNavigationRef.current).toBeNull();
+});
+
+it("holds navigation until the container is ready, then runs it once", () => {
+  const navigate = vi.fn();
+  const failing = vi.fn(() => {
+    throw new Error("unknown route");
+  });
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  whenRootNavigationReady(failing);
+  whenRootNavigationReady(navigate);
+  expect(navigate).not.toHaveBeenCalled();
+
+  const detach = attachRootNavigation(fakeContainer());
+  flushRootNavigationQueue();
+  flushRootNavigationQueue();
+  expect(failing).toHaveBeenCalledOnce();
+  expect(navigate).toHaveBeenCalledOnce();
+  expect(logged).toHaveBeenCalledOnce();
+
+  whenRootNavigationReady(navigate);
+  expect(navigate).toHaveBeenCalledTimes(2);
+  detach();
+  logged.mockRestore();
 });
