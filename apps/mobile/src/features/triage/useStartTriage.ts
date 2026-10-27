@@ -1,4 +1,3 @@
-import { useNavigation } from "@react-navigation/native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -17,6 +16,7 @@ import {
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 const CLI_COMMAND = "npx t3 triage";
 
@@ -25,7 +25,7 @@ const CLI_COMMAND = "npx t3 triage";
  * clones the matching source, then a No project draft opens with the prompt.
  */
 export function useStartTriage() {
-  const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
   const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
 
@@ -72,9 +72,9 @@ export function useStartTriage() {
       projectId: scratch.value.id,
     });
     setComposerDraftText(draftId, prepared.value.prompt);
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: { draftId, title: "Triage" },
+    selectDetail({
+      name: "Thread",
+      params: { draft: { environmentId, projectId: scratch.value.id, title: "Triage", draftId } },
     });
   };
 }
