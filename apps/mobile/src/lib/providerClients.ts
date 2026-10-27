@@ -1,4 +1,10 @@
-import { isProviderDriverKind } from "@t3tools/contracts";
+import {
+  AntigravitySettings,
+  ClaudeSettings,
+  CodexSettings,
+  isProviderDriverKind,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
@@ -9,11 +15,32 @@ import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 const providerClients = makeProviderClientRegistry([
+  {
+    driverKind: ProviderDriverKind.make("codex"),
+    label: "Codex",
+    modelFamilies: ["GPT-"],
+    acpRegistryAgentIds: ["codex-acp"],
+    settingsSchema: CodexSettings,
+  },
+  {
+    driverKind: ProviderDriverKind.make("claudeAgent"),
+    label: "Claude",
+    modelFamilies: ["Claude "],
+    acpRegistryAgentIds: ["claude-acp"],
+    settingsSchema: ClaudeSettings,
+  },
   cursorClient,
   grokClient,
   fxClient,
   museClient,
   openCodeClient,
+  {
+    driverKind: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    modelFamilies: ["Gemini "],
+    acpRegistryAgentIds: ["antigravity-acp"],
+    settingsSchema: AntigravitySettings,
+  },
   piClient,
   acpRegistryClient,
 ]);

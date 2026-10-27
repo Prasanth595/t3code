@@ -1,5 +1,3 @@
-import type { ServerProviderModel } from "@t3tools/contracts";
-
 const FAMILY_PREFIXES = ["Claude ", "GPT-", "Gemini ", "Muse ", "Grok "] as const;
 
 // Words that describe a variant within a family rather than name a model. Off the
@@ -39,22 +37,14 @@ const VERSION = /^v?\d+(?:\.\d+)*[a-z]?$/i;
 
 const VENDOR_PREFIX = /^[A-Z][\w.&\- ]{0,24}: (?=\S)/;
 
-function modelShortName(name: string, nativeFamilies: ReadonlyArray<string>): string | undefined {
+export function modelShortName(
+  name: string,
+  nativeFamilies: ReadonlyArray<string>,
+): string | undefined {
   const unprefixed = name.replace(VENDOR_PREFIX, "");
   const short =
     withoutFamily(unprefixed, nativeFamilies) ?? (namesModel(unprefixed) ? unprefixed : name);
   return short === name ? undefined : short;
-}
-
-export function withModelShortNames(
-  models: ReadonlyArray<ServerProviderModel>,
-  nativeFamilies: ReadonlyArray<string>,
-): ReadonlyArray<ServerProviderModel> {
-  return models.map((model) => {
-    if (model.shortName) return model;
-    const shortName = modelShortName(model.name, nativeFamilies);
-    return shortName ? { ...model, shortName } : model;
-  });
 }
 
 function withoutFamily(name: string, nativeFamilies: ReadonlyArray<string>): string | undefined {

@@ -16,6 +16,8 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { modelShortName } from "@t3tools/provider-core/modelShortName";
+import { getProviderClient } from "./providerClients";
 
 export type ModelOption = {
   readonly key: string;
@@ -64,6 +66,14 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "claudeAgent") return "Claude";
   if (provider.driver === "pi") return "Pi";
   return provider.instanceId;
+}
+
+function shortNameField(
+  model: { readonly name: string; readonly shortName?: string | undefined },
+  modelFamilies: ReadonlyArray<string>,
+): { readonly shortName?: string } {
+  const shortName = model.shortName ?? modelShortName(model.name, modelFamilies);
+  return shortName ? { shortName } : {};
 }
 
 function isProviderEnabledForProject(
@@ -313,6 +323,7 @@ export function buildModelOptions(
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
+    const modelFamilies = getProviderClient(provider.driver)?.modelFamilies ?? [];
     const models = provider.models.filter(
       (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
     );
@@ -323,7 +334,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        ...(model.shortName ? { shortName: model.shortName } : {}),
+        ...shortNameField(model, modelFamilies),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -389,7 +400,9 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
-        ...(model?.shortName ? { shortName: model.shortName } : {}),
+        ...(model
+          ? shortNameField(model, getProviderClient(providerDriver)?.modelFamilies ?? [])
+          : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,

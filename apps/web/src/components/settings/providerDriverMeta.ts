@@ -17,12 +17,14 @@ export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("codex"),
     label: "Codex",
+    modelFamilies: ["GPT-"],
     acpRegistryAgentIds: ["codex-acp"],
     settingsSchema: CodexSettings,
   },
   {
     driverKind: ProviderDriverKind.make("claudeAgent"),
     label: "Claude",
+    modelFamilies: ["Claude "],
     acpRegistryAgentIds: ["claude-acp"],
     settingsSchema: ClaudeSettings,
   },
@@ -33,6 +35,7 @@ export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
+    modelFamilies: ["Gemini "],
     acpRegistryAgentIds: ["antigravity-acp"],
     settingsSchema: AntigravitySettings,
   },

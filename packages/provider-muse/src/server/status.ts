@@ -26,7 +26,6 @@ const MUSE_PRESENTATION = {
   reportsContextWindow: true,
   // Muse has no accept-edits mode; map only :ask-me and :unrestricted.
   supportedRuntimeModes: ["approval-required", "full-access"],
-  modelFamilies: ["Muse "],
 } as const;
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();

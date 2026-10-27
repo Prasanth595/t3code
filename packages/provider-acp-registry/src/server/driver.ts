@@ -26,7 +26,6 @@ import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import { withModelShortNames } from "@t3tools/provider-core/server/modelShortName";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   defaultProviderContinuationIdentity,
@@ -114,10 +113,7 @@ function modelsFromDiscovery(
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
           capabilities,
         }));
-  return withModelShortNames(
-    providerModelsFromSettings(builtInModels, customModels, capabilities),
-    [],
-  );
+  return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
 
 function acpRegistrySnapshotReadiness(

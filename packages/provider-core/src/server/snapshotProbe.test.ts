@@ -9,7 +9,6 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
-  buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -94,43 +93,6 @@ describe("providerModelsFromSettings", () => {
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
   });
-});
-
-describe("buildServerProvider", () => {
-  it.each([
-    ["Claude Opus 5.5", ["Claude "], undefined, "Opus 5.5"],
-    ["GPT-6.1-Sol", ["GPT-"], undefined, "6.1 Sol"],
-    ["Grok 4 Pro", [], undefined, undefined],
-    ["Claude Opus 5.5", [], undefined, "Opus 5.5"],
-    ["NVIDIA: Nemotron 3 Super", [], undefined, "Nemotron 3 Super"],
-    ["GPT-5.5", ["GPT-"], undefined, undefined],
-    ["Claude Opus 5.5", ["Claude "], "Opus", "Opus"],
-  ] as const)(
-    "gives %s on families %j (explicit %s) the short name %s",
-    (name, modelFamilies, shortName, expected) => {
-      const provider = buildServerProvider({
-        presentation: { displayName: "Test", modelFamilies },
-        enabled: true,
-        checkedAt: "2026-10-23T00:00:00Z",
-        models: [
-          {
-            slug: "model",
-            name,
-            isCustom: false,
-            capabilities: null,
-            ...(shortName && { shortName }),
-          },
-        ],
-        probe: {
-          installed: true,
-          version: "1.0.0",
-          status: "ready",
-          auth: { status: "authenticated" },
-        },
-      });
-      expect(provider.models[0]?.shortName).toBe(expected);
-    },
-  );
 });
 
 describe("parseGenericCliVersion", () => {

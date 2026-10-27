@@ -79,7 +79,6 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
   reportsContextWindow: true,
-  modelFamilies: ["GPT-"],
 } as const;
 
 export interface CodexAppServerProviderSnapshot {

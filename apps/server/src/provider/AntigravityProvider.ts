@@ -21,7 +21,6 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import { withModelShortNames } from "@t3tools/provider-core/server/modelShortName";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
@@ -34,11 +33,6 @@ import {
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
-const ANTIGRAVITY_PRESENTATION = {
-  displayName: "Antigravity",
-  showInteractionModeToggle: false,
-  modelFamilies: ["Gemini "],
-} as const;
 const MAX_WORKSPACE_SNAPSHOTS = 32;
 const HEALTH_CHECK_TIMEOUT = "90 seconds";
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
@@ -68,7 +62,7 @@ export function buildAntigravityModelsFromSession(
           })) ?? [])
         : [];
   const seen = new Set<string>();
-  const models = entries.flatMap((entry): ServerProviderModel[] => {
+  return entries.flatMap((entry): ServerProviderModel[] => {
     if (!entry.value.trim() || seen.has(entry.value)) return [];
     seen.add(entry.value);
     return [
@@ -83,7 +77,6 @@ export function buildAntigravityModelsFromSession(
       },
     ];
   });
-  return withModelShortNames(models, ANTIGRAVITY_PRESENTATION.modelFamilies);
 }
 
 function nativeCommands(
@@ -144,7 +137,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({
-      presentation: ANTIGRAVITY_PRESENTATION,
+      presentation: { displayName: "Antigravity", showInteractionModeToggle: false },
       enabled: settings.enabled,
       checkedAt,
       models: [],
