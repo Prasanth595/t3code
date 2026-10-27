@@ -97,7 +97,7 @@ import {
   goalCommandStopsActiveRun,
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
-  runAwaitsProviderTurn,
+  runLacksRunningProviderTurn,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
@@ -5508,7 +5508,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification === undefined &&
       !isNativeMaintenanceCommand(command) &&
       (activeRunMessage === undefined || !isNativeMaintenanceCommand(activeRunMessage)) &&
-      runAwaitsProviderTurn(projection, activeRun)
+      runLacksRunningProviderTurn(projection, activeRun)
         ? command.deliveryIntent
         : undefined;
     if (shouldQueue) {

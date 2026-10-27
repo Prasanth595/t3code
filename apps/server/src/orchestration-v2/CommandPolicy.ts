@@ -170,17 +170,16 @@ export function resolveMessageDispatchIntent(
     : mode;
 }
 
-export function runAwaitsProviderTurn(
+export function runLacksRunningProviderTurn(
   projection: Pick<OrchestrationV2ThreadProjection, "providerTurns">,
   run: Pick<OrchestrationV2Run, "status" | "activeAttemptId">,
 ): boolean {
   return (
     run.status === "preparing" ||
     run.status === "starting" ||
-    (run.status === "running" &&
-      !projection.providerTurns.some(
-        (turn) => turn.runAttemptId === run.activeAttemptId && turn.status !== "pending",
-      ))
+    !projection.providerTurns.some(
+      (turn) => turn.runAttemptId === run.activeAttemptId && turn.status === "running",
+    )
   );
 }
 
@@ -202,18 +201,9 @@ function resolveDeliveryIntent(
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
-  if (runAwaitsProviderTurn(projection, activeRun)) return { type: "queue_after_active" };
+  if (runLacksRunningProviderTurn(projection, activeRun)) return { type: "queue_after_active" };
   if (deliveryIntent === "steer") {
     return { type: "steer_active", targetRunId: activeRun.id };
-  }
-  // A run stays active after its provider turn finishes. Queue automatic input
-  // in that gap so steering cannot reject the message.
-  if (
-    !projection.providerTurns.some(
-      (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
-    )
-  ) {
-    return { type: "queue_after_active" };
   }
 
   const providerThread = projection.providerThreads.find(
