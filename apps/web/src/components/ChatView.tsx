@@ -647,6 +647,8 @@ export default function ChatView(props: ChatViewProps) {
     serverAcknowledgedUserMessageIds,
   );
   if (optimisticState !== heldOptimisticUserMessages) {
+    // Idempotent, and a discarded render only delays revocation to the thread's end.
+    optimisticBlobPreviews.handOff(optimisticState);
     setHeldOptimisticUserMessages(optimisticState);
   }
   const optimisticUserMessages = optimisticState.messages;

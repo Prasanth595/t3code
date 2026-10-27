@@ -92,6 +92,38 @@ describe("optimistic user messages", () => {
     previews.revokeThread(threadA);
     expect(revoke.mock.calls.map(([url]) => url)).toEqual(["blob:a1", "blob:a2"]);
   });
+
+  it("a send that fails after the server acknowledged it leaves the handed-off previews shown", () => {
+    using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const previews = createOptimisticBlobPreviews();
+    const sent = message("m1", "blob:m1");
+    previews.track(threadA, sent);
+    let state = applyOptimisticUserMessagesAction(emptyOptimisticUserMessages(threadA), threadA, [
+      sent,
+    ]);
+    state = reconcileOptimisticUserMessages(state, threadA, ids("m1"));
+    previews.handOff(state);
+
+    previews.release(threadA, sent);
+    expect(revoke).not.toHaveBeenCalled();
+
+    previews.revokeThread(threadA);
+    expect(revoke.mock.calls.map(([url]) => url)).toEqual(["blob:m1"]);
+  });
+
+  it("a send that fails before acknowledgement revokes its previews", () => {
+    using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const previews = createOptimisticBlobPreviews();
+    const sent = message("m1", "blob:m1");
+    previews.track(threadA, sent);
+    const state = applyOptimisticUserMessagesAction(emptyOptimisticUserMessages(threadA), threadA, [
+      sent,
+    ]);
+    previews.handOff(reconcileOptimisticUserMessages(state, threadA, ids()));
+
+    previews.release(threadA, sent);
+    expect(revoke.mock.calls.map(([url]) => url)).toEqual(["blob:m1"]);
+  });
 });
 
 class FakeImage {
