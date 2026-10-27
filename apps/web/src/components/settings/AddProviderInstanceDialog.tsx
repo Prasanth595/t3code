@@ -195,7 +195,8 @@ export function AddProviderInstanceDialog({
     !addingChatGptAccount &&
     wizardStep === 0 &&
     !(isAcpRegistry && isManualAcpConfiguration);
-  const registry = useAcpRegistrySearch(environmentId, showRegistrySearch && showMoreProviders);
+  // Searches while Show more is closed, so the fold opens on results.
+  const registry = useAcpRegistrySearch(environmentId, showRegistrySearch);
   const isPreparingRegistryAgent = registry.preparingId !== null;
   const defaultIdentity: ProviderIdentityDraft = {
     label: driverOption.label,
@@ -458,10 +459,7 @@ export function AddProviderInstanceDialog({
           />
         ) : (
           <>
-            <WizardPanel
-              className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}
-              holdHeight={showRegistrySearch && showMoreProviders && registry.search.isPending}
-            >
+            <WizardPanel className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}>
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
                 <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
                   Provider
@@ -487,7 +485,8 @@ export function AddProviderInstanceDialog({
                       />
                     </CollapsibleTrigger>
                   </div>
-                  <CollapsiblePanel>
+                  {/* WizardPanel already animates its height, so the fold opens without its own. */}
+                  <CollapsiblePanel animate={false}>
                     <div className="space-y-4 pt-4">
                       <ProviderOptionGrid
                         options={MORE_DRIVER_OPTIONS}
