@@ -8,7 +8,7 @@ description: >-
 
 # T3 Code worktree setup
 
-T3 has managed worktrees and `t3.json` setup scripts. It does not expose Orca's
+T3 has managed worktrees and project actions importable from `t3.json`. It does not expose Orca's
 `environmentRecipes` or VM recipe doctor. For disposable cloud/VM lifecycle
 provisioning, explain that gap instead of inventing a T3 equivalent. This skill
 configures checkout initialization on the selected environment's host.
@@ -44,6 +44,13 @@ Preserve existing `t3.json` fields and scripts. A minimal setup entry looks like
 ```
 
 Create that script only if needed, using the repo's language and conventions.
+Import the `t3.json` action in **Settings → Projects → Actions** for the intended
+project and environment, or update its configured project actions through the
+supported settings API. A committed `t3.json` alone does not register the action:
+the setup runner uses resolved saved actions, including project overrides and
+environment defaults. Check those before blaming the script. A handoff result
+with `setupScript.status: 'no-script'` means no setup action was selected.
+
 Commands run in the worktree. `T3CODE_PROJECT_ROOT` identifies the primary
 project path; `T3CODE_WORKTREE_PATH` identifies the worktree when present.
 Validate these before reading from another checkout. Quote paths and support

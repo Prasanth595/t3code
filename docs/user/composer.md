@@ -280,7 +280,7 @@ The bundled catalog covers these workflows:
 | `t3code-jira`            | Issue context and valid transitions through a provider-connected Jira MCP server, such as [Atlassian's Cloud service](https://developer.atlassian.com/cloud/rovo-mcp/guides/getting-started/). |
 | `t3code-ios`             | iOS Simulator through the Device panel; needs device agent access and a compatible host. Local simulators require macOS and Xcode.                                                             |
 | `t3code-android`         | Android devices through the Device panel; needs device agent access, SDK tools, and an emulator or connected device.                                                                           |
-| `t3code-workspace-setup` | Reproducible local worktree initialization with `t3.json` scripts and isolated state.                                                                                                          |
+| `t3code-workspace-setup` | Reproducible worktree initialization with configured project actions imported from `t3.json` and isolated state.                                                                               |
 
 Each catalog entry explains its prerequisites before installation. Installing a
 skill supplies instructions; it does not install SDKs/controllers, authenticate

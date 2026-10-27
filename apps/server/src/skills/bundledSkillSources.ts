@@ -69,7 +69,7 @@ export const BUNDLED_SKILL_METADATA = [
     title: "Worktree setup",
     description: "Configure reproducible worktree setup, dependencies, and isolated local state.",
     requirements:
-      "Uses t3.json setup scripts on the selected environment. Disposable VM/cloud recipes from Orca are not supported.",
+      "Requires a configured project setup action (importable from t3.json). Disposable VM/cloud recipes from Orca are not supported.",
   },
 ] as const satisfies ReadonlyArray<Omit<BundledSkillSource, "files">>;
 
