@@ -33,6 +33,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   mergePullRequestLists,
   applyPullRequestOverrides,
+  pullRequestResultOverride,
   matchesPullRequestFilters,
   type PullRequestListOverride,
   type EnvironmentPullRequestStat,
@@ -431,13 +432,13 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       }
     }),
   actionResult: ({ environmentId, input }, result, registry) =>
-    Effect.sync(() => {
+    Effect.map(Clock.currentTimeMillis, (at) => {
       if (input.expectedAccountId !== undefined) return;
       const key = pullRequestSummaryKey(environmentId, input);
       const previous = registry.get(pullRequestActionOverridesAtom).get(key);
       if (previous?.observedAt !== undefined && previous.observedAt >= result.observedAt) return;
       registry.update(pullRequestActionOverridesAtom, (current) => {
-        const next = new Map(current).set(key, { ...result, token: 0, at: result.observedAt });
+        const next = new Map(current).set(key, pullRequestResultOverride(result, 0, at));
         if (next.size > 256) next.delete(next.keys().next().value!);
         return next;
       });

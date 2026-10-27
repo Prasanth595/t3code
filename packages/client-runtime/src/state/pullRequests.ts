@@ -427,13 +427,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       reference.number,
       reference.expectedAccountId ?? null,
     ]).pipe(Effect.orDie);
-    const previous =
-      actions.get(key) ??
-      Array.from(actions.values()).find(
-        (action) =>
-          action.environmentId === target.environmentId &&
-          sameActionReference(action.reference, reference),
-      );
+    const matches = Array.from(actions.entries()).filter(
+      ([, action]) =>
+        action.environmentId === target.environmentId &&
+        sameActionReference(action.reference, reference),
+    );
+    const previous = matches.reduce<ConfirmedAction | undefined>(
+      (latest, [, action]) =>
+        latest === undefined || action.result.observedAt > latest.result.observedAt
+          ? action
+          : latest,
+      undefined,
+    );
     if (
       previous !== undefined &&
       ((previous.result.state === "merged" && result.state !== "merged") ||
@@ -447,6 +452,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       result,
       epoch: ++actionEpoch,
     };
+    for (const [alias] of matches) actions.delete(alias);
     actions.set(key, confirmed);
     const oldest = actions.keys().next().value;
     if (actions.size > 256 && oldest !== undefined) actions.delete(oldest);
@@ -581,6 +587,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       }),
     });
     let value = yield* read;
+    let refreshNeeded = false;
     for (const confirmed of actionsFor(registry, session.value).values()) {
       if (confirmed.environmentId !== supervisor.target.environmentId) continue;
       if (
@@ -592,9 +599,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               (typeof value.observedAt !== "number" ||
                 value.observedAt < confirmed.result.observedAt))))
       ) {
+        if (epoch < confirmed.epoch && needsRefresh(value, confirmed.reference, confirmed.result)) {
+          refreshNeeded = true;
+        }
         value = patch(value, confirmed.reference, confirmed.result);
       }
     }
+    if (refreshNeeded) registry.refresh(atom);
     return value;
   });
   const commandScheduler = createAtomCommandScheduler();

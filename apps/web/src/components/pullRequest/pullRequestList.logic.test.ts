@@ -837,6 +837,24 @@ describe("confirmed pull request actions", () => {
     observedAt: 300,
   };
 
+  it("keeps a fresh confirmed override when the server clock is behind", () => {
+    const row = entry({ number: 1, state: "open", observedAt: 200 });
+    const override = pullRequestOverrideAfterAction(row, "close", new Date(120_000), 1, {
+      ...result,
+      state: "closed",
+    })!;
+    const overrides = new Map([["row", override]]);
+    expect(settlePullRequestOverrides(overrides, [row], () => "row", 121_000)).toBe(overrides);
+    expect(override).toEqual({
+      state: "closed",
+      isDraft: false,
+      updatedAt: result.updatedAt,
+      observedAt: 300,
+      token: 1,
+      at: 120_000,
+    });
+  });
+
   it("keeps an accepted auto-merge open and uses the host date", () => {
     const row = entry({ number: 1 });
     const override = pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, result)!;

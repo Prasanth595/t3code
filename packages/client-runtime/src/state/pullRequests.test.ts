@@ -1220,54 +1220,65 @@ it.effect(
     ),
 );
 
-it.effect("refreshes head-dependent detail when an action changes the head", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let headSha = "old-head";
-      let reads = 0;
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.sync(() => {
-            reads++;
-            return {
-              ...actionReference,
-              state: "open",
-              isDraft: false,
-              headSha,
-              additions: headSha === "old-head" ? 1 : 2,
-              observedAt: 300,
-            };
+it.effect.each([false, true])(
+  "refreshes head-dependent detail after an action, pending=%s",
+  (pending) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let headSha = "old-head";
+        let reads = 0;
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = actionResultClient({
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.gen(function* () {
+              reads++;
+              const snapshot = {
+                ...actionReference,
+                state: "open",
+                isDraft: false,
+                headSha,
+                additions: headSha === "old-head" ? 1 : 2,
+                observedAt: reads === 1 ? 300 : 500,
+              };
+              if (pending && reads === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return snapshot;
+            }),
+          [WS_METHODS.pullRequestsRunActionWithResult]: () =>
+            Effect.sync(() => {
+              headSha = "new-head";
+              return {
+                ...confirmedActionResult,
+                state: "open",
+                mergedAt: null,
+                closedAt: null,
+                headSha,
+                observedAt: 400,
+              };
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const detail = atoms.detail(target);
+        registry.mount(detail);
+        if (pending) yield* Deferred.await(started);
+        else yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "update-branch" },
           }),
-        [WS_METHODS.pullRequestsRunActionWithResult]: () =>
-          Effect.sync(() => {
-            headSha = "new-head";
-            return {
-              ...confirmedActionResult,
-              state: "open",
-              mergedAt: null,
-              closedAt: null,
-              headSha,
-              observedAt: 400,
-            };
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const detail = atoms.detail(target);
-      registry.mount(detail);
-      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-      yield* Effect.promise(() =>
-        atoms.runAction.run(registry, {
-          ...target,
-          input: { ...actionReference, action: "update-branch" },
-        }),
-      );
-      expect(
-        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).additions,
-      ).toBe(2);
-      expect(reads).toBe(2);
-    }),
-  ),
+        );
+        if (pending) yield* Deferred.succeed(release, undefined);
+        expect(
+          (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).additions,
+        ).toBe(2);
+        expect(reads).toBe(2);
+      }),
+    ),
 );
 
 it.effect("keeps a confirmed result when an earlier detail read finishes late", () =>
@@ -1508,6 +1519,56 @@ it.effect("patches typed refresh results and reloads only the affected activity"
       expect(
         (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).state,
       ).toBe("closed");
+    }),
+  ),
+);
+
+it.effect("keeps the newest action across hosted and hostless references", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
+      const client = actionResultClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => SubscriptionRef.changes(events),
+        [WS_METHODS.pullRequestsPreview]: () =>
+          Effect.succeed({ ...actionReference, state: "open", isDraft: true }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const refreshes = atoms.refreshes({ environmentId: target.environmentId, input: {} });
+      registry.mount(refreshes);
+      yield* AtomRegistry.getResult(registry, refreshes);
+      const previews = [atoms.preview(target), atoms.previewCard(target)];
+      for (const atom of previews) {
+        registry.mount(atom);
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      }
+      for (const [revision, reference, observedAt, isDraft] of [
+        [1, actionReference, 200, true],
+        [2, { ...actionReference, host: undefined }, 300, false],
+        [3, actionReference, 250, true],
+      ] as const) {
+        const seen = Latch.makeUnsafe();
+        const stop = registry.subscribe(refreshes, (value) => {
+          if (Option.getOrNull(AsyncResult.value(value)) === revision) seen.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(stop));
+        yield* SubscriptionRef.set(events, {
+          revision,
+          reference,
+          result: {
+            ...confirmedActionResult,
+            state: "open",
+            mergedAt: null,
+            closedAt: null,
+            observedAt,
+            isDraft,
+          },
+        });
+        yield* seen.await;
+        stop();
+      }
+      for (const atom of previews)
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom))).isDraft).toBe(false);
     }),
   ),
 );

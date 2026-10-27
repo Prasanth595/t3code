@@ -796,6 +796,14 @@ export interface PullRequestListOverride {
   readonly observedAt?: number;
 }
 
+export function pullRequestResultOverride(
+  { state, isDraft, updatedAt, observedAt }: PullRequestActionResult,
+  token: number,
+  at: number,
+): PullRequestListOverride {
+  return { state, isDraft, updatedAt, observedAt, token, at };
+}
+
 export function pullRequestOverrideAfterAction(
   entry: Pick<PullRequestListEntry, "state" | "isDraft">,
   action: PullRequestAction,
@@ -803,7 +811,7 @@ export function pullRequestOverrideAfterAction(
   token: number,
   result?: PullRequestActionResult | null,
 ): PullRequestListOverride | null {
-  if (result != null) return { ...result, token, at: result.observedAt };
+  if (result != null) return pullRequestResultOverride(result, token, now.getTime());
   const stamp = { updatedAt: now.toISOString(), token, at: now.getTime() };
   switch (action) {
     case "close":
