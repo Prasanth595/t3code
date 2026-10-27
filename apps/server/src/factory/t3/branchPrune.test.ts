@@ -11,8 +11,10 @@ import * as Process from "../process.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "../ledger/runId.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
 import {
+  ARCHIVE_PREFIX,
   decide,
   pruneBranches,
+  REMOTE_PRUNES_PER_RUN,
   unfinishedRunBranches,
   type Branch,
   type Facts,
@@ -98,10 +100,14 @@ const input = (
   options: {
     readonly pulls?: Readonly<Record<string, HeadPulls>> | "fail";
     readonly threads?: ReadonlyArray<string> | "fail";
-    readonly runs?: ReadonlyArray<string>;
+    readonly runs?: ReadonlyArray<string> | "fail";
+    readonly tip?: "fail";
+    readonly remove?: "fail";
     readonly dryRun?: boolean;
     readonly logFile?: string;
     readonly beforeRemove?: (name: string) => void;
+    /** Runs once the branches are listed and before any is judged. */
+    readonly afterListing?: () => void;
   } = {},
 ): { input: PruneInput; asked: Asked; logFile: string } => {
   const asked: Asked = { pulls: [], removed: [] };
@@ -121,8 +127,14 @@ const input = (
       threads:
         options.threads === "fail"
           ? failed("thread lookup")
-          : Effect.succeed(new Set(options.threads ?? [])),
-      runs: Effect.succeed(new Set(options.runs ?? [])),
+          : Effect.sync(() => {
+              options.afterListing?.();
+              return new Set(options.threads ?? []);
+            }),
+      runs:
+        options.runs === "fail"
+          ? failed("run lookup")
+          : Effect.succeed(new Set(options.runs ?? [])),
       github: {
         pulls: (heads) => {
           asked.pulls.push(heads);
@@ -131,16 +143,20 @@ const input = (
           return Effect.succeed(new Map(heads.map((head) => [head, pulls?.[head] ?? NO_PULLS])));
         },
         tip: (name) =>
-          Effect.sync(() => {
-            const ref = `refs/heads/${name}`;
-            return refExists(r.origin, ref) ? git(r.origin, ["rev-parse", ref]).trim() : null;
-          }),
+          options.tip === "fail"
+            ? failed("tip read")
+            : Effect.sync(() => {
+                const ref = `refs/heads/${name}`;
+                return refExists(r.origin, ref) ? git(r.origin, ["rev-parse", ref]).trim() : null;
+              }),
         remove: (name) =>
-          Effect.sync(() => {
-            options.beforeRemove?.(name);
-            asked.removed.push(name);
-            git(r.origin, ["update-ref", "-d", `refs/heads/${name}`]);
-          }),
+          options.remove === "fail"
+            ? Effect.sync(() => asked.removed.push(name)).pipe(Effect.andThen(failed("removal")))
+            : Effect.sync(() => {
+                options.beforeRemove?.(name);
+                asked.removed.push(name);
+                git(r.origin, ["update-ref", "-d", `refs/heads/${name}`]);
+              }),
       },
     },
   };
@@ -268,25 +284,63 @@ describe("pruneBranches", () => {
     }),
   );
 
-  it.effect("keeps every branch when the pull request lookup fails", () =>
+  it.effect("keeps every branch and fails, naming the lookup, when a lookup fails", () =>
     Effect.gen(function* () {
-      const r = repo();
-      r.merged("t3/merged");
-      r.unmerged("t3/old", NOW_MS - 60 * DAY_MS);
-      const report = yield* prune(input(r, { pulls: "fail" }).input);
-      assert.isTrue(refExists(r.work, "refs/heads/t3/merged"));
-      assert.isTrue(refExists(r.work, "refs/heads/t3/old"));
-      assert.deepStrictEqual(report.pruned, []);
+      for (const [what, options] of [
+        ["the pull request lookup", { pulls: "fail" }],
+        ["the thread lookup", { threads: "fail" }],
+        ["the run lookup", { runs: "fail" }],
+      ] as const) {
+        const r = repo();
+        r.merged("t3/merged");
+        r.unmerged("t3/old", NOW_MS - 60 * DAY_MS);
+        const error = yield* Effect.flip(prune(input(r, options).input));
+        assert.include(error.message, `${what} failed, so every branch is kept`);
+        assert.isTrue(refExists(r.work, "refs/heads/t3/merged"), what);
+        assert.isTrue(refExists(r.work, "refs/heads/t3/old"), what);
+      }
     }),
   );
 
-  it.effect("keeps every branch when the thread lookup fails", () =>
+  it.effect("keeps the commits of a pruned unmerged branch, so its logged sha restores it", () =>
     Effect.gen(function* () {
       const r = repo();
+      r.unmerged("t3/old", NOW_MS - 60 * DAY_MS);
       r.merged("t3/merged");
-      const report = yield* prune(input(r, { threads: "fail" }).input);
-      assert.isTrue(refExists(r.work, "refs/heads/t3/merged"));
-      assert.deepStrictEqual(report.pruned, []);
+      const old = r.sha("t3/old");
+      const { input: pruneInput } = input(r);
+      yield* prune(pruneInput);
+      assert.isFalse(refExists(r.work, "refs/heads/t3/old"));
+      git(r.work, ["reflog", "expire", "--expire=now", "--all"]);
+      git(r.work, ["gc", "-q", "--prune=now"]);
+      git(r.work, ["branch", "t3/old", old]);
+      assert.strictEqual(r.sha("t3/old"), old);
+      // Commits `main` has need no keeping.
+      assert.deepStrictEqual(
+        git(r.work, ["for-each-ref", "--format=%(refname)", ARCHIVE_PREFIX]).trim().split("\n"),
+        [`${ARCHIVE_PREFIX}${old}`],
+      );
+    }),
+  );
+
+  it.effect("leaves a local branch that moved after it was listed, with its new commit", () =>
+    Effect.gen(function* () {
+      const r = repo();
+      r.unmerged("t3/old", NOW_MS - 60 * DAY_MS);
+      const { input: pruneInput } = input(r, {
+        afterListing: () => {
+          git(r.work, ["switch", "-q", "t3/old"]);
+          git(r.work, ["commit", "-q", "--allow-empty", "-m", "later"]);
+          git(r.work, ["switch", "-q", "main"]);
+        },
+      });
+      const moved = yield* prune(pruneInput);
+      assert.isTrue(refExists(r.work, "refs/heads/t3/old"));
+      assert.deepStrictEqual(moved.pruned, []);
+      assert.deepStrictEqual(moved.failed, []);
+      assert.deepStrictEqual(moved.left, [
+        { ref: "refs/heads/t3/old", why: `it moved to ${r.sha("t3/old")}` },
+      ]);
     }),
   );
 
@@ -358,6 +412,78 @@ describe("pruneBranches", () => {
       assert.deepStrictEqual(asked.removed, []);
       assert.isTrue(refExists(r.work, "refs/remotes/origin/t3/shipped"));
       assert.deepStrictEqual(report.pruned, []);
+    }),
+  );
+
+  it.effect("keeps a remote branch GitHub cannot read or refuses to delete, as a failure", () =>
+    Effect.gen(function* () {
+      for (const [options, why] of [
+        [{ tip: "fail" }, "cannot read it on GitHub: tip read failed"],
+        [{ remove: "fail" }, "GitHub refused: removal failed"],
+      ] as const) {
+        const r = repo();
+        r.unmerged("t3/closed");
+        r.push("t3/closed");
+        git(r.work, ["update-ref", "-d", "refs/heads/t3/closed"]);
+        const sha = r.sha("origin/t3/closed");
+        const report = yield* prune(
+          input(r, {
+            ...options,
+            pulls: { "t3/closed": { open: 0, ended: [{ merged: false, headSha: sha }] } },
+          }).input,
+        );
+        assert.isTrue(refExists(r.work, "refs/remotes/origin/t3/closed"), why);
+        assert.isTrue(refExists(r.origin, "refs/heads/t3/closed"), why);
+        assert.deepStrictEqual(report.pruned, []);
+        assert.deepStrictEqual(report.failed, [
+          { ref: "refs/remotes/origin/t3/closed", kind: "github", why },
+        ]);
+      }
+    }),
+  );
+
+  it.effect("drops the tracking ref of a branch GitHub no longer has, with no GitHub call", () =>
+    Effect.gen(function* () {
+      const r = repo();
+      r.unmerged("t3/closed");
+      r.push("t3/closed");
+      git(r.work, ["update-ref", "-d", "refs/heads/t3/closed"]);
+      const sha = r.sha("origin/t3/closed");
+      git(r.origin, ["update-ref", "-d", "refs/heads/t3/closed"]);
+      const { input: pruneInput, asked } = input(r, {
+        pulls: { "t3/closed": { open: 0, ended: [{ merged: false, headSha: sha }] } },
+      });
+      const report = yield* prune(pruneInput);
+      assert.deepStrictEqual(asked.removed, []);
+      assert.isFalse(refExists(r.work, "refs/remotes/origin/t3/closed"));
+      assert.deepStrictEqual(
+        report.pruned.map((p) => p.ref),
+        ["refs/remotes/origin/t3/closed"],
+      );
+    }),
+  );
+
+  it.effect("deletes at most a set number of branches on GitHub per prune", () =>
+    Effect.gen(function* () {
+      const r = repo();
+      r.unmerged("t3/work");
+      r.push("t3/work");
+      const sha = r.sha("t3/work");
+      git(r.work, ["update-ref", "-d", "refs/heads/t3/work"]);
+      git(r.work, ["update-ref", "-d", "refs/remotes/origin/t3/work"]);
+      const names = Array.from({ length: REMOTE_PRUNES_PER_RUN + 2 }, (_, i) => `t3/b${i}`);
+      for (const name of names) {
+        git(r.origin, ["update-ref", `refs/heads/${name}`, sha]);
+        git(r.work, ["update-ref", `refs/remotes/origin/${name}`, sha]);
+      }
+      const closed = { open: 0, ended: [{ merged: false, headSha: sha }] };
+      const { input: pruneInput, asked } = input(r, {
+        pulls: Object.fromEntries(names.map((name) => [name, closed])),
+      });
+      const report = yield* prune(pruneInput);
+      assert.strictEqual(asked.removed.length, REMOTE_PRUNES_PER_RUN);
+      assert.strictEqual(report.pruned.length, REMOTE_PRUNES_PER_RUN);
+      assert.strictEqual(report.waiting, 2);
     }),
   );
 
@@ -449,12 +575,6 @@ const facts = (overrides: Partial<Facts> = {}): Facts => ({
 });
 
 describe("decide", () => {
-  it("keeps every branch when a lookup failed", () => {
-    for (const failed of ["worktrees", "threads", "runs", "pulls"] as const) {
-      assert.isFalse(decide(branch(), facts({ [failed]: null })).prune, failed);
-    }
-  });
-
   it("keeps a branch any worktree, live thread or unfinished run uses", () => {
     for (const using of ["worktrees", "threads", "runs"] as const) {
       assert.isFalse(decide(branch(), facts({ [using]: new Set(["t3/x"]) })).prune, using);
@@ -529,6 +649,49 @@ describe("unfinishedRunBranches", () => {
       const names = yield* unfinishedRunBranches(dataDir, "Acme/Widgets");
       assert.deepStrictEqual([...names], ["t3/working"]);
     }),
+  );
+
+  it.effect(
+    "names a run's base and the branches it resumes, relaunches or was interrupted on",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir("ledger");
+        const [, launchedData] = launched("t3/stacked");
+        writeRun(dataDir, { repo: "acme/widgets", issue: "1", attempt: 1 }, [
+          building,
+          [
+            "session_launched",
+            {
+              ...launchedData,
+              base: "t3/stack-base",
+              resumed_from: { branch: "t3/earlier", run: "acme/widgets#1/1" },
+            },
+          ],
+        ]);
+        writeRun(dataDir, { repo: "acme/widgets", issue: "2", attempt: 1 }, [
+          building,
+          ["step_changed", { step: "launch-base t3/planned-base" }],
+          ["step_changed", { step: "launch-sending resumed-from t3/resume-from" }],
+        ]);
+        writeRun(dataDir, { repo: "acme/widgets", issue: "3", attempt: 1 }, [
+          building,
+          ["session_interrupted", { resumes: 0, branch: "t3/interrupted" }],
+        ]);
+        writeRun(dataDir, { repo: "acme/widgets", issue: "4", attempt: 1 }, [
+          building,
+          ["regate_relaunching", { attempt: 1, branch: "t3/regate", message: "fix it" }],
+        ]);
+        const names = yield* unfinishedRunBranches(dataDir, "acme/widgets");
+        assert.deepStrictEqual([...names].toSorted(), [
+          "t3/earlier",
+          "t3/interrupted",
+          "t3/planned-base",
+          "t3/regate",
+          "t3/resume-from",
+          "t3/stack-base",
+          "t3/stacked",
+        ]);
+      }),
   );
 
   it.effect("fails when one of the repo's runs cannot be read", () =>

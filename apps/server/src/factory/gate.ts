@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { configFlags, HARDENED_GIT_CONFIG, HARDENED_GIT_ENV } from "./gitHardening.ts";
 import type { AppendIo } from "./ledger/appendFile.ts";
 import { errnoCode, ledgerCall, type LedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
@@ -505,28 +506,10 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const checkoutTimeoutMs = options.checkoutTimeoutMs ?? DEFAULT_CHECKOUT_TIMEOUT_MS;
   const fetchRetryDelaysMs = options.fetchRetryDelaysMs ?? FETCH_RETRY_DELAYS_MS;
   const fileTransport = remoteBase.startsWith("file://") ? "always" : "never";
-  const hardening = [
-    "core.fsmonitor=false",
-    "core.hooksPath=/dev/null",
-    "core.autocrlf=false",
-    // The default attributes and ignore files (`~/.config/git/attributes` and `ignore`, and the
-    // `$XDG_CONFIG_HOME` ones) are read even with no config at all.
-    "core.attributesFile=/dev/null",
-    "core.excludesFile=/dev/null",
-    "protocol.ext.allow=never",
-    `protocol.file.allow=${fileTransport}`,
-  ].flatMap((setting) => ["-c", setting]);
+  const hardening = configFlags([...HARDENED_GIT_CONFIG, `protocol.file.allow=${fileTransport}`]);
 
   const gitEnv = (fetch: boolean): Record<string, string> => {
-    const env: Record<string, string> = {
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_NO_REPLACE_OBJECTS: "1",
-      GIT_LFS_SKIP_SMUDGE: "1",
-      // Git's messages in English, whatever the locale the server started in.
-      LC_ALL: "C",
-    };
+    const env: Record<string, string> = { ...HARDENED_GIT_ENV };
     if (fetch) {
       for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "XDG_CONFIG_HOME"]) {
         const value = globalThis.process.env[name];

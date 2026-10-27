@@ -818,6 +818,14 @@ const pruneStaleBranches = Effect.fn("Pass.pruneStaleBranches")(function* (
     for (const { ref, why } of result.success.left) {
       pass.line(plain(`${name}: left ${ref}: ${why}`));
     }
+    for (const { ref, kind, why } of result.success.failed) {
+      yield* pass.fail(null, passError(kind, `${name}: branch prune: ${ref}: `, why));
+    }
+    if (result.success.waiting > 0) {
+      pass.line(
+        plain(`${name}: ${result.success.waiting} remote branches wait for the next prune`),
+      );
+    }
   }
 });
 

@@ -92,8 +92,8 @@ const PR_LIST_FIELDS = "number,url,headRefName,baseRefName,isCrossRepository,aut
 const HEAD_PULLS_BATCH = 50;
 
 /**
- * Per head, how many open pull requests there are and the newest ten that ended, each in a
- * connection of its own. The names go in as variables `$h0`, `$h1`, ….
+ * Per name, how many open pull requests are from it and onto it, and the newest ten from it that
+ * ended, each in a connection of its own. The names go in as variables `$h0`, `$h1`, ….
  */
 const headPullsQuery = (count: number): string => {
   const vars = Array.from({ length: count }, (_, i) => `, $h${i}: String!`).join("");
@@ -101,6 +101,7 @@ const headPullsQuery = (count: number): string => {
     { length: count },
     (_, i) =>
       ` o${i}: pullRequests(headRefName: $h${i}, states: OPEN, first: 1) { totalCount }` +
+      ` b${i}: pullRequests(baseRefName: $h${i}, states: OPEN, first: 1) { totalCount }` +
       ` e${i}: pullRequests(headRefName: $h${i}, states: [MERGED, CLOSED], first: 10, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { state headRefOid isCrossRepository } }`,
   ).join("");
   return `query($owner: String!, $name: String!${vars}) { repository(owner: $owner, name: $name) {${fields} } }`;
@@ -126,9 +127,9 @@ const HeadPullsAnswer = Schema.Struct({
   }),
 });
 
-/** The pull requests from one branch name: see `headPulls`. */
+/** The pull requests from one branch name, and those onto it: see `headPulls`. */
 export interface HeadPulls {
-  /** Open pull requests, drafts and forks included. */
+  /** Open pull requests from the branch or onto it, drafts and forks included. */
   readonly open: number;
   /** This repo's merged and closed pull requests, newest first, at most ten. */
   readonly ended: ReadonlyArray<{ readonly merged: boolean; readonly headSha: string }>;
@@ -1546,8 +1547,8 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * The pull requests from each of `heads`, by name, in one GraphQL call per 50 names. A name
-   * that is not a plain ref name (`isPlainRefName`) is refused before any call.
+   * The pull requests from and onto each of `heads`, by name, in one GraphQL call per 50 names.
+   * A name that is not a plain ref name (`isPlainRefName`) is refused before any call.
    */
   const headPulls = Effect.fn("GitHub.headPulls")(function* (
     heads: ReadonlyArray<string>,
@@ -1577,13 +1578,14 @@ export const makeGitHub = (options: GitHubOptions) => {
       const answer = yield* ghJson(args, HeadPullsAnswer, "a GraphQL response with pull requests");
       const found = answer.data.repository;
       for (const [i, head] of batch.entries()) {
-        const open = found[`o${i}`]?.totalCount;
+        const from = found[`o${i}`]?.totalCount;
+        const onto = found[`b${i}`]?.totalCount;
         const ended = found[`e${i}`]?.nodes;
-        if (open === undefined || ended === undefined) {
+        if (from === undefined || onto === undefined || ended === undefined) {
           return yield* parseError(args, `the pull requests of every head (${head} had none)`);
         }
         out.set(head, {
-          open,
+          open: from + onto,
           ended: ended
             .filter((pull) => !pull.isCrossRepository)
             .map((pull) => ({ merged: pull.state === "MERGED", headSha: pull.headRefOid })),

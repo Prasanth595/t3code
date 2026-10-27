@@ -642,7 +642,12 @@ class Fake implements PassWorld {
 
   pruneBranches(repo: Repo) {
     this.calls.push(`prune ${repo.watched.repo}`);
-    const answer = this.prunes[repo.watched.repo] ?? { pruned: [], left: [] };
+    const answer = this.prunes[repo.watched.repo] ?? {
+      pruned: [],
+      left: [],
+      failed: [],
+      waiting: 0,
+    };
     return "kind" in answer ? Effect.fail(answer) : Effect.succeed(answer);
   }
 
@@ -6030,11 +6035,36 @@ describe("pruning t3/* branches", () => {
       fake.prunes[REPO] = {
         pruned: [{ ref: "refs/heads/t3/a", sha: SHA, scope: "local", reason: "merged" }],
         left: [{ ref: "refs/remotes/origin/t3/b", why: "it moved on GitHub" }],
+        failed: [],
+        waiting: 3,
       };
       const { lines, report } = yield* pass(fake, [REPO], 1);
       assert.include(lines, `${REPO}: pruned refs/heads/t3/a at ${SHA} (merged)`);
       assert.include(lines, `${REPO}: left refs/remotes/origin/t3/b: it moved on GitHub`);
+      assert.include(lines, `${REPO}: 3 remote branches wait for the next prune`);
       assert.equal(report.errors, 0);
+    }),
+  );
+
+  it.effect("counts each deletion that failed as an error", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.prunes[REPO] = {
+        pruned: [],
+        left: [],
+        failed: [
+          { ref: "refs/remotes/origin/t3/b", kind: "github", why: "GitHub refused: HTTP 403" },
+          { ref: "refs/heads/t3/c", kind: "git", why: "cannot lock ref" },
+        ],
+        waiting: 0,
+      };
+      const { lines, report } = yield* pass(fake, [REPO], 1);
+      assert.include(
+        lines,
+        `error: ${REPO}: branch prune: refs/remotes/origin/t3/b: GitHub refused: HTTP 403`,
+      );
+      assert.include(lines, `error: ${REPO}: branch prune: refs/heads/t3/c: cannot lock ref`);
+      assert.equal(report.errors, 2);
     }),
   );
 
@@ -6045,6 +6075,8 @@ describe("pruning t3/* branches", () => {
       fake.prunes[REPO] = {
         pruned: [{ ref: "refs/heads/t3/a", sha: SHA, scope: "local", reason: "stale" }],
         left: [],
+        failed: [],
+        waiting: 0,
       };
       const { lines } = yield* pass(fake, [REPO], 1);
       assert.include(lines, `${REPO}: would prune refs/heads/t3/a at ${SHA} (stale)`);

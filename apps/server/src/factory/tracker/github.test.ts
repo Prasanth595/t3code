@@ -4369,10 +4369,14 @@ it.effect("openPullRequestsOnHead refuses an answer it cannot read", () =>
   }),
 );
 
-/** The `headPulls` answer for each head in order: its open count and its ended pull requests. */
+/**
+ * The `headPulls` answer for each head in order: its open pull requests, those open onto it, and
+ * its ended ones.
+ */
 const headPullsReply = (
   heads: ReadonlyArray<{
     open: number;
+    onto?: number;
     ended: ReadonlyArray<{ state: string; headRefOid: string; isCrossRepository: boolean }>;
   }>,
 ) =>
@@ -4381,6 +4385,7 @@ const headPullsReply = (
       repository: Object.fromEntries(
         heads.flatMap((head, i) => [
           [`o${i}`, { totalCount: head.open }],
+          [`b${i}`, { totalCount: head.onto ?? 0 }],
           [`e${i}`, { nodes: head.ended }],
         ]),
       ),
@@ -4394,6 +4399,8 @@ it.effect("headPulls reads the open and the ended pull requests of each head", (
       reply(
         headPullsReply([
           { open: 1, ended: [] },
+          // A stacked pull request onto the branch uses it as much as one from it.
+          { open: 0, onto: 2, ended: [] },
           {
             open: 0,
             ended: [
@@ -4406,11 +4413,12 @@ it.effect("headPulls reads the open and the ended pull requests of each head", (
         ]),
       ),
     );
-    const pulls = yield* t.ok(t.github.headPulls(["t3/draft", "t3/done"]));
+    const pulls = yield* t.ok(t.github.headPulls(["t3/draft", "t3/base", "t3/done"]));
     assert.deepStrictEqual(
       pulls,
       new Map([
         ["t3/draft", { open: 1, ended: [] }],
+        ["t3/base", { open: 2, ended: [] }],
         [
           "t3/done",
           {
@@ -4434,12 +4442,15 @@ it.effect("headPulls reads the open and the ended pull requests of each head", (
       "-f",
       "h0=t3/draft",
       "-f",
-      "h1=t3/done",
+      "h1=t3/base",
+      "-f",
+      "h2=t3/done",
     ]);
     const query = call![3]!;
     assert.notInclude(query, "t3/");
     // GitHub's OPEN state counts drafts too.
     assert.include(query, "o1: pullRequests(headRefName: $h1, states: OPEN, first: 1)");
+    assert.include(query, "b1: pullRequests(baseRefName: $h1, states: OPEN, first: 1)");
   }),
 );
 

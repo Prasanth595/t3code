@@ -1,8 +1,8 @@
 /**
  * Prunes the `t3/*` branches every thread launch leaves in a watched repo, so a branch name's
  * `-N` suffixes are never used up. `decide` is the rule over facts; `pruneBranches` gathers them
- * from git and its callers, logs each deletion with its sha, then deletes. Every lookup that
- * fails keeps every branch.
+ * from git and its callers, logs each deletion with its sha, then deletes. A lookup that fails
+ * fails the prune before anything is decided, so it keeps every branch.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +13,7 @@ import { listUnfinishedRuns } from "../ledger/listRuns.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
+import { configFlags, HARDENED_GIT_CONFIG, HARDENED_GIT_ENV } from "../gitHardening.ts";
 import { FactoryProcess } from "../process.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import type { HeadPulls } from "../tracker/github.ts";
@@ -20,6 +21,13 @@ import type { HeadPulls } from "../tracker/github.ts";
 const LOCAL_PREFIX = "refs/heads/";
 const REMOTE_PREFIX = "refs/remotes/origin/";
 const BRANCH_PREFIX = "t3/";
+/**
+ * Where the tip of a pruned branch whose commits `origin/<default branch>` lacks is kept, by sha,
+ * so `git gc` never takes the commits and the logged sha always restores the branch.
+ */
+export const ARCHIVE_PREFIX = "refs/factory-pruned/";
+/** How many branches one prune deletes on GitHub, so a backlog never holds a pass up for long. */
+export const REMOTE_PRUNES_PER_RUN = 20;
 
 /** A `t3/*` branch as git lists it in the watched checkout. */
 export interface Branch {
@@ -35,18 +43,18 @@ export interface Branch {
   readonly merged: boolean;
 }
 
-/** What `decide` weighs. A null set or map is a lookup that failed. */
+/** What `decide` weighs. */
 export interface Facts {
   readonly nowMs: number;
   readonly maxAgeMs: number;
   /** Branch names checked out in a worktree of the repo, its main checkout included. */
-  readonly worktrees: ReadonlySet<string> | null;
+  readonly worktrees: ReadonlySet<string>;
   /** Branch names of threads that are neither archived nor deleted. */
-  readonly threads: ReadonlySet<string> | null;
-  /** Branch names the repo's unfinished factory runs name. */
-  readonly runs: ReadonlySet<string> | null;
+  readonly threads: ReadonlySet<string>;
+  /** Branch names the repo's unfinished factory runs name, as their work or their base. */
+  readonly runs: ReadonlySet<string>;
   /** By branch name; a name missing from the map has no pull request. */
-  readonly pulls: ReadonlyMap<string, HeadPulls> | null;
+  readonly pulls: ReadonlyMap<string, HeadPulls>;
 }
 
 export type PruneReason = "merged" | "pr-merged" | "pr-closed" | "stale";
@@ -63,14 +71,11 @@ const keep = (reason: string): Verdict => ({ prune: false, reason });
  */
 export const decide = (branch: Branch, facts: Facts): Verdict => {
   const { worktrees, threads, runs, pulls } = facts;
-  if (worktrees === null || threads === null || runs === null || pulls === null) {
-    return keep("a lookup failed");
-  }
   if (worktrees.has(branch.name)) return keep("checked out in a worktree");
   if (threads.has(branch.name)) return keep("a live thread's");
   if (runs.has(branch.name)) return keep("an unfinished run's");
   const onHead = pulls.get(branch.name);
-  if (onHead !== undefined && onHead.open > 0) return keep("its pull request is open");
+  if (onHead !== undefined && onHead.open > 0) return keep("an open pull request uses it");
   const atTip = (onHead?.ended ?? []).filter((pull) => pull.headSha === branch.sha);
   if (branch.scope === "local" && branch.merged) return { prune: true, reason: "merged" };
   if (atTip.some((pull) => pull.merged)) return { prune: true, reason: "pr-merged" };
@@ -81,9 +86,11 @@ export const decide = (branch: Branch, facts: Facts): Verdict => {
     : keep("unmerged and recent");
 };
 
-/** The branches a run's ledger names as where its work is or goes. */
+/** The branches a run's ledger names as where its work is or goes, or as its base. */
 const runBranches = (seen: Seen): ReadonlyArray<string> =>
   [
+    seen.base,
+    seen.launchBase,
     seen.lastBranch,
     seen.resumedFrom,
     seen.launchResumedFrom,
@@ -157,14 +164,24 @@ export interface Pruned {
 export interface PruneReport {
   /** What was deleted, or in a dry run what would have been. */
   readonly pruned: ReadonlyArray<Pruned>;
-  /** Branches judged prunable that were left, each with why. */
+  /** Branches judged prunable that were left because they moved or went meanwhile, each with why. */
   readonly left: ReadonlyArray<{ readonly ref: string; readonly why: string }>;
+  /** Branches judged prunable whose deletion failed, each with why. */
+  readonly failed: ReadonlyArray<{
+    readonly ref: string;
+    readonly kind: "git" | "github";
+    readonly why: string;
+  }>;
+  /** Remote branches judged prunable that wait for the next prune: {@link REMOTE_PRUNES_PER_RUN}. */
+  readonly waiting: number;
 }
 
 const GIT_TIMEOUT_MS = 60_000;
 const GIT_TAIL_BYTES = 8 * 1024 * 1024;
 
-/** One git call in the checkout: its stdout when it exits 0, else the failure. */
+const HARDENING = configFlags(HARDENED_GIT_CONFIG);
+
+/** One hardened git call in the checkout: its stdout when it exits 0, else the failure. */
 const git = Effect.fn("BranchPrune.git")(function* (cwd: string, args: ReadonlyArray<string>) {
   const factoryProcess = yield* FactoryProcess;
   const fail = (why: string) =>
@@ -172,9 +189,9 @@ const git = Effect.fn("BranchPrune.git")(function* (cwd: string, args: ReadonlyA
   const result = yield* factoryProcess
     .run({
       command: "git",
-      args,
+      args: [...HARDENING, ...args],
       cwd,
-      env: { LC_ALL: "C", GIT_TERMINAL_PROMPT: "0" },
+      env: HARDENED_GIT_ENV,
       timeoutMs: GIT_TIMEOUT_MS,
       tailBytes: GIT_TAIL_BYTES,
       separateStderr: true,
@@ -204,6 +221,7 @@ const listBranches = Effect.fn("BranchPrune.listBranches")(function* (
         `--merged=${REMOTE_PREFIX}${defaultBranch}`,
         "--format=%(refname)",
         local,
+        remote,
       ]),
     ),
   );
@@ -246,10 +264,18 @@ const checkedOut = (cwd: string) =>
     ),
   );
 
-const orNull = <A, E, R>(lookup: Effect.Effect<A, E, R>) =>
-  lookup.pipe(Effect.orElseSucceed(() => null));
+/** A lookup whose failure fails the prune, before anything is decided. */
+const lookup = <A, R>(what: string, effect: Effect.Effect<A, { readonly message: string }, R>) =>
+  effect.pipe(
+    Effect.mapError(
+      (error) =>
+        new BranchPruneError({
+          detail: `${what} failed, so every branch is kept: ${error.message}`,
+        }),
+    ),
+  );
 
-/** A line of the prune log: enough to restore the branch with `git branch <name> <sha>`. */
+/** A line of the prune log: enough to restore the branch, locally or on GitHub. */
 const LogLine = Schema.Struct({
   timestamp: Schema.String,
   repo: Schema.String,
@@ -290,26 +316,28 @@ const logDeletion = Effect.fn("BranchPrune.logDeletion")(
     ),
 );
 
+/** The sha `ref` points at now; empty when it is gone. */
+const tipNow = (cwd: string, ref: string) =>
+  git(cwd, ["for-each-ref", "--format=%(objectname)", ref]).pipe(Effect.map((text) => text.trim()));
+
 /**
- * Prunes the repo's `t3/*` branches that `decide` lets go. A local branch is deleted only at the
- * sha it was judged on. A remote branch is deleted on GitHub only when GitHub still has it at that
- * sha, then its tracking ref goes. Fails, with nothing more deleted, when git cannot list the
- * branches or a log line cannot be written.
+ * Prunes the `t3/*` branches `decide` lets go: a local one only at the sha it was judged on, a
+ * remote one on GitHub only while GitHub has it at that sha. Fails, with nothing more deleted,
+ * when git cannot list the branches, a lookup fails or a log line cannot be written.
  */
 export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (input: PruneInput) {
   const branches = yield* listBranches(input.path, input.defaultBranch);
-  const worktrees = yield* orNull(checkedOut(input.path));
-  const threads = yield* orNull(input.threads);
-  const runs = yield* orNull(input.runs);
-  // GitHub is asked only about the branches nothing local keeps; a failed lookup keeps them all.
-  const heads =
-    worktrees === null || threads === null || runs === null
-      ? []
-      : [...new Set(branches.map((branch) => branch.name))].filter(
-          (name) => !worktrees.has(name) && !threads.has(name) && !runs.has(name),
-        );
+  const worktrees = yield* lookup("the worktree list", checkedOut(input.path));
+  const threads = yield* lookup("the thread lookup", input.threads);
+  const runs = yield* lookup("the run lookup", input.runs);
+  // GitHub is asked only about the branches nothing local keeps.
+  const heads = [...new Set(branches.map((branch) => branch.name))].filter(
+    (name) => !worktrees.has(name) && !threads.has(name) && !runs.has(name),
+  );
   const pulls =
-    heads.length === 0 ? new Map<string, HeadPulls>() : yield* orNull(input.github.pulls(heads));
+    heads.length === 0
+      ? new Map<string, HeadPulls>()
+      : yield* lookup("the pull request lookup", input.github.pulls(heads));
   const facts: Facts = {
     nowMs: input.nowMs,
     maxAgeMs: input.maxAgeMs,
@@ -320,7 +348,10 @@ export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (i
   };
 
   const pruned: Array<Pruned> = [];
-  const left: Array<{ ref: string; why: string }> = [];
+  const left: Array<PruneReport["left"][number]> = [];
+  const failed: Array<PruneReport["failed"][number]> = [];
+  let waiting = 0;
+  let remoteTries = 0;
   for (const branch of branches) {
     const verdict = decide(branch, facts);
     if (!verdict.prune) continue;
@@ -334,35 +365,58 @@ export const pruneBranches = Effect.fn("BranchPrune.pruneBranches")(function* (i
       pruned.push(entry);
       continue;
     }
+    let onGitHub = false;
     if (branch.scope === "remote") {
+      if (remoteTries >= REMOTE_PRUNES_PER_RUN) {
+        waiting += 1;
+        continue;
+      }
+      remoteTries += 1;
       const tip = yield* Effect.result(input.github.tip(branch.name));
       if (tip._tag === "Failure") {
-        left.push({ ref: branch.ref, why: `cannot read it on GitHub: ${tip.failure.message}` });
+        const why = `cannot read it on GitHub: ${tip.failure.message}`;
+        failed.push({ ref: branch.ref, kind: "github", why });
         continue;
       }
       if (tip.success !== null && tip.success !== branch.sha) {
         left.push({ ref: branch.ref, why: `it moved on GitHub to ${tip.success}` });
         continue;
       }
-      yield* logDeletion(input, entry);
-      if (tip.success !== null) {
-        const removed = yield* Effect.result(input.github.remove(branch.name));
-        if (removed._tag === "Failure") {
-          left.push({ ref: branch.ref, why: `GitHub refused: ${removed.failure.message}` });
-          continue;
-        }
+      onGitHub = tip.success !== null;
+    }
+    if (!branch.merged) {
+      const archived = yield* Effect.result(
+        git(input.path, ["update-ref", `${ARCHIVE_PREFIX}${branch.sha}`, branch.sha]),
+      );
+      if (archived._tag === "Failure") {
+        failed.push({ ref: branch.ref, kind: "git", why: archived.failure.message });
+        continue;
       }
-    } else {
-      yield* logDeletion(input, entry);
+    }
+    yield* logDeletion(input, entry);
+    if (onGitHub) {
+      const removed = yield* Effect.result(input.github.remove(branch.name));
+      if (removed._tag === "Failure") {
+        const why = `GitHub refused: ${removed.failure.message}`;
+        failed.push({ ref: branch.ref, kind: "github", why });
+        continue;
+      }
     }
     const deleted = yield* Effect.result(
       git(input.path, ["update-ref", "-d", branch.ref, branch.sha]),
     );
     if (deleted._tag === "Failure") {
-      left.push({ ref: branch.ref, why: deleted.failure.message });
+      // A ref that moved or went since it was listed is not a failure: its new commits stay.
+      const now = yield* Effect.result(tipNow(input.path, branch.ref));
+      if (now._tag === "Success" && now.success !== branch.sha) {
+        const why = now.success === "" ? "it is gone already" : `it moved to ${now.success}`;
+        left.push({ ref: branch.ref, why });
+      } else {
+        failed.push({ ref: branch.ref, kind: "git", why: deleted.failure.message });
+      }
       continue;
     }
     pruned.push(entry);
   }
-  return { pruned, left } satisfies PruneReport;
+  return { pruned, left, failed, waiting } satisfies PruneReport;
 });
