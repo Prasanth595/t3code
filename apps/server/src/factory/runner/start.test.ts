@@ -526,6 +526,7 @@ describe("start: a fresh ready issue", () => {
         model_options: null,
         resumed_from: null,
         base: "main",
+        title: "Build step",
       });
     }),
   );
