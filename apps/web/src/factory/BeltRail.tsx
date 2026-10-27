@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon, FlagIcon, InboxIcon, ShieldCheckIcon, WrenchIcon } from "lucide-react";
-import { Fragment, useState, type ComponentType } from "react";
+import { Fragment, useState, type ComponentType, type RefCallback } from "react";
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -110,6 +110,7 @@ function Post({
         open && "border-(--factory-station) bg-accent/30",
         dim && station !== "claimed" && "opacity-60 grayscale",
       )}
+      data-post={station}
       data-station={station}
       onClick={onPick}
       type="button"
@@ -143,18 +144,23 @@ function Post({
   );
 }
 
-/** One run on the rail: a link to its page showing the issue, its environment and its elapsed time. */
+/**
+ * One run on the rail: a link to its page showing the issue, its environment and its elapsed time.
+ * `tileRef` lets the belt's motion find it by the run's key.
+ */
 function Tile({
   run,
   station,
   mine,
   nowMs,
+  tileRef,
 }: {
   run: BeltRun;
   station: Station;
   /** Whether the run is in the environment picked in the belt: solid, else hollow. */
   mine: boolean;
   nowMs: number;
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const elapsed = elapsedOf(run.forMs, nowMs);
   return (
@@ -165,7 +171,9 @@ function Tile({
         mine ? "bg-card" : "border-dashed bg-transparent",
       )}
       data-station={station}
+      data-tile={run.key}
       params={{ environmentId: run.environmentId, runId: run.id }}
+      ref={tileRef}
       to="/factory/$environmentId/$runId"
     >
       <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-(--factory-station)" />
@@ -211,6 +219,7 @@ function Lane({
   nowMs,
   dim,
   onOpen,
+  tileRef,
 }: {
   station: Station;
   runs: ReadonlyArray<BeltRun>;
@@ -218,6 +227,7 @@ function Lane({
   nowMs: number;
   dim: boolean;
   onOpen: () => void;
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const [width, setWidth] = useState<number | null>(null);
   const slots =
@@ -250,6 +260,7 @@ function Lane({
           nowMs={nowMs}
           run={run}
           station={station}
+          tileRef={tileRef}
         />
       ))}
       {hidden > 0 ? <MoreTile hidden={runs.slice(shown)} onOpen={onOpen} /> : null}
@@ -274,6 +285,7 @@ function DoneBin({ belt, known }: { belt: Belt; known: boolean }) {
         "flex min-h-16 min-w-0 items-center gap-3 overflow-hidden rounded-md border border-l-4 border-l-(--factory-station) bg-card px-3 py-2",
         PLACEMENT.done.lane,
       )}
+      data-bin="done"
       data-lane="done"
       data-station="done"
     >
@@ -309,6 +321,7 @@ export function BeltRail({
   onOpenChange,
   stopping,
   onStop,
+  tileRef,
 }: {
   belt: Belt;
   /** Whether the recent runs lists the Done post counts from have all answered. */
@@ -322,6 +335,8 @@ export function BeltRail({
   /** The runs with a stop in flight, by key. */
   stopping: ReadonlySet<string>;
   onStop: (run: BeltRun) => void;
+  /** On every tile: how the belt's motion finds the element of a run. */
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const paused = pausedSince !== null;
   const noteOf = (station: Station) => {
@@ -354,6 +369,7 @@ export function BeltRail({
               runs={belt.runs[station]}
               selectedId={selectedId}
               station={station}
+              tileRef={tileRef}
             />
           )}
           {open === station ? (

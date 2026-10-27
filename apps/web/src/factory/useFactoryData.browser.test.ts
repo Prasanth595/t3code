@@ -869,6 +869,133 @@ describe("useFactoryRunsOf", () => {
   });
 });
 
+describe("a status read that drops a run", () => {
+  const withRuns = (...ids: Array<string>): FactoryStatus => ({
+    ...status(0),
+    runs: ids.map((id) => ({
+      id,
+      state: "building",
+      last_event: "step_changed",
+      title: null,
+      user: null,
+      for_ms: 1_000,
+      pr_url: null,
+      thread_id: null,
+      unreadable: false,
+    })),
+  });
+
+  /** Answers each status read with the next of `answers` (the last repeats), per environment. */
+  const answering = (answers: Partial<Record<EnvironmentId, Array<FactoryStatus | Error>>>) => {
+    const seen = new Map<EnvironmentId, number>();
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(
+      api({
+        runs: fetchRuns,
+        status: vi.fn(async (environmentId: EnvironmentId) => {
+          const list = answers[environmentId]!;
+          const n = seen.get(environmentId) ?? 0;
+          seen.set(environmentId, n + 1);
+          const next = list[Math.min(n, list.length - 1)]!;
+          if (next instanceof Error) throw next;
+          return next;
+        }),
+      }),
+    );
+    return fetchRuns;
+  };
+
+  it("reads that environment's recent runs again, once, and leaves the full list alone", async () => {
+    await using _state = setup();
+    const fetchRuns = answering({ [ENV_1]: [withRuns("a", "b"), withRuns("a")] });
+    const latest = await mount(() => ({
+      status: useFactoryStatus(ENV_1),
+      recent: useFactoryRuns(ENV_1),
+      all: useFactoryRuns(ENV_1, true),
+    }));
+    expect(fetchRuns.mock.calls).toEqual([
+      [ENV_1, { all: false }],
+      [ENV_1, { all: true }],
+    ]);
+    fetchRuns.mockClear();
+    await act(async () => latest.current.status.refresh());
+    expect(latest.current.status.data!.runs.map((run) => run.id)).toEqual(["a"]);
+    expect(fetchRuns.mock.calls).toEqual([[ENV_1, { all: false }]]);
+  });
+
+  it("reads nothing more when a runs list, not the status, drops a run", async () => {
+    await using _state = setup();
+    const row = (id: string) => ({ id }) as FactoryRunRow;
+    const answers = [[row("a"), row("b")], [row("a")]];
+    let n = 0;
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({
+      runs: answers[Math.min(n++, answers.length - 1)]!,
+    }));
+    __setFactoryApiForTests(api({ runs: fetchRuns, status: vi.fn(async () => withRuns("x")) }));
+    const latest = await mount(() => ({
+      status: useFactoryStatus(ENV_1),
+      recent: useFactoryRuns(ENV_1),
+    }));
+    expect(latest.current.recent.data!.runs).toHaveLength(2);
+    fetchRuns.mockClear();
+    await act(async () => latest.current.recent.refresh());
+    expect(latest.current.recent.data!.runs).toHaveLength(1);
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads nothing when no run dropped out, on the first answer, or on a failed read", async () => {
+    await using _state = setup();
+    const fetchRuns = answering({
+      [ENV_1]: [withRuns("a"), withRuns("a", "b"), withRuns("a", "b"), new Error("down")],
+    });
+    const latest = await mount(() => ({
+      status: useFactoryStatus(ENV_1),
+      recent: useFactoryRuns(ENV_1),
+    }));
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+    fetchRuns.mockClear();
+    // A run was added; then none changed; then the read fails and keeps the last data.
+    for (let read = 0; read < 3; read++) await act(async () => latest.current.status.refresh());
+    expect(latest.current.status.status).toBe("error");
+    expect(fetchRuns).not.toHaveBeenCalled();
+  });
+
+  it("reads nothing for a run that dropped out of a read that then failed", async () => {
+    await using _state = setup();
+    const fetchRuns = answering({ [ENV_1]: [withRuns("a", "b"), new Error("down")] });
+    const latest = await mount(() => ({
+      status: useFactoryStatus(ENV_1),
+      recent: useFactoryRuns(ENV_1),
+    }));
+    fetchRuns.mockClear();
+    await act(async () => latest.current.status.refresh());
+    expect(fetchRuns).not.toHaveBeenCalled();
+  });
+
+  it("reads only the list of the environment that lost the run", async () => {
+    await using _state = setup();
+    environments.connected = [ENV_2];
+    const fetchRuns = answering({
+      [ENV_1]: [withRuns("a", "b"), withRuns("a")],
+      [ENV_2]: [withRuns("c", "d")],
+    });
+    const latest = await mount(() => {
+      const [one, two] = useFactoryRunsOf([ENV_1, ENV_2], false);
+      return {
+        statuses: [useFactoryStatus(ENV_1), useFactoryStatus(ENV_2)],
+        recent: [one!, two!],
+      };
+    });
+    expect(fetchRuns.mock.calls.map(([env]) => env)).toEqual([ENV_1, ENV_2]);
+    fetchRuns.mockClear();
+    await act(async () => {
+      latest.current.statuses[0]!.refresh();
+      latest.current.statuses[1]!.refresh();
+    });
+    expect(fetchRuns.mock.calls.map(([env]) => env)).toEqual([ENV_1]);
+  });
+});
+
 describe("the badge and the sidebar item across several environments", () => {
   it("sums the open attention items over every listed environment", async () => {
     await using _state = setup();

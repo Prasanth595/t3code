@@ -111,6 +111,17 @@ export interface Belt {
   readonly newest: Station;
 }
 
+/** Done's summary of its runs: how their pull requests ended, and the issues of the latest three. */
+export function summariseDone(doneRuns: ReadonlyArray<BeltRun>): Belt["done"] {
+  // A done run's step is how its pull request ended.
+  const merged = doneRuns.filter((run) => run.step === "merged").length;
+  return {
+    merged,
+    closed: doneRuns.length - merged,
+    latest: doneRuns.slice(0, 3).map((run) => run.issue),
+  };
+}
+
 const startedOf = (row: FactoryRunRow | undefined): number =>
   row?.started_ts ? Date.parse(row.started_ts) : Number.NaN;
 
@@ -149,7 +160,7 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
     gate: [],
     pr: [],
   };
-  const done: Array<{ run: BeltRun; finishedMs: number; merged: boolean }> = [];
+  const done: Array<{ run: BeltRun; finishedMs: number }> = [];
   const stuck: Array<BeltRun> = [];
   const info: Array<BeltRun> = [];
   // In the order seen, so that of two runs with the same (or no) start the later one is newest.
@@ -210,7 +221,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
             forMs: row.total_ms,
           }),
           finishedMs,
-          merged: row.pr_end === "merged",
         });
       } else if (row.state === "stuck") {
         stuck.push(beltRun(row.id, row, { reason: row.reason ?? null }));
@@ -234,7 +244,7 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
 
   const byStart = (a: BeltRun, b: BeltRun) => newestFirst(a.startedMs, b.startedMs);
   const doneRuns = done.map(({ run }) => run);
-  const merged = done.filter((entry) => entry.merged).length;
+  const summary = summariseDone(doneRuns);
   const sortedStuck = stuck.toSorted(byStart);
   return {
     runs: {
@@ -244,15 +254,113 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       pr: lanes.pr.toSorted(byStart),
       done: doneRuns,
     },
-    done: {
-      merged,
-      closed: done.length - merged,
-      latest: doneRuns.slice(0, 3).map((run) => run.issue),
-    },
+    done: summary,
     stuck: sortedStuck,
     info: info.toSorted(byStart),
-    counters: { runsToday, mergedToday: merged, stuck: sortedStuck.length },
+    counters: { runsToday, mergedToday: summary.merged, stuck: sortedStuck.length },
     newest,
+  };
+}
+
+/** Where a run is on the belt: a post (its lane, or Done's bin) or one of the bins under the belt. */
+export type Place = Station | "stuck" | "info";
+
+/** The posts with a lane of tiles: every post but Done, whose runs are counted in a bin. */
+type LaneStation = Exclude<Station, "done">;
+type Bin = "done" | "stuck" | "info";
+
+/**
+ * Where each run of the belt is, by key. A run on a lane stays there even when a bin lists it too:
+ * the status read drops a finished run from its lane and the recent runs list adds it to a bin at
+ * different times, so for a while either may be ahead.
+ */
+export function placesOf(belt: Belt): ReadonlyMap<string, Place> {
+  const places = new Map<string, Place>();
+  for (const run of belt.runs.done) places.set(run.key, "done");
+  for (const run of belt.stuck) places.set(run.key, "stuck");
+  for (const run of belt.info) places.set(run.key, "info");
+  for (const station of STATIONS) {
+    if (station === "done") continue;
+    for (const run of belt.runs[station]) places.set(run.key, station);
+  }
+  return places;
+}
+
+/** What one run's tile does between two reads of the belt. */
+export type TileMotion =
+  | {
+      readonly kind: "slide";
+      readonly key: string;
+      readonly from: LaneStation;
+      readonly to: LaneStation;
+    }
+  /** Off a lane and into a bin in one read. */
+  | { readonly kind: "leave"; readonly key: string; readonly from: LaneStation; readonly to: Bin }
+  /** Off a lane into no place: the status read dropped it and no bin knows it yet. */
+  | { readonly kind: "exit"; readonly key: string; readonly from: LaneStation }
+  /** Into a bin from no place: the bin has learned of a run that left its lane earlier. */
+  | { readonly kind: "arrive"; readonly key: string; readonly to: Bin }
+  | { readonly kind: "enter"; readonly key: string; readonly to: LaneStation };
+
+const isLane = (place: Place): place is LaneStation =>
+  place !== "done" && place !== "stuck" && place !== "info";
+
+/**
+ * Which tiles moved from `previous` to `next`: a run that went to another post slides, one that
+ * finished into a bin leaves, one that is new on a post (or back from a bin) enters. A run the
+ * rail dropped before any bin had it exits, and arrives when a bin has it. Nothing moves on the
+ * first load (`previous` null), and bin to bin or out of a bin moves nothing.
+ */
+export function tileMotions(
+  previous: ReadonlyMap<string, Place> | null,
+  next: ReadonlyMap<string, Place>,
+): Array<TileMotion> {
+  if (previous === null) return [];
+  const motions: Array<TileMotion> = [];
+  for (const [key, to] of next) {
+    const from = previous.get(key);
+    if (from === to) continue;
+    if (from === undefined) {
+      motions.push(isLane(to) ? { kind: "enter", key, to } : { kind: "arrive", key, to });
+    } else if (!isLane(from)) {
+      if (isLane(to)) motions.push({ kind: "enter", key, to });
+    } else if (isLane(to)) {
+      motions.push({ kind: "slide", key, from, to });
+    } else {
+      motions.push({ kind: "leave", key, from, to });
+    }
+  }
+  for (const [key, from] of previous) {
+    if (!next.has(key) && isLane(from)) motions.push({ kind: "exit", key, from });
+  }
+  return motions;
+}
+
+/**
+ * The belt with the runs that are not in a bin yet left out of them, so a bin's count changes when
+ * the slide ends: those in `landing`, still sliding into a bin, and those whose `places` put them
+ * elsewhere (a lane wins over a bin there). Lanes and counters are as they were. The same belt when
+ * nothing is left out.
+ */
+export function holdBins(
+  belt: Belt,
+  places: ReadonlyMap<string, Place>,
+  landing: ReadonlySet<string>,
+): Belt {
+  const kept = (runs: ReadonlyArray<BeltRun>, bin: Bin) => {
+    const rest = runs.filter((run) => places.get(run.key) === bin && !landing.has(run.key));
+    return rest.length === runs.length ? runs : rest;
+  };
+  const done = kept(belt.runs.done, "done");
+  const stuck = kept(belt.stuck, "stuck");
+  const info = kept(belt.info, "info");
+  if (done === belt.runs.done && stuck === belt.stuck && info === belt.info) return belt;
+  return {
+    ...belt,
+    runs: { ...belt.runs, done },
+    done: summariseDone(done),
+    stuck,
+    info,
   };
 }
 

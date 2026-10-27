@@ -11,6 +11,7 @@ import { deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
 import "./belt.css";
 import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
+import { useBeltMotion } from "./beltMotion";
 import { BeltRail } from "./BeltRail";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
@@ -257,6 +258,8 @@ export function FactoryBelt({
     })),
     nowMs,
   );
+  // The belt as drawn: a bin does not count a run until the run has slid into it.
+  const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined);
   // What the recent runs lists say (the counters, Done, the bins, and the rail's first pick) is known
   // once some status has answered and no answered environment's list is still loading. A list that
   // failed before its first answer adds nothing; the page names it. The rail's pick is made then,
@@ -293,7 +296,7 @@ export function FactoryBelt({
   const pausedSince = since === undefined ? null : Date.parse(since);
 
   return (
-    <div className="flex flex-col gap-4" data-factory-belt="">
+    <div className="relative flex flex-col gap-4" data-factory-belt="">
       <section
         aria-label="Production belt"
         className="@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
@@ -311,7 +314,7 @@ export function FactoryBelt({
         />
         {open !== undefined ? (
           <BeltRail
-            belt={belt}
+            belt={shown}
             known={known}
             nowMs={nowMs}
             onOpenChange={setOpen}
@@ -320,6 +323,7 @@ export function FactoryBelt({
             pausedSince={pausedSince !== null && !Number.isNaN(pausedSince) ? pausedSince : null}
             selectedId={selected.environmentId}
             stopping={stopping}
+            tileRef={tileRef}
           />
         ) : (
           <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
@@ -333,13 +337,15 @@ export function FactoryBelt({
       <BeltLowerRow
         attention={attention}
         known={known}
-        needsInfo={belt.info}
+        needsInfo={shown.info}
         nowMs={nowMs}
         onDismiss={onDismiss}
         selectedId={selected.environmentId}
         showEnvironment={showEnvironment}
-        stuck={belt.stuck}
+        stuck={shown.stuck}
       />
+      {/* Where the tiles fly: last, so that it is laid over the rest and set after every tile. */}
+      <div aria-hidden className="pointer-events-none absolute inset-0" ref={layerRef} />
     </div>
   );
 }

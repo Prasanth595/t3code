@@ -150,6 +150,7 @@ function Bin({
     <section
       aria-label={name}
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2.5"
+      data-bin={station}
       data-station={station}
     >
       <div className="flex items-center gap-2">

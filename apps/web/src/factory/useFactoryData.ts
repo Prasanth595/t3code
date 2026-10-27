@@ -74,15 +74,32 @@ const load = ({ environmentId, resource }: Store): Promise<unknown> =>
       ? factoryApi.runs(environmentId, { all: resource === "runs:all" })
       : factoryApi.run(environmentId, resource.slice("run:".length));
 
+/** Whether `next` lacks a run that `previous` had: it finished, or the factory forgot it. */
+const droppedRun = (previous: FactoryStatus, next: FactoryStatus): boolean => {
+  const ids = new Set(next.runs.map((run) => run.id));
+  return previous.runs.some((run) => !ids.has(run.id));
+};
+
 const read = (key: string, store: Store): void => {
   const n = ++store.issued;
   store.inFlight = true;
   store.startedAt = Date.now();
   const settle = (next: Loaded<unknown>) => {
     if (stores.get(key) !== store || n !== store.issued) return;
+    const previous = store.state.data as FactoryStatus | null;
     store.inFlight = false;
     store.state = next;
     store.listeners.forEach((listener) => listener());
+    // A run the status no longer lists has finished, and the recent runs list has the news before
+    // its next poll would: read it now, so a bin learns of it within seconds, not half a minute.
+    if (
+      store.resource === "status" &&
+      next.status === "ready" &&
+      previous !== null &&
+      droppedRun(previous, next.data as FactoryStatus)
+    ) {
+      refresh(keyOf(store.environmentId, "runs"));
+    }
   };
   load(store).then(
     (data) => settle({ status: "ready", data, error: null, readAt: Date.now() }),
