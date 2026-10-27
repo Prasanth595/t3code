@@ -226,6 +226,7 @@ export const HTML_RENDER_THEME_GUIDE = [
   "--background, --foreground, --muted, --card, --popover, --secondary, --border, --ring, --primary, --accent, --destructive, --warning, --success, --info, --code-background",
   "(most have a matching -foreground; accent, destructive, and warning also have -surface),",
   "--chart-1 to --chart-6, --radius, --font-sans, --font-mono.",
+  "Text uses --foreground, or --muted-foreground when secondary. --muted, --card, --secondary, and --background are surfaces and are unreadable as text.",
   "The base sheet sets background, text, and font.",
 ].join(" ");
 
