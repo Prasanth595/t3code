@@ -32,11 +32,12 @@ function broadcast(result: GitActionResultNotification | null): void {
 }
 
 export function showGitActionResult(result: GitActionResultNotification): void {
-  void Haptics.notificationAsync(
+  // Best effort: devices without a haptics engine reject.
+  Haptics.notificationAsync(
     result.type === "success"
       ? Haptics.NotificationFeedbackType.Success
       : Haptics.NotificationFeedbackType.Error,
-  );
+  ).catch(() => undefined);
   if (dismissTimer) clearTimeout(dismissTimer);
   broadcast(result);
   dismissTimer = setTimeout(() => {
