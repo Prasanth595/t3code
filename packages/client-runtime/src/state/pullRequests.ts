@@ -249,10 +249,14 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
 }
 
 /** Lets a client record what each answer says where it lands, rather than watching the data. */
+type ActionQueryAnswerHandler<Input, A> = (
+  ...args: [...Parameters<QueryAnswerHandler<Input, A>>, freshRead: A | null]
+) => Effect.Effect<void>;
+
 export interface PullRequestAnswerHandlers {
   readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
   readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
-  readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
+  readonly detail?: ActionQueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
   readonly actionResult?: QueryAnswerHandler<PullRequestRef, PullRequestActionResult>;
@@ -550,7 +554,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       reference: PullRequestRef,
       result: PullRequestActionResult,
     ) => boolean = () => false,
-    onPatched?: QueryAnswerHandler<Input, A>,
+    onQueryAnswer?: ActionQueryAnswerHandler<Input, A>,
   ) {
     const registry = yield* AtomRegistry.AtomRegistry;
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -575,10 +579,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         const next = patch(value.value, reference, result);
         if (next !== value.value) {
           yield* (
-            onPatched?.(
+            onQueryAnswer?.(
               { environmentId: supervisor.target.environmentId, input },
               next,
               registry,
+              null,
             ) ?? Effect.void
           );
           registry.set(atom, AsyncResult.map(() => next)(current));
@@ -586,7 +591,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         if (needsRefresh(value.value, reference, result)) registry.refresh(atom);
       }),
     });
-    let value = yield* read;
+    const freshRead = yield* read;
+    let value = freshRead;
     let refreshNeeded = false;
     for (const confirmed of actionsFor(registry, session.value).values()) {
       if (confirmed.environmentId !== supervisor.target.environmentId) continue;
@@ -605,6 +611,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         value = patch(value, confirmed.reference, confirmed.result);
       }
     }
+    yield* (
+      onQueryAnswer?.(
+        { environmentId: supervisor.target.environmentId, input },
+        value,
+        registry,
+        freshRead,
+      ) ?? Effect.void
+    );
     if (refreshNeeded) registry.refresh(atom);
     return value;
   });
@@ -647,7 +661,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         ),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => fieldRefreshes(environmentId),
-      ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
     }),
   );
   const preview = writableQueryFamily(

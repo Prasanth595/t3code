@@ -9,6 +9,7 @@ import {
   PullRequestOperationError,
   WS_METHODS,
   type AuthSessionState,
+  type PullRequestDetail,
   type PullRequestRefreshEvent,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -1281,48 +1282,57 @@ it.effect.each([false, true])(
     ),
 );
 
-it.effect("keeps a confirmed result when an earlier detail read finishes late", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let reads = 0;
-      const answers: unknown[] = [];
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.gen(function* () {
-            reads++;
-            if (reads === 2) {
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-            }
-            return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+it.effect(
+  "keeps a confirmed result and checks read time when an earlier detail read finishes late",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let reads = 0;
+        const answers: unknown[] = [];
+        const checkReadTimes: Array<number | undefined> = [];
+        const client = actionResultClient({
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.gen(function* () {
+              reads++;
+              if (reads === 2) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          detail: (_target, value, _registry, read?: PullRequestDetail | null) =>
+            Effect.sync(() => {
+              answers.push(value.state);
+              if (read !== null) checkReadTimes.push((read ?? value).observedAt);
+            }),
+        });
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const atom = atoms.detail(target);
+        registry.mount(atom);
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        registry.refresh(atom);
+        yield* Deferred.await(started);
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "merge" },
           }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-        detail: (_target, value) => Effect.sync(() => answers.push(value.state)),
-      });
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const atom = atoms.detail(target);
-      registry.mount(atom);
-      yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-      registry.refresh(atom);
-      yield* Deferred.await(started);
-      yield* Effect.promise(() =>
-        atoms.runAction.run(registry, {
-          ...target,
-          input: { ...actionReference, action: "merge" },
-        }),
-      );
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(atom))).state).toBe("merged");
-      yield* Deferred.succeed(release, undefined);
-      expect(
-        (yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })).state,
-      ).toBe("merged");
-      expect(answers).toEqual(["open", "merged", "merged"]);
-      expect(reads).toBe(2);
-    }),
-  ),
+        );
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom))).state).toBe("merged");
+        expect(checkReadTimes).toEqual([100]);
+        yield* Deferred.succeed(release, undefined);
+        expect(
+          (yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })).state,
+        ).toBe("merged");
+        expect(answers).toEqual(["open", "merged", "merged"]);
+        expect(checkReadTimes).toEqual([100, 100]);
+        expect(reads).toBe(2);
+      }),
+    ),
 );
 
 it.effect.each([false, true])(

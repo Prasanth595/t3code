@@ -490,18 +490,29 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
         }
       } catch {}
     }),
-  detail: ({ environmentId, input }, detail, registry) =>
+  detail: ({ environmentId, input }, detail, registry, freshRead) =>
     Effect.map(Clock.currentTimeMillis, (at) => {
       // Only fresh reads seed the cold-start snapshot; a stale one could replace a newer record.
       if (input.allowStale === false) {
         writePullRequestDetailSnapshot(snapshotStorage(), environmentId, input, detail);
       }
-      observePullRequestSummary(
-        registry,
-        pullRequestSummaryKey(environmentId, input),
-        { ...detail, checksState: pullRequestChecksState(detail.checks) },
-        at,
-      );
+      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
+        const next = observePullRequestMetadata(
+          current,
+          {
+            summary: { ...detail, checksState: pullRequestChecksState(detail.checks) },
+            observedAt: at,
+          },
+          false,
+        );
+        return freshRead === null
+          ? next
+          : observePullRequestChecks(next, {
+              checksState: pullRequestChecksState(freshRead.checks),
+              readAt: freshRead.observedAt,
+              observedAt: at,
+            });
+      });
     }),
   checks: ({ environmentId, input }, checks, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
