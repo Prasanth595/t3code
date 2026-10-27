@@ -53,6 +53,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -60,6 +61,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -2959,7 +2961,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         if (outcome === "release-before") {
           yield* Deferred.succeed(release, undefined);
-          yield* Fiber.join(pending);
         }
         yield* harness.offerAndWait(
           claudeSdkFrame({
@@ -2975,6 +2976,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(pending)));
         } else if (outcome === "release-after") {
           yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(pending);
+        } else if (outcome === "release-before") {
+          // Held until the compaction ended.
           yield* Fiber.join(pending);
         }
         // Flush the budget update through the event stream before trying again.
@@ -3039,6 +3043,163 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  // Forks a steer and returns once the adapter holds it for the running compaction.
+  const holdSteerForCompaction = Effect.fnUntraced(function* (
+    harness: Effect.Success<typeof makeWakeHarness>,
+    input: {
+      readonly runId: ProviderAdapter.ProviderAdapterV2SteerInput["runId"];
+      readonly providerTurnId: ProviderAdapter.ProviderAdapterV2SteerInput["providerTurnId"];
+      readonly text: string;
+    },
+  ) {
+    const held = yield* Deferred.make<void>();
+    const logger = Logger.make(({ message }) => {
+      if (String(message).includes("claude-steer-held-for-compaction")) {
+        Deferred.doneUnsafe(held, Effect.void);
+      }
+    });
+    const steer = yield* harness.runtime
+      .steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: input.providerTurnId,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make(`compaction-${input.text}`),
+          text: input.text,
+          attachments: [],
+        },
+      })
+      .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: true })), Effect.forkChild);
+    yield* Deferred.await(held);
+    return steer;
+  });
+
+  const startCompactingTurn = Effect.fnUntraced(function* (
+    harness: Effect.Success<typeof makeWakeHarness>,
+    attemptId: string,
+  ) {
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const input = makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread: harness.providerThread,
+      now: yield* DateTime.now,
+      attemptId: RunAttemptId.make(attemptId),
+      text: "Keep going.",
+      attachments: [],
+    });
+    yield* harness.runtime.startTurn(input);
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        uuid: "00000000-0000-4000-8000-000000000821",
+        session_id: WAKE_NATIVE_SESSION,
+      }),
+    );
+    return {
+      runId: input.runId,
+      providerTurnId: idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${input.attemptId}`,
+      }),
+    };
+  });
+
+  // regression: #25796 a `now` steer offered mid-compaction aborts the compaction
+  it.effect("holds steers sent during compaction until the compaction ends", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const turn = yield* startCompactingTurn(harness, "steer-during-compaction");
+      const pending = [];
+      for (const text of ["First steer.", "Second steer."]) {
+        pending.push(yield* holdSteerForCompaction(harness, { ...turn, text }));
+      }
+      assert.lengthOf(
+        harness.offeredMessages,
+        1,
+        "a steer sent while compacting reached Claude before the compaction ended",
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: null,
+          compact_result: "success",
+          uuid: "00000000-0000-4000-8000-000000000822",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Fiber.joinAll(pending);
+      const steers = harness.offeredMessages.slice(1);
+      assert.deepEqual(
+        steers.map((message) => message.priority),
+        ["now", "now"],
+      );
+      assert.match(encodeJsonString(steers[0]?.message.content), /First steer/);
+      assert.match(encodeJsonString(steers[1]?.message.content), /Second steer/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("cancels a steer held for compaction when the turn is stopped", () =>
+    Effect.gen(function* () {
+      let offeredAtInterrupt: number | undefined;
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        interrupt: Effect.sync(() => {
+          offeredAtInterrupt = harness.offeredMessages.length;
+        }),
+      });
+      const turn = yield* startCompactingTurn(harness, "steer-then-stop-during-compaction");
+      const steer = yield* holdSteerForCompaction(harness, { ...turn, text: "Then stop." });
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: turn.providerTurnId,
+      });
+      assert.equal(offeredAtInterrupt, 1);
+      const steerExit = yield* Fiber.await(steer);
+      assert.match(
+        Exit.isFailure(steerExit) ? Cause.pretty(steerExit.cause) : "steer succeeded",
+        /was stopped before the steer was sent/,
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "interrupted");
+      assert.lengthOf(harness.offeredMessages, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("fails a steer held for compaction when the turn ends first", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const turn = yield* startCompactingTurn(harness, "turn-ends-during-compaction");
+      const steer = yield* holdSteerForCompaction(harness, { ...turn, text: "Too late." });
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000823", result: "Done." }),
+      );
+      const steerExit = yield* Fiber.await(steer);
+      assert.match(
+        Exit.isFailure(steerExit) ? Cause.pretty(steerExit.cause) : "steer succeeded",
+        /ended before the steer was sent/,
+      );
+      assert.lengthOf(harness.offeredMessages, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   const attachmentBudgetOutcomes = [

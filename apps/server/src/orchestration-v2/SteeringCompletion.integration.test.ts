@@ -408,11 +408,13 @@ const composerSelection = {
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
   canRestart = false,
+  steerTurn?: (turn: ProviderAdapter.ProviderAdapterV2SteerInput) => Effect.Effect<void>,
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
+  const interrupted: ProviderTurnId[] = [];
   const capabilities = {
     ...CodexProviderCapabilitiesV2,
     turns: {
@@ -488,11 +490,16 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
                 },
               });
             }),
-          steerTurn: (turn) =>
+          steerTurn:
+            steerTurn ??
+            ((turn) =>
+              Effect.sync(() => {
+                steered.push(turn.message.text);
+              })),
+          interruptTurn: (turn) =>
             Effect.sync(() => {
-              steered.push(turn.message.text);
+              interrupted.push(turn.providerTurnId);
             }),
-          interruptTurn: () => Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => Effect.die("unused"),
           rollbackThread: () => Effect.die("unused"),
@@ -547,7 +554,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     yield* Fiber.join(running);
     return threadId;
   });
-  return { cwd, events, started, steered, layer, startFirstTurn };
+  return { cwd, events, started, steered, interrupted, layer, startFirstTurn };
 });
 
 it.effect("sends a selected held message once and preserves the remaining queue order", () =>
@@ -820,6 +827,50 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
         assert.deepEqual(started[1]?.modelSelection, composerSelection);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// regression: #25796 Stop must not wait behind a steer the provider is still holding
+it.effect("Stop cancels a steer still waiting to reach the provider", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const steerWaiting = yield* Deferred.make<void>();
+      const { interrupted, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "stop-cancels-waiting-steer",
+        false,
+        () => Deferred.succeed(steerWaiting, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("waiting-steer"),
+          threadId,
+          messageId: MessageId.make("message:waiting-steer"),
+          text: "steer",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: run.id },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const steering = yield* worker.runOnce.pipe(Effect.forkScoped);
+        yield* Deferred.await(steerWaiting);
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-waiting-steer"),
+          threadId,
+        });
+        // The steer effect is cancelled, which ends its never-returning steerTurn.
+        yield* Fiber.join(steering);
+        yield* worker.drain();
+
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        assert.deepEqual(interrupted, [turn.id]);
       }).pipe(Effect.provide(layer));
     }),
   ),
