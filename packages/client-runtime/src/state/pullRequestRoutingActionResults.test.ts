@@ -111,12 +111,13 @@ const makeRuntime = Effect.fn("makeRuntime")(function* (
     [originClient, ...(destinationClient ? [destinationClient] : [])],
     (rpc, index) =>
       Effect.gen(function* () {
-        const session: RpcSession = {
+        const session = {
           client: rpc as unknown as WsRpcProtocolClient,
           initialConfig: rpc[WS_METHODS.serverGetConfig]({}).pipe(Effect.orDie),
           subscribeServerConfig: () => Stream.never,
           ready: Effect.void,
           probe: Effect.void,
+          inboundFrames: Effect.succeed(0),
           closed: Effect.never,
         };
         return EnvironmentSupervisor.of({
@@ -126,7 +127,7 @@ const makeRuntime = Effect.fn("makeRuntime")(function* (
             httpBaseUrl: index === 0 ? "https://origin.test" : "http://localhost:3773",
             wsBaseUrl: index === 0 ? "wss://origin.test" : "ws://localhost:3773",
           }),
-          session: yield* SubscriptionRef.make(Option.some(session)),
+          session: yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.some(session)),
           state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
           prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
           connect: Effect.void,
