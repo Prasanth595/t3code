@@ -28,10 +28,13 @@ const environments = vi.hoisted(() => ({
   primary: "env-1" as string | null,
   connected: [] as Array<string>,
   labels: new Map<string, string>(),
+  // Whether the list of connected ids is a new array on every call, as a derived one would be.
+  freshIds: false,
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => environments.primary,
-  useConnectedEnvironmentIds: () => environments.connected,
+  useConnectedEnvironmentIds: () =>
+    environments.freshIds ? [...environments.connected] : environments.connected,
   useEnvironments: () => ({
     presentationById: new Map(
       [...environments.labels].map(([id, label]) => [id, { entry: { target: { label } } }]),
@@ -152,6 +155,7 @@ function setup(): AsyncDisposable {
   stack.use(setDocumentVisible(true));
   environments.primary = ENV_1;
   environments.connected = [];
+  environments.freshIds = false;
   environments.labels = new Map();
   stack.defer(() => {
     __setFactoryApiForTests();
@@ -782,6 +786,24 @@ describe("useFactoryEnvironments with a status poll", () => {
     await show(false);
     await settle(1_000);
     await show(true);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps its 5 second period when an answer lands mid-period and the page renders again", async () => {
+    await using _state = setup();
+    environments.freshIds = true;
+    // The answer takes 3 seconds, so the page renders again at 3 seconds, between two ticks.
+    const fetchStatus = vi.fn(
+      (_env: EnvironmentId) =>
+        new Promise<ReturnType<typeof status>>((resolve) => {
+          setTimeout(() => resolve(status(0)), 3_000);
+        }),
+    );
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(() => useFactoryEnvironments({ statusPollMs: FIVE_SECONDS }));
+    await settle(3_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await settle(2_000);
     expect(fetchStatus).toHaveBeenCalledTimes(2);
   });
 
