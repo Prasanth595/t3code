@@ -485,11 +485,23 @@ export const advanceShellLaunchers = Effect.fn("cloud.pinned_runtime.advance_she
       .realPath(versionsDir)
       .pipe(Effect.orElseSucceed(() => versionsDir));
     const advanced: Array<string> = [];
-    for (const { launcher, target } of yield* shellLaunchers(input.baseDir)) {
-      const ownedBy = [versionsDir, realVersionsDir].find((dir) =>
-        launcherOwnsVersionsDir(path, dir, target),
-      );
-      if (ownedBy === undefined || advanced.includes(launcher)) continue;
+    for (const launcher of yield* shellLaunchers(input.baseDir)) {
+      if (advanced.includes(launcher.launcher)) continue;
+      // Like `t3 update`, only a link straight into the runtimes is a launcher to move.
+      const target =
+        platform === "win32"
+          ? launcher.target
+          : yield* fs.readLink(launcher.launcher).pipe(
+              Effect.map((link) => path.resolve(path.dirname(launcher.launcher), link)),
+              Effect.orElseSucceed(() => undefined),
+            );
+      const ownedBy =
+        target === undefined
+          ? undefined
+          : [versionsDir, realVersionsDir].find((dir) =>
+              launcherOwnsVersionsDir(path, dir, target),
+            );
+      if (target === undefined || ownedBy === undefined) continue;
       const launcherVersion = path.relative(ownedBy, target).split(path.sep)[0] ?? "";
       if (
         !isExactServiceVersion(launcherVersion) ||
@@ -497,13 +509,11 @@ export const advanceShellLaunchers = Effect.fn("cloud.pinned_runtime.advance_she
       ) {
         continue;
       }
-      // Only a symlink is a launcher on POSIX; anything else is an executable to leave in place.
-      if (platform !== "win32" && !(yield* fs.readLink(launcher).pipe(Effect.isSuccess))) continue;
-      yield* writeShellLauncher(launcher, runtime.entryPath).pipe(
-        Effect.andThen(Effect.sync(() => advanced.push(launcher))),
+      yield* writeShellLauncher(launcher.launcher, runtime.entryPath).pipe(
+        Effect.andThen(Effect.sync(() => advanced.push(launcher.launcher))),
         Effect.catch((cause) =>
           Effect.logWarning("Could not move a t3 launcher to the running version.", {
-            launcher,
+            launcher: launcher.launcher,
             cause,
           }),
         ),

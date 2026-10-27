@@ -108,6 +108,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           return "launcher-id";
         })),
     prepareTrial: Effect.undefined,
+    committed: Effect.void,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
@@ -410,6 +411,8 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     readonly symlinkedHome?: boolean;
     /** Installs a `~/.local/bin/t3` launcher pointing at this runtime version. */
     readonly launcherVersion?: string;
+    /** Called with the launcher path, completing once the service commits this version. */
+    readonly committed?: (launcher: string) => Effect.Effect<void>;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -440,7 +443,10 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
         : "/usr/local/bin/node";
     const removed = yield* ServerSelfUpdate.pruneRuntimesOnStart({
       baseDir,
-      managed: input.managed ?? false,
+      launcher: {
+        managed: input.managed ?? false,
+        committed: input.committed?.(launcher) ?? Effect.void,
+      },
     }).pipe(
       Effect.provideService(HostProcess.ExecutablePath, executablePath),
       Effect.provideService(HostProcess.Platform, "darwin"),
@@ -492,6 +498,30 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
         Option.some(path.join(versionsDir, packageJson.version, "t3")),
       );
       expect(removed).toEqual([staleVersion]);
+    }),
+  );
+
+  it.effect("keeps the launcher until the service commits an update on trial", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let duringTrial: Option.Option<string> = Option.none();
+      const { launcherTarget, versionsDir } = yield* pruneOnStart({
+        executable: "elsewhere",
+        managed: true,
+        launcherVersion: staleVersion,
+        committed: (launcher) =>
+          fs.readLink(launcher).pipe(
+            Effect.orDie,
+            Effect.map((target) => {
+              duringTrial = Option.some(target);
+            }),
+          ),
+      });
+      expect(duringTrial).toEqual(Option.some(path.join(versionsDir, staleVersion, "t3")));
+      expect(launcherTarget).toEqual(
+        Option.some(path.join(versionsDir, packageJson.version, "t3")),
+      );
     }),
   );
 

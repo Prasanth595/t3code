@@ -177,11 +177,17 @@ export const withRunningThreadContinuation = Effect.fn(
 
 /**
  * Runtimes left by earlier updates can go once a server starts from its home's pinned runtime or
- * under the boot service. A boot-service server first moves older `t3` launchers to its version,
- * since an update from the app reaches the service but not the CLI on PATH.
+ * under the boot service. A boot-service server first moves older `t3` launchers to its version
+ * once the service keeps it, since an update from the app reaches the service but not the CLI.
  */
 export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
-  function* (input: { readonly baseDir: string; readonly managed: boolean }) {
+  function* (input: {
+    readonly baseDir: string;
+    readonly launcher: Pick<
+      ServiceLauncherClient.ServiceLauncherClient["Service"],
+      "managed" | "committed"
+    >;
+  }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
@@ -189,10 +195,16 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     const { entryPath } = pinnedRuntimePaths(path, input.baseDir, packageJson.version, platform);
     // The executable path is resolved, so it names the real path of a symlinked T3 home.
     const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
-    if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
+    if (
+      !input.launcher.managed &&
+      executablePath !== entryPath &&
+      executablePath !== realEntryPath
+    ) {
       return [];
     }
-    if (input.managed) {
+    if (input.launcher.managed) {
+      // A trial that fails rolls the service back, and the CLI must not stay on the failed build.
+      yield* input.launcher.committed;
       const advanced = yield* advanceShellLaunchers({
         baseDir: input.baseDir,
         version: packageJson.version,
@@ -230,9 +242,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   );
   const inFlight = yield* Ref.make(false);
 
-  yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
-    Effect.forkScoped,
-  );
+  yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, launcher }).pipe(Effect.forkScoped);
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
