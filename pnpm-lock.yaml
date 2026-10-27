@@ -164,6 +164,18 @@ settings:
 
 catalogs:
   default:
+    '@alchemy.run/axiom':
+      specifier: 2.0.0-beta.84
+      version: 2.0.0-beta.84
+    '@alchemy.run/cloudflare':
+      specifier: 2.0.0-beta.84
+      version: 2.0.0-beta.84
+    '@alchemy.run/drizzle':
+      specifier: 2.0.0-beta.84
+      version: 2.0.0-beta.84
+    '@alchemy.run/planetscale':
+      specifier: 2.0.0-beta.84
+      version: 2.0.0-beta.84
     '@distilled.cloud/cloudflare':
       specifier: 1.0.0-rc.17
       version: 1.0.0-rc.17
@@ -1282,16 +1294,16 @@ importers:
   infra/relay:
     dependencies:
       '@alchemy.run/axiom':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(74118100341fd69edb1510aa7b7f1bd2)
       '@alchemy.run/cloudflare':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(24ce6902b7189b66a257867375b8f56d)
       '@alchemy.run/drizzle':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(621723465c0c1236eb5d87515baf6818)
       '@alchemy.run/planetscale':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(1b64d144d22bc50b8239f5331dd49513)
       '@clerk/backend':
         specifier: 3.25.0
@@ -1358,10 +1370,10 @@ importers:
   infra/task-cache:
     dependencies:
       '@alchemy.run/axiom':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(74118100341fd69edb1510aa7b7f1bd2)
       '@alchemy.run/cloudflare':
-        specifier: 2.0.0-beta.84
+        specifier: 'catalog:'
         version: 2.0.0-beta.84(24ce6902b7189b66a257867375b8f56d)
       alchemy:
         specifier: 2.0.0-beta.84
