@@ -126,10 +126,7 @@ const make = Effect.gen(function* () {
         message: "A launch in a linked environment cannot carry attachments yet.",
       });
     }
-    if (
-      (toolName === "schedule_task" || toolName === "update_scheduled_task") &&
-      hasScheduleSecretRef(args)
-    ) {
+    if (toolName === "schedule_task" && hasScheduleSecretRef(args)) {
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
         message:

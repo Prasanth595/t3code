@@ -560,7 +560,7 @@ it.effect("runs any tool that takes a linked environment there", () =>
       const a = yield* makeLaptop;
       yield* linkTo(a.links, b, "auto");
 
-      const there = yield* a.call("thread:laptop-full", "t3_thread_configuration", {
+      const there = yield* a.call("thread:laptop-full", "t3_thread_configure", {
         environmentId: box.environmentId,
         threadId: boxThread,
       });
@@ -597,11 +597,11 @@ it.effect("runs any tool that takes a linked environment there", () =>
           title: "Requested title",
         })
         .pipe(Effect.flip);
-      expect(mismatched.message).toContain("regenerate_title does not accept title");
+      expect(mismatched.message).toContain("regenerate_title does not accept one");
       expect(yield* Ref.get(b.bearers)).toEqual([]);
 
       // This environment's own id keeps the call here.
-      const own = yield* a.call("thread:laptop-full", "t3_thread_configuration", {
+      const own = yield* a.call("thread:laptop-full", "t3_thread_configure", {
         environmentId: laptop.environmentId,
       });
       expect(own.structuredContent).toMatchObject({
@@ -622,12 +622,12 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       yield* Ref.set(b.bearers, []);
 
       const probes = yield* Ref.get(b.probes);
-      for (const name of ["schedule_task", "update_scheduled_task"]) {
-        const args =
-          name === "schedule_task"
-            ? { projectId: boxProject, prompt: "Handle {{body.action}}." }
-            : { scheduledTaskId: "scheduled-task:box" };
-        const signed = yield* a.call("thread:laptop-full", name, {
+      // Creating and updating a schedule share one tool.
+      for (const args of [
+        { projectId: boxProject, prompt: "Handle {{body.action}}." },
+        { scheduledTaskId: "scheduled-task:box" },
+      ]) {
+        const signed = yield* a.call("thread:laptop-full", "schedule_task", {
           ...args,
           environmentId: box.environmentId,
           schedule: {
@@ -648,7 +648,7 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
         });
         expect(failureOf(signed).message).toContain("destination environment");
 
-        const ordinary = yield* a.call("thread:laptop-full", name, {
+        const ordinary = yield* a.call("thread:laptop-full", "schedule_task", {
           ...args,
           environmentId: EnvironmentId.make("environment-elsewhere"),
           schedule: { type: "interval", everyMs: 3_600_000 },
