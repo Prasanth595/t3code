@@ -81,6 +81,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
+  pullRequestActionResults: Schema.optionalKey(Schema.Boolean),
   /** Every protocol-2 server sends this; older mobile builds still read it. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),

@@ -592,6 +592,26 @@ export const PullRequestDetail = Schema.Struct({
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
+export const PullRequestActionResult = Schema.Struct({
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  updatedAt: IsoDateTime,
+  mergedAt: Schema.NullOr(IsoDateTime),
+  closedAt: Schema.NullOr(IsoDateTime),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  autoMergeEnabled: Schema.Boolean,
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  observedAt: Schema.Finite,
+});
+export type PullRequestActionResult = typeof PullRequestActionResult.Type;
+
+export const PullRequestRefreshEvent = Schema.Struct({
+  revision: NonNegativeInt,
+  reference: Schema.optional(PullRequestRef),
+  result: Schema.optional(PullRequestActionResult),
+});
+export type PullRequestRefreshEvent = typeof PullRequestRefreshEvent.Type;
+
 export const PullRequestChecks = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,

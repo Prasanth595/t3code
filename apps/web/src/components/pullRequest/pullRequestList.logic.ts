@@ -9,6 +9,7 @@ import type {
   ProjectId,
   RepositoryIdentity,
   PullRequestAction,
+  PullRequestActionResult,
   PullRequestActor,
   PullRequestDiffStat,
   PullRequestInvolvement,
@@ -792,6 +793,7 @@ export interface PullRequestListOverride {
   readonly updatedAt: string;
   readonly token: number;
   readonly at: number;
+  readonly observedAt?: number;
 }
 
 export function pullRequestOverrideAfterAction(
@@ -799,7 +801,9 @@ export function pullRequestOverrideAfterAction(
   action: PullRequestAction,
   now: Date,
   token: number,
+  result?: PullRequestActionResult | null,
 ): PullRequestListOverride | null {
+  if (result != null) return { ...result, token, at: result.observedAt };
   const stamp = { updatedAt: now.toISOString(), token, at: now.getTime() };
   switch (action) {
     case "close":
@@ -826,7 +830,13 @@ export function applyPullRequestOverrides<Entry extends PullRequestListEntry>(
   if (overrides.size === 0 && state === "all") return entries;
   const out: Entry[] = [];
   for (const entry of entries) {
-    const override = overrides.get(keyOf(entry));
+    const incoming = overrides.get(keyOf(entry));
+    const override =
+      incoming?.observedAt !== undefined &&
+      ((entry.observedAt !== undefined && entry.observedAt > incoming.observedAt) ||
+        (entry.state === "merged" && incoming.state !== "merged"))
+        ? undefined
+        : incoming;
     if (state !== "all" && (override?.state ?? entry.state) !== state) continue;
     out.push(override === undefined ? entry : { ...entry, ...override });
   }

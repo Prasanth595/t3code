@@ -8,6 +8,7 @@ import {
   type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type PullRequestRef,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -253,21 +254,29 @@ export function shownPullRequestListPages(
 export function patchPullRequestListEntry(
   recorded: PullRequestListPages | null,
   head: PullRequestListResult | null,
-  entry: PullRequestListEntry,
+  entry: Pick<PullRequestRef, "projectId" | "host" | "repository" | "number">,
   patch: Partial<PullRequestListEntry>,
   observedAt: number,
 ): PullRequestListPages | null {
   const pages = shownPullRequestListPages(recorded, head);
-  return (
-    pages && {
-      ...pages,
-      entries: pages.entries.map((row) =>
-        pullRequestListKey(row) === pullRequestListKey(entry)
-          ? { ...row, ...patch, observedAt }
-          : row,
-      ),
-    }
-  );
+  if (!pages) return null;
+  let changed = false;
+  const entries = pages.entries.map((row) => {
+    if (
+      row.projectId !== entry.projectId ||
+      row.repository.toLowerCase() !== entry.repository.toLowerCase() ||
+      row.number !== entry.number ||
+      (entry.host !== undefined && row.host.toLowerCase() !== entry.host.toLowerCase()) ||
+      (row.state === "merged" && patch.state !== undefined && patch.state !== "merged") ||
+      (row.observedAt ?? 0) > observedAt
+    )
+      return row;
+    changed = true;
+    return { ...row, ...patch, observedAt };
+  });
+  return changed
+    ? { ...pages, entries: entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) }
+    : pages;
 }
 
 export function pullRequestListInput(

@@ -171,6 +171,7 @@ import {
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
+  PullRequestActionResult,
   PullRequestActivity,
   PullRequestChangeBreakdown,
   PullRequestCommentInput,
@@ -192,6 +193,7 @@ import {
   PullRequestOperationError,
   PullRequestReactionInput,
   PullRequestRef,
+  PullRequestRefreshEvent,
   PullRequestRoutingResult,
   PullRequestRoutingIdentityInput,
   PullRequestRoutingIdentityResult,
@@ -555,6 +557,7 @@ export const WS_METHODS = {
   pullRequestsChangeBreakdown: "pullRequests.changeBreakdown",
   pullRequestsSetFilesViewed: "pullRequests.setFilesViewed",
   pullRequestsRunAction: "pullRequests.runAction",
+  pullRequestsRunActionWithResult: "pullRequests.runActionWithResult",
   pullRequestsUpdate: "pullRequests.update",
   pullRequestsComment: "pullRequests.comment",
   pullRequestsUpdateComment: "pullRequests.updateComment",
@@ -565,6 +568,7 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReportState: "pullRequests.reportState",
   pullRequestsSubscribeRefreshes: "pullRequests.subscribeRefreshes",
+  pullRequestsSubscribeRefreshEvents: "pullRequests.subscribeRefreshEvents",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
@@ -1094,6 +1098,12 @@ const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAction, {
   error: PullRequestRpcError,
 });
 
+const WsPullRequestsRunActionWithResultRpc = Rpc.make(WS_METHODS.pullRequestsRunActionWithResult, {
+  payload: PullRequestActionInput,
+  success: Schema.NullOr(PullRequestActionResult),
+  error: PullRequestRpcError,
+});
+
 const WsPullRequestsUpdateRpc = Rpc.make(WS_METHODS.pullRequestsUpdate, {
   payload: PullRequestUpdateInput,
   success: Schema.Void,
@@ -1154,6 +1164,16 @@ const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubs
   error: EnvironmentAuthorizationError,
   stream: true,
 });
+
+const WsPullRequestsSubscribeRefreshEventsRpc = Rpc.make(
+  WS_METHODS.pullRequestsSubscribeRefreshEvents,
+  {
+    payload: Schema.Struct({}),
+    success: PullRequestRefreshEvent,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
 
 // Fetch reviewer candidates only when the menu opens to avoid unused host requests.
 const WsPullRequestsReviewerCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsReviewerCandidates, {
@@ -2001,6 +2021,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsChangeBreakdownRpc,
   WsPullRequestsSetFilesViewedRpc,
   WsPullRequestsRunActionRpc,
+  WsPullRequestsRunActionWithResultRpc,
   WsPullRequestsUpdateRpc,
   WsPullRequestsCommentRpc,
   WsPullRequestsUpdateCommentRpc,
@@ -2011,6 +2032,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReportStateRpc,
   WsPullRequestsSubscribeRefreshesRpc,
+  WsPullRequestsSubscribeRefreshEventsRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,

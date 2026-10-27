@@ -137,6 +137,23 @@ describe("pull request observations", () => {
     observedAt: number,
   ) => ({ checksState, readAt, observedAt });
 
+  it("patches action state without treating inherited checks as a new checks read", () => {
+    const original = summary({ checksState: "pending", observedAt: 100 });
+    let state = fromSummary(original, 1);
+    state = observePullRequestChecks(state, checksRead("passing", 200, 2));
+    state = observePullRequestMetadata(
+      state,
+      observed({ ...original, state: "closed", isDraft: false, observedAt: 300 }, 3),
+      false,
+    );
+    expect(observedPullRequestSummary(state)).toMatchObject({
+      state: "closed",
+      isDraft: false,
+      observedAt: 300,
+      checksState: "passing",
+    });
+  });
+
   it("keeps a newer list's mergeability when a checks read lands after it", () => {
     const detail = summary({
       mergeability: "conflicting",
@@ -256,6 +273,57 @@ describe("pull request list answers across a reload", () => {
   const local = EnvironmentId.make("env-local");
   const remote = EnvironmentId.make("env-remote");
   const input: PullRequestListInput = { state: "open", involvement: "all", limit: 99 };
+
+  it("stores confirmed state with state and draft filters before a reload", () => {
+    const storage = makeStorage();
+    const row = listEntry(1);
+    const key = JSON.stringify([local, row.projectId, row.repository, row.number]);
+    const overrides = new Map([
+      [
+        key,
+        {
+          state: "closed" as const,
+          isDraft: false,
+          updatedAt: "2026-07-03T00:00:00Z",
+          observedAt: 300,
+          token: 0,
+          at: 300,
+        },
+      ],
+    ]);
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer([row]),
+      overrides,
+    );
+    expect(restorePullRequestList(storage, [{ environmentId: local, input }])?.entries).toEqual([]);
+    const all = { ...input, state: "all" as const };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: all },
+      answer([row, listEntry(2)]),
+      overrides,
+    );
+    expect(
+      restorePullRequestList(storage, [{ environmentId: local, input: all }])?.entries.map(
+        ({ number, state }) => [number, state],
+      ),
+    ).toEqual([
+      [1, "closed"],
+      [2, "open"],
+    ]);
+    const draft = { ...all, filters: { draft: "only" as const } };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: draft },
+      answer([{ ...row, isDraft: true }]),
+      overrides,
+    );
+    expect(
+      restorePullRequestList(storage, [{ environmentId: local, input: draft }])?.entries,
+    ).toEqual([]);
+  });
 
   it("restores every environment's first page as one merged list without stale failures or cursors", () => {
     const storage = makeStorage();

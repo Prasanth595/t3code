@@ -17,6 +17,7 @@ import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
   type PullRequestAction,
+  type PullRequestActionResult,
   type PullRequestDetail,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
@@ -287,7 +288,11 @@ export function PullRequestDetailPanel({
    * notification can switch it.
    */
   tabOnPage?: boolean;
-  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
+  onActed?: (
+    action?: PullRequestAction,
+    phase?: "sent" | "done" | "failed",
+    result?: PullRequestActionResult | null,
+  ) => void;
   onClose?: () => void;
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -683,12 +688,14 @@ export function PullRequestDetailPanel({
     if (action === "delete-branch") {
       toastManager.add({ type: "success", title: "Branch deleted" });
     }
-    if (pullRequestActionNeedsHostRefresh(action)) {
+    if (result.value != null) {
+      if (nativeStack !== null) nativeStackQuery.refresh();
+    } else if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
     } else {
       refreshDetail();
     }
-    onActed?.(action, "done");
+    onActed?.(action, "done", result.value);
     return true;
   };
 

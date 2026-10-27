@@ -429,9 +429,10 @@ export function PullRequestsPage() {
   const overrideEntry = (
     entry: EnvironmentPullRequestEntry,
     action: PullRequestAction,
+    result?: PullRequestSpeedActionResult["result"],
   ): number | null => {
     const token = ++overrideToken.current;
-    const override = pullRequestOverrideAfterAction(entry, action, new Date(), token);
+    const override = pullRequestOverrideAfterAction(entry, action, new Date(), token, result);
     if (override === null) return null;
     setOverrides((current) => new Map(current).set(pullRequestEntryKey(entry), override));
     return token;
@@ -446,13 +447,17 @@ export function PullRequestsPage() {
     });
   };
   const detailOverrideTokens = useRef(new Map<string, number | null>());
-  const onSpeedAction = useStableCallback(({ entry, action }: PullRequestSpeedActionResult) => {
-    // Some hosts accept a merge before it completes. Let the next host read declare it merged.
-    if (action !== "merge") overrideEntry(entry, action);
-  });
-  const onBatchClosed = useStableCallback((entry: EnvironmentPullRequestEntry) => {
-    onSpeedAction({ entry, action: "close" });
-  });
+  const onSpeedAction = useStableCallback(
+    ({ entry, action, result }: PullRequestSpeedActionResult) => {
+      // Some hosts accept a merge before it completes. Let the next host read declare it merged.
+      if (result != null || action !== "merge") overrideEntry(entry, action, result);
+    },
+  );
+  const onBatchClosed = useStableCallback(
+    (entry: EnvironmentPullRequestEntry, result?: PullRequestSpeedActionResult["result"]) => {
+      onSpeedAction({ entry, action: "close", result });
+    },
+  );
   const { close: closeBatch, closingKeys } = usePullRequestCloseBatch(onBatchClosed);
   const [snapshotEnvironmentKey, setSnapshotEnvironmentKey] = useState("");
   if (environmentKey.length > 0 && snapshotEnvironmentKey !== environmentKey) {
@@ -1542,12 +1547,20 @@ export function PullRequestsPage() {
               }
               refreshToken={detailRefreshToken}
               tabOnPage
-              onActed={(action, phase = "done") => {
+              onActed={(action, phase = "done", result) => {
                 // From every row held, not the ones on screen: a pull request closed from an open
                 // list has left the screen, and reopening it has to find it anyway.
                 const acted = heldPullRequestsBySurface.get(
                   pullRequestListEntryId(renderedPullRequestSurface),
                 );
+                if (result != null) {
+                  if (acted !== undefined) {
+                    const key = pullRequestEntryKey(acted);
+                    if (action !== undefined) overrideEntry(acted, action, result);
+                    detailOverrideTokens.current.delete(key);
+                  }
+                  return;
+                }
                 const stateOnly =
                   action !== undefined &&
                   acted !== undefined &&

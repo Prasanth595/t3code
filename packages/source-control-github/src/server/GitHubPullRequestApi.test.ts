@@ -1863,6 +1863,115 @@ layer("GitHubPullRequestApi.layer", (it) => {
   });
 
   it.effect.each([
+    { action: "draft", field: "convertPullRequestToDraft", state: "OPEN", isDraft: true },
+    { action: "ready", field: "markPullRequestReadyForReview", state: "OPEN" },
+    { action: "close", field: "closePullRequest", state: "CLOSED" },
+    { action: "reopen", field: "reopenPullRequest", state: "OPEN" },
+    { action: "disable-auto-merge", field: "disablePullRequestAutoMerge", state: "OPEN" },
+    { action: "update-branch", field: "updatePullRequestBranch", state: "OPEN" },
+    { action: "merge", field: "mergePullRequest", state: "MERGED" },
+    {
+      action: "merge",
+      field: "enablePullRequestAutoMerge",
+      state: "OPEN",
+      queued: true,
+      autoMergeMethod: "MERGE",
+    },
+    {
+      action: "enable-auto-merge",
+      field: "enablePullRequestAutoMerge",
+      state: "OPEN",
+      autoMergeMethod: "SQUASH",
+    },
+    {
+      action: "enable-auto-merge",
+      field: "mergePullRequest",
+      state: "MERGED",
+      clean: true,
+    },
+  ] as const)("returns the response state for $action via $field", (testCase) =>
+    Effect.gen(function* () {
+      const { action, field, state } = testCase;
+      const snapshot = {
+        state,
+        isDraft: "isDraft" in testCase && testCase.isDraft,
+        updatedAt: "2026-10-27T12:00:00Z",
+        mergedAt: state === "MERGED" ? "2026-10-27T11:59:00Z" : null,
+        closedAt: state === "OPEN" ? null : "2026-10-27T11:59:00Z",
+        headRefOid: "response-head",
+        autoMergeRequest:
+          "autoMergeMethod" in testCase ? { mergeMethod: testCase.autoMergeMethod } : null,
+      };
+      const routes = [
+        [NODE_ID_QUERY, nodeIdAnswer("PR_7")],
+        [
+          "query PullRequestActionState",
+          actionState({
+            isMergeQueueEnabled: "queued" in testCase && testCase.queued,
+            mergeStateStatus: "clean" in testCase && testCase.clean ? "CLEAN" : "BLOCKED",
+          }),
+        ],
+      ] as const;
+      route(...routes, [
+        field + "(",
+        { data: { [field]: { clientMutationId: null, pullRequest: snapshot } } },
+      ]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { ...pullRequestInput, action, mergeMethod: "squash" as const };
+      expect(yield* cli.runPullRequestAction(input)).toEqual({
+        state: state.toLowerCase(),
+        isDraft: snapshot.isDraft,
+        updatedAt: snapshot.updatedAt,
+        mergedAt: snapshot.mergedAt,
+        closedAt: snapshot.closedAt,
+        headSha: snapshot.headRefOid,
+        autoMergeEnabled: snapshot.autoMergeRequest !== null,
+        ...("autoMergeMethod" in testCase
+          ? { autoMergeMethod: testCase.autoMergeMethod.toLowerCase() }
+          : {}),
+      });
+      const mutation = mockedExecute.mock.calls.find(
+        ([call]) => call.kind === "graphql" && call.query.startsWith("mutation "),
+      )?.[0];
+      assert.isDefined(mutation);
+      assert.strictEqual(mutation.kind, "graphql");
+      if (mutation.kind === "graphql") {
+        for (const selected of [
+          "state",
+          "isDraft",
+          "updatedAt",
+          "mergedAt",
+          "closedAt",
+          "headRefOid",
+          "autoMergeRequest",
+        ])
+          expect(mutation.query).toContain(selected);
+        expect(mutation.query).not.toMatch(/reviews|commits|checks|pageInfo|nodes/);
+      }
+      expect(variablesOf(field + "(")).toHaveLength(1);
+      for (const payload of [undefined, null, {}, { clientMutationId: null, pullRequest: null }]) {
+        route(...routes, [field + "(", { data: { [field]: payload } }]);
+        expect(yield* cli.runPullRequestAction(input)).toBeUndefined();
+      }
+      expect(variablesOf(field + "(")).toHaveLength(5);
+      const refusal = new GitHubRequestPolicy.GitHubApiResponseError({
+        host: input.host,
+        operation: "runPullRequestAction",
+        status: 422,
+      });
+      const answer = mockedExecute.getMockImplementation()!;
+      mockedExecute.mockImplementation((call) =>
+        matches(call, field + "(") ? Effect.fail(refusal) : answer(call),
+      );
+      expect(yield* cli.runPullRequestAction(input).pipe(Effect.flip)).toMatchObject({
+        _tag: "GitHubApiResponseError",
+        status: 422,
+      });
+      expect(variablesOf(field + "(")).toHaveLength(6);
+    }),
+  );
+
+  it.effect.each([
     {
       description: "base-only write",
       basePermission: "WRITE",

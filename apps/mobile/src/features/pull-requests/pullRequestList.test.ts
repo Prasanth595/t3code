@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, vi } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import type { PullRequestAnswerHandlers } from "@t3tools/client-runtime/state/pull-requests";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   EnvironmentId,
   SourceControlProviderKind,
@@ -27,6 +31,32 @@ import {
   withShownPullRequestStats,
   withoutScratchProjectScope,
 } from "./pullRequestList";
+
+const answers = vi.hoisted(() => ({ handlers: {} as PullRequestAnswerHandlers, reads: 0 }));
+vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("@t3tools/client-runtime/state/pull-requests", () => ({
+  createPullRequestEnvironmentAtoms: (_runtime: unknown, handlers: PullRequestAnswerHandlers) => {
+    answers.handlers = handlers;
+    const list = Atom.family((_key: string) =>
+      Atom.writable(
+        (): AsyncResult.AsyncResult<PullRequestListResult, never> => {
+          answers.reads++;
+          return AsyncResult.initial();
+        },
+        (context, value: AsyncResult.AsyncResult<PullRequestListResult, never>) =>
+          context.setSelf(value),
+      ),
+    );
+    return { list: (target: unknown) => list(JSON.stringify(target)) };
+  },
+  createPullRequestStackAtomFamily: () => {},
+}));
+
+import {
+  composerPullRequests,
+  pullRequestListPagesFamily,
+  pullRequestListPagesKey,
+} from "../../state/pull-requests";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
   return {
@@ -86,6 +116,93 @@ describe("recycled PR list rows", () => {
 });
 
 describe("mobile PR list pagination", () => {
+  it.effect(
+    "applies canonical results to cached heads and loaded pages only in their environment",
+    () =>
+      Effect.gen(function* () {
+        const registry = AtomRegistry.make();
+        const environmentId = EnvironmentId.make("action-result");
+        const target = { environmentId, input: { state: "all" as const } };
+        const other = { ...target, environmentId: EnvironmentId.make("other") };
+        const head = page([entry(3)]);
+        const pagesAtom = pullRequestListPagesFamily(pullRequestListPagesKey(target));
+        const otherAtom = pullRequestListPagesFamily(pullRequestListPagesKey(other));
+        const cachedAtom = pullRequestListPagesFamily(
+          pullRequestListPagesKey({ ...target, input: { state: "open" } }),
+        );
+        registry.set(
+          pagesAtom,
+          appendPullRequestListPage(
+            pullRequestListHead(null, head),
+            page([entry(1)], { repo: "next" }),
+            { state: "all" },
+          ),
+        );
+        registry.set(otherAtom, pullRequestListHead(null, page([entry(1)])));
+        registry.get(cachedAtom);
+        const cachedTarget = { ...target, input: { state: "open" as const } };
+        registry.set(
+          composerPullRequests.list(cachedTarget) as Atom.Writable<
+            AsyncResult.AsyncResult<PullRequestListResult, unknown>
+          >,
+          AsyncResult.success(page([entry(1)])),
+        );
+        try {
+          const reads = answers.reads;
+          yield* answers.handlers.actionResult!(
+            { environmentId, input: entry(1) },
+            {
+              state: "open",
+              isDraft: true,
+              autoMergeEnabled: true,
+              mergedAt: null,
+              closedAt: null,
+              updatedAt: "2026-10-10T00:00:00Z",
+              observedAt: 10,
+            },
+            registry,
+          );
+          expect(answers.reads).toBe(reads);
+          expect(
+            registry.get(pagesAtom)?.entries.map((row) => [row.number, row.state, row.isDraft]),
+          ).toEqual([
+            [1, "open", true],
+            [3, "open", false],
+          ]);
+          expect(registry.get(pagesAtom)?.nextCursors).toEqual({ repo: "next" });
+          expect(registry.get(cachedAtom)?.entries[0]).toMatchObject({
+            state: "open",
+            isDraft: true,
+            observedAt: 10,
+          });
+          expect(registry.get(otherAtom)?.entries[0]).toMatchObject({
+            state: "open",
+            isDraft: false,
+            observedAt: 1,
+          });
+          yield* answers.handlers.actionResult!(
+            { environmentId, input: { ...entry(1), expectedAccountId: "other-account" } },
+            {
+              state: "closed",
+              isDraft: false,
+              autoMergeEnabled: false,
+              mergedAt: null,
+              closedAt: "2026-10-11T00:00:00Z",
+              updatedAt: "2026-10-11T00:00:00Z",
+              observedAt: 20,
+            },
+            registry,
+          );
+          expect(registry.get(pagesAtom)?.entries[0]).toMatchObject({
+            state: "open",
+            isDraft: true,
+            observedAt: 10,
+          });
+        } finally {
+          registry.dispose();
+        }
+      }),
+  );
   it("continues only the repositories that have more, preserving the query and filters", () => {
     const first = pullRequestListHead(
       null,
@@ -128,6 +245,76 @@ describe("mobile PR list pagination", () => {
       "open",
       "merged",
     ]);
+  });
+  it("keeps newer rows when an older action result arrives", () => {
+    const row = entry(1, { state: "merged", observedAt: 20 });
+    const head = page([row]);
+    const pages = pullRequestListHead(null, head);
+    expect(patchPullRequestListEntry(pages, head, row, { state: "open" }, 10)).toBe(pages);
+    expect(patchPullRequestListEntry(pages, head, row, { state: "open" }, 30)).toBe(pages);
+  });
+  it("patches loaded rows without losing metadata, filters, or the next page", () => {
+    const row = entry(1, { isDraft: true, additions: 42 });
+    const head = page([entry(3)], { repo: "first" });
+    const pages = appendPullRequestListPage(
+      pullRequestListHead(null, head),
+      page([row], { repo: "next" }),
+      { state: "all" },
+    );
+    const result = patchPullRequestListEntry(
+      pages,
+      head,
+      row,
+      {
+        state: "open",
+        isDraft: false,
+        updatedAt: "2026-10-10T00:00:00Z",
+      },
+      5,
+    )!;
+    expect(result.entries.map((item) => item.number)).toEqual([1, 3]);
+    expect(result.entries[0]).toMatchObject({
+      ...row,
+      isDraft: false,
+      updatedAt: "2026-10-10T00:00:00Z",
+      observedAt: 5,
+    });
+    expect(result.nextCursors).toEqual({ repo: "next" });
+    expect(
+      filterPullRequestList(
+        result.entries,
+        { ...DEFAULT_PR_LIST_CONTROLS, filters: { draft: "only" } },
+        head.viewers,
+        "",
+        new Set(),
+      ),
+    ).toHaveLength(0);
+    const closed = patchPullRequestListEntry(result, head, row, { state: "closed" }, 6)!;
+    expect(
+      filterPullRequestList(
+        closed.entries,
+        DEFAULT_PR_LIST_CONTROLS,
+        head.viewers,
+        "",
+        new Set(),
+      ).map((item) => item.number),
+    ).toEqual([3]);
+    expect(
+      filterPullRequestList(
+        closed.entries,
+        { ...DEFAULT_PR_LIST_CONTROLS, state: "closed" },
+        head.viewers,
+        "",
+        new Set(),
+      ).map((item) => item.number),
+    ).toEqual([1]);
+  });
+  it("does not patch a different project's copy or create unknown rows", () => {
+    const row = entry(1);
+    const other = entry(1, { projectId: "other" as PullRequestListEntry["projectId"] });
+    const head = page([other]);
+    const pages = pullRequestListHead(null, head);
+    expect(patchPullRequestListEntry(pages, head, row, { state: "closed" }, 5)).toBe(pages);
   });
   it("refreshes the head without dropping older loaded pages or rewinding their cursor", () => {
     const first = pullRequestListHead(null, page([entry(3)], { repo: "first" }));

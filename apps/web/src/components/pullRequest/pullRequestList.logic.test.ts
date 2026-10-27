@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   pullRequestHostActions,
+  pullRequestOverrideAfterAction,
   largestPullRequestReadCount,
   pullRequestQuickActions,
   filterPullRequestsByInvolvement,
@@ -821,5 +822,42 @@ describe("filter picker choices", () => {
       { name: "size:XL", color: "d93f0b", count: 7 },
       { name: "bug", color: null, count: 0 },
     ]);
+  });
+});
+
+describe("confirmed pull request actions", () => {
+  const result = {
+    state: "open" as const,
+    isDraft: false,
+    updatedAt: "2026-07-03T00:00:00Z",
+    mergedAt: null,
+    closedAt: null,
+    autoMergeEnabled: true,
+    autoMergeMethod: "squash" as const,
+    observedAt: 300,
+  };
+
+  it("keeps an accepted auto-merge open and uses the host date", () => {
+    const row = entry({ number: 1 });
+    const override = pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, result)!;
+    const shown = applyPullRequestOverrides(
+      [row],
+      new Map([["row", override]]),
+      () => "row",
+      "open",
+    );
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({ state: "open", updatedAt: result.updatedAt, observedAt: 300 });
+    expect(pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, null)?.state).toBe(
+      "merged",
+    );
+  });
+
+  it("keeps a newer host read when an older action result arrives", () => {
+    const row = entry({ number: 1, state: "closed", observedAt: 400 });
+    const override = pullRequestOverrideAfterAction(row, "reopen", new Date(900), 1, result)!;
+    expect(
+      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "closed"),
+    ).toEqual([row]);
   });
 });

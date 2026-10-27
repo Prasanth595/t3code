@@ -60,6 +60,15 @@ it("tells watching a pull request apart from unwatching it", () => {
 });
 
 it("reads RPC variants from enums, never from paths or text", () => {
+  for (const method of [
+    WS_METHODS.pullRequestsRunAction,
+    WS_METHODS.pullRequestsRunActionWithResult,
+  ]) {
+    expect(featureUsage(method, { action: "close", repository: "owner/private" })).toEqual({
+      feature: "pull_request.action",
+      variant: "close",
+    });
+  }
   expect(
     featureUsage(WS_METHODS.shellOpenInEditor, { cwd: "/Users/someone/secret", editor: "cursor" }),
   ).toEqual({ feature: "editor.open", variant: "cursor" });

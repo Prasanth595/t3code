@@ -26,8 +26,11 @@ import * as ConnectionProfileStore from "../connection/profileStore.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   requestGuarded as request,
+  getInitialServerConfig,
   EnvironmentRpcUnavailableError,
   type EnvironmentRpcInput,
+  type EnvironmentRpcFailure,
+  type EnvironmentRpcSuccess,
   type EnvironmentUnaryRpcTag,
 } from "../rpc/client.ts";
 
@@ -50,6 +53,7 @@ const reads = new Set<string>([
 const writes = new Set<string>([
   WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,
+  WS_METHODS.pullRequestsRunActionWithResult,
   WS_METHODS.pullRequestsUpdate,
   WS_METHODS.pullRequestsComment,
   WS_METHODS.pullRequestsUpdateComment,
@@ -92,6 +96,31 @@ const encodeKey = Schema.encodeSync(
 type PendingMetadata<A> = WeakMap<RpcSession, Map<string, Deferred.Deferred<Exit.Exit<A>>>>;
 const pendingRouting: PendingMetadata<PullRequestRoutingResult | null> = new WeakMap();
 const pendingIdentities: PendingMetadata<PullRequestRoutingIdentityResult | null> = new WeakMap();
+
+const requestFromDestination = Effect.fn("PullRequestRouting.requestFromDestination")(function* <
+  T extends EnvironmentUnaryRpcTag,
+>(tag: T, input: EnvironmentRpcInput<T>) {
+  if (tag === WS_METHODS.pullRequestsRunActionWithResult) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const config = yield* getInitialServerConfig().pipe(
+      Effect.mapError(
+        () =>
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: "The environment configuration is unavailable.",
+          }),
+      ),
+    );
+    if (config.environment.capabilities.pullRequestActionResults !== true) {
+      yield* request(
+        WS_METHODS.pullRequestsRunAction,
+        input as EnvironmentRpcInput<typeof WS_METHODS.pullRequestsRunAction>,
+      ).pipe(Effect.mapError((error) => error as EnvironmentRpcFailure<T>));
+      return null as EnvironmentRpcSuccess<T>;
+    }
+  }
+  return yield* request(tag, input);
+});
 
 function shareMetadataRead<A, R>(
   pending: PendingMetadata<A>,
@@ -239,7 +268,7 @@ export function createPullRequestRouter() {
   const routedRequest = Effect.fn("PullRequestRouting.request")(function* <
     T extends EnvironmentUnaryRpcTag,
   >(tag: T, input: EnvironmentRpcInput<T>, sourceRead?: ReturnType<typeof request<T>>) {
-    const source = sourceRead ?? request(tag, input);
+    const source = sourceRead ?? requestFromDestination(tag, input);
     if (tag === WS_METHODS.pullRequestsInvalidate && isInvalidation(input)) {
       const result = yield* request(tag, input);
       const origin = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -363,7 +392,8 @@ export function createPullRequestRouter() {
       host: identity.host,
       expectedAccountId: identity.accountId,
     };
-    const guardedSource = sourceRead ?? (yield* Effect.cached(request(tag, routedInput)));
+    const guardedSource =
+      sourceRead ?? (yield* Effect.cached(requestFromDestination(tag, routedInput)));
     const local = alternatives.filter((entry) => entry.local);
     const remote = alternatives.filter((entry) => !entry.local);
     const sourceLocal = sourceEntry !== undefined && isLocal(sourceEntry);
@@ -377,7 +407,7 @@ export function createPullRequestRouter() {
     const run = (id: EnvironmentId): ReturnType<typeof request<T>> =>
       (id === origin.target.environmentId
         ? guardedSource
-        : registry.run(id, request(tag, routedInput))
+        : registry.run(id, requestFromDestination(tag, routedInput))
       ).pipe(
         Effect.tap((result) =>
           id !== origin.target.environmentId && hasState(result)
