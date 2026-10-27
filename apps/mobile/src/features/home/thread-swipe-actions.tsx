@@ -1,3 +1,5 @@
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
+
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -21,7 +23,7 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -139,6 +141,17 @@ export function SwipeableScrollGateProvider(props: {
   );
 }
 
+/**
+ * Which edge the swipe actions dock on. Android phones keep them reachable on a
+ * rightward swipe so the rows inside the threads drawer are not fighting the
+ * drawer's leftward close gesture; every other surface keeps the classic left
+ * reveal.
+ */
+export function useSwipeRowSide(): "left" | "right" {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  return Platform.OS === "android" && !layout.usesSplitView ? "left" : "right";
+}
+
 /** Trackpads can start pans mid-momentum, bypassing failOffsetY; disable swipes during vertical scrolls. */
 export function useSwipeableScrollGate(options?: {
   readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -231,11 +244,16 @@ interface ThreadSwipeableProps {
   readonly secondaryAction?: ThreadSwipeAction | null;
   readonly resetKey?: string;
   readonly dormant?: boolean;
+  /** Which row edge the actions dock to; "left" reveals them on a rightward swipe. */
+  readonly side?: "left" | "right";
   readonly simultaneousWith?: ComponentProps<typeof ReanimatedSwipeable>["simultaneousWith"];
   readonly threadTitle: string;
 }
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
+  const swipeRowSide = props.side ?? "right";
+  // Right-side actions reveal on negative (leftward) translation; left-side on positive.
+  const revealMultiplier = swipeRowSide === "left" ? 1 : -1;
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
   const actionsWidth = swipeActionsWidth(hasSecondaryAction);
@@ -389,13 +407,13 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     (translation: SharedValue<number>) => {
       "worklet";
       if (dismissing.value) return true;
-      if (-translation.value >= fullSwipeThreshold) {
+      if (translation.value * revealMultiplier >= fullSwipeThreshold) {
         runOnJS(commitFullSwipe)();
         return true;
       }
       return false;
     },
-    [commitFullSwipe, dismissing, fullSwipeThreshold],
+    [commitFullSwipe, dismissing, fullSwipeThreshold, revealMultiplier],
   );
   const handleFullSwipeArmedChange = useCallback(
     (armed: boolean) => {
@@ -419,7 +437,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
   const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
-  const renderRightActions = (
+  const renderActions = (
     _progress: SharedValue<number>,
     translation: SharedValue<number>,
     methods: SwipeableMethods,
@@ -464,6 +482,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
             secondaryAction,
             threadTitle,
           })}
+          side={swipeRowSide}
           translation={translation}
         />
       </Animated.View>
@@ -490,7 +509,13 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           animationOptions={THREAD_SWIPE_SPRING}
           childrenContainerStyle={childrenContainerStyle}
           containerStyle={swipeableContainerStyle}
-          dragOffsetFromRight={-8}
+          {...(swipeRowSide === "left"
+            ? { dragOffsetFromLeft: -8, overshootLeft: true, leftThreshold: actionsWidth * 0.42 }
+            : {
+                dragOffsetFromRight: -8,
+                overshootRight: true,
+                rightThreshold: actionsWidth * 0.42,
+              })}
           enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
@@ -501,9 +526,9 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           onSwipeableOpenStartDrag={handleWillOpen}
           onSwipeableWillOpen={handleWillOpen}
           overshootFriction={1}
-          overshootRight
-          renderRightActions={renderRightActions}
-          rightThreshold={actionsWidth * 0.42}
+          {...(swipeRowSide === "left"
+            ? { renderLeftActions: renderActions }
+            : { renderRightActions: renderActions })}
           simultaneousWith={props.simultaneousWith}
         >
           {
@@ -529,6 +554,8 @@ function SwipeActionButton(props: {
   readonly menu?: ThreadSwipeAction["menu"];
   readonly onPress: () => void;
   readonly stretchesOnFullSwipe: boolean;
+  /** Which row edge the actions dock to: "right" reveals on a leftward drag, "left" on a rightward one. */
+  readonly side: "left" | "right";
   readonly translation: SharedValue<number>;
 }) {
   const {
@@ -540,8 +567,9 @@ function SwipeActionButton(props: {
   } = props;
   const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE;
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
+  const revealMultiplier = props.side === "left" ? 1 : -1;
   const actionStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealMultiplier, 0);
     const entryProgress = interpolate(
       reveal,
       [entryRangeStart, entryRangeEnd],
@@ -568,7 +596,7 @@ function SwipeActionButton(props: {
     };
   });
   const circleStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealMultiplier, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
@@ -577,7 +605,7 @@ function SwipeActionButton(props: {
     };
   });
   const iconStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealMultiplier, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
     const armedProgress = interpolate(
       reveal,
@@ -595,7 +623,7 @@ function SwipeActionButton(props: {
       return { opacity: 1 };
     }
 
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealMultiplier, 0);
     const stretch = Math.max(reveal - actionsWidth, 0);
     return {
       opacity: interpolate(
@@ -719,13 +747,15 @@ export function ThreadSwipeActions(props: {
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
   readonly primaryAction: ThreadSwipeAction;
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
+  readonly side: "left" | "right";
   readonly translation: SharedValue<number>;
 }) {
   const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
+  const revealMultiplier = props.side === "left" ? 1 : -1;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
   const actionsWidth = swipeActionsWidth(secondaryAction !== null);
   useAnimatedReaction(
-    () => -translation.value >= fullSwipeThreshold,
+    () => translation.value * revealMultiplier >= fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
         runOnJS(onFullSwipeArmedChange)(armed);
@@ -758,6 +788,7 @@ export function ThreadSwipeActions(props: {
         label={props.primaryAction.label}
         onPress={props.primaryAction.onPress}
         stretchesOnFullSwipe={fullSwipeIsPrimary}
+        side={props.side}
         translation={props.translation}
       />
       {secondaryAction === null ? null : (
@@ -773,6 +804,7 @@ export function ThreadSwipeActions(props: {
           menu={secondaryAction.menu}
           onPress={secondaryAction.onPress}
           stretchesOnFullSwipe={!fullSwipeIsPrimary}
+          side={props.side}
           translation={props.translation}
         />
       )}

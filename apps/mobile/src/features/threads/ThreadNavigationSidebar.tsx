@@ -101,6 +101,8 @@ interface ThreadNavigationSidebarProps {
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
+  /** Android drawer: tapping the brand returns to the home thread list. */
+  readonly onOpenHome?: () => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
   readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
@@ -863,7 +865,7 @@ function ThreadNavigationSidebarPane(
           <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
             <WorkspaceConnectionTitle
               grow
-              onPress={props.onOpenEnvironmentSettings}
+              onPress={props.onOpenHome ?? props.onOpenEnvironmentSettings}
               size="pageTitle"
               brand={
                 <View className="h-11 flex-1 justify-center">

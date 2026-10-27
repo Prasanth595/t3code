@@ -57,7 +57,7 @@ import {
 } from "../../state/thread-pr-presentation";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { ThreadSwipeable, useSwipeRowSide } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -359,6 +359,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 }) {
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const { width: windowWidth } = useWindowDimensions();
+  const swipeRowSide = useSwipeRowSide();
   const dormant = useSwipeRowDormant(props.activationKey);
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
@@ -514,6 +515,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         <ThreadListV2SectionDivider label="Unsent" pane={props.pane} />
       ) : null}
       <ThreadSwipeable
+        side={swipeRowSide}
         dormant={dormant}
         threadKey={pendingTask.key}
         backgroundColor={rowAppearance.swipeBackgroundColor}
@@ -539,8 +541,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             <RowPressable
               accessibilityHint={
                 isDraft
-                  ? `Opens the draft in the new task composer. Swipe left to ${deleteLabel.toLowerCase()}.`
-                  : `Sends when the environment reconnects. Opens the task for editing. Swipe left to ${deleteLabel.toLowerCase()}.`
+                  ? `Opens the draft in the new task composer. Swipe ${swipeRowSide === "left" ? "right" : "left"} to ${deleteLabel.toLowerCase()}.`
+                  : `Sends when the environment reconnects. Opens the task for editing. Swipe ${swipeRowSide === "left" ? "right" : "left"} to ${deleteLabel.toLowerCase()}.`
               }
               accessibilityLabel={pendingTask.title}
               accessibilityRole="button"
@@ -625,6 +627,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
+  const swipeRowSide = useSwipeRowSide();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
@@ -1019,8 +1022,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const swipeAccessibilityHint = !canOperateThread
     ? "Opens the thread"
     : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+      ? `Opens the thread. Swipe ${swipeRowSide === "left" ? "right" : "left"} to ${primaryAction.label.toLowerCase()}.`
+      : `Opens the thread. Swipe ${swipeRowSide === "left" ? "right" : "left"} for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1378,6 +1381,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
       <ThreadSwipeable
+        side={swipeRowSide}
         dormant={dormant}
         threadKey={`${thread.environmentId}:${thread.id}`}
         backgroundColor={rowAppearance.swipeBackgroundColor}

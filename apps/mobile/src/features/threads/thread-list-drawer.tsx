@@ -34,8 +34,13 @@ import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context
 const DRAWER_MAX_WIDTH = 360;
 const DRAWER_WIDTH_RATIO = 0.86;
 const DRAWER_OPEN_DURATION = 260;
-const DRAWER_OPEN_ACTIVATION_DISTANCE = 24;
-const DRAWER_CLOSE_ACTIVATION_DISTANCE = 24;
+// 12px, just above touch slop: a swipe activates the pan fast enough that the
+// feed's native TextView cancels its pending long-press instead of starting a
+// text selection mid-swipe (a 24px activation left a ~400ms window where a slow
+// or hesitant swipe was eaten by the long-press timer and selected text).
+const DRAWER_OPEN_ACTIVATION_DISTANCE = 12;
+const DRAWER_CLOSE_ACTIVATION_DISTANCE = 12;
+// Vertical drift above this fails the pan, so feed scrolling still wins.
 const DRAWER_VERTICAL_FAIL_DISTANCE = 18;
 const DRAWER_OPEN_COMMIT_RATIO = 0.35;
 const DRAWER_CLOSE_COMMIT_RATIO = 0.35;
