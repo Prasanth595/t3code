@@ -664,8 +664,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               : value,
           (value, reference, result) =>
             sameActionReference(input, reference) &&
-            result.headSha !== undefined &&
-            value.headSha !== result.headSha,
+            ((value.state === "closed" && result.state === "open") ||
+              (result.headSha !== undefined && value.headSha !== result.headSha)),
           onAnswer.detail,
         ),
       staleTimeMs: 60_000,

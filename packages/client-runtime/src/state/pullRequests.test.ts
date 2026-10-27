@@ -1335,6 +1335,66 @@ it.effect.each(["loaded", "pending", "account-pinned"])(
     ),
 );
 
+it.effect.each([false, true])(
+  "refreshes branch permissions on reopening with the same head, pending=%s",
+  (pending) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let state: "open" | "closed" = "closed";
+        let reads = 0;
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = actionResultClient({
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.gen(function* () {
+              reads++;
+              const snapshot = {
+                ...actionReference,
+                state,
+                headSha: "same-head",
+                baseComparison: state === "open" ? "behind" : "unknown",
+                viewerPermissions: { actions: state === "open" ? ["update-branch"] : [] },
+                observedAt: reads === 1 ? 100 : 300,
+              };
+              if (pending && reads === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return snapshot;
+            }),
+          [WS_METHODS.pullRequestsRunActionWithResult]: () =>
+            Effect.sync(() => {
+              state = "open";
+              return {
+                ...confirmedActionResult,
+                state,
+                headSha: "same-head",
+                mergedAt: null,
+                closedAt: null,
+              };
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const detail = atoms.detail(target);
+        registry.mount(detail);
+        if (pending) yield* Deferred.await(started);
+        else yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "reopen" },
+          }),
+        );
+        if (pending) yield* Deferred.succeed(release, undefined);
+        const result = yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+        expect(result.baseComparison).toBe("behind");
+        expect(result.viewerPermissions?.actions).toContain("update-branch");
+        expect(reads).toBe(2);
+      }),
+    ),
+);
+
 it.effect(
   "keeps a confirmed result and checks read time when an earlier detail read finishes late",
   () =>
