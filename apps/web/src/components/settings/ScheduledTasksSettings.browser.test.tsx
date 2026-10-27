@@ -12,6 +12,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -38,7 +39,18 @@ const task: ScheduledTask = {
   runCount: 0,
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true }));
+const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, remove: vi.fn() }));
+
+function setup() {
+  state.connected = true;
+  state.tasksLoaded = true;
+  state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: { id: task.id } });
+}
+
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
 
 function environment() {
   return {
@@ -74,6 +86,10 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      deleteScheduledTask: {
+        ...actual.serverEnvironment.deleteScheduledTask,
+        run: state.remove,
+      },
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: () => allowed,
@@ -105,9 +121,36 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it("only deletes a scheduled task after confirmation, including after cancelling", async () => {
+    setup();
+    await using screen = await render(
+      <>
+        <ScheduledTasksSettings />
+        <ConfirmDialogHost />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+    expect(state.remove).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+    expect(state.remove).not.toHaveBeenCalled();
+    await expect
+      .element(screen.getByRole("button", { name: "Actions for Review issues" }))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await userEvent.click(page.getByRole("button", { name: "Confirm", exact: true }));
+    await vi.waitFor(() =>
+      expect(state.remove).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId,
+        input: { id: task.id },
+      }),
+    );
+  });
+
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
-    state.connected = true;
-    state.tasksLoaded = true;
+    setup();
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
@@ -124,7 +167,7 @@ describe("ScheduledTasksSettings", () => {
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {
-    state.connected = true;
+    setup();
     state.tasksLoaded = false;
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     await userEvent.click(page.getByRole("button", { name: "New task" }));
