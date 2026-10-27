@@ -66,23 +66,26 @@ function pdfFindText(runs: readonly string[]) {
     Array.from(run.toLowerCase(), (char) => ({ char, run: index })),
   );
   let text = "";
+  let last = "";
   const owner: number[] = [];
   for (let index = 0; index < chars.length; index++) {
     const { char, run } = chars[index]!;
     if (/\s/.test(char)) {
       if (!text.endsWith(" ")) {
         text += " ";
+        last = " ";
         owner.push(run);
       }
     } else if (
       char === "-" &&
       chars[index + 1]?.char === "\n" &&
-      /\p{L}/u.test(text.at(-1) ?? "") &&
+      /\p{L}/u.test(last) &&
       /\p{L}/u.test(chars[index + 2]?.char ?? "")
     ) {
       index++;
     } else {
       text += char;
+      last = char;
       for (let unit = 0; unit < char.length; unit++) owner.push(run);
     }
   }

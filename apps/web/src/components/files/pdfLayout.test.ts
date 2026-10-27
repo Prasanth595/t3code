@@ -120,6 +120,14 @@ describe("pdfFindMatchRuns", () => {
     ]);
   });
 
+  it("drops a line-end hyphen after a letter outside the BMP", () => {
+    expect(pdfFindMatchRuns(["\u{10400}-", "\n", "\u{10401}"], "\u{10400}\u{10401}")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
   it("finds the same pages the highlights do", () => {
     const page = "Q3 quarterly\noutlook ahead, the quar-\nterly report";
     expect(pdfFindIncludes(page, "Quarterly  OUTLOOK")).toBe(true);
