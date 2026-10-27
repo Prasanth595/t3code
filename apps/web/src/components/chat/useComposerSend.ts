@@ -1133,7 +1133,13 @@ export function useComposerSend(input: ComposerSendInput) {
           ? { inputIntent: "steer" as const }
           : {}),
     };
-    optimisticBlobPreviews.track(optimisticMessage);
+    // After leaving the thread during an upload, its previews were already released and the
+    // message is never shown, so tracking them would keep them alive past the thread.
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      optimisticBlobPreviews.track(optimisticMessage);
+    } else {
+      optimisticBlobPreviews.release(optimisticMessage);
+    }
     setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {

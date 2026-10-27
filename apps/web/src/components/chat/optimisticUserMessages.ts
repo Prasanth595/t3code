@@ -119,15 +119,22 @@ export function createOptimisticBlobPreviews(): OptimisticBlobPreviews {
   };
 }
 
+// Server asset URLs carry a signed token, so the error keeps only where the image was loaded from.
 class ImagePreloadError extends Schema.TaggedError<ImagePreloadError>()("ImagePreloadError", {
-  url: Schema.String,
-}) {}
+  protocol: Schema.String,
+  host: Schema.String,
+}) {
+  static fromUrl(url: string) {
+    const parsed = URL.parse(url, globalThis.location?.href);
+    return new ImagePreloadError({ protocol: parsed?.protocol ?? "", host: parsed?.host ?? "" });
+  }
+}
 
 const preloadImage = Effect.fn("optimisticUserMessages.preloadImage")(function* (url: string) {
   yield* Effect.callback<void, ImagePreloadError>((resume) => {
     const image = new Image();
     image.addEventListener("load", () => resume(Effect.void), { once: true });
-    image.addEventListener("error", () => resume(Effect.fail(new ImagePreloadError({ url }))), {
+    image.addEventListener("error", () => resume(Effect.fail(ImagePreloadError.fromUrl(url))), {
       once: true,
     });
     image.src = url;
