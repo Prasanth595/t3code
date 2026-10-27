@@ -93,13 +93,21 @@ export function resolveCitationPhase(input: {
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
   const source = input.entries.find(
-    (entry) => (entry.kind === "message" && entry.message.id === input.messageId) || (entry.kind === "html-render" && entry.id === input.messageId),
+    (entry) =>
+      (entry.kind === "message" && entry.message.id === input.messageId) ||
+      (entry.kind === "html-render" && entry.id === input.messageId),
   );
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
-  if (source.kind !== "html-render" && (source.kind !== "message" || source.message.role !== "assistant")) return { _tag: "failed" };
+  if (
+    source.kind !== "html-render" &&
+    (source.kind !== "message" || source.message.role !== "assistant")
+  )
+    return { _tag: "failed" };
   const row = input.rows.find(
-    (candidate) => (candidate.kind === "message" && candidate.message.id === input.messageId) || (candidate.kind === "html-render" && candidate.id === input.messageId),
+    (candidate) =>
+      (candidate.kind === "message" && candidate.message.id === input.messageId) ||
+      (candidate.kind === "html-render" && candidate.id === input.messageId),
   );
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
@@ -130,10 +138,19 @@ export function citedThreadSnapshot(input: {
   const item = input.thread.projection.visibleTurnItems.find(
     (row) =>
       ((row.item.type === "assistant_message" || row.item.type === "user_message") &&
-      row.item.messageId === input.messageId) || (row.item.type === "dynamic_tool" && row.item.status === "completed" && row.item.id === input.messageId && htmlRenderFromToolItem(row.item) !== undefined),
+        row.item.messageId === input.messageId) ||
+      (row.item.type === "dynamic_tool" &&
+        row.item.status === "completed" &&
+        row.item.id === input.messageId &&
+        htmlRenderFromToolItem(row.item) !== undefined),
   )?.item;
   return {
-    message: item === undefined ? null : item.type === "assistant_message" || item.type === "dynamic_tool" ? "assistant" : "other",
+    message:
+      item === undefined
+        ? null
+        : item.type === "assistant_message" || item.type === "dynamic_tool"
+          ? "assistant"
+          : "other",
     hasMoreHistory: input.history.hasMoreHistory,
   };
 }
