@@ -9,6 +9,7 @@ import {
   pruneNewTaskFlowStates,
   readNewTaskFlowState,
   resolveRouteDraft,
+  stampedEnvironmentProjectsLoading,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
 
@@ -68,6 +69,7 @@ describe("resolveRouteDraft", () => {
     draftsLoaded: true,
     stamp,
     projects: [project],
+    stampedEnvironmentLoading: false,
   };
 
   it("binds the route's draft and its stamped project", () => {
@@ -87,11 +89,26 @@ describe("resolveRouteDraft", () => {
     expect(resolveRouteDraft({ ...base, flow })).toEqual({ kind: "none" });
   });
 
-  it("waits for hydration, and for projects while none have loaded", () => {
+  it("waits for hydration, and for the stamped environment's projects", () => {
     expect(resolveRouteDraft({ ...base, draftsLoaded: false, stamp: undefined })).toEqual({
       kind: "pending",
     });
-    expect(resolveRouteDraft({ ...base, projects: [] })).toEqual({ kind: "pending" });
+    expect(resolveRouteDraft({ ...base, projects: [], stampedEnvironmentLoading: true })).toEqual({
+      kind: "pending",
+    });
+  });
+
+  it("waits for a slower environment's projects while another environment's have loaded", () => {
+    const environmentB = EnvironmentId.make("env-b");
+    const projectB = { environmentId: environmentB, id: ProjectId.make("project-b") };
+    const stampB = { environmentId: environmentB, projectId: projectB.id };
+
+    expect(resolveRouteDraft({ ...base, stamp: stampB, stampedEnvironmentLoading: true })).toEqual({
+      kind: "pending",
+    });
+    expect(
+      resolveRouteDraft({ ...base, stamp: stampB, projects: [project, projectB] }),
+    ).toMatchObject({ kind: "open", flow: { environmentId: environmentB } });
   });
 
   it("reports a draft that is gone or whose project is gone", () => {
@@ -99,5 +116,39 @@ describe("resolveRouteDraft", () => {
     expect(
       resolveRouteDraft({ ...base, projects: [{ environmentId, id: ProjectId.make("other") }] }),
     ).toEqual({ kind: "missing" });
+  });
+});
+
+describe("stampedEnvironmentProjectsLoading", () => {
+  const settled = {
+    connectionsReady: true,
+    connectionState: "connected" as const,
+    shellCacheRead: true,
+    shellStatus: "live" as const,
+    shellHasError: false,
+  };
+
+  it("waits while the environment is still delivering its first project list", () => {
+    expect(stampedEnvironmentProjectsLoading({ ...settled, connectionsReady: false })).toBe(true);
+    expect(stampedEnvironmentProjectsLoading({ ...settled, shellCacheRead: false })).toBe(true);
+    expect(stampedEnvironmentProjectsLoading({ ...settled, connectionState: "connecting" })).toBe(
+      true,
+    );
+    expect(stampedEnvironmentProjectsLoading({ ...settled, shellStatus: "synchronizing" })).toBe(
+      true,
+    );
+  });
+
+  it("settles once the list is live, or when nothing more will arrive", () => {
+    expect(stampedEnvironmentProjectsLoading(settled)).toBe(false);
+    expect(stampedEnvironmentProjectsLoading({ ...settled, connectionState: null })).toBe(false);
+    expect(
+      stampedEnvironmentProjectsLoading({
+        ...settled,
+        connectionState: "reconnecting",
+        shellStatus: "synchronizing",
+      }),
+    ).toBe(false);
+    expect(stampedEnvironmentProjectsLoading({ ...settled, shellHasError: true })).toBe(false);
   });
 });

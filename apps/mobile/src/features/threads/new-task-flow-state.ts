@@ -1,3 +1,5 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -86,6 +88,8 @@ export function resolveRouteDraft(input: {
     readonly environmentId: EnvironmentId;
     readonly id: ProjectId;
   }>;
+  /** See `stampedEnvironmentProjectsLoading`. */
+  readonly stampedEnvironmentLoading: boolean;
 }): RouteDraftResolution {
   const { routeDraftId, stamp } = input;
   if (routeDraftId === undefined || input.flow.draftKey !== null) return { kind: "none" };
@@ -97,7 +101,7 @@ export function resolveRouteDraft(input: {
   const loaded = input.projects.some(
     (project) => project.environmentId === stamp.environmentId && project.id === stamp.projectId,
   );
-  if (!loaded) return input.projects.length === 0 ? { kind: "pending" } : { kind: "missing" };
+  if (!loaded) return input.stampedEnvironmentLoading ? { kind: "pending" } : { kind: "missing" };
   return {
     kind: "open",
     flow: {
@@ -107,6 +111,29 @@ export function resolveRouteDraft(input: {
       draftKey: routeDraftId,
     },
   };
+}
+
+/**
+ * Whether the stamped environment may still deliver its project list. An
+ * unknown, offline, or failed environment is settled, so a project it lacks
+ * sends the route back to the picker. Mirrors `threadRouteIsHydrating`.
+ */
+export function stampedEnvironmentProjectsLoading(input: {
+  readonly connectionsReady: boolean;
+  readonly connectionState: EnvironmentConnectionPhase | null;
+  readonly shellCacheRead: boolean;
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly shellHasError: boolean;
+}): boolean {
+  if (input.shellHasError) return false;
+  if (!input.connectionsReady) return true;
+  if (input.connectionState === null) return false;
+  if (!input.shellCacheRead) return true;
+  // Only a first attempt is worth waiting out; a reconnecting environment's
+  // retries leave its shell synchronizing.
+  if (input.connectionState === "connecting") return true;
+  if (input.connectionState !== "connected") return false;
+  return input.shellStatus === "synchronizing" || input.shellStatus === "empty";
 }
 
 interface NavigationRoutes {

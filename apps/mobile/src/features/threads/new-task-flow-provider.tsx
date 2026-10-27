@@ -100,8 +100,11 @@ import {
   readNewTaskFlowState,
   resolveRouteDraft,
   type RouteDraftResolution,
+  stampedEnvironmentProjectsLoading,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
+import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -242,6 +245,22 @@ export function NewTaskFlowProvider(
   const routeDraft = useComposerDraft(
     storedFlowState.draftKey === null ? (props.routeDraftId ?? null) : null,
   );
+  // Readiness of the environment the route's draft is stamped to; another
+  // environment's projects loading first says nothing about it.
+  const stampedEnvironmentId = routeDraft.project?.environmentId ?? null;
+  const connectionsReady = useConnectionsReady();
+  const stampedEnvironmentConnection =
+    useWorkspaceEnvironments().find(
+      (environment) => environment.environmentId === stampedEnvironmentId,
+    )?.connectionState ?? null;
+  const stampedEnvironmentShell = useEnvironmentShellReadiness(stampedEnvironmentId);
+  const stampedEnvironmentLoading = stampedEnvironmentProjectsLoading({
+    connectionsReady,
+    connectionState: stampedEnvironmentConnection,
+    shellCacheRead: stampedEnvironmentShell.cacheRead,
+    shellStatus: stampedEnvironmentShell.status,
+    shellHasError: stampedEnvironmentShell.hasError,
+  });
   const resolveRoute = (
     flow: NewTaskFlowState,
     loaded: boolean,
@@ -253,6 +272,7 @@ export function NewTaskFlowProvider(
       draftsLoaded: loaded,
       stamp,
       projects,
+      stampedEnvironmentLoading,
     });
   const routeDraftResolution = resolveRoute(storedFlowState, draftsLoaded, routeDraft.project);
   const flowState =
