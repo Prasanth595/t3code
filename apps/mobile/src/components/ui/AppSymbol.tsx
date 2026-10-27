@@ -111,6 +111,7 @@ import IconSearch from "@tabler/icons-react-native/IconSearch";
 import IconShare from "@tabler/icons-react-native/IconShare";
 import IconServer from "@tabler/icons-react-native/IconServer";
 import IconSettings from "@tabler/icons-react-native/IconSettings";
+import IconSparkles from "@tabler/icons-react-native/IconSparkles";
 import IconStack2 from "@tabler/icons-react-native/IconStack2";
 import IconStar from "@tabler/icons-react-native/IconStar";
 import IconStarFilled from "@tabler/icons-react-native/IconStarFilled";
@@ -272,6 +273,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "exclamationmark.shield": IconShieldQuestion,
   "bubble.left.and.bubble.right": IconMessage,
   "bubble.left": IconMessage,
+  sparkles: IconSparkles,
   "plus.bubble": IconMessagePlus,
   "ellipsis.bubble": IconMessageDots,
   robot: IconRobot,
@@ -310,6 +312,7 @@ const SF_ICON_LOOKUP: Partial<
 > = ANDROID_ICON_BY_SF_SYMBOL;
 
 const ANDROID_ICON_BY_MATERIAL_NAME = {
+  auto_awesome: IconSparkles,
   bolt: IconBolt,
   build: IconTool,
   chat: IconMessage,
