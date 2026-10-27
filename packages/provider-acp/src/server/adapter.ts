@@ -3878,12 +3878,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* rearmDeferredFinalize(context);
         });
 
-        /** Notices have no id; each is its own item, numbered by the turn's item count. */
+        /**
+         * Notices have no id; each is its own item, numbered by the turn's item count.
+         * A notice is not conversation content, so an open message keeps streaming across it.
+         */
         const emitNotice = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           notice: { readonly title: string; readonly description?: string },
         ) {
-          yield* closeTextStreams(context);
           const nativeItemId = `${context.nativeTurnId}:notice:${context.itemOrdinals.size}`;
           const now = yield* DateTime.now;
           yield* emitProviderEvent({

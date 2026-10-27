@@ -1172,7 +1172,17 @@ const program = Effect.gen(function* () {
       }
 
       if (emitNotice) {
-        // fx 0.0.14's shape for a skipped skill.
+        // A notice in fx 0.0.14's shape for a skipped skill, between two chunks of one message.
+        const chunk = (text: string) =>
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "mock-notice-message",
+              content: { type: "text", text },
+            },
+          });
+        chunk("before the notice, ");
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
           update: {
@@ -1181,6 +1191,8 @@ const program = Effect.gen(function* () {
             title: "skill discovery warning: candidate was skipped because its metadata is invalid",
           },
         });
+        chunk("after the notice");
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (emitV2Fidelity) {

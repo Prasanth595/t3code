@@ -2129,9 +2129,13 @@ describe("AcpAdapterV2", () => {
         items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
         [title],
       );
-      assert.isFalse(
-        items.some((item) => item.type === "assistant_message" && item.text.includes(title)),
-        "a notice is not part of the reply",
+      const replies = new Map(
+        items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
+      );
+      assert.deepEqual(
+        [...replies.values()],
+        ["before the notice, after the notice"],
+        "a notice neither joins the reply nor splits it",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
