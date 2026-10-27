@@ -1774,6 +1774,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...options.clientCapabilities?.fs,
     },
     terminal: options.clientCapabilities?.terminal ?? false,
+    // ACP v1 agents send session notices only to clients that advertise them; v2 needs no capability.
+    session: { ...options.clientCapabilities?.session, notices: {} },
     ...(options.clientCapabilities?.auth ? { auth: options.clientCapabilities.auth } : {}),
     ...(options.clientCapabilities?.elicitation
       ? { elicitation: options.clientCapabilities.elicitation }
@@ -2221,10 +2223,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       );
     }
     const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
-      Effect.catch((error) =>
-        !isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false
-          ? Effect.fail(error)
-          : authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
+      Effect.catchIf(
+        (error) =>
+          !(!isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false),
+        (error) => authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
       ),
     );
 
@@ -2578,12 +2580,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           ),
           (activePrompt) =>
             Fiber.join(activePrompt.fiber).pipe(
-              Effect.catchCause((cause) =>
-                options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed({
-                      stopReason: "cancelled",
-                    } satisfies EffectAcpSchema.PromptResponse)
-                  : Effect.failCause(cause),
+              Effect.catchCauseIf(
+                (cause) =>
+                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+                (_cause) =>
+                  Effect.succeed({
+                    stopReason: "cancelled",
+                  } satisfies EffectAcpSchema.PromptResponse),
               ),
               Effect.tap(() =>
                 closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
