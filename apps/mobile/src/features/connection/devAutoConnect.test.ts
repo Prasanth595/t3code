@@ -4,21 +4,43 @@ import { expect, it, vi } from "vite-plus/test";
 const harness = vi.hoisted(() => ({
   pair: vi.fn(),
   goBack: vi.fn(),
-  currentRoute: "SettingsEnvironmentNew",
+  dispatch: vi.fn(),
+  columns: false,
+  // The root stack the form sits on when pairing succeeds.
+  rootState: {
+    key: "root",
+    index: 2,
+    routes: [
+      { key: "home", name: "Home" },
+      { key: "settings", name: "Settings" },
+      { key: "new", name: "SettingsEnvironmentNew" },
+    ],
+  },
+  // Navigation that is not ready yet holds callbacks here until the test flushes them.
+  deferred: null as Array<() => void> | null,
 }));
 
 vi.mock("@react-navigation/native", () => ({ StackActions: { replace: vi.fn() } }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   pairEnvironment: harness.pair,
 }));
+vi.mock("../workspace/workspace-selection-store", () => ({
+  workspaceHasColumns: () => harness.columns,
+}));
 vi.mock("../../lib/rootNavigation", () => ({
   rootNavigationRef: {
-    getCurrentRoute: () => ({ name: harness.currentRoute }),
+    getCurrentRoute: () => harness.rootState.routes[harness.rootState.index],
+    getRootState: () => harness.rootState,
+    getState: () => harness.rootState,
+    getParent: () => undefined,
     canGoBack: () => true,
     goBack: harness.goBack,
-    dispatch: vi.fn(),
+    dispatch: harness.dispatch,
   },
-  whenRootNavigationReady: (navigate: () => void) => navigate(),
+  whenRootNavigationReady: (navigate: () => void) => {
+    if (harness.deferred) harness.deferred.push(navigate);
+    else navigate();
+  },
 }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -121,4 +143,51 @@ it("keeps Connect busy while the auto-connect runs, even after the user edits th
   });
   expect(autoConnectReport(failed, PAIRING_URL, true).error).toBeNull();
   expect(autoConnectReport(connecting, "http://other/pair#token=x", false).connecting).toBe(false);
+});
+
+async function pairSuccessfully(link: PartialState<NavigationState>) {
+  const succeeded = Promise.withResolvers<{ ok: boolean; error: string | null }>();
+  harness.pair.mockReturnValueOnce(succeeded.promise);
+  startDevAutoConnect(link);
+  succeeded.resolve({ ok: true, error: null });
+  await succeeded.promise;
+  await Promise.resolve();
+}
+
+it("on columns, a successful settings link shows Environments instead of an empty detail", async () => {
+  vi.stubGlobal("__DEV__", true);
+  harness.goBack.mockClear();
+  harness.dispatch.mockClear();
+  harness.columns = true;
+  await pairSuccessfully(settingsLink({ pairingUrl: PAIRING_URL, autoConnect: "1" }));
+  harness.columns = false;
+
+  expect(harness.goBack).not.toHaveBeenCalled();
+  expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({
+    type: "RESET",
+    target: "root",
+    payload: expect.objectContaining({
+      index: 2,
+      routes: [
+        { key: "home", name: "Home" },
+        { key: "settings", name: "Settings" },
+        { name: "SettingsEnvironments", params: undefined },
+      ],
+    }),
+  });
+});
+
+it("a success that waited for navigation leaves a newer link's form open", async () => {
+  vi.stubGlobal("__DEV__", true);
+  harness.goBack.mockClear();
+  harness.dispatch.mockClear();
+  harness.deferred = [];
+  await pairSuccessfully(settingsLink({ pairingUrl: PAIRING_URL, autoConnect: "1" }));
+  startDevAutoConnect(settingsLink({ pairingUrl: "http://192.168.1.11:3773/pair#token=def" }));
+
+  const deferred = harness.deferred;
+  harness.deferred = null;
+  for (const navigate of deferred) navigate();
+  expect(harness.goBack).not.toHaveBeenCalled();
+  expect(harness.dispatch).not.toHaveBeenCalled();
 });

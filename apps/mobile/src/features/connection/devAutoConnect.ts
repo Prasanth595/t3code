@@ -6,6 +6,8 @@ import { Atom } from "effect/reactivity";
 import { findLinkedRoute } from "../../lib/appLinking";
 import { rootNavigationRef, whenRootNavigationReady } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { leaveSettingsPage } from "../settings/settings-navigation";
+import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 import { pairEnvironment } from "../../state/use-remote-environment-registry";
 
 export type DevAutoConnectAttempt =
@@ -56,15 +58,16 @@ async function connect(pairingUrl: string, expectedEnvironmentId: EnvironmentId 
     });
     return;
   }
-  appAtomRegistry.set(devAutoConnectAttemptAtom, null);
   whenRootNavigationReady(() => {
-    // A link that arrived before navigation was ready owns the form now.
-    if (appAtomRegistry.get(devAutoConnectAttemptAtom) !== null) return;
+    // A newer link (with or without the flag) owns the form now.
+    if (appAtomRegistry.get(devAutoConnectAttemptAtom) !== attempt) return;
+    appAtomRegistry.set(devAutoConnectAttemptAtom, null);
     const current = rootNavigationRef.getCurrentRoute()?.name;
     if (current === undefined || !PAIRING_FORM_ROUTES.includes(current)) return;
-    // Return to whatever the link opened the sheet over.
-    if (rootNavigationRef.canGoBack()) rootNavigationRef.goBack();
-    else rootNavigationRef.dispatch(StackActions.replace("Home"));
+    // Same exit as the form's own Connect: return to the opener, and on columns show the
+    // new environment on Environments instead of an empty detail.
+    if (!rootNavigationRef.canGoBack()) rootNavigationRef.dispatch(StackActions.replace("Home"));
+    else leaveSettingsPage(rootNavigationRef, workspaceHasColumns(), "SettingsEnvironments");
   });
 }
 
