@@ -13,3 +13,26 @@ index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7
              try {
                  await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
              }
+diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+index 7d08e55f5ddf70e51ebd965803d001561bca6d71..a5e466c48768ebd75b3c4d87c78c18c8ebd6b588 100644
+--- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
++++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+@@ -63,7 +63,8 @@
+ 
+ !macro FIND_PROCESS _FILE _RETURN
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "if ((Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
++    # @() keeps .Count defined for one process on PowerShell 5.1 (electron-builder#10454); skip our own PID
++    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "if (@(Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $pid -and $$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
+     Pop ${_RETURN}
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+@@ -91,7 +92,7 @@
+   ${endIf}
+ 
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
++    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $pid -and $$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+       nsExec::Exec `taskkill /IM "${_FILE}" /FI "PID ne $pid"`
