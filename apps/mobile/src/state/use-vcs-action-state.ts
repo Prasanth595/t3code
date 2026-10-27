@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
 import { Atom } from "effect/reactivity";
+import * as Haptics from "expo-haptics";
 import { useSyncExternalStore } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
@@ -31,6 +32,11 @@ function broadcast(result: GitActionResultNotification | null): void {
 }
 
 export function showGitActionResult(result: GitActionResultNotification): void {
+  void Haptics.notificationAsync(
+    result.type === "success"
+      ? Haptics.NotificationFeedbackType.Success
+      : Haptics.NotificationFeedbackType.Error,
+  );
   if (dismissTimer) clearTimeout(dismissTimer);
   broadcast(result);
   dismissTimer = setTimeout(() => {
