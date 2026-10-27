@@ -13,6 +13,7 @@ import {
 } from "./incomingShareImport";
 
 const destination = { environmentId: "env-1", projectId: "project-1" };
+const edited: ComposerDraft = { text: "typed after the restore", attachments: [] };
 
 function fileAttachment(id: string): DraftComposerAttachment {
   return {
@@ -225,6 +226,40 @@ describe("incoming share imports", () => {
     expect(deps.onImportFailure).not.toHaveBeenCalled();
     watched.unmount();
   });
+
+  it.each([
+    ["edited", (drafts: Map<string, ComposerDraft>) => drafts.set("draft-a", edited)],
+    ["deleted", (drafts: Map<string, ComposerDraft>) => drafts.delete("draft-a")],
+  ] as const)(
+    "a retried cancel keeps a draft the user %s after the restore was shown",
+    async (_change, change) => {
+      let restoreAttempts = 0;
+      const { deps, drafts, watch, imports } = setup({
+        consume: vi.fn(async () => {
+          throw new Error("disk full");
+        }),
+        // Like restoreComposerDraftSnapshot: publishes, then fails to persist.
+        restoreDraft: vi.fn(async (draftKey: string, snapshot: ComposerDraft) => {
+          restoreAttempts += 1;
+          drafts.set(draftKey, snapshot);
+          if (restoreAttempts === 1) throw new Error("write failed");
+        }),
+      });
+      const target = importTarget();
+      const watched = watch(target);
+      await imports.settled(target);
+      await imports.cancel(target);
+      expect(deps.onCancelFailure).toHaveBeenCalledWith(target, new Error("write failed"));
+
+      change(drafts);
+      const expected = drafts.get("draft-a");
+      await imports.cancel(target);
+
+      expect(watched.phase()).toBe("cancelled");
+      expect(drafts.get("draft-a")).toBe(expected);
+      expect(deps.release).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("a failed import keeps its cancel after its route left, and reports a failed undo", async () => {
     const { calls, deps, imports, watch } = setup({
