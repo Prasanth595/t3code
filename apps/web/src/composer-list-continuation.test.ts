@@ -47,6 +47,13 @@ describe("composer list continuation", () => {
     }
   });
 
+  it("renumbers the parent list after lifting an empty nested item", () => {
+    const value = "1. a\n   1. \n2. b";
+    const edit = listContinuationForEnter(value, value.indexOf("\n2."))!;
+    expect(applyEdit(value, edit)).toBe("1. a\n2. \n3. b");
+    expect(edit.cursorAfter).toBe("1. a\n2. ".length);
+  });
+
   it("refuses to split a supplementary currency skill chip", () => {
     const value = "1. 𑿝review go";
     const cursor = value.indexOf(" go") - 1;
