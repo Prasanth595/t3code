@@ -6,8 +6,8 @@ import {
 } from "@t3tools/shared/path";
 
 import {
+  decodeMarkdownFilePath,
   normalizeMarkdownLinkDestination,
-  safeDecodeURIComponent,
   splitMarkdownLinkSearchAndHash,
 } from "@t3tools/shared/markdownLinks";
 import { parseFileUrlHref } from "@t3tools/shared/fileLinks";
@@ -64,13 +64,13 @@ export function classifyMarkdownImageSource(
     return target === null
       ? { _tag: "Blocked" }
       : hostFileSource(
-          stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path)),
+          stripSlashPrefixedWindowsDrive(decodeMarkdownFilePath(target.path)),
           workspaceRoot,
         );
   }
 
   const path = stripSlashPrefixedWindowsDrive(
-    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+    decodeMarkdownFilePath(splitMarkdownLinkSearchAndHash(source).path),
   );
   if (path.length === 0) return { _tag: "Blocked" };
   if (path.startsWith("/") || isWindowsAbsolutePath(path)) {

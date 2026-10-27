@@ -38,6 +38,31 @@ describe("parseMarkdownFileLink", () => {
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
+    [
+      "/home/me/.grok/sessions/%2Fhome%2Fme%2FMy%20App/id/images/shot%20one.jpg",
+      "/home/me/.grok/sessions/%2Fhome%2Fme%2FMy%20App/id/images/shot one.jpg",
+    ],
+    [
+      "file:///home/me/.grok/sessions/%2Fhome%2Fme%2Fproj/id/images/1.jpg",
+      "/home/me/.grok/sessions/%2Fhome%2Fme%2Fproj/id/images/1.jpg",
+    ],
+    [
+      "/opt/grok-data/sessions/%2Fhome%2Fme%2Fproj/id/images/1.jpg",
+      "/opt/grok-data/sessions/%2Fhome%2Fme%2Fproj/id/images/1.jpg",
+    ],
+    [
+      "C:\\Users\\me\\.grok\\sessions\\%2FC%3A%5CUsers%5Cme\\images\\1.jpg",
+      "C:\\Users\\me\\.grok\\sessions\\%2FC%3A%5CUsers%5Cme\\images\\1.jpg",
+    ],
+    [
+      "C:%5CUsers%5Cme%5C.grok%5Csessions%5C%2FC%3A%5Cproject/images/1.jpg",
+      "C:\\Users\\me\\.grok\\sessions\\%2FC%3A%5Cproject/images/1.jpg",
+    ],
+    [
+      "/home/me/.grok/sessions/plain-project/images/shot%20one.jpg",
+      "/home/me/.grok/sessions/plain-project/images/shot one.jpg",
+    ],
+    ["/home/me/project/sessions/a%2Fb/report.md", "/home/me/project/sessions/a/b/report.md"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });

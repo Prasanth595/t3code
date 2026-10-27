@@ -208,6 +208,91 @@ export function safeDecodeURIComponent(value: string): string {
   }
 }
 
+/**
+ * Percent-decodes a markdown file destination, leaving a Grok session group as written.
+ *
+ * Grok stores each session under `<grok-home>/sessions/<encoded-cwd>/`. The group
+ * directory is `encodeURIComponent` of the absolute working directory, so `/`
+ * is the characters `%2F`. Decoding that segment inserts a slash, and media is
+ * looked up at `~/.grok/sessions//home/...`. A relative name under some other
+ * `sessions` directory, such as `a%2Fb`, still decodes to `a/b`. Other escapes,
+ * including `%20` in the rest of the path, still decode.
+ */
+export function decodeMarkdownFilePath(value: string): string {
+  const group = grokSessionGroupRange(value);
+  if (group === null) return safeDecodeURIComponent(value);
+  return (
+    safeDecodeURIComponent(value.slice(0, group.start)) +
+    value.slice(group.start, group.end) +
+    safeDecodeURIComponent(value.slice(group.end))
+  );
+}
+
+/** True when `segment` is exactly `encodeURIComponent` of an absolute path. */
+function isEncodedGrokWorkingDirectory(segment: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return false;
+  }
+  if (!(decoded.startsWith("/") || /^[A-Za-z]:[\\/]/.test(decoded))) return false;
+  return encodeURIComponent(decoded).toLowerCase() === segment.toLowerCase();
+}
+
+const ENCODED_WINDOWS_SEPARATOR = "%5c";
+
+function separatorEndsAt(value: string, end: number): boolean {
+  if (end <= 0) return false;
+  const literal = value[end - 1];
+  if (literal === "/" || literal === "\\") return true;
+  return value.slice(Math.max(0, end - 3), end).toLowerCase() === ENCODED_WINDOWS_SEPARATOR;
+}
+
+/** A real slash, or a `%5C` that stands in for one in an encoded Windows path. */
+function pathSeparatorAt(
+  value: string,
+  index: number,
+): { readonly start: number; readonly end: number } | null {
+  const character = value[index];
+  if (character === "/" || character === "\\") return { start: index, end: index + 1 };
+  if (value.slice(index, index + 3).toLowerCase() === ENCODED_WINDOWS_SEPARATOR) {
+    return { start: index, end: index + 3 };
+  }
+  return null;
+}
+
+function nextLiteralSeparator(value: string, start: number): number {
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "/" || character === "\\") return index;
+  }
+  return value.length;
+}
+
+function grokSessionGroupRange(
+  value: string,
+): { readonly start: number; readonly end: number } | null {
+  const lower = value.toLowerCase();
+  let from = 0;
+  while (from < lower.length) {
+    const at = lower.indexOf("sessions", from);
+    if (at < 0) return null;
+    // `%5C` is a separator around the sessions directory. Inside the group it
+    // is part of the encoded working directory and must stay encoded.
+    const after = pathSeparatorAt(value, at + "sessions".length);
+    if (!separatorEndsAt(value, at) || after === null) {
+      from = at + "sessions".length;
+      continue;
+    }
+    const start = after.end;
+    const end = nextLiteralSeparator(value, start);
+    if (isEncodedGrokWorkingDirectory(value.slice(start, end))) return { start, end };
+    from = start;
+  }
+  return null;
+}
+
 export function normalizeMarkdownLinkDestination(value: string): string {
   const trimmed = value.trim();
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
@@ -289,7 +374,8 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
     splitMarkdownLinkSearchAndHash(normalized);
-  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
+  // A percent-encoded drive colon (`/c%3A/`) only becomes strippable once decoded.
+  const path = stripSlashPrefixedWindowsDrive(decodeMarkdownFilePath(source.path.trim()));
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
