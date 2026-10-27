@@ -50,7 +50,7 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
+import { getDisplayModelName, getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { ScrollToEndButton } from "../chat/TimelineOverlays";
 import type { TimelineRow } from "../chat/timelineRowContext";
 import { useTimelineFollow } from "../chat/useTimelineFollow";
@@ -564,10 +564,11 @@ function GuestModelLabel({ model }: { readonly model: GuestThreadModel }) {
     ...model,
     ...(shortName ? { shortName } : {}),
   });
+  const fullLabel = getDisplayModelName({ slug: model.name, ...model });
   return (
     <ComposerControl
       render={<span />}
-      aria-label={`Model: ${label}`}
+      aria-label={`Model: ${fullLabel}`}
       className="pointer-events-none min-w-0 shrink"
     >
       {model.driver === null ? null : (
