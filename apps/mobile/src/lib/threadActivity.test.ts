@@ -155,6 +155,38 @@ it("shows a skipped compaction as one stopped row, without a separate interrupte
   ).toEqual(["compaction"]);
 });
 
+it("keeps the interrupted row for a compaction stopped before its provider started", () => {
+  const rows = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected({ ...userMessage(), text: "/compact" }, 0),
+      projected(
+        {
+          ...base("interrupt-result", "2026-06-20T00:00:03.000Z", 1),
+          type: "run_interrupt_result",
+          status: "interrupted",
+          message: "Run interrupted before provider start",
+        },
+        1,
+      ),
+    ]),
+    {
+      runId,
+      status: "interrupted",
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    },
+    new Set(),
+  );
+
+  expect(
+    rows.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? entry.activities.map((activity) => activity.projectedItem.item.type)
+        : [],
+    ),
+  ).toContain("run_interrupt_result");
+});
+
 it.each(["/compact", "Continue"])(
   "keeps a completed compaction divider visible while other settled work folds for %s",
   (promptText) => {

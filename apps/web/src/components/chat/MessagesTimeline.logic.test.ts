@@ -828,25 +828,32 @@ describe("deriveMessagesTimelineRows", () => {
         message: "Skipped compaction to send a queued message",
       },
     };
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems: [history0!, history1!, history2!, prompt, compaction, interruptResult],
-        optimisticMessages: [],
-      }),
-      isWorking: false,
-      latestRun: {
-        runId: fixture.runId,
-        status: "interrupted",
-        startedAt: fixture.time(5),
-        completedAt: fixture.time(9),
-      },
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
+    const liveRowsFor = (visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [history0!, history1!, history2!, ...visibleTurnItems],
+          optimisticMessages: [],
+        }),
+        isWorking: false,
+        latestRun: {
+          runId: fixture.runId,
+          status: "interrupted",
+          startedAt: fixture.time(5),
+          completedAt: fixture.time(9),
+        },
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      return rows.slice(rows.findIndex((row) => row.id.includes("history-assistant")) + 1);
+    };
 
-    expect(
-      rows.slice(rows.findIndex((row) => row.id.includes("history-assistant")) + 1),
-    ).toMatchObject([{ kind: "context-compaction", label: "Context compaction stopped" }]);
+    expect(liveRowsFor([prompt, compaction, interruptResult])).toMatchObject([
+      { kind: "context-compaction", label: "Context compaction stopped" },
+    ]);
+    // Stopped before the provider started: no compaction row says so, so the interrupt stays.
+    expect(liveRowsFor([prompt, interruptResult]).map((row) => row.id)).toContain(
+      "interrupt-result",
+    );
   });
 
   it("only enables assistant copy for the terminal assistant message in a turn", () => {

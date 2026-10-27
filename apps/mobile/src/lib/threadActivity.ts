@@ -2175,16 +2175,18 @@ export function buildThreadFeed(
 
   const entries: RawThreadFeedEntry[] = [];
   const entryRows: number[] = [];
-  // A stopped compaction's own row already says it stopped.
-  const compactionRunIds = new Set(
-    visibleTurnItems.flatMap(({ item }) =>
-      item.type === "user_message" &&
-      item.runId !== null &&
-      isCompactionCommandMessage({ role: "user", ...item })
-        ? [item.runId]
-        : [],
-    ),
-  );
+  // A stopped compaction's own row already says it stopped. A `/compact` run stopped
+  // before its provider started has no such row, so it keeps the interrupted one.
+  const compactPromptRunIds = new Set<RunId>();
+  const compactedRunIds = new Set<RunId>();
+  for (const { item } of visibleTurnItems) {
+    if (item.runId === null) continue;
+    if (item.type === "user_message" && isCompactionCommandMessage({ role: "user", ...item })) {
+      compactPromptRunIds.add(item.runId);
+    } else if (item.type === "compaction") {
+      compactedRunIds.add(item.runId);
+    }
+  }
   for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
     const row = visibleTurnItems[index]!;
     const item = row.item;
@@ -2195,7 +2197,8 @@ export function buildThreadFeed(
       item.type === "run_interrupt_request" ||
       (item.type === "run_interrupt_result" &&
         item.runId !== null &&
-        compactionRunIds.has(item.runId))
+        compactPromptRunIds.has(item.runId) &&
+        compactedRunIds.has(item.runId))
     ) {
       continue;
     }

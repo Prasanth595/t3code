@@ -1670,7 +1670,8 @@ export function deriveMessagesTimelineRows(input: {
       (timelineEntry.projectedItem.item.type === "run_interrupt_request" ||
         (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
           timelineEntry.projectedItem.item.runId !== null &&
-          compactionRuns.has(timelineEntry.projectedItem.item.runId)))
+          compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
+          compactedRunIds.has(timelineEntry.projectedItem.item.runId)))
     ) {
       continue;
     }
