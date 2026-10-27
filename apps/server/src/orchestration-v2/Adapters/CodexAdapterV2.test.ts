@@ -73,6 +73,9 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const isProviderAdapterEventStreamError = Schema.is(
+  ProviderAdapter.ProviderAdapterEventStreamError,
+);
 
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
@@ -848,9 +851,7 @@ describe("CodexAdapterV2 process exit", () => {
       assert.isTrue(
         readerExit !== undefined &&
           Exit.isFailure(readerExit) &&
-          Schema.is(ProviderAdapter.ProviderAdapterEventStreamError)(
-            Cause.squash(readerExit.cause),
-          ),
+          isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
         "the session manager must receive process death so it can retire the shared process",
       );
     }).pipe(
