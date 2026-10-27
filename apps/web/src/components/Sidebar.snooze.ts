@@ -18,6 +18,7 @@ export function resolveSnoozePresets(
   timestampFormat: TimestampFormat,
 ): ReadonlyArray<SnoozePreset> {
   return resolveSharedSnoozePresets(now).map((preset) => {
+    if (preset.id === "indefinite") return preset;
     const wake = parseTimestampDate(preset.snoozedUntil);
     if (wake === null) return preset;
     const time = timeOfDayLabel(wake, timestampFormat);

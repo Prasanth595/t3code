@@ -8,6 +8,7 @@ import {
   effectiveSnoozed,
   hasQueuedTurnStart,
   resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -279,6 +280,7 @@ describe("resolveSnoozePresets", () => {
       "three-hours",
       "tomorrow",
       "next-week",
+      "indefinite",
     ]);
   });
 
@@ -289,9 +291,16 @@ describe("resolveSnoozePresets", () => {
       "three-hours",
       "evening",
       "tomorrow",
+      "indefinite",
     ]);
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
+  });
+
+  it("snoozes indefinitely with no wake time to show", () => {
+    const { snoozedUntil } = resolveSnoozePresets(new Date(NOW)).at(-1)!;
+    expect(effectiveSnoozed(makeShell({ snoozedUntil }), { now: NOW })).toBe(true);
+    expect(snoozeWakeLabel(snoozedUntil, { now: NOW })).toBe("");
   });
 });
 

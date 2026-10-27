@@ -173,8 +173,16 @@ export function threadWokeAt(
 const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
+// A wake time no timer reaches, so every existing snooze check treats it as snoozed until woken.
+const INDEFINITE_SNOOZE_UNTIL = "9999-12-31T23:59:59.999Z";
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week"
+  | "indefinite";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -249,6 +257,12 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     });
   }
 
+  presets.push({
+    id: "indefinite",
+    label: "Indefinitely",
+    whenLabel: "Until woken",
+    snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
+  });
   return presets;
 }
 
@@ -256,6 +270,7 @@ export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: s
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
+  if (snoozedUntil === INDEFINITE_SNOOZE_UNTIL) return "";
   const remainingMs = wakeMs - nowMs;
   if (remainingMs <= 0) return "now";
   if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
