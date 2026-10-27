@@ -19,6 +19,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as RelayClientLedger from "./RelayClientLedger.ts";
+
 export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "disabled";
@@ -177,6 +179,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const relayClientLedger = yield* Effect.serviceOption(RelayClientLedger.RelayClientLedger);
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
@@ -602,6 +605,12 @@ export const make = Effect.gen(function* () {
 
     const http2 = yield* Ref.get(http2Ref);
     const connectorScope = yield* Scope.make("sequential");
+    // Finalizers run in reverse order; forget only after the spawner stops the client.
+    let forgetRelayClient: Effect.Effect<void> = Effect.void;
+    yield* Scope.addFinalizer(
+      connectorScope,
+      Effect.suspend(() => forgetRelayClient),
+    );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(
@@ -666,6 +675,9 @@ export const make = Effect.gen(function* () {
     }
 
     if (!("status" in child)) {
+      if (Option.isSome(relayClientLedger)) {
+        forgetRelayClient = yield* relayClientLedger.value.track({ pid: Number(child.pid) });
+      }
       const connector = {
         child,
         executable,
