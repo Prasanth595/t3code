@@ -610,9 +610,9 @@ const sessionGenerationAtomsByRuntime = new WeakMap<
 >();
 
 /**
- * The generation of the environment's latest established session, kept while it reconnects.
- * It changes only when a new session comes up, so a one-shot read that failed while the
- * environment was unreachable can watch it to run again once it is back.
+ * Counts established sessions; it changes only when a new one comes up, so failed one-shot reads
+ * can watch it to run again. Keyed on the session object because the supervisor's `generation`
+ * restarts when the registry installs a new supervisor (re-pairing, route edits).
  */
 export function environmentSessionGenerationAtom<R, ER>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
@@ -621,15 +621,26 @@ export function environmentSessionGenerationAtom<R, ER>(
   let family = sessionGenerationAtomsByRuntime.get(runtime);
   if (family === undefined) {
     const connectionAtom = environmentConnectionAtoms(runtime);
+    const sessionsSeen = Atom.family((id: EnvironmentIdType) =>
+      Atom.make(
+        (get): { readonly session: RpcSession.RpcSession | null; readonly count: number } => {
+          const previous = Option.getOrElse(
+            get.self<{ readonly session: RpcSession.RpcSession | null; readonly count: number }>(),
+            () => ({ session: null, count: 0 }),
+          );
+          const connection = Option.getOrNull(AsyncResult.value(get(connectionAtom(id))));
+          if (connection === null || connection[0].phase !== "connected") return previous;
+          const session = Option.getOrNull(connection[1]);
+          return session === null || session === previous.session
+            ? previous
+            : { session, count: previous.count + 1 };
+        },
+      ),
+    );
     family = Atom.family((id: EnvironmentIdType) =>
-      Atom.make((get): number => {
-        const connection = Option.getOrNull(AsyncResult.value(get(connectionAtom(id))));
-        return connection !== null &&
-          connection[0].phase === "connected" &&
-          Option.isSome(connection[1])
-          ? connection[0].generation
-          : Option.getOrElse(get.self<number>(), () => 0);
-      }).pipe(Atom.withLabel(`environment-session-generation:${id}`)),
+      Atom.make((get) => get(sessionsSeen(id)).count).pipe(
+        Atom.withLabel(`environment-session-generation:${id}`),
+      ),
     );
     sessionGenerationAtomsByRuntime.set(runtime, family);
   }

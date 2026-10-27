@@ -743,7 +743,7 @@ describe("environment query lifecycle", () => {
       ),
   );
 
-  it.effect("a read started on a new session generation sees that session", () =>
+  it.effect("a refresh started on a new session generation answers from that session", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("connected"), {
@@ -754,27 +754,37 @@ describe("environment query lifecycle", () => {
             retryAt: 1,
           }),
         });
-        const registry = AtomRegistry.make();
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        // Callers hold the failure a read got while the environment was retrying.
+        const failed = yield* Effect.promise(() =>
+          executeAtomQuery(registry, harness.atom, { reportFailure: false }),
+        );
+        expect(AsyncResult.isFailure(failed)).toBe(true);
+
         const answered = yield* Deferred.make<AsyncResult.AsyncResult<string, unknown>>();
         const sessionGeneration = environmentSessionGenerationAtom(
           harness.runtime,
           QUERY_ENVIRONMENT.environmentId,
         );
         const unmount = registry.mount(sessionGeneration);
-        const unsubscribe = registry.subscribe(sessionGeneration, (generation) => {
-          void executeAtomQuery(registry, harness.atom, { reportFailure: false }).then((result) => {
-            if (generation === 2) Deferred.doneUnsafe(answered, Effect.succeed(result));
-          });
+        const unsubscribe = registry.subscribe(sessionGeneration, () => {
+          void executeAtomQuery(registry, harness.atom, {
+            refresh: true,
+            reportFailure: false,
+          }).then((result) => Deferred.doneUnsafe(answered, Effect.succeed(result)));
         });
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             unsubscribe();
             unmount();
-            registry.dispose();
           }),
         );
         yield* Effect.yieldNow;
 
+        yield* SubscriptionRef.set(
+          harness.supervisorSession,
+          Option.some({} as RpcSession.RpcSession),
+        );
         yield* SubscriptionRef.set(
           harness.supervisorState,
           queryConnectionState({ generation: 2 }),

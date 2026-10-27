@@ -28,62 +28,94 @@ const connectionState = (
   ...overrides,
 });
 
+const makeCatalogHarness = Effect.fn("TestCatalog.makeHarness")(function* () {
+  const state = yield* SubscriptionRef.make(
+    connectionState({ phase: "connected", attempt: 1, generation: 1 }),
+  );
+  const session = yield* SubscriptionRef.make(Option.some({} as RpcSession.RpcSession));
+  const supervisor = {
+    state,
+    session,
+  } as unknown as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
+  const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+    _environmentId,
+    stream,
+  ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+  const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+    followStream,
+  } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+  const catalog = createEnvironmentCatalogAtoms(
+    Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
+  );
+  const atom = catalog.sessionGenerationAtom(ENVIRONMENT_ID);
+  const atoms = AtomRegistry.make();
+  const unmount = atoms.mount(atom);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      unmount();
+      atoms.dispose();
+    }),
+  );
+  yield* Effect.yieldNow;
+  /** Moves the supervisor to `next`, with a new session object when one is established. */
+  const generationAfter = (
+    next: SupervisorConnectionState,
+    nextSession: Option.Option<RpcSession.RpcSession> = Option.none(),
+  ) =>
+    SubscriptionRef.set(session, nextSession).pipe(
+      Effect.andThen(SubscriptionRef.set(state, next)),
+      Effect.andThen(Effect.yieldNow),
+      Effect.map(() => atoms.get(atom)),
+    );
+  return { generation: () => atoms.get(atom), generationAfter };
+});
+
+const lastFailure = new ConnectionTransientError({ reason: "transport", detail: "Down." });
+const newSession = () => Option.some({} as RpcSession.RpcSession);
+
 describe("environment catalog atoms", () => {
   it.effect("changes the session generation only when a new session comes up", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const state = yield* SubscriptionRef.make(
-          connectionState({ phase: "connected", attempt: 1, generation: 1 }),
-        );
-        const session = yield* SubscriptionRef.make(Option.some({} as RpcSession.RpcSession));
-        const supervisor = {
-          state,
-          session,
-        } as unknown as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
-        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
-          _environmentId,
-          stream,
-        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
-        const registry = EnvironmentRegistry.EnvironmentRegistry.of({
-          followStream,
-        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-        const catalog = createEnvironmentCatalogAtoms(
-          Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
-        );
-        const atom = catalog.sessionGenerationAtom(ENVIRONMENT_ID);
-        const atoms = AtomRegistry.make();
-        const unmount = atoms.mount(atom);
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            unmount();
-            atoms.dispose();
-          }),
-        );
-        const lastFailure = new ConnectionTransientError({ reason: "transport", detail: "Down." });
-        const generationAfter = (next: SupervisorConnectionState) =>
-          SubscriptionRef.set(state, next).pipe(
-            Effect.andThen(Effect.yieldNow),
-            Effect.map(() => atoms.get(atom)),
-          );
-
-        yield* Effect.yieldNow;
-        expect(atoms.get(atom)).toBe(1);
+        const { generation, generationAfter } = yield* makeCatalogHarness();
+        const first = generation();
         // A retry reports the generation it is attempting before it is established.
         expect(
           yield* generationAfter(
             connectionState({ phase: "connecting", stage: "opening", generation: 2, lastFailure }),
           ),
-        ).toBe(1);
+        ).toBe(first);
         expect(
           yield* generationAfter(
             connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
           ),
-        ).toBe(1);
+        ).toBe(first);
         expect(
           yield* generationAfter(
             connectionState({ phase: "connected", attempt: 2, generation: 2 }),
+            newSession(),
           ),
-        ).toBe(2);
+        ).not.toBe(first);
+      }),
+    ),
+  );
+
+  it.effect("changes when a replaced supervisor's first session reuses an old generation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { generation, generationAfter } = yield* makeCatalogHarness();
+        const first = generation();
+        yield* generationAfter(
+          connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
+        );
+        // Re-pairing or editing a route installs a new supervisor, whose counter starts over.
+        yield* generationAfter(connectionState({ phase: "available", generation: 0 }));
+        expect(
+          yield* generationAfter(
+            connectionState({ phase: "connected", attempt: 1, generation: 1 }),
+            newSession(),
+          ),
+        ).not.toBe(first);
       }),
     ),
   );
