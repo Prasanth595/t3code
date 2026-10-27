@@ -11,13 +11,12 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import { isProviderDriverKind, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { modelShortName } from "@t3tools/provider-core/modelShortName";
-import { getProviderClient } from "./providerClients";
+import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
 export type ModelOption = {
   readonly key: string;
@@ -66,14 +65,6 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "claudeAgent") return "Claude";
   if (provider.driver === "pi") return "Pi";
   return provider.instanceId;
-}
-
-function shortNameField(
-  model: { readonly name: string; readonly shortName?: string | undefined },
-  modelFamilies: ReadonlyArray<string>,
-): { readonly shortName?: string } {
-  const shortName = model.shortName ?? modelShortName(model.name, modelFamilies);
-  return shortName ? { shortName } : {};
 }
 
 function isProviderEnabledForProject(
@@ -323,7 +314,6 @@ export function buildModelOptions(
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
-    const modelFamilies = getProviderClient(provider.driver)?.modelFamilies ?? [];
     const models = provider.models.filter(
       (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
     );
@@ -331,10 +321,11 @@ export function buildModelOptions(
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
     for (const model of models) {
       const key = `${provider.instanceId}:${model.slug}`;
+      const shortName = resolveModelShortName(model, provider.driver);
       options.set(key, {
         key,
         label: model.name,
-        ...shortNameField(model, modelFamilies),
+        ...(shortName ? { shortName } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -397,12 +388,13 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const shortName = model
+        ? resolveModelShortName(model, isProviderDriverKind(providerDriver) ? providerDriver : null)
+        : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
-        ...(model
-          ? shortNameField(model, getProviderClient(providerDriver)?.modelFamilies ?? [])
-          : {}),
+        ...(shortName ? { shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,

@@ -31,8 +31,7 @@ import {
   NO_PROVIDER_MODEL_SELECTION,
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
-import { modelShortName } from "@t3tools/provider-core/modelShortName";
-import { providerClients } from "./components/settings/providerDriverMeta";
+import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
@@ -85,15 +84,6 @@ function appendUnavailableDynamicModelSelection(
   if (options.some((option) => option.slug === slug)) return options;
 
   return [...options, { slug, name: slug, isCustom: false, isUnavailable: true }];
-}
-
-export function resolveModelShortName(
-  model: { readonly name: string; readonly shortName?: string | undefined },
-  driverKind: ProviderDriverKind | null,
-): string | undefined {
-  if (model.shortName) return model.shortName;
-  const families = driverKind ? providerClients.get(driverKind)?.modelFamilies : undefined;
-  return modelShortName(model.name, families ?? []);
 }
 
 function toAppModelOption(
