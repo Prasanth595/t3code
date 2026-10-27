@@ -137,16 +137,17 @@ it.each([true, false])(
     vi.useFakeTimers();
     vi.setSystemTime(now);
     recordServerClock(thread.environmentId, {
-      serverTimeMs: Date.now() + 3_600_000,
-      requestedAtMs: Date.now(),
-      receivedAtMs: Date.now(),
+      serverTimeMs: Date.parse(now) + 3_600_000,
+      requestedAtMs: Date.parse(now),
+      receivedAtMs: Date.parse(now),
     });
     try {
       const dispatch = createLocalDispatchSnapshot(hasThread ? thread : undefined, {
         environmentId: thread.environmentId,
       });
       expect(
-        toServerClock(thread.environmentId, Date.now() + 2_000) - Date.parse(dispatch.startedAt),
+        toServerClock(thread.environmentId, Date.parse(now) + 2_000) -
+          Date.parse(dispatch.startedAt),
       ).toBe(2_000);
     } finally {
       recordServerClock(thread.environmentId, {
