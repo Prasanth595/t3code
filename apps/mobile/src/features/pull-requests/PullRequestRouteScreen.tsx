@@ -393,7 +393,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     requestedSection.current = next;
     scrollOffsets.current[next] = offset;
     currentScrollOffset.current = { tab: next, offset };
-    scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
+    // LegendList clamps to its measured rows, which leave out the short-tab minHeight below.
+    scrollViews.current[next]?.getNativeScrollRef().scrollTo({ y: offset, animated: false });
     setSection(next);
   };
   const tabContent = activityContent;
@@ -676,6 +677,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   // move the list in the same frame as the bar.
                   contentInsetAdjustmentBehavior="automatic"
                   contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+                  // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
+                  scrollToOverflowEnabled
                   refreshControl={
                     <RefreshControl
                       refreshing={section === tab && pullRefresh.refreshing}
