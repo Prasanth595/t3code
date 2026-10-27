@@ -2,7 +2,6 @@ import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { branchNameMessage, orTitleBranch } from "@t3tools/shared/placeholderNames";
 import {
   CommandId,
   type ChatAttachment,
@@ -51,6 +50,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { branchNameMessage, withLaunchTitleFallback } from "@t3tools/shared/placeholderNames";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -359,7 +359,7 @@ const make = Effect.gen(function* () {
                 branch: result.branch,
                 exactName: settings.branchNamingMode === "custom",
               })),
-              Effect.catch(orTitleBranch(input.title, settings)),
+              withLaunchTitleFallback(input.title, settings, modelSelection),
             );
         },
       );

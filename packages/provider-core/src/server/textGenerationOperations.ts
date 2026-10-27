@@ -4,7 +4,6 @@ import * as Schema from "effect/Schema";
 import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
-import { rejectPlaceholderBranch } from "@t3tools/shared/placeholderNames";
 
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
@@ -130,7 +129,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         naming: input.naming,
       }),
     });
-    yield* rejectPlaceholderBranch(generated.branch, input.modelSelection);
     return { branch: formatGeneratedBranchName(generated.branch, input.naming) };
   });
 

@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -61,11 +62,15 @@ const placeholderModel = fromRunner("placeholder-model", () =>
 
 /**
  * Launches a worktree thread titled `title` and resolves with the branch the
- * temporary one was renamed to, or `null` once the rename gave up.
+ * temporary one was renamed to, or `null` once the rename gave up. With
+ * `retried`, the first worktree checkout fails and the run's preparation is
+ * retried, so the branch is named on the retry path.
  */
 const launchAndRename = (input: {
   readonly title: string;
   readonly generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"];
+  readonly branchNamingMode?: "custom";
+  readonly retried?: boolean;
 }) =>
   Effect.gen(function* () {
     const renamed = yield* Deferred.make<string | null>();
@@ -86,7 +91,10 @@ const launchAndRename = (input: {
       ProviderAdapterRegistry.layerFromAdapters([adapter]),
       { databaseLayer: layerDatabase, runEffectWorker: false },
     );
-    const layerServerSettings = ServerSettings.layerTest();
+    const layerServerSettings = ServerSettings.layerTest(
+      input.branchNamingMode === undefined ? {} : { branchNamingMode: input.branchNamingMode },
+    );
+    let checkoutFailures = input.retried === true ? 1 : 0;
     const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
     const layerThreadManagement = ThreadManagement.layer.pipe(
       Layer.provide(layerOrchestrator),
@@ -119,9 +127,11 @@ const launchAndRename = (input: {
       }),
       Layer.mock(GitWorkflow.GitWorkflowService)({
         createWorktree: (worktree) =>
-          Effect.succeed({
-            worktree: { path: "/repo-worktrees/thread", refName: worktree.newRefName },
-          } as never),
+          checkoutFailures-- > 0
+            ? Effect.die("checkout failed")
+            : Effect.succeed({
+                worktree: { path: "/repo-worktrees/thread", refName: worktree.newRefName },
+              } as never),
         renameBranch,
         hasCommit: () => Effect.succeed(false),
         resolveWorktreeBaseRemote: () => Effect.succeed(null),
@@ -140,7 +150,7 @@ const launchAndRename = (input: {
       }),
     );
     const layerLaunch = ThreadLaunch.layer.pipe(
-      Layer.provide(
+      Layer.provideMerge(
         Layer.mergeAll(
           layerExternalServices,
           layerThreadManagement,
@@ -152,7 +162,7 @@ const launchAndRename = (input: {
 
     const branch = yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
-      yield* launches.launch({
+      const launched = yield* launches.launch({
         commandId: CommandId.make("launch:branch-name-fallback"),
         threadId: ThreadId.make("thread:branch-name-fallback"),
         projectId,
@@ -169,6 +179,21 @@ const launchAndRename = (input: {
         createdBy: "user",
         creationSource: "web",
       });
+      if (input.retried === true) {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+          ),
+          Stream.runHead,
+        );
+        yield* launches.retryPreparation({
+          commandId: CommandId.make("retry:branch-name-fallback"),
+          threadId: launched.threadId,
+          runId: launched.projection.runs[0]!.id,
+        });
+      }
       return yield* Deferred.await(renamed);
     }).pipe(
       Effect.provide(Layer.merge(layerLaunch, Logger.layer([gaveUp], { mergeWithExisting: true }))),
@@ -236,5 +261,33 @@ describe("launched thread branch names", () => {
         assert.isNull(branch);
         assert.equal(renameBranch.mock.calls.length, 0);
       }),
+  );
+
+  it.effect("come from the thread title when a failed preparation is retried", () =>
+    Effect.gen(function* () {
+      const { branch, generateBranchName } = yield* launchAndRename({
+        title: FACTORY_TITLE,
+        generateBranchName: placeholderModel,
+        retried: true,
+      });
+      assert.equal(branch, "t3/trilogy-care-tc-supplier-portal-v2-401-fix-suppl");
+      const message = generateBranchName.mock.calls[0]![0].message;
+      assert.isTrue(message.startsWith(FACTORY_TITLE), message);
+    }),
+  );
+
+  it.effect("keep the temporary branch under custom naming when generation fails", () =>
+    Effect.gen(function* () {
+      const { branch, renameBranch } = yield* launchAndRename({
+        title: FACTORY_TITLE,
+        branchNamingMode: "custom",
+        generateBranchName: () =>
+          Effect.fail(
+            new TextGenerationError({ operation: "generateBranchName", detail: "CLI exited 1" }),
+          ),
+      });
+      assert.isNull(branch);
+      assert.equal(renameBranch.mock.calls.length, 0);
+    }),
   );
 });
