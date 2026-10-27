@@ -638,8 +638,19 @@ function OpenCommandPaletteDialog(props: {
   // Triage the machine the user is looking at. Not limited to environments that
   // offer No project threads: when that is missing, the action explains the
   // terminal fallback instead of hiding.
+  // With nothing on screen and no primary, a single capable machine is unambiguous.
+  const triageCapableEnvironments = environments.filter(
+    (environment) => environment.serverConfig?.environment.capabilities.triage === true,
+  );
+  const soleTriageEnvironmentId =
+    triageCapableEnvironments.length === 1
+      ? (triageCapableEnvironments[0]?.environmentId ?? null)
+      : null;
   const triageEnvironmentId =
-    currentProjectEnvironmentId ?? primaryEnvironmentId ?? scratchTargetEnvironmentId;
+    currentProjectEnvironmentId ??
+    primaryEnvironmentId ??
+    soleTriageEnvironmentId ??
+    scratchTargetEnvironmentId;
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     environments.find((environment) => environment.environmentId === triageEnvironmentId)
