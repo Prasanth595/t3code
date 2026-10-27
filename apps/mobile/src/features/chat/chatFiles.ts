@@ -7,16 +7,6 @@ import {
   type DraftComposerAttachment,
 } from "../../lib/composerImages";
 
-/** A picked photo or document, ready to upload. */
-export interface ChatFileToSend {
-  readonly id: string;
-  readonly name: string;
-  readonly mimeType: string;
-  readonly sizeBytes: number;
-  readonly previewUri: string | null;
-  readonly body: () => BodyInit;
-}
-
 const dataUrlBytes = (dataUrl: string) => {
   const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
   const bytes = new Uint8Array(binary.length);
@@ -24,38 +14,16 @@ const dataUrlBytes = (dataUrl: string) => {
   return bytes;
 };
 
-const toSend = (attachment: DraftComposerAttachment): ChatFileToSend | null => {
-  if (attachment.type === "file") {
-    return {
-      id: attachment.id,
-      name: attachment.name,
-      mimeType: attachment.mimeType,
-      sizeBytes: attachment.sizeBytes,
-      previewUri: null,
-      body: () => new File(attachment.fileUri),
-    };
-  }
-  const { fileUri, dataUrl } = attachment;
-  if (fileUri === undefined && dataUrl === undefined) return null;
-  return {
-    id: attachment.id,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    sizeBytes: attachment.sizeBytes,
-    previewUri: attachment.previewUri,
-    body: () => (fileUri !== undefined ? new File(fileUri) : dataUrlBytes(dataUrl!)),
-  };
+/** The bytes to upload for a picked photo or document; null when it has none on the device. */
+export const chatFileBody = (attachment: DraftComposerAttachment): BodyInit | null => {
+  if (attachment.type === "file") return new File(attachment.fileUri);
+  if (attachment.fileUri !== undefined) return new File(attachment.fileUri);
+  return attachment.dataUrl === undefined ? null : dataUrlBytes(attachment.dataUrl);
 };
-
-const sendable = (attachments: ReadonlyArray<DraftComposerAttachment>) =>
-  attachments.flatMap((attachment) => {
-    const file = toSend(attachment);
-    return file === null ? [] : [file];
-  });
 
 export async function pickChatPhotos(existingCount: number) {
   const result = await pickComposerMedia({ existingCount });
-  return { files: sendable(result.attachments), error: result.error };
+  return { attachments: result.attachments, error: result.error };
 }
 
 export async function pickChatDocuments(existingCount: number) {
@@ -63,5 +31,5 @@ export async function pickChatDocuments(existingCount: number) {
     existingCount,
     maxBytes: SAAS_CHAT_MAX_ATTACHMENT_BYTES,
   });
-  return { files: sendable(result.files), error: result.error };
+  return { attachments: result.files, error: result.error };
 }

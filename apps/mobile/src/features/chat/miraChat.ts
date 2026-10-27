@@ -19,7 +19,8 @@ import { Linking } from "react-native";
 
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
-import type { ChatFileToSend } from "./chatFiles";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
+import { chatFileBody } from "./chatFiles";
 
 export { hasAgenticAccess } from "@t3tools/client-runtime/chat";
 
@@ -88,7 +89,11 @@ export const miraChatHistory = new ChatHistory({
 void miraChatHistory.load();
 
 /** Stores a picked photo or document on the relay for the next message. */
-export async function uploadMiraAttachment(file: ChatFileToSend): Promise<ChatUploadResult> {
+export async function uploadMiraAttachment(
+  file: DraftComposerAttachment,
+): Promise<ChatUploadResult> {
+  const body = chatFileBody(file);
+  if (body === null) return { ok: false, message: `Could not read ${file.name}.` };
   await miraChatHistory.load();
   const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);
   return uploadChatAttachment({
@@ -97,7 +102,7 @@ export async function uploadMiraAttachment(file: ChatFileToSend): Promise<ChatUp
     deviceId: miraChatHistory.deviceId,
     name: file.name,
     mimeType: file.mimeType,
-    body: file.body(),
+    body,
     fetch: expoFetch as unknown as typeof globalThis.fetch,
   });
 }

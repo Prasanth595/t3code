@@ -3,6 +3,7 @@ import {
   chatAttachmentUrl,
   type ChatReplyError,
 } from "@t3tools/client-runtime/chat";
+import { EnvironmentId } from "@t3tools/contracts";
 import type {
   SaasChatAttachment,
   SaasChatConversation,
@@ -20,7 +21,7 @@ import {
   View,
 } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import Animated, { FadeIn, FadeInUp, useAnimatedStyle } from "react-native-reanimated";
+import Animated, { FadeIn, FadeInUp, FadeOut, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolveClassNames } from "uniwind";
 
@@ -29,6 +30,14 @@ import { ComposerEditor } from "../../components/ComposerEditor";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
+import {
+  ComposerAttachmentStrip,
+  ComposerAttachmentThumbnail,
+} from "../../components/ComposerAttachmentStrip";
+import {
+  convertPastedImagesToAttachments,
+  type DraftComposerAttachment,
+} from "../../lib/composerImages";
 import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -40,7 +49,7 @@ import {
   useCompactComposerEditor,
 } from "../threads/ThreadComposer";
 import { useMarkdownStyles } from "../threads/ThreadFeed";
-import { pickChatDocuments, pickChatPhotos, type ChatFileToSend } from "./chatFiles";
+import { pickChatDocuments, pickChatPhotos } from "./chatFiles";
 import {
   miraChatHistory,
   openMiraUpgrade,
@@ -48,6 +57,9 @@ import {
   useMiraChatHistory,
   useMiraRelayUrl,
 } from "./miraChat";
+
+// Chat files belong to no environment; the strip only shows their local previews.
+const CHAT_ENVIRONMENT_ID = EnvironmentId.make("mira-chat");
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -108,12 +120,7 @@ export function ChatModeContent(props: {
           />
         </View>
       ) : null}
-      <ChatComposer
-        busy={busy}
-        expanded={chat === undefined}
-        bottomInset={insets.bottom}
-        onSend={send}
-      />
+      <ChatComposer busy={busy} bottomInset={insets.bottom} onSend={send} />
     </Animated.View>
   );
 }
@@ -273,11 +280,7 @@ function MessageAttachments(props: { readonly attachments: ReadonlyArray<SaasCha
   );
 }
 
-function FileChip(props: {
-  readonly name: string;
-  readonly status?: string;
-  readonly onRemove?: () => void;
-}) {
+function FileChip(props: { readonly name: string }) {
   return (
     <View className="max-w-60 flex-row items-center gap-2 rounded-xl bg-subtle px-2.5 py-2">
       <SymbolView name="doc.text" size={16} tintColorClassName="accent-icon-subtle" />
@@ -285,121 +288,76 @@ function FileChip(props: {
         <AppText className="text-sm text-foreground" numberOfLines={1}>
           {props.name}
         </AppText>
-        {props.status ? (
-          <AppText className="text-xs text-foreground-muted">{props.status}</AppText>
-        ) : null}
       </View>
-      {props.onRemove ? (
-        <Pressable accessibilityLabel={`Remove ${props.name}`} onPress={props.onRemove} hitSlop={8}>
-          <SymbolView name="xmark.circle.fill" size={16} tintColorClassName="accent-icon-subtle" />
-        </Pressable>
-      ) : null}
     </View>
   );
 }
 
 interface PendingFile {
-  readonly file: ChatFileToSend;
+  readonly draft: DraftComposerAttachment;
   readonly attachment: SaasChatAttachment | null;
-  readonly error: string | null;
 }
 
 /** Picked files upload right away, so sending only waits on the reply. */
 function usePendingFiles() {
   const [files, setFiles] = useState<ReadonlyArray<PendingFile>>([]);
-  const update = (id: string, change: Partial<PendingFile>) =>
-    setFiles((current) =>
-      current.map((item) => (item.file.id === id ? { ...item, ...change } : item)),
-    );
   const add = (picked: {
-    readonly files: ReadonlyArray<ChatFileToSend>;
+    readonly attachments: ReadonlyArray<DraftComposerAttachment>;
     readonly error: string | null;
   }) => {
     if (picked.error) Dialog.alert("Could not add the file", picked.error);
-    for (const file of picked.files) {
-      const problem = chatAttachmentProblem(file);
+    for (const draft of picked.attachments) {
+      const problem = chatAttachmentProblem(draft);
       if (problem !== null) {
         Dialog.alert("Could not add the file", problem);
         continue;
       }
-      setFiles((current) => [...current, { file, attachment: null, error: null }]);
-      void uploadMiraAttachment(file).then((result) =>
-        update(file.id, result.ok ? { attachment: result.attachment } : { error: result.message }),
-      );
+      setFiles((current) => [...current, { draft, attachment: null }]);
+      void uploadMiraAttachment(draft).then((result) => {
+        if (result.ok) {
+          setFiles((current) =>
+            current.map((item) =>
+              item.draft.id === draft.id ? { ...item, attachment: result.attachment } : item,
+            ),
+          );
+        } else {
+          setFiles((current) => current.filter((item) => item.draft.id !== draft.id));
+          Dialog.alert("Could not add the file", result.message);
+        }
+      });
     }
   };
   return {
-    files,
-    uploading: files.some((item) => item.attachment === null && item.error === null),
+    drafts: files.map((item) => item.draft),
+    uploading: files.some((item) => item.attachment === null),
     ready: files.flatMap((item) => (item.attachment === null ? [] : [item.attachment])),
-    remove: (id: string) => setFiles((current) => current.filter((item) => item.file.id !== id)),
+    remove: (id: string) => setFiles((current) => current.filter((item) => item.draft.id !== id)),
+    add,
     clear: () => setFiles([]),
     pickPhotos: async () => add(await pickChatPhotos(files.length)),
     pickDocuments: async () => add(await pickChatDocuments(files.length)),
   };
 }
 
-function PendingFiles(props: {
-  readonly files: ReadonlyArray<PendingFile>;
-  readonly onRemove: (id: string) => void;
-}) {
-  if (props.files.length === 0) return null;
-  return (
-    <ScrollView
-      horizontal
-      keyboardShouldPersistTaps="handled"
-      showsHorizontalScrollIndicator={false}
-      contentContainerClassName="gap-2 px-3 pt-2"
-    >
-      {props.files.map(({ file, attachment, error }) => {
-        const status = error ?? (attachment === null ? "Uploading…" : undefined);
-        return file.previewUri !== null ? (
-          <View key={file.id} className="items-center gap-1">
-            <Pressable
-              accessibilityLabel={`Remove ${file.name}`}
-              onPress={() => props.onRemove(file.id)}
-            >
-              <Image
-                source={{ uri: file.previewUri }}
-                contentFit="cover"
-                className="size-14 rounded-[10px]"
-                style={{ opacity: attachment === null ? 0.5 : 1 }}
-              />
-            </Pressable>
-            {error ? (
-              <AppText className="max-w-20 text-2xs text-danger" numberOfLines={2}>
-                {error}
-              </AppText>
-            ) : null}
-          </View>
-        ) : (
-          <FileChip
-            key={file.id}
-            name={file.name}
-            {...(status ? { status } : {})}
-            onRemove={() => props.onRemove(file.id)}
-          />
-        );
-      })}
-    </ScrollView>
-  );
-}
+const COMPACT_ATTACHMENT_LIMIT = 1;
 
 /**
- * The thread composer: tall with its toolbar for a new chat, the compact pill afterwards, with
- * the same attach button and editor and no model controls.
+ * The thread composer's layout and motion: a one-row pill that grows with the text, attachments
+ * in the row or above it while editing, and the same attach and send buttons. No model control.
  */
 function ChatComposer(props: {
   readonly busy: boolean;
-  readonly expanded: boolean;
   readonly bottomInset: number;
   readonly onSend: (text: string, attachments: ReadonlyArray<SaasChatAttachment>) => void;
 }) {
   const bodyText = useScaledTextRole("body");
   const { color: foregroundColor } = useResolveClassNames("text-foreground");
   const [text, setText] = useState("");
+  const [isFocused, setIsFocused] = useState(false);
   const pending = usePendingFiles();
-  const editor = useCompactComposerEditor(bodyText, text);
+  const compactEditor = useCompactComposerEditor(bodyText, text);
+  const isExpanded = isFocused;
+  const stripAttachments = pending.drafts;
   const canSend =
     !props.busy && !pending.uploading && (text.trim() !== "" || pending.ready.length > 0);
   const submit = () => {
@@ -410,84 +368,112 @@ function ChatComposer(props: {
     pending.clear();
     props.onSend(trimmed, attachments);
   };
-  const attachButton = (
-    <ComposerAttachmentButton
-      supportsFiles
-      onPickMedia={pending.pickPhotos}
-      onPickFiles={pending.pickDocuments}
-    />
-  );
-  const sendButton = (
-    <ComposerActionButton
-      accessibilityLabel="Send"
-      icon="arrow.up"
-      variant="primary"
-      disabled={!canSend}
-      onPress={submit}
-    />
-  );
-  const expanded = props.expanded || editor.isExpanded || pending.files.length > 0;
+
   return (
     <View
       className={Platform.OS === "android" ? "bg-composer-panel px-[12px]" : "px-[12px]"}
       style={{ paddingTop: 6, paddingBottom: props.bottomInset + THREAD_COMPOSER_BOTTOM_GUTTER }}
     >
-      <ComposerSurface
-        animateLayout={false}
-        style={{
-          borderRadius: expanded ? 24 : 27,
-          borderCurve: "circular",
-          overflow: "hidden",
-          paddingVertical: 2,
-        }}
-      >
-        {expanded ? (
-          <View>
-            <PendingFiles files={pending.files} onRemove={pending.remove} />
-            <View className="min-h-[76px] px-[14px] pt-2">
-              <ComposerEditor
-                multiline
-                value={text}
-                onChangeText={setText}
-                placeholder="Ask anything..."
-                submitTitle="Send"
-                onSubmit={submit}
-                scrollEnabled
-                style={{ maxHeight: bodyText.lineHeight * 6 }}
-                textStyle={{ ...bodyText, color: foregroundColor }}
+      <View className="relative w-full self-center">
+        <ComposerSurface
+          animateLayout={false}
+          style={{
+            borderRadius: 27,
+            borderCurve: "circular",
+            overflow: "hidden",
+            paddingVertical: 2,
+          }}
+        >
+          {isExpanded && stripAttachments.length > 0 ? (
+            <Animated.View
+              className="px-[14px] pb-2.5 pt-2"
+              entering={FadeIn.duration(160)}
+              exiting={FadeOut.duration(120)}
+            >
+              <ComposerAttachmentStrip
+                environmentId={CHAT_ENVIRONMENT_ID}
+                attachments={stripAttachments}
+                onRemove={pending.remove}
               />
-            </View>
-            <View className="h-[52px] flex-row items-center justify-between px-1.5">
-              {attachButton}
-              {sendButton}
-            </View>
-          </View>
-        ) : (
-          <View onLayout={editor.onRowLayout}>
+            </Animated.View>
+          ) : null}
+          <View onLayout={compactEditor.onRowLayout}>
             <View className="flex-row items-end">
-              {attachButton}
+              <ComposerAttachmentButton
+                supportsFiles
+                onPickMedia={pending.pickPhotos}
+                onPickFiles={pending.pickDocuments}
+              />
               <Animated.View
                 className="min-w-0 flex-1"
-                onLayout={editor.onEditorLayout}
-                style={[{ minWidth: "40%" }, editor.containerStyle]}
+                onLayout={compactEditor.onEditorLayout}
+                style={[
+                  {
+                    minWidth: compactEditor.isExpanded || stripAttachments.length > 0 ? 0 : "40%",
+                  },
+                  compactEditor.containerStyle,
+                  compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
+                ]}
               />
-              <View className="min-w-0 shrink flex-row items-center">{sendButton}</View>
+              {!isExpanded && stripAttachments.length > 0 ? (
+                <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
+                  {stripAttachments.slice(0, COMPACT_ATTACHMENT_LIMIT).map((attachment) => (
+                    <ComposerAttachmentThumbnail
+                      environmentId={CHAT_ENVIRONMENT_ID}
+                      key={attachment.id}
+                      attachment={attachment}
+                      size={30}
+                      borderRadius={8}
+                      compact
+                    />
+                  ))}
+                  {stripAttachments.length > COMPACT_ATTACHMENT_LIMIT ? (
+                    <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
+                      <AppText className="text-foreground-muted text-2xs font-t3-bold">
+                        +{stripAttachments.length - COMPACT_ATTACHMENT_LIMIT}
+                      </AppText>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+              <View
+                className="min-w-0 shrink flex-row items-center"
+                style={
+                  compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
+                }
+              >
+                <ComposerActionButton
+                  accessibilityLabel={pending.uploading ? "Uploading files" : "Send message"}
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={submit}
+                />
+              </View>
             </View>
-            <Animated.View style={editor.editorStyle}>
+            <Animated.View style={compactEditor.editorStyle}>
               <ComposerEditor
                 multiline
                 value={text}
                 onChangeText={setText}
                 placeholder="Ask anything..."
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                onPasteImages={(uris) =>
+                  void convertPastedImagesToAttachments({
+                    uris,
+                    existingCount: stripAttachments.length,
+                  }).then((attachments) => pending.add({ attachments, error: null }))
+                }
                 submitTitle="Send"
                 onSubmit={submit}
-                {...editor.editorProps}
+                {...compactEditor.editorProps}
                 textStyle={{ ...bodyText, color: foregroundColor }}
               />
             </Animated.View>
           </View>
-        )}
-      </ComposerSurface>
+        </ComposerSurface>
+      </View>
     </View>
   );
 }
