@@ -262,20 +262,19 @@ export function mergeLearnedRoutes(input: {
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
     if (known.has(url.origin)) continue;
+    let credential = sharedCredential;
     if (
       url.protocol === "http:" &&
-      sharedCredential !== undefined &&
+      credential !== undefined &&
       !tailscaleOrigins.has(url.origin) &&
-      !tokenAllowsPlainHttp(saved, sharedCredential)
+      !tokenAllowsPlainHttp(saved, credential)
     ) {
-      continue;
+      // The paired token stays off this address, but T3 Connect can authorize it.
+      if (!hasRelayRoute(entry)) continue;
+      credential = undefined;
     }
     const httpBaseUrl = `${url.origin}/`;
-    const connectionId = learnedConnectionId(
-      entry.target.environmentId,
-      url.origin,
-      sharedCredential,
-    );
+    const connectionId = learnedConnectionId(entry.target.environmentId, url.origin, credential);
     next = insertRoute(next, {
       target: new BearerConnectionTarget({
         environmentId: entry.target.environmentId,
@@ -290,7 +289,7 @@ export function mergeLearnedRoutes(input: {
           httpBaseUrl,
           wsBaseUrl: `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}/`,
           learned: true,
-          ...(authorization === undefined ? {} : { authorization }),
+          ...(credential === undefined ? { authorization: "t3-connect" as const } : {}),
           ...(tailscaleOrigins.has(url.origin) ? { network: "tailscale" as const } : {}),
         }),
       ),

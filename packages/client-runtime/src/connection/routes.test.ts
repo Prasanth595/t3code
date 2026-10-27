@@ -233,7 +233,7 @@ describe("learned routes", () => {
   });
 
   it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {
-    const entry = entryWithRoutes(relayOnly, [PUBLIC, RELAY]);
+    const entry = entryWithRoutes(relayOnly, [PUBLIC]);
     const routes = mergeLearnedRoutes({
       entry,
       activeRoute: PUBLIC,
@@ -248,8 +248,28 @@ describe("learned routes", () => {
       `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@public`,
       "public",
+    ]);
+  });
+
+  it("learns a plain HTTP LAN address with T3 Connect while an HTTPS-paired route is active", () => {
+    const entry = entryWithRoutes(relayOnly, [TAILNET, RELAY]);
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: TAILNET,
+      reported: [
+        { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      ],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual([
+      `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
+      "tailnet",
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@tailnet`,
       "relay",
     ]);
+    expect(profileOf(routes![0]!)).toMatchObject({ authorization: "t3-connect" });
+    expect(profileOf(routes![2]!)).not.toHaveProperty("authorization");
   });
 
   it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {
