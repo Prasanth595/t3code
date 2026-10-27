@@ -202,10 +202,9 @@ function createMotion() {
     for (const motion of motions) {
       const tile = tiles.get(motion.key);
       if (motion.kind === "enter") {
-        const was = recall(motion.key);
-        if (was === undefined) oneShot(tile, "factory-tile-enter");
-        // A tile folded into a lane's `+N` has no element to fly to.
-        else if (tile !== undefined) slide(tile, was, motion.to);
+        // Back on the rail, a run's old place is no use: it fades in like any new run.
+        remembered.delete(motion.key);
+        oneShot(tile, "factory-tile-enter");
       } else if (motion.kind === "slide") {
         const from = departed.get(motion.key);
         // A tile folded into a lane's `+N` has no element to fly from or to.
