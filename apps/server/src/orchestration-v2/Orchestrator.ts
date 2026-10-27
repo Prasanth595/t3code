@@ -5066,8 +5066,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(recovery?.autoResume &&
             recovery.requestId === command.usageLimitRecoveryRequestId &&
             recovery.runId === command.usageLimitContinuationOfRunId &&
-            projection.thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
+            (projection.runtimeRequests.some((request) => request.status === "pending") ||
+              (projection.thread.snoozedUntil != null &&
+                DateTime.toEpochMillis(projection.thread.snoozedUntil) >
+                  DateTime.toEpochMillis(now)))
               ? { limitRecovery: { ...recovery, requestId: command.commandId } }
               : {}),
           },

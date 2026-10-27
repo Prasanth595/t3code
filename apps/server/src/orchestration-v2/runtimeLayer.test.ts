@@ -6360,6 +6360,52 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
+        const ready = (yield* projections.getLimitRecoveryCandidates({
+          now: checkedNow,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId)!;
+        const racedResume = limitRecoveryCommand(ready, true, nowMs, false, reading(checkedNow, 0));
+        assert(racedResume?.type === "message.dispatch");
+        const nodeId = run.rootNodeId;
+        assert(nodeId !== null);
+        const request = {
+          id: RuntimeRequestId.make("recovery:pending-race"),
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input" as const,
+          status: "pending" as const,
+          responseCapability: { type: "message" as const },
+          createdAt: checkedNow,
+          resolvedAt: null,
+        };
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:pending-race"),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: checkedNow,
+              payload: request,
+            },
+          ],
+        });
+        yield* orchestrator.dispatch(racedResume);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:pending-race:resolved"),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: checkedNow,
+              payload: { ...request, status: "resolved", resolvedAt: checkedNow },
+            },
+          ],
+        });
         yield* sweep(reading(checkedNow, 0));
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(resumed.runs, 2);
