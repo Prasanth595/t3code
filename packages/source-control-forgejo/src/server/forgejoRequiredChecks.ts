@@ -20,12 +20,13 @@ const matchesContext = (glob: string, name: string) => {
   let star = -1;
   let resume = 0;
   while (t < text.length) {
-    if (p < pattern.length && (pattern[p] === "?" || pattern[p] === text[t])) {
-      p++;
-      t++;
-    } else if (p < pattern.length && pattern[p] === "*") {
+    // Wildcard first, so a literal `*` in the name never consumes the pattern's `*`.
+    if (pattern[p] === "*") {
       star = p++;
       resume = t;
+    } else if (p < pattern.length && (pattern[p] === "?" || pattern[p] === text[t])) {
+      p++;
+      t++;
     } else if (star >= 0) {
       p = star + 1;
       t = ++resume;
