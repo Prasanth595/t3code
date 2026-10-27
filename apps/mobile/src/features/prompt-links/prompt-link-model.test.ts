@@ -33,25 +33,25 @@ describe("stepPendingPromptLink", () => {
   const waiting = "repo=t3tools%2Ft3code";
 
   it("drops a link whose screen is missing from the first state after it was parsed", () => {
-    expect(stepPendingPromptLink(waiting, { screenOnStack: false, shellsSettled: true })).toEqual({
+    expect(stepPendingPromptLink(waiting, { screenOnStack: false, ready: true })).toEqual({
       pending: null,
       resolve: null,
     });
   });
 
-  it("holds a link on its screen until the shells settle, then resolves it once", () => {
-    expect(stepPendingPromptLink(waiting, { screenOnStack: true, shellsSettled: false })).toEqual({
+  it("holds a link on its screen until its target is ready, then resolves it once", () => {
+    expect(stepPendingPromptLink(waiting, { screenOnStack: true, ready: false })).toEqual({
       pending: waiting,
       resolve: null,
     });
-    expect(stepPendingPromptLink(waiting, { screenOnStack: true, shellsSettled: true })).toEqual({
+    expect(stepPendingPromptLink(waiting, { screenOnStack: true, ready: true })).toEqual({
       pending: null,
       resolve: waiting,
     });
   });
 
-  it("drops a link whose screen was left while the shells were loading", () => {
-    expect(stepPendingPromptLink(waiting, { screenOnStack: false, shellsSettled: false })).toEqual({
+  it("drops a link whose screen was left before its target was ready", () => {
+    expect(stepPendingPromptLink(waiting, { screenOnStack: false, ready: false })).toEqual({
       pending: null,
       resolve: null,
     });

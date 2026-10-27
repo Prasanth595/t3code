@@ -1,23 +1,37 @@
 import * as Dialog from "../../components/ui/Dialog";
 import type { NavigationState, PartialState } from "@react-navigation/native";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { parseThreadLinkPrompt } from "@t3tools/shared/promptLinks";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { parseThreadLinkPrompt, type LinkedPrompt } from "@t3tools/shared/promptLinks";
 
+import { findStackRoute } from "../../lib/appLinking";
+import { rootNavigationRef } from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentThreadShells } from "../../state/threads";
 import { applyLinkedPromptToThreadDraft } from "./prompt-link-actions";
-import { promptLinkNotice, promptLinkSearchFromParams } from "./prompt-link-model";
+import {
+  promptLinkNotice,
+  promptLinkSearchFromParams,
+  stepPendingPromptLink,
+} from "./prompt-link-model";
 
 const THREAD_LINK_KEYS = ["prompt"];
+
+type PendingThreadLink = { readonly ref: ScopedThreadRef; readonly prompt: LinkedPrompt };
 
 function firstString(value: unknown): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return typeof first === "string" && first.length > 0 ? first : null;
 }
 
+let pendingLink: PendingThreadLink | null = null;
+let stopWaitingForThread: (() => void) | null = null;
+
 /**
- * `threads/<environment>/<thread>?prompt=…` fills that thread's composer draft.
- * The link applies the prompt as it arrives and drops the param, so the thread
- * screen never sees it and a later visit cannot apply it again.
+ * `threads/<environment>/<thread>?prompt=…` fills that thread's composer draft. The param is
+ * dropped as the link arrives, so the thread screen never sees it and a later visit cannot apply
+ * it again. The draft is written only once the thread's screen shows a thread that exists: a
+ * screen for an unknown thread replaces itself with a new-thread draft, which drops the link.
  */
 export function takeThreadPromptLink(
   state: PartialState<NavigationState> | undefined,
@@ -41,12 +55,51 @@ export function takeThreadPromptLink(
     Dialog.alert("Could not open link", parsed.error);
     return nextState;
   }
+  dropPendingLink();
   if (parsed.value !== null) {
-    void applyLinkedPromptToThreadDraft(
-      scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId)),
-      parsed.value,
-      promptLinkNotice({ hiddenCharacters: parsed.value.hiddenCharacters }),
-    );
+    pendingLink = {
+      ref: { environmentId: EnvironmentId.make(environmentId), threadId: ThreadId.make(threadId) },
+      prompt: parsed.value,
+    };
   }
   return nextState;
+}
+
+/** Wired to the navigation container's state changes. */
+export function resolvePendingThreadPromptLink(state: NavigationState | undefined): void {
+  if (pendingLink === null) return;
+  const { ref } = pendingLink;
+  // Every thread the screen can show gets a shell: for a subagent thread the environment's list
+  // leaves out, the screen mounts its family, which adds it.
+  const shellAtom = environmentThreadShells.threadShellAtom(ref);
+  const step = stepPendingPromptLink(pendingLink, {
+    screenOnStack:
+      findStackRoute(
+        state,
+        "Thread",
+        (params) =>
+          firstString(params?.environmentId) === ref.environmentId &&
+          firstString(params?.threadId) === ref.threadId,
+      ) !== undefined,
+    ready: appAtomRegistry.get(shellAtom) !== null,
+  });
+  if (step.pending === null) dropPendingLink();
+  if (step.resolve !== null) {
+    const { prompt } = step.resolve;
+    void applyLinkedPromptToThreadDraft(
+      scopedThreadKey(ref.environmentId, ref.threadId),
+      prompt,
+      promptLinkNotice({ hiddenCharacters: prompt.hiddenCharacters }),
+    );
+  } else if (step.pending !== null) {
+    stopWaitingForThread ??= appAtomRegistry.subscribe(shellAtom, (shell) => {
+      if (shell !== null) resolvePendingThreadPromptLink(rootNavigationRef.getRootState());
+    });
+  }
+}
+
+function dropPendingLink(): void {
+  pendingLink = null;
+  stopWaitingForThread?.();
+  stopWaitingForThread = null;
 }

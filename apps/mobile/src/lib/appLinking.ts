@@ -61,21 +61,29 @@ export function findLinkedRoute(
 }
 
 /**
- * The last route named `name` at any depth of a live navigation state, with the key of the
- * navigator holding it, so an action can be dispatched as that screen would.
+ * The last route named `name` (and accepted by `accept`, when given) at any depth of a live
+ * navigation state, with the key of the navigator holding it, so an action can be dispatched as
+ * that screen would.
  */
 export function findStackRoute(
   state: NavigationState | undefined,
   name: string,
+  accept?: (params: Readonly<Record<string, unknown>> | undefined) => boolean,
 ): { readonly navigatorKey: string; readonly routeKey: string } | undefined {
   if (!state) return undefined;
   for (let index = state.routes.length - 1; index >= 0; index -= 1) {
     const route = state.routes[index]!;
-    if (route.name === name) return { navigatorKey: state.key, routeKey: route.key };
+    if (
+      route.name === name &&
+      (accept === undefined ||
+        accept(route.params as Readonly<Record<string, unknown>> | undefined))
+    ) {
+      return { navigatorKey: state.key, routeKey: route.key };
+    }
     const nested = route.state;
     // Mounted navigators always have keys; a partial state from a link has not been mounted yet.
     if (typeof nested?.key === "string") {
-      const found = findStackRoute(nested as NavigationState, name);
+      const found = findStackRoute(nested as NavigationState, name, accept);
       if (found) return found;
     }
   }

@@ -79,15 +79,15 @@ export const promptLinkRepositoryName = (repository: PromptLinkRepository) =>
   `${repository.owner}/${repository.name}`;
 
 /**
- * Advances a parsed link at each navigation state; `resolve` is the search to open. The first
+ * Advances a parsed link at each navigation state; `resolve` is the link to apply. The first
  * state after the parse must hold the link's screen. A link that never lands there, or whose
- * screen is left while the shells settle, is dropped so it cannot open on a later visit.
+ * screen is left before its target is ready, is dropped so it cannot apply on a later visit.
  */
-export function stepPendingPromptLink(
-  search: string,
-  input: { readonly screenOnStack: boolean; readonly shellsSettled: boolean },
-): { readonly pending: string | null; readonly resolve: string | null } {
+export function stepPendingPromptLink<Link>(
+  link: Link,
+  input: { readonly screenOnStack: boolean; readonly ready: boolean },
+): { readonly pending: Link | null; readonly resolve: Link | null } {
   if (!input.screenOnStack) return { pending: null, resolve: null };
-  if (input.shellsSettled) return { pending: null, resolve: search };
-  return { pending: search, resolve: null };
+  if (input.ready) return { pending: null, resolve: link };
+  return { pending: link, resolve: null };
 }

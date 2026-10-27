@@ -54,7 +54,10 @@ import {
   resolvePendingNewTaskPromptLink,
   takeNewTaskPromptLink,
 } from "./features/prompt-links/newTaskPromptLink";
-import { takeThreadPromptLink } from "./features/prompt-links/threadPromptLink";
+import {
+  resolvePendingThreadPromptLink,
+  takeThreadPromptLink,
+} from "./features/prompt-links/threadPromptLink";
 import {
   disposeOnFoundationReplace,
   type FoundationHotModule,
@@ -139,6 +142,7 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
   presentPendingIncomingShare();
   resolvePendingNewTaskPromptLink(state);
+  resolvePendingThreadPromptLink(state);
   if (!state) return;
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);

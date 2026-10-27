@@ -109,7 +109,7 @@ export function resolvePendingNewTaskPromptLink(state: NavigationState | undefin
   if (pendingLink === null) return;
   const step = stepPendingPromptLink(pendingLink, {
     screenOnStack: findStackRoute(state, NEW_TASK_ROUTE) !== undefined,
-    shellsSettled: appAtomRegistry.get(shellsSettledAtom),
+    ready: appAtomRegistry.get(shellsSettledAtom),
   });
   if (step.pending === null) dropPendingLink();
   else pendingLink = step.pending;
