@@ -79,8 +79,7 @@ const serverClockOffsets = new Map<EnvironmentId, number>();
 /**
  * The host stamped `serverTimeMs` between the request and its reply, so the
  * offset lies within that window. Keep the one nearest 0, so clocks that agree
- * read as 0 instead of shifting every timer by network latency. A connection
- * without a stamp, such as one to an older host, drops the previous reading.
+ * read as 0 instead of shifting every timer by network latency.
  */
 export function recordServerClock(
   environmentId: EnvironmentId,
@@ -105,11 +104,7 @@ export function recordServerClock(
   );
 }
 
-/**
- * `clientMs` on `environmentId`'s clock. Live elapsed timers subtract that
- * environment's timestamps from this, not from `Date.now()`, so a skewed host
- * clock does not freeze them at 0 or inflate them.
- */
+/** Converts client epoch milliseconds to the environment's clock. */
 export function toServerClock(environmentId: EnvironmentId, clientMs: number): number {
   return clientMs + (serverClockOffsets.get(environmentId) ?? 0);
 }

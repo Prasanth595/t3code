@@ -181,4 +181,24 @@ describe("server clock", () => {
     recordServerClock(environmentId, { serverTimeMs: 0, requestedAtMs: 0, receivedAtMs: 0 });
     expect(toServerClock(environmentId, 500)).toBe(500);
   });
+
+  it("keeps readings separate for each environment", () => {
+    const ahead = EnvironmentId.make("isolated-ahead");
+    const behind = EnvironmentId.make("isolated-behind");
+    recordServerClock(ahead, { serverTimeMs: HOUR, requestedAtMs: 0, receivedAtMs: 0 });
+    recordServerClock(behind, { serverTimeMs: 0, requestedAtMs: HOUR, receivedAtMs: HOUR });
+    expect(toServerClock(ahead, 500)).toBe(HOUR + 500);
+    expect(toServerClock(behind, HOUR + 500)).toBe(500);
+    expect(toServerClock(EnvironmentId.make("unknown"), 500)).toBe(500);
+  });
+
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+    "drops the previous reading when the next stamp is %s",
+    (serverTimeMs) => {
+      const environmentId = EnvironmentId.make("missing-stamp");
+      recordServerClock(environmentId, { serverTimeMs: HOUR, requestedAtMs: 0, receivedAtMs: 0 });
+      recordServerClock(environmentId, { serverTimeMs, requestedAtMs: 0, receivedAtMs: 0 });
+      expect(toServerClock(environmentId, 500)).toBe(500);
+    },
+  );
 });
