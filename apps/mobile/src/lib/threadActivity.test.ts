@@ -92,16 +92,16 @@ it("shows a page an execute script returned only when it was published for the r
         },
       }),
     }) as OrchestrationV2TurnItem;
-  const pages = (rows: OrchestrationV2ProjectedTurnItem[]) =>
-    buildThreadFeed(rows).flatMap((entry) => (entry.type === "html-render" ? [entry.id] : []));
+  const pages = (row: OrchestrationV2ProjectedTurnItem) =>
+    buildThreadFeed([row]).filter((entry) => entry.type === "html-render");
 
-  expect(pages([projected(executeCall("own", threadId), 0)])).toHaveLength(1);
-  expect(pages([projected(executeCall("foreign", "thread-2"), 0)])).toEqual([]);
+  expect(pages(projected(executeCall("own", threadId), 0))).toHaveLength(1);
+  expect(pages(projected(executeCall("foreign", "thread-2"), 0))).toEqual([]);
   // An inherited row is checked against the thread it came from, not the one showing it.
-  expect(pages([projected(executeCall("inherited", sourceThreadId), 0, "inherited")])).toHaveLength(
+  expect(pages(projected(executeCall("inherited", sourceThreadId), 0, "inherited"))).toHaveLength(
     1,
   );
-  expect(pages([projected(executeCall("inherited-local", threadId), 0, "inherited")])).toEqual([]);
+  expect(pages(projected(executeCall("inherited-local", threadId), 0, "inherited"))).toEqual([]);
 });
 
 it("shows a compact command as one mobile divider before, during, and after compaction", () => {

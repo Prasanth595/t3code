@@ -700,18 +700,13 @@ function makeProviderThread(input: {
   };
 }
 
-/**
- * Grok wraps MCP results one level deeper than codex-acp (`{ type: "MCP",
- * output: { OkayOutput: "<json string>" } }`, Rust's Result serialization).
- */
 export function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
   if (!("result" in record) && !("error" in record)) {
-    const output = unknownRecord(record.output);
-    const okay = output === undefined ? undefined : output.OkayOutput;
-    if (typeof okay === "string") return okay;
-    return rawOutput;
+    // Grok serializes Rust's Result: `{ type: "MCP", output: { OkayOutput: "<json>" } }`.
+    const okay = unknownRecord(record.output)?.OkayOutput;
+    return typeof okay === "string" ? okay : rawOutput;
   }
   const result = unknownRecord(record.result);
   const resultOutput =
@@ -2677,7 +2672,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input: merged.data.rawInput ?? null,
-              output: merged.data.rawOutput ?? merged.data.content ?? null,
+              output:
+                (mcpIdentity === undefined
+                  ? merged.data.rawOutput
+                  : acpMcpToolCallOutput(merged.data.rawOutput)) ??
+                merged.data.content ??
+                null,
             },
           });
         });
@@ -3878,7 +3878,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     type: "dynamic_tool",
                     toolName: toolCall.title ?? toolCall.kind ?? null,
                     input: rawInput ?? {},
-                    ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
+                    ...(rawOutput === undefined ? {} : { output: rawOutput }),
                   };
                 }
             }

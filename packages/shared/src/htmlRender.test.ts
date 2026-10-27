@@ -132,41 +132,36 @@ describe("htmlRenderFromToolItem", () => {
     }
   });
 
-  it("reads htmlRender from an execute tool output", () => {
-    const executeRender = {
-      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
-      title: "Chart",
-      height: 420,
-    };
-    const output = [{ type: "text", text: JSON.stringify({ htmlRender: executeRender }) }];
-    expect(htmlRenderFromToolItem({ toolName: "execute", output }, "thread-1")).toEqual(
-      executeRender,
-    );
-    // The script wrote this output, so a page published for another thread is not shown,
-    // including one whose thread segment merely starts with this thread's.
-    expect(htmlRenderFromToolItem({ toolName: "execute", output }, "thread-2")).toBeUndefined();
-    expect(htmlRenderFromToolItem({ toolName: "execute", output }, "thread")).toBeUndefined();
-    expect(htmlRenderFromToolItem({ toolName: "execute", output })).toBeUndefined();
+  it("reads the reference from ACP content and bare text block wrappers", () => {
+    const text = JSON.stringify(result);
+    for (const output of [
+      [{ type: "content", content: { type: "text", text } }],
+      { type: "text", text },
+    ]) {
+      expect(htmlRenderFromToolItem({ toolName: "t3-code.html_render", output })).toEqual(
+        reference,
+      );
+    }
   });
 
-  it("reads a bare reference an execute script returned", () => {
-    const executeRender = {
+  it("shows a page an execute script returned only for the thread it was published for", () => {
+    const page = {
       attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
       title: "Chart",
       height: 420,
     };
-    const output = [{ type: "text", text: JSON.stringify(executeRender) }];
-    expect(htmlRenderFromToolItem({ toolName: "execute", output }, "thread-1")).toEqual(
-      executeRender,
-    );
+    const execute = (value: unknown) => ({
+      toolName: "execute",
+      output: [{ type: "text", text: JSON.stringify(value) }],
+    });
+    expect(htmlRenderFromToolItem(execute({ htmlRender: page }), "thread-1")).toEqual(page);
+    expect(htmlRenderFromToolItem(execute(page), "thread-1")).toEqual(page);
+    expect(htmlRenderFromToolItem(execute({ htmlRender: page }), "thread-2")).toBeUndefined();
+    expect(htmlRenderFromToolItem(execute(page), "thread")).toBeUndefined();
+    expect(htmlRenderFromToolItem(execute(page))).toBeUndefined();
+    // Only ids html_render mints are pages; another upload with the same fields is not.
     expect(
-      htmlRenderFromToolItem(
-        {
-          toolName: "execute",
-          output: { attachmentId: "thread-1-upload", title: "Chart", height: 420 },
-        },
-        "thread-1",
-      ),
+      htmlRenderFromToolItem(execute({ ...page, attachmentId: "thread-1-upload" }), "thread-1"),
     ).toBeUndefined();
   });
 });

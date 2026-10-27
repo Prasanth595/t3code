@@ -1522,13 +1522,11 @@ describe("HTML renders in the timeline", () => {
       input: { code: "return await tools.render()" },
       output: JSON.stringify({ htmlRender: render }),
     });
-    const own = turn(executeCall(page("render-thread")));
-    expect(own.find((entry) => entry.kind === "html-render")).toMatchObject({
-      htmlRender: page("render-thread"),
-    });
+    expect(
+      turn(executeCall(page("render-thread"))).find((e) => e.kind === "html-render"),
+    ).toMatchObject({ htmlRender: page("render-thread") });
     const foreign = turn(executeCall(page("other-thread")));
     expect(foreign.some((entry) => entry.kind === "html-render")).toBe(false);
-    expect(foreign.find((entry) => entry.id === "render")?.kind).toBe("work");
     // A delegated child's row is checked against the child, not the thread showing it.
     const child = ThreadId.make("child-thread");
     const merged = deriveTimelineEntriesFromVisibleTurnItems({

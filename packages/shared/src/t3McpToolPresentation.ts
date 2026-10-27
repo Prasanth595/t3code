@@ -340,15 +340,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
 
-/** Strips provider annotations (completion state, Grok file-passed notes) so name matching sees the raw tool label. */
-export function normalizeT3McpToolLabel(value: string): string {
-  return (
-    value
-      // Grok annotates file-passed calls ("t3-code__html_render — source file: /tmp/x").
-      .replace(/\s+—\s+source file:.*$/i, "")
-      .replace(/\s+(?:complete|completed)\s*$/i, "")
-      .trim()
-  );
+function normalizeT3McpToolLabel(value: string): string {
+  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
 // ACP tool prefixes vary; match loosely but require a known display-name entry.

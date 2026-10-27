@@ -4,7 +4,6 @@ const ATTACHMENT_ID_SUFFIX =
 
 export const PENDING_ATTACHMENT_THREAD_SEGMENT = "pending";
 
-/** The thread part of every attachment id minted for `threadId`. */
 export function toSafeThreadAttachmentSegment(threadId: string): string | null {
   const segment = threadId
     .trim()
@@ -20,11 +19,7 @@ export function toSafeThreadAttachmentSegment(threadId: string): string | null {
   return segment === PENDING_ATTACHMENT_THREAD_SEGMENT ? "_pending" : segment;
 }
 
-/**
- * Whether `attachmentId` was minted for `threadId`. A thread segment can
- * itself hold dashes, so the rest of the id must be exactly the uuid and
- * optional extension that follow it.
- */
+/** Thread segments can hold dashes, so everything after the segment must be exactly the uuid and extension. */
 export function attachmentIdBelongsToThread(attachmentId: string, threadId: string): boolean {
   const segment = toSafeThreadAttachmentSegment(threadId);
   return (

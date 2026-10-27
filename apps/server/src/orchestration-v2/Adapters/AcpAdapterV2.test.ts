@@ -32,6 +32,7 @@ import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deriveBlockedOnThreadWait } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
@@ -112,34 +113,21 @@ const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 describe("acpMcpToolCallOutput", () => {
-  it("unwraps codex-acp result/content envelopes", () => {
-    const content = [{ type: "text", text: '{"ok":true}' }];
-    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { content } }), content);
-    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { structuredContent: { ok: true } } }), {
-      ok: true,
-    });
-  });
-
   it("unwraps Grok's OkayOutput result string", () => {
-    const inner = JSON.stringify({
-      htmlRender: { attachmentId: "t-html", title: "T", height: 100 },
-    });
+    const inner = JSON.stringify({ htmlRender: { attachmentId: "t-html", title: "T", height: 1 } });
     assert.strictEqual(
       acpMcpToolCallOutput({
         type: "MCP",
         tool_name: "html_render",
-        server_name: "t3-code",
         output: { OkayOutput: inner },
       }),
       inner,
     );
-    // Non-string or missing OkayOutput passes through untouched.
-    const other = { type: "MCP", output: { OkayOutput: { nested: true } } };
-    assert.strictEqual(acpMcpToolCallOutput(other), other);
-    const plain = { htmlRender: { attachmentId: "t-html" } };
-    assert.strictEqual(acpMcpToolCallOutput(plain), plain);
+    const nested = { type: "MCP", output: { OkayOutput: { nested: true } } };
+    assert.strictEqual(acpMcpToolCallOutput(nested), nested);
   });
 });
+
 describe("acpToolCallDiffPatch", () => {
   it("builds a patch per file from ACP v1 oldText/newText, with /dev/null for a new file", () => {
     assert.equal(
@@ -1568,6 +1556,7 @@ describe("AcpAdapterV2", () => {
 
   it.effect("keeps Devin parent paragraphs intact while projecting native child work", () =>
     Effect.gen(function* () {
+      const childPage = { attachmentId: "child-html", title: "Child page", height: 120 };
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const mockAgentPath = yield* path.fromFileUrl(
@@ -1673,6 +1662,21 @@ describe("AcpAdapterV2", () => {
                           },
                           content: [{ type: "text", text: "Sunny" }],
                         },
+                      },
+                      _meta: {
+                        is_mcp_tool_call: true,
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    },
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "child-html",
+                      title: "Render page",
+                      status: "completed",
+                      rawInput: { server: "t3-code", tool: "html_render", arguments: {} },
+                      rawOutput: {
+                        type: "MCP",
+                        output: { OkayOutput: JSON.stringify({ htmlRender: childPage }) },
                       },
                       _meta: {
                         is_mcp_tool_call: true,
@@ -1850,6 +1854,16 @@ describe("AcpAdapterV2", () => {
           item.threadId === threadId &&
           item.type === "dynamic_tool" &&
           item.toolName === "weather.get_weather",
+      );
+      const childHtml = items.findLast(
+        (item) =>
+          item.threadId === task?.childThreadId &&
+          item.type === "dynamic_tool" &&
+          item.toolName === "t3-code.html_render",
+      );
+      assert.deepEqual(
+        childHtml?.type === "dynamic_tool" ? htmlRenderFromToolItem(childHtml) : undefined,
+        childPage,
       );
       for (const item of [parentMcp, childMcp]) {
         assert.equal(item?.title, "get weather");

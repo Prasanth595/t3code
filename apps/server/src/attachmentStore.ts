@@ -25,9 +25,9 @@ const ATTACHMENT_ID_PATTERN = new RegExp(
   "i",
 );
 
-const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export { PENDING_ATTACHMENT_THREAD_SEGMENT, toSafeThreadAttachmentSegment };
 
+const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PARTIAL_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
 export function attachmentFileExtension(fileName: string): string {
