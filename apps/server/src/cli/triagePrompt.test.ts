@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 
 import { buildTriageContext, buildTriageLaunchPrompt, TRIAGE_PLAYBOOK } from "./triagePrompt.ts";
+import { RECOVERY_PLAYBOOK } from "./recoveryPrompt.ts";
 
 it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
   // Older releases fetch the repository playbook.
@@ -15,13 +16,29 @@ it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
   assert.equal(TRIAGE_PLAYBOOK, NodeFS.readFileSync(canonicalPath, "utf8"));
 });
 
-it("launch prompt stays a single argv-safe line naming the prompt file", () => {
-  // Windows .cmd shims cannot carry multiline argv.
-  const launch = buildTriageLaunchPrompt(String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
-  assert.notInclude(launch, "\n");
-  assert.include(launch, String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
-  assert.isBelow(launch.length, 1_000);
+it("ships the current recovery playbook for offline use", () => {
+  assert.equal(
+    RECOVERY_PLAYBOOK,
+    NodeFS.readFileSync(
+      new URL("../../../../.github/recovery/PLAYBOOK.md", import.meta.url),
+      "utf8",
+    ),
+  );
 });
+
+it.each(["triage", "unfuck"] as const)(
+  "%s launch prompt stays a single argv-safe line naming the prompt file",
+  (command) => {
+    // Windows .cmd shims cannot carry multiline argv.
+    const launch = buildTriageLaunchPrompt(
+      String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`,
+      command,
+    );
+    assert.notInclude(launch, "\n");
+    assert.include(launch, String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
+    assert.isBelow(launch.length, 1_000);
+  },
+);
 
 it("context file labels the CLI version as the CLI's, not the user's build", () => {
   const context = buildTriageContext({
