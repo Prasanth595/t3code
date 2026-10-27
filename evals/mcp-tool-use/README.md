@@ -27,7 +27,7 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results.
 - `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `textMust`, and `linked`.
 
-`setup.skills` can load `t3code-threads` or `t3code-orchestration` from this
+`setup.skills` can load any bundled skill ID from `packages/contracts/src/skills.ts` from this
 checkout's `.agents/skills` into the case context, as an already-selected skill.
 Use `--cases mcp-tool-use/cases/skills.ndjson --dry-run` to check those scenarios.
 This tests the loaded guidance; it does not test provider skill discovery.

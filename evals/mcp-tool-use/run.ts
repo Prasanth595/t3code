@@ -11,7 +11,7 @@ import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestratorMcpTaskRole, ProviderInstanceId } from "@t3tools/contracts";
+import { BundledSkillId, OrchestratorMcpTaskRole, ProviderInstanceId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -172,9 +172,7 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
-    skills: Schema.optional(
-      Schema.Array(Schema.Literals(["t3code-threads", "t3code-orchestration"])),
-    ),
+    skills: Schema.optional(Schema.Array(BundledSkillId)),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
