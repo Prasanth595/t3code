@@ -6,6 +6,7 @@ import { useThreadActions } from "./useThreadActions";
 import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
 import { useThreadUndoNotice } from "./showThreadUndoNotice";
+import { announce } from "../lib/announce";
 
 const commands = vi.hoisted(() => ({
   pin: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
+vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",
@@ -130,12 +132,25 @@ describe("concurrent thread action Undo", () => {
   );
 });
 
+describe("pin", () => {
+  it("announces that the thread was pinned", async () => {
+    vi.mocked(announce).mockClear();
+    await useThreadActions().pinThread(target);
+    expect(commands.pin).toHaveBeenCalledOnce();
+    const spoken = vi.mocked(announce).mock.calls.map(([message]) => message);
+    expect(spoken).toContainEqual(expect.stringMatching(/\bpinned\b/i));
+  });
+});
+
 describe("unpin Undo", () => {
   it("restores the original snooze after restoring the pin", async () => {
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
     threadShell.snoozedUntil = "2030-01-01T09:00:00.000Z";
     await useThreadActions().unpinThread(target);
+    vi.mocked(announce).mockClear();
     await currentUndo()();
+    const spoken = vi.mocked(announce).mock.calls.map(([message]) => message);
+    expect(spoken).not.toContainEqual(expect.stringMatching(/\bpinned\b/i));
     expect(commands.pin).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, orderKey: "a0" },
