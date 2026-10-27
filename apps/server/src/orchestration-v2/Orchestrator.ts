@@ -2941,6 +2941,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    const movesProject =
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId;
+    if (
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId
+    ) {
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is a subagent and moves with its parent.`,
+        });
+      }
+      const project = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+      if (Option.isNone(project) || project.value.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Project ${command.projectId} does not exist.`,
+        });
+      }
+      const records = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "runtimeRequests"])
+        .pipe(mapDispatchError(command));
+      if (
+        records.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        ) ||
+        records.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is busy. Stop it or clear its queue before moving it.`,
+        });
+      }
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3097,15 +3137,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    const changesWorkspace =
+      movesProject ||
+      (command.type === "thread.metadata.update" &&
+        command.worktreePath !== undefined &&
+        command.worktreePath !== thread.worktreePath);
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
       command.type === "thread.archive" ||
       command.type === "thread.settle" ||
-      (command.type === "thread.metadata.update" &&
-        command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+      changesWorkspace;
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3387,6 +3430,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.projectId === undefined || command.projectId === thread.projectId
+              ? {}
+              : {
+                  projectId: command.projectId,
+                  branch: command.branch ?? null,
+                  worktreePath: command.worktreePath ?? null,
+                }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -3852,9 +3902,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+        : changesWorkspace
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])
