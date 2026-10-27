@@ -171,7 +171,7 @@ it("hands the draft screen the same project ref across re-renders", async () => 
   // The draft screen re-applies its route project when this identity changes,
   // and that write re-renders the route; an unstable ref loops forever.
   act(() => harness.set({ projects: [{ ...project }], catalog: { ...connected } }));
-  const refs = new Set(harness.draftProjectRefs);
-  expect(harness.draftProjectRefs.length).toBeGreaterThan(1);
-  expect(refs.size).toBe(1);
+  // A stable ref lets the compiled screen skip re-rendering the draft screen at all; an unstable
+  // one re-renders it with a second ref.
+  expect(new Set(harness.draftProjectRefs).size).toBe(1);
 });

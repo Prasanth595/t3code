@@ -7,7 +7,7 @@ import {
   usePreventRemoveContext,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -171,25 +171,17 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const preparedBranch = prepared ? prepared.branch : initialProjectRef.branch;
   const preparedWorktreePath = prepared ? prepared.worktreePath : initialProjectRef.worktreePath;
   // NewTaskDraftScreen re-applies the route project (and rewrites the draft's
-  // workspace) whenever this object's identity changes. The compiler does not
-  // memoize values that cross the hooks above, so key it on its fields;
-  // otherwise every draft write re-renders into another write.
-  const preparedProjectRef = useMemo(
-    () => ({
-      environmentId: initialProjectRef.environmentId,
-      projectId: initialProjectRef.projectId,
-      branch: preparedBranch,
-      worktreePath: preparedWorktreePath,
-      cloning: initialProjectRef.cloning,
-    }),
-    [
-      initialProjectRef.environmentId,
-      initialProjectRef.projectId,
-      preparedBranch,
-      preparedWorktreePath,
-      initialProjectRef.cloning,
-    ],
-  );
+  // workspace) whenever this object's identity changes. initialProjectRef is new
+  // every render, so read its fields first: the compiler then memoizes this
+  // object on them, instead of on initialProjectRef.
+  const { environmentId, projectId, cloning } = initialProjectRef;
+  const preparedProjectRef = {
+    environmentId,
+    projectId,
+    branch: preparedBranch,
+    worktreePath: preparedWorktreePath,
+    cloning,
+  };
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 
   if (!initialized) return null;
