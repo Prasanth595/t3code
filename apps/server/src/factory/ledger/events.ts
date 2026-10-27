@@ -93,8 +93,16 @@ export type RunEvent =
         branch: string | null;
         t3_error: string | null;
         ended_in_pass: number;
-        /** The run ended on a provider rate limit: resumed after its cooldown, and not counted. */
-        rate_limited?: boolean;
+      };
+    }
+  | {
+      /** The run ended on a provider rate limit, and the session is resumed once in its thread. */
+      readonly event: "session_rate_limited";
+      readonly data: {
+        run_ordinal: number;
+        branch: string | null;
+        /** The interruption resumes used so far: this resume leaves them as they are. */
+        resumes: number;
         /** The model id the resume moved the session to, on the same provider instance. */
         model?: string;
       };
@@ -191,7 +199,7 @@ export type RunEventName = RunEvent["event"];
 type RunDataKeys<N extends RunEventName> = keyof Extract<RunEvent, { event: N }>["data"];
 
 /**
- * The 32 event types a run file can hold, each with the names of its `data` fields in the order
+ * The 33 event types a run file can hold, each with the names of its `data` fields in the order
  * they are written.
  */
 export const RUN_EVENT_FIELDS = {
@@ -217,9 +225,8 @@ export const RUN_EVENT_FIELDS = {
     "branch",
     "t3_error",
     "ended_in_pass",
-    "rate_limited",
-    "model",
   ],
+  session_rate_limited: ["run_ordinal", "branch", "resumes", "model"],
   session_paused: ["run_ordinal"],
   stop_requested: ["by"],
   step_changed: ["step"],

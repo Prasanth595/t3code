@@ -73,8 +73,8 @@ export const cooldownKey = (model: Model): string => `${model.instanceId} ${mode
 
 /**
  * A session that ended (`endedMs`) inside the current window is part of its burst and changes nothing.
- * Otherwise a window opens from `nowMs`: the retry-after, else 5 minutes doubling per window in a row
- * up to `COOLDOWN_CAP_MS`. One that ended after the model went quiet starts a new streak.
+ * Otherwise a window opens from `nowMs`: 5 minutes doubling per window in a row up to `COOLDOWN_CAP_MS`,
+ * or the retry-after when longer. One that ended after the model went quiet starts a new streak.
  */
 export const recordRateLimit = (
   cooldowns: Map<string, Cooldown>,
@@ -90,7 +90,7 @@ export const recordRateLimit = (
   if (current !== undefined && endedMs < current.untilMs) return;
   const windows = (current?.windows ?? 0) + 1;
   const backoff = Math.min(COOLDOWN_FIRST_MS * 2 ** (windows - 1), COOLDOWN_CAP_MS);
-  const untilMs = nowMs + (retryAfterMs ?? backoff);
+  const untilMs = nowMs + Math.max(retryAfterMs ?? 0, backoff);
   if (current === undefined) {
     cooldowns.set(key, { model, untilMs, windows, raised: false });
   } else {
@@ -121,6 +121,9 @@ export const forgetQuietCooldowns = (
   return quiet;
 };
 
+/** `model` moved to the model id `to`, on the same provider instance with the same options. */
+export const fallbackOf = (model: Model, to: string): Model => ({ ...model, model: to });
+
 /**
  * The model a session started or resumed now runs on: `model` while it does not cool down, else its
  * `fallbacks` model on the same provider instance, with the same options, while that one does not
@@ -135,6 +138,6 @@ export const launchModel = (
   if (coolingDown(cooldowns, cooldownKey(model), nowMs) === null) return model;
   const to = Object.hasOwn(fallbacks, model.model) ? fallbacks[model.model] : undefined;
   if (to === undefined) return null;
-  const fallback: Model = { ...model, model: to };
+  const fallback = fallbackOf(model, to);
   return coolingDown(cooldowns, cooldownKey(fallback), nowMs) === null ? fallback : null;
 };

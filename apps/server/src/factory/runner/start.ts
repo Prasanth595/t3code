@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
+import { fallbackOf } from "../cooldown.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
 import { issueBase } from "../domain/base.ts";
 import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
@@ -64,6 +65,7 @@ import { launchable } from "./launchTarget.ts";
 import {
   APPROVAL_RECHECKED,
   LAUNCH_BASE,
+  LAUNCH_MODEL,
   LAUNCH_PULL_REQUEST,
   LAUNCH_SENDING,
   LAUNCH_SENDING_RESUMED,
@@ -668,8 +670,12 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
     };
   }
   const project = target.success;
-  const model = ctx.launchModel?.(project.model) ?? project.model;
-  // A launch sent again keeps the base the first send was decided on.
+  // A launch sent again keeps the model and the base the first send was decided on.
+  const model = seen.launchSent
+    ? seen.launchModel === null
+      ? project.model
+      : fallbackOf(project.model, seen.launchModel)
+    : (ctx.launchModel?.(project.model) ?? project.model);
   const based = seen.launchSent
     ? ({ ok: true, base: seen.launchBase ?? ctx.project.base } as const)
     : yield* runBase(ctx, detail);
@@ -682,6 +688,14 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
       : yield* recordedResume(ctx, run, seen.launchResumedFrom, seen.launchResumedPr)
     : yield* resumeFrom(ctx, run, issue, base);
   if (!seen.launchSent) {
+    if (model.model !== project.model.model) {
+      yield* ledger(() =>
+        out.append(
+          { event: "step_changed", data: { step: `${LAUNCH_MODEL}${model.model}` } },
+          makeCause("start", "launch-sending"),
+        ),
+      );
+    }
     if (named) {
       yield* ledger(() =>
         out.append(

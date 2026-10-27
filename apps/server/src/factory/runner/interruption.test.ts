@@ -2359,18 +2359,16 @@ const MOVED_MESSAGE =
 const movedCall = (ordinal: number) =>
   `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${MOVED_MESSAGE}${ON_SONNET}`;
 
-const cooledLine = (resumes: number, runOrdinal: number): RunEvent => ({
-  event: "session_interrupted",
+const cooledLine = (resumes: number, runOrdinal: number, model?: string): RunEvent => ({
+  event: "session_rate_limited",
   data: {
-    resumes,
-    relaunch: false,
     run_ordinal: runOrdinal,
     branch: "t3code/abc",
-    t3_error: null,
-    ended_in_pass: 0,
-    rate_limited: true,
+    resumes,
+    ...(model !== undefined && { model }),
   },
 });
+const cooledSent = (runOrdinal: number) => step(`rate-limited-sent ${runOrdinal}`);
 
 describe("a provider rate limit", () => {
   it.effect("is told apart from a session that ended badly, and nothing is written", () =>
@@ -2398,7 +2396,7 @@ describe("a provider rate limit", () => {
       endedAs(rig, "failed", 1, COOLING_DOWN);
       clearCalls(rig);
       assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), sentStep(0)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), cooledSent(1)]);
       assert.deepStrictEqual(rig.t3, ["status thread-1", cooledCall(1)]);
       theIssueIsStillBuilding(rig);
       // The session is working until a run newer than the one that ended has ended.
@@ -2433,7 +2431,7 @@ describe("a provider rate limit", () => {
         resumeLine(1, 1, T3_ERROR, 1),
         sentStep(1),
         cooledLine(1, 2),
-        sentStep(1),
+        cooledSent(2),
       ]);
     }),
   );
@@ -2444,7 +2442,7 @@ describe("a provider rate limit", () => {
       endedAs(rig, "failed", 1, COOLING_DOWN);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
       assert.deepStrictEqual(sends(rig), [cooledCall(1)]);
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), sentStep(0)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), cooledSent(1)]);
     }),
   );
 
@@ -2474,8 +2472,8 @@ describe("a provider rate limit", () => {
         });
         assert.deepStrictEqual(linesOf(rig), [
           ...STARTED,
-          { ...cooledLine(0, 1), data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" } },
-          sentStep(0),
+          cooledLine(0, 1, "claude-sonnet-5-5"),
+          cooledSent(1),
         ]);
         assert.deepStrictEqual(rig.t3, ["status thread-1", movedCall(1)]);
         assert.deepStrictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).model, SONNET);
@@ -2483,7 +2481,7 @@ describe("a provider rate limit", () => {
         endedAs(rig, "failed", 2, COOLING_DOWN);
         assert.deepStrictEqual(yield* advanceIn(rig), {
           kind: "rate-limited",
-          endedMs: T0,
+          endedMs: 0,
           retryAfterMs: null,
           model: SONNET,
         });
@@ -2494,15 +2492,12 @@ describe("a provider rate limit", () => {
     "moved to another model and cut short before its send is sent again on that model",
     () =>
       Effect.gen(function* () {
-        const switched: RunEvent = {
-          event: "session_interrupted",
-          data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" },
-        } as RunEvent;
+        const switched = cooledLine(0, 1, "claude-sonnet-5-5");
         const rig = rigFor([...STARTED, switched]);
         endedAs(rig, "failed", 1, COOLING_DOWN);
         assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
         assert.deepStrictEqual(sends(rig), [movedCall(1)]);
-        assert.deepStrictEqual(linesOf(rig), [...STARTED, switched, sentStep(0)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, switched, cooledSent(1)]);
       }),
   );
 
@@ -2524,6 +2519,25 @@ describe("a provider rate limit", () => {
         retryAfterMs: 120_000,
         model: OPUS,
       });
+    }),
+  );
+
+  it.effect("with no end from T3 is placed at its start, else long ago, never at the clock", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.status = () =>
+        statusOf("failed", COOLING_DOWN, { runOrdinal: 1, runStartedAt: T0 - 3 * MINUTE });
+      const started = {
+        kind: "rate-limited" as const,
+        endedMs: T0 - 3 * MINUTE,
+        retryAfterMs: null,
+        model: OPUS,
+      };
+      assert.deepStrictEqual(yield* advanceIn(rig), started);
+      rig.clock.now += 30 * MINUTE;
+      assert.deepStrictEqual(yield* advanceIn(rig), started);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      assert.deepStrictEqual(yield* advanceIn(rig), { ...started, endedMs: 0 });
     }),
   );
 
@@ -2590,10 +2604,7 @@ describe("a provider rate limit", () => {
           ? ({ ...line, data: { ...line.data, model_options: options } } as RunEvent)
           : line,
       );
-      const moved: RunEvent = {
-        event: "session_interrupted",
-        data: { ...cooledLine(0, 1).data, model: "claude-sonnet-5-5" },
-      } as RunEvent;
+      const moved = cooledLine(0, 1, "claude-sonnet-5-5");
       assert.deepStrictEqual(readProgress(seededEntries([...launched, moved])).model, {
         ...SONNET,
         options,

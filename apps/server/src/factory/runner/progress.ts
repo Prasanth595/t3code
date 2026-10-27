@@ -4,6 +4,7 @@
  * they read.
  */
 
+import { fallbackOf } from "../cooldown.ts";
 import { isState, type State } from "../domain/lifecycle.ts";
 import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
@@ -34,7 +35,7 @@ export interface CommandLine {
   readonly durationMs: number;
 }
 
-/** A `session_interrupted` line as `readProgress` keeps it. */
+/** A `session_interrupted` or `session_rate_limited` line as `readProgress` keeps it. */
 export interface Interruption {
   /** How many interruptions the run has been through, this one included. */
   readonly resumes: number;
@@ -44,9 +45,9 @@ export interface Interruption {
   readonly runOrdinal: number | null;
   /** The line's branch: the thread's for a resume, where the next attempt resumes from for a relaunch; null when it names none. */
   readonly branch: string | null;
-  /** The `interruption-sent <resumes>` step for this resume is in the ledger. */
+  /** The `interruption-sent <resumes>` (or `rate-limited-sent <run ordinal>`) step for this resume is in the ledger. */
   readonly sent: boolean;
-  /** The run ended on a provider rate limit: its resume is sent after the cooldown and counts as none. */
+  /** A `session_rate_limited` line: its resume is sent after the cooldown and counts as none. */
   readonly rateLimited: boolean;
   /** The model the resume moves the session to, by id on the same instance; null to keep its own. */
   readonly model: string | null;
@@ -154,6 +155,11 @@ export interface Seen {
    * when it is not the repo's. A launch sent again reads it and never the issue again.
    */
   readonly launchBase: string | null;
+  /**
+   * The model id in a `launch-model <model>` step: the model the first launch call was decided on,
+   * when it is not the project's. A launch sent again reads it and never the cooldowns again.
+   */
+  readonly launchModel: string | null;
   /** The `approval-rechecked` step: the issue text was checked again after the launch. */
   readonly rechecked: boolean;
   /** The `session_launched` line's worktree path. */
@@ -217,9 +223,9 @@ export interface Seen {
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
   readonly paused: { readonly runOrdinal: number | null } | null;
-  /** The newest `session_interrupted` line, until a new session is launched: the decision to resume or to relaunch. */
+  /** The newest `session_interrupted` or `session_rate_limited` line, until a new session is launched: the decision to resume or to relaunch. */
   readonly interruption: Interruption | null;
-  /** The newest branch a `session_launched` or `session_interrupted` line names: where the run's work is. */
+  /** The newest branch a `session_launched`, `session_interrupted` or `session_rate_limited` line names: where the run's work is. */
   readonly lastBranch: string | null;
   /** Milliseconds spent in `triage` and `building` in stints that have ended. */
   readonly workedMs: number;
@@ -346,6 +352,8 @@ export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
 export const LAUNCH_PULL_REQUEST = "launch-pull-request ";
 /** The step written before `launch-sending` when the run's base is not the repo's: `launch-base <branch>`. */
 export const LAUNCH_BASE = "launch-base ";
+/** The step written before `launch-sending` when the launch runs on a fallback: `launch-model <model>`. */
+export const LAUNCH_MODEL = "launch-model ";
 /** The ledger step that says the issue text was checked again after the launch. */
 export const APPROVAL_RECHECKED = "approval-rechecked";
 /** The ledger step written before the reminder is sent: `result-line-reminding <k>`, `k` the ordinal of the run that ended. */
@@ -354,6 +362,8 @@ export const RESULT_LINE_REMINDING = "result-line-reminding";
 export const RESULT_LINE_REMINDED = "result-line-reminded";
 /** The ledger step written once the resume of a `session_interrupted` line was sent: `interruption-sent <resumes>`. */
 export const INTERRUPTION_SENT = "interruption-sent";
+/** The ledger step written once the resume of a `session_rate_limited` line was sent: `rate-limited-sent <run ordinal>`. */
+export const RATE_LIMITED_SENT = "rate-limited-sent";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
 /** The ledger step written when every message sent under a `forward-wait <k>` was refused by T3, so no run was started and the wait is over: `forward-wait-cancelled <k>`. */
@@ -425,10 +435,6 @@ const feedbackItems = (data: unknown): ReadonlyArray<string> => {
   return Array.isArray(items) ? items.filter((id): id is string => typeof id === "string") : [];
 };
 
-/** The session's model after a rate-limited resume moved it to `to`, on the same instance. */
-const movedModel = (from: Model | null, to: string): Model | null =>
-  from === null ? null : { ...from, model: to };
-
 const sentInterruption = (interruption: Interruption): Interruption => ({
   ...interruption,
   sent: true,
@@ -446,6 +452,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let launchResumedPr: string | null = null;
   let launchPullRequest: { branch: string; url: string } | null = null;
   let launchBase: string | null = null;
+  let launchModel: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
   let worktreeDone = false;
@@ -576,7 +583,17 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           sentRun !== null &&
           interruption !== null &&
           !interruption.relaunch &&
+          !interruption.rateLimited &&
           interruption.resumes === sentRun
+        ) {
+          interruption = sentInterruption(interruption);
+        }
+        const sentLimited = stepNumber(step, RATE_LIMITED_SENT);
+        if (
+          sentLimited !== null &&
+          interruption !== null &&
+          interruption.rateLimited &&
+          interruption.runOrdinal === sentLimited
         ) {
           interruption = sentInterruption(interruption);
         }
@@ -610,6 +627,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
             at < 0 ? null : { branch: rest.slice(0, at), url: rest.slice(at + 1) };
         } else if (step.startsWith(LAUNCH_BASE)) {
           launchBase = step.slice(LAUNCH_BASE.length);
+        } else if (step.startsWith(LAUNCH_MODEL)) {
+          launchModel = step.slice(LAUNCH_MODEL.length);
         }
         const gateSending = parseGateSending(step);
         if (gateSending !== null) {
@@ -759,21 +778,39 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof branch === "string") lastBranch = branch;
         if (resumes === null) break;
         const relaunch = dataField(entry.data, "relaunch") === true;
-        const moved = dataField(entry.data, "model");
-        const movedTo = typeof moved === "string" ? moved : null;
         interruption = {
           resumes,
           relaunch,
           runOrdinal: ordinal,
           branch: typeof branch === "string" ? branch : null,
           sent: false,
-          rateLimited: dataField(entry.data, "rate_limited") === true,
-          model: movedTo,
+          rateLimited: false,
+          model: null,
         };
-        model = movedTo === null ? model : movedModel(model, movedTo);
         // The resume starts a new run: the session is working until one newer than the run that
         // ended has ended. Like a forward's, only a newer run drops the wait.
         if (!relaunch && ordinal !== null) awaitRun(ordinal, true);
+        break;
+      }
+      case "session_rate_limited": {
+        const resumes = number(dataField(entry.data, "resumes"));
+        const ordinal = number(dataField(entry.data, "run_ordinal"));
+        const branch = dataField(entry.data, "branch");
+        if (typeof branch === "string") lastBranch = branch;
+        if (resumes === null || ordinal === null) break;
+        const moved = dataField(entry.data, "model");
+        const movedTo = typeof moved === "string" ? moved : null;
+        interruption = {
+          resumes,
+          relaunch: false,
+          runOrdinal: ordinal,
+          branch: typeof branch === "string" ? branch : null,
+          sent: false,
+          rateLimited: true,
+          model: movedTo,
+        };
+        if (movedTo !== null && model !== null) model = fallbackOf(model, movedTo);
+        awaitRun(ordinal, true);
         break;
       }
       case "session_paused": {
@@ -924,6 +961,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     launchResumedFrom,
     launchResumedPr,
     launchBase,
+    launchModel,
     rechecked,
     worktree,
     worktreeDone,

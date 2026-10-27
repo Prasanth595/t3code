@@ -74,6 +74,7 @@ import {
   FORWARD_WAIT,
   FORWARD_WAIT_CANCELLED,
   INTERRUPTION_SENT,
+  RATE_LIMITED_SENT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
   readProgress,
@@ -709,9 +710,9 @@ export const advance = (
       if (status === null) return { kind: "ended-badly", what: "thread-gone" } as const;
       const message = status.lastAssistantMessage;
       const result = parseSessionResult(ctx.repo, message ?? undefined);
-      // A `session_interrupted` line with no `interruption-sent <n>` is a resume cut short. If the
-      // thread already has a run newer than the one that ended, the message arrived and only the
-      // step is written; otherwise the send is repeated under the same command id. A thread T3 no
+      // A `session_interrupted` (or `session_rate_limited`) line with no sent step is a resume cut
+      // short. If the thread has a run newer than the one that ended, the message arrived and only
+      // the step is written; else the send is repeated under the same command id. A thread T3 no
       // longer has is the thread-gone case.
       const owedResume = seen.interruption;
       if (owedResume !== null && !owedResume.relaunch && !owedResume.sent) {
@@ -733,9 +734,16 @@ export const advance = (
         }
         yield* append(
           out,
-          { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${owedResume.resumes}` } },
+          {
+            event: "step_changed",
+            data: {
+              step: owedResume.rateLimited
+                ? `${RATE_LIMITED_SENT} ${owedResume.runOrdinal}`
+                : `${INTERRUPTION_SENT} ${owedResume.resumes}`,
+            },
+          },
           "advance",
-          "interruption-sent",
+          owedResume.rateLimited ? "rate-limited-sent" : "interruption-sent",
         );
         if (!arrived) return { kind: "running" } as const;
       }
@@ -793,7 +801,9 @@ export const advance = (
         if (limit !== null && endedBadly.what !== null) {
           return {
             kind: "rate-limited",
-            endedMs: status.runCompletedAt ?? ctx.clock(),
+            // Never the clock, which each pass would read as a new hit: a run T3 gave no end is
+            // placed at its start, else long ago, so it counts as part of the window it opened.
+            endedMs: status.runCompletedAt ?? status.runStartedAt ?? 0,
             retryAfterMs: limit.retryAfterMs,
             model: seen.model,
           } as const;
@@ -927,7 +937,8 @@ export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(funct
       if (
         entry.event === "session_launched" ||
         entry.event === "stuck" ||
-        entry.event === "session_interrupted"
+        entry.event === "session_interrupted" ||
+        entry.event === "session_rate_limited"
       ) {
         const branch = field(entry.data, "branch");
         if (typeof branch === "string") branches.add(branch);
@@ -1785,7 +1796,13 @@ export const resumeAfterCooldown = Effect.fn("RunnerBuilding.resumeAfterCooldown
   if (status === null) return gone;
   const message = status.lastAssistantMessage;
   const ended = endedBadlyNow(seen, status, parseSessionResult(ctx.repo, message ?? undefined));
-  if (ended === null || ended.what === null || rateLimitOf(message) === null) {
+  const runOrdinal = status.runOrdinal;
+  if (
+    ended === null ||
+    ended.what === null ||
+    runOrdinal === null ||
+    rateLimitOf(message) === null
+  ) {
     return { kind: "unchanged", why: "its thread has moved on since" } as const;
   }
   const moveTo = model !== null && model.model !== seen.model?.model ? model : null;
@@ -1794,15 +1811,11 @@ export const resumeAfterCooldown = Effect.fn("RunnerBuilding.resumeAfterCooldown
     append(
       out,
       {
-        event: "session_interrupted",
+        event: "session_rate_limited",
         data: {
-          resumes,
-          relaunch: false,
-          run_ordinal: status.runOrdinal,
+          run_ordinal: runOrdinal,
           branch: status.branch,
-          t3_error: null,
-          ended_in_pass: 0,
-          rate_limited: true,
+          resumes,
           ...(moveTo !== null && { model: moveTo.model }),
         },
       },
@@ -1810,14 +1823,13 @@ export const resumeAfterCooldown = Effect.fn("RunnerBuilding.resumeAfterCooldown
       "session-rate-limited",
     ),
   );
-  if ((yield* sendRateLimited(ctx, run, threadId, status.runOrdinal, moveTo)) === "gone")
-    return gone;
+  if ((yield* sendRateLimited(ctx, run, threadId, runOrdinal, moveTo)) === "gone") return gone;
   yield* withLedger(ctx, run, (out) =>
     append(
       out,
-      { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${resumes}` } },
+      { event: "step_changed", data: { step: `${RATE_LIMITED_SENT} ${runOrdinal}` } },
       "advance",
-      "interruption-sent",
+      "rate-limited-sent",
     ),
   );
   return { kind: "resumed" } as const;

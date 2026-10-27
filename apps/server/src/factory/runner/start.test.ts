@@ -510,7 +510,11 @@ describe("start: a fresh ready issue", () => {
       });
       assert.deepStrictEqual(asked, ["claude-fable-5-1"]);
       assert.deepStrictEqual(t3.launchRequests[0]!.model, fallback);
-      assert.deepStrictEqual(entriesOf(dataDir)[4]!.data, {
+      const steps = entriesOf(dataDir)
+        .filter((e) => e.event === "step_changed")
+        .map((e) => (e.data as { step: string }).step);
+      assert.deepStrictEqual(steps.slice(1, 3), ["launch-model claude-opus-5-5", "launch-sending"]);
+      assert.deepStrictEqual(entriesOf(dataDir).find((e) => e.event === "session_launched")!.data, {
         thread_id: "thread-1",
         worktree: WORKTREE,
         branch: "t3code/abc",
@@ -520,6 +524,39 @@ describe("start: a fresh ready issue", () => {
         resumed_from: null,
         base: "main",
       });
+    }),
+  );
+
+  it.effect("a launch sent again keeps the model the first send decided and asks no cooldown", () =>
+    Effect.gen(function* () {
+      const fable = { instanceId: "claudeAgent", model: "claude-fable-5-1" };
+      for (const [pinned, expected] of [
+        [["launch-model claude-opus-5-5"], "claude-opus-5-5"],
+        [[], "claude-fable-5-1"],
+      ] as const) {
+        const dataDir = tempDir();
+        seedRun(dataDir, [
+          ...startedLines().slice(0, 3),
+          ...pinned.map((step) => ({
+            line: { event: "step_changed", data: { step } } as RunEvent,
+            cause: cause("launch-sending"),
+          })),
+          startedLines()[3]!,
+        ]);
+        const { tracker } = fakeTracker({ issues: [detail("triage", [USER])] });
+        const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model: fable } });
+        const asked: Array<string> = [];
+        yield* startIn(dataDir, tracker, t3.sessions, {
+          launchModel: (m) => {
+            asked.push(m.model);
+            return { ...m, model: "claude-sonnet-5-5" };
+          },
+        });
+        assert.deepStrictEqual(asked, [], expected);
+        assert.deepStrictEqual(t3.launchRequests[0]!.model, { ...fable, model: expected });
+        const launched = entriesOf(dataDir).find((e) => e.event === "session_launched")!;
+        assert.strictEqual((launched.data as { model: string }).model, expected);
+      }
     }),
   );
 

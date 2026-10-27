@@ -135,6 +135,22 @@ describe("recordRateLimit", () => {
     assert.strictEqual(cooldowns.get("k")!.untilMs, T0 + 90 * MINUTE);
   });
 
+  it("still backs off when the provider keeps asking for a short wait", () => {
+    const cooldowns = new Map<string, Cooldown>();
+    let now = T0;
+    const lengths: Array<number> = [];
+    for (let i = 0; i < 4; i++) {
+      recordRateLimit(cooldowns, "k", null, now, now, 5_000);
+      const cooldown = cooldowns.get("k")!;
+      lengths.push(cooldown.untilMs - now);
+      now = cooldown.untilMs;
+    }
+    assert.deepStrictEqual(
+      lengths.map((ms) => ms / MINUTE),
+      [5, 10, 20, 40],
+    );
+  });
+
   it("keeps each model's window apart", () => {
     const cooldowns = new Map<string, Cooldown>();
     recordRateLimit(cooldowns, "a", null, T0, T0, null);
