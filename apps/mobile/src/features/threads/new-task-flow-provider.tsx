@@ -1,8 +1,11 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
+import { canLoadBalanceToEnvironment } from "@t3tools/client-runtime/load-balancing";
+import { AsyncResult } from "effect/reactivity";
 import React, { useEffect, useRef, useState } from "react";
 
 import type {
+  ComposerContextRecord,
   EnvironmentId,
   ModelSelection,
   ProviderInteractionMode,
@@ -11,6 +14,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
@@ -28,6 +32,7 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
+  isNewTaskModelSelectionBlocked,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -42,6 +47,7 @@ import {
   appendComposerDraftAttachments,
   type ComposerDraftInsertion,
   type ComposerDraftWorkspaceSelection,
+  composerContextImportsAtom,
   composerDraftsLoadedAtom,
   createNewTaskDraft,
   getComposerDraftSnapshot,
@@ -80,6 +86,9 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { useEnvironmentsWithScope } from "../../state/session";
+import { useLoadBalancedEnvironment } from "../../state/use-load-balanced-environment";
 import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
@@ -90,7 +99,12 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  type AutoBalanceStatus,
+  resolveAutoBalanceStatus,
+  resolveBalancedProjects,
+  resolveEnvironmentProjectMatch,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
@@ -166,7 +180,13 @@ type NewTaskFlowContextValue = {
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
-  readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProject: (
+    project: EnvironmentProject,
+    options?: {
+      /** Keeps the draft on this project's machine instead of auto balancing it. */
+      readonly pinEnvironment?: boolean;
+    },
+  ) => void;
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
   /**
@@ -178,6 +198,14 @@ type NewTaskFlowContextValue = {
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
+  /** True when auto balance is on and the draft's project spans several machines. */
+  readonly canAutoBalance: boolean;
+  /** Null while the draft's machine is the user's own choice. */
+  readonly autoBalanceStatus: AutoBalanceStatus | null;
+  /** Keeps the draft on its current machine, ahead of work that commits to it. */
+  readonly pinEnvironment: () => void;
+  /** Hands the draft back to auto balance. Returns false when it must stay put. */
+  readonly selectAutoBalance: () => boolean;
   readonly setSelectedModelKey: (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -209,6 +237,11 @@ type NewTaskFlowContextValue = {
   ) => void;
   readonly setExpandedProvider: (value: string | null) => void;
 };
+
+const EMPTY_LOAD_BALANCING_WEIGHTS: Readonly<Record<string, number>> = {};
+const EMPTY_ENVIRONMENT_IDS: ReadonlyArray<EnvironmentId> = [];
+const EMPTY_PROJECTS: ReadonlyArray<EnvironmentProject> = [];
+const EMPTY_CONTEXT_RECORDS: ReadonlyArray<ComposerContextRecord> = [];
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
@@ -283,6 +316,8 @@ export function NewTaskFlowProvider(
     draftKey: activeDraftKey,
     submitting,
     expandedProvider,
+    environmentPinned,
+    loadBalancedEnvironmentId,
   } = flowState;
   // Continuations read the flow at use time, with the route's draft applied.
   const readFlow = (): NewTaskFlowState => {
@@ -616,13 +651,22 @@ export function NewTaskFlowProvider(
     return createNewTaskDraft(target);
   };
 
-  const setProject = (project: EnvironmentProject) => {
+  const setProject = (
+    project: EnvironmentProject,
+    options?: { readonly pinEnvironment?: boolean },
+  ) => {
     updateFlow({
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
+      // A newly chosen project is routed afresh.
+      loadBalancedEnvironmentId: null,
+      ...(options?.pinEnvironment ? { environmentPinned: true } : {}),
     });
   };
+
+  const pinEnvironment = () =>
+    updateFlow({ environmentPinned: true, loadBalancedEnvironmentId: null });
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
     const match = resolveEnvironmentProjectMatch(
@@ -642,6 +686,7 @@ export function NewTaskFlowProvider(
   );
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    pinEnvironment();
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
@@ -674,6 +719,206 @@ export function NewTaskFlowProvider(
     return false;
   };
 
+  // Keeps the checkout-or-worktree choice but drops the branch and path, which
+  // only mean something on the machine they were picked on.
+  const releaseWorkspaceSelectionFromMachine = (
+    draftKey: string,
+    selection: ComposerDraftWorkspaceSelection | undefined,
+  ) => {
+    if (!selection) return;
+    // Every machine resolves a pull request's head branch for itself at send.
+    if (selection.pullRequestReference !== undefined) {
+      updateComposerDraftSettings(draftKey, {
+        workspaceSelection: { ...selection, worktreePath: null },
+      });
+      return;
+    }
+    updateComposerDraftSettings(draftKey, {
+      workspaceSelection: {
+        mode: selection.mode,
+        branch: null,
+        worktreePath: null,
+        ...(selection.startFromOrigin !== undefined
+          ? { startFromOrigin: selection.startFromOrigin }
+          : {}),
+        ...(selection.mode === "local" ? { followsCurrentCheckout: true } : {}),
+      },
+    });
+  };
+
+  const loadBalancingPreferences = useAtomValue(mobilePreferencesAtom);
+  const loadBalancingEnabled =
+    AsyncResult.isSuccess(loadBalancingPreferences) &&
+    loadBalancingPreferences.value.loadBalancingEnabled === true;
+  const loadBalancingWeights =
+    (AsyncResult.isSuccess(loadBalancingPreferences)
+      ? loadBalancingPreferences.value.loadBalancingWeights
+      : undefined) ?? EMPTY_LOAD_BALANCING_WEIGHTS;
+  const balancedProjects = resolveBalancedProjects(projectScopes, selectedProject);
+  // Only a project the user chose is routed, and only while its draft is open.
+  const canAutoBalance =
+    props.active !== false &&
+    loadBalancingEnabled &&
+    selectedProjectKey !== null &&
+    !isScratchDraft &&
+    balancedProjects.length > 1;
+  const needsLoadBalancing =
+    canAutoBalance &&
+    !environmentPinned &&
+    loadBalancedEnvironmentId === null &&
+    attachments.length === 0;
+  const operableEnvironments = useEnvironmentsWithScope(
+    needsLoadBalancing ? balancedProjects : EMPTY_PROJECTS,
+    AuthOrchestrationOperateScope,
+  );
+  const selectedModelInstanceId = selectedModel?.instanceId;
+  const selectedModelName = selectedModel?.model;
+  const contextRecords = selectedProjectDraft.context?.records ?? EMPTY_CONTEXT_RECORDS;
+  const loadBalancingCandidates = needsLoadBalancing
+    ? balancedProjects.flatMap(({ environmentId, id }) =>
+        (loadBalancingWeights[environmentId] ?? 50) > 0 &&
+        // An attached thread can only be read on its own machine.
+        threadContextsOutsideEnvironment({ text: prompt, records: contextRecords, environmentId })
+          .length === 0 &&
+        // Resource checks only need read access; starting a task needs more.
+        operableEnvironments.has(environmentId) &&
+        connectedEnvironments.some(
+          (environment) =>
+            environment.environmentId === environmentId &&
+            environment.connectionState === "connected",
+        ) &&
+        canLoadBalanceToEnvironment({
+          providers: serverConfigs.get(environmentId)?.providers,
+          settings: serverConfigs.get(environmentId)?.settings,
+          projectId: id,
+          providerInstanceId: selectedModelInstanceId ?? null,
+          // The option knows the driver even when this machine reports no status for it.
+          providerDriver:
+            selectedProviderStatus?.driver ?? selectedModelOption?.providerDriver ?? null,
+        }) &&
+        // The same checks the start button applies once the draft is there.
+        !isNewTaskModelSelectionBlocked(
+          serverConfigs.get(environmentId),
+          selectedModelInstanceId !== undefined && selectedModelName !== undefined
+            ? { instanceId: selectedModelInstanceId, model: selectedModelName }
+            : null,
+          id,
+        )
+          ? [environmentId]
+          : [],
+      )
+    : EMPTY_ENVIRONMENT_IDS;
+  const loadBalancing = useLoadBalancedEnvironment(loadBalancingCandidates, loadBalancingWeights);
+  // A pasted context lands after its files copy and may reference a thread on
+  // this machine, so routing waits for it.
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const importingContext =
+    selectedProjectDraftKey !== null && contextImports[selectedProjectDraftKey] === true;
+  const defaultWorkspaceModeSettled = projectDefaults.defaultWorkspaceModeSettled;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the draft once the asynchronous host resource checks pick a machine
+  useEffect(() => {
+    if (
+      !needsLoadBalancing ||
+      loadBalancing.pending ||
+      loadBalancing.environmentId === null ||
+      importingContext ||
+      selectedProject === null ||
+      selectedProjectDraftKey === null
+    ) {
+      return;
+    }
+    // A pin, project change, send, or import begun earlier in this commit has not rendered yet.
+    const live = readFlow();
+    if (
+      live.environmentPinned ||
+      live.loadBalancedEnvironmentId !== null ||
+      live.projectKey !== selectedProjectKey ||
+      live.submitting ||
+      appAtomRegistry.get(composerContextImportsAtom)[selectedProjectDraftKey] === true
+    ) {
+      return;
+    }
+    const target = balancedProjects.find(
+      (project) => project.environmentId === loadBalancing.environmentId,
+    );
+    if (!target) return;
+    const liveDraft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    if (liveDraft.attachments.length > 0) return;
+    if (
+      threadContextsOutsideEnvironment({
+        text: liveDraft.text,
+        records: liveDraft.context?.records ?? EMPTY_CONTEXT_RECORDS,
+        environmentId: target.environmentId,
+      }).length > 0
+    ) {
+      return;
+    }
+    const movesMachine = target.environmentId !== selectedProject.environmentId;
+    // The mode on screen travels even when it is only this machine's default, as on web.
+    const workspaceSelection =
+      liveDraft.workspaceSelection ??
+      (defaultWorkspaceModeSettled
+        ? { mode: workspaceMode, branch: null, worktreePath: null }
+        : undefined);
+    if (movesMachine && workspaceSelection === undefined) return;
+    // The machine was checked for the model on screen, which may be an unwritten default.
+    if (selectedModel !== null && movesMachine) {
+      updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selectedModel });
+    }
+    const draftKey = carryDraftContentTo(target);
+    if (movesMachine) {
+      releaseWorkspaceSelectionFromMachine(draftKey, workspaceSelection);
+    }
+    updateFlow({
+      draftKey,
+      environmentId: target.environmentId,
+      projectKey: scopedProjectKey(target.environmentId, target.id),
+      loadBalancedEnvironmentId: target.environmentId,
+    });
+  }, [
+    needsLoadBalancing,
+    loadBalancing.pending,
+    loadBalancing.environmentId,
+    importingContext,
+    balancedProjects,
+    carryDraftContentTo,
+    defaultWorkspaceModeSettled,
+    readFlow,
+    releaseWorkspaceSelectionFromMachine,
+    selectedModel,
+    selectedProject,
+    selectedProjectDraftKey,
+    selectedProjectKey,
+    updateFlow,
+    workspaceMode,
+  ]);
+  const autoBalanceStatus = resolveAutoBalanceStatus({
+    canAutoBalance,
+    environmentPinned,
+    hasAttachments: attachments.length > 0,
+    loadBalancedEnvironmentId,
+    pending: loadBalancing.pending || !defaultWorkspaceModeSettled || importingContext,
+  });
+  const refreshLoadBalancing = loadBalancing.refresh;
+  const selectAutoBalance = () => {
+    if (attachments.length > 0) {
+      Dialog.alert(
+        "Keep attachments on this machine",
+        "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+      );
+      return false;
+    }
+    refreshLoadBalancing(balancedProjects.map((project) => project.environmentId));
+    if (selectedProjectDraftKey) {
+      releaseWorkspaceSelectionFromMachine(
+        selectedProjectDraftKey,
+        getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection,
+      );
+    }
+    updateFlow({ environmentPinned: false, loadBalancedEnvironmentId: null });
+    return true;
+  };
+
   const setWorkspaceMode = (mode: WorkspaceMode) => {
     if (!selectedProjectDraftKey) {
       return;
@@ -681,6 +926,8 @@ export function NewTaskFlowProvider(
     if (!selectedProject) {
       return;
     }
+    // A checkout or worktree choice is made for this machine.
+    pinEnvironment();
     const localSelection = resolveNewTaskLocalWorkspaceSelection({
       branches: availableBranches,
       projectCwd: selectedProject.workspaceRoot,
@@ -866,6 +1113,10 @@ export function NewTaskFlowProvider(
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,
+    canAutoBalance,
+    autoBalanceStatus,
+    selectAutoBalance,
+    pinEnvironment,
     setSelectedModelKey,
     setWorkspaceMode,
     selectBranch,
