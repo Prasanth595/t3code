@@ -905,7 +905,7 @@ describe("a status read that drops a run", () => {
     return fetchRuns;
   };
 
-  it("reads that environment's recent runs and full list again, once", async () => {
+  it("reads that environment's recent runs again, once, and leaves the full list alone", async () => {
     await using _state = setup();
     const fetchRuns = answering({ [ENV_1]: [withRuns("a", "b"), withRuns("a")] });
     const latest = await mount(() => ({
@@ -920,10 +920,27 @@ describe("a status read that drops a run", () => {
     fetchRuns.mockClear();
     await act(async () => latest.current.status.refresh());
     expect(latest.current.status.data!.runs.map((run) => run.id)).toEqual(["a"]);
-    expect(fetchRuns.mock.calls).toEqual([
-      [ENV_1, { all: false }],
-      [ENV_1, { all: true }],
-    ]);
+    expect(fetchRuns.mock.calls).toEqual([[ENV_1, { all: false }]]);
+  });
+
+  it("reads nothing more when a runs list, not the status, drops a run", async () => {
+    await using _state = setup();
+    const row = (id: string) => ({ id }) as FactoryRunRow;
+    const answers = [[row("a"), row("b")], [row("a")]];
+    let n = 0;
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({
+      runs: answers[Math.min(n++, answers.length - 1)]!,
+    }));
+    __setFactoryApiForTests(api({ runs: fetchRuns, status: vi.fn(async () => withRuns("x")) }));
+    const latest = await mount(() => ({
+      status: useFactoryStatus(ENV_1),
+      recent: useFactoryRuns(ENV_1),
+    }));
+    expect(latest.current.recent.data!.runs).toHaveLength(2);
+    fetchRuns.mockClear();
+    await act(async () => latest.current.recent.refresh());
+    expect(latest.current.recent.data!.runs).toHaveLength(1);
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
   });
 
   it("reads nothing when no run dropped out, on the first answer, or on a failed read", async () => {
