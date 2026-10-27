@@ -257,12 +257,18 @@ type OpenQuestionShell = Pick<EnvironmentThreadShell, "hasPendingUserInput"> & {
 
 /** Thread lists show Input even for async questions the agent keeps working past. */
 export function threadHasOpenQuestion(thread: OpenQuestionShell): boolean {
-  return thread.hasPendingUserInput || threadWorksPastQuestion(thread);
+  return thread.hasPendingUserInput || thread.source?.pendingRuntimeRequest?.kind === "user_input";
 }
 
 /** An async question during active work; lists pair Input with a Working cue. */
-export function threadWorksPastQuestion(thread: OpenQuestionShell): boolean {
-  return !thread.hasPendingUserInput && thread.source?.pendingRuntimeRequest?.kind === "user_input";
+export function threadWorksPastQuestion(
+  thread: OpenQuestionShell & { readonly blockedOnThreadWait?: boolean | undefined },
+): boolean {
+  return (
+    !thread.hasPendingUserInput &&
+    thread.blockedOnThreadWait !== true &&
+    thread.source?.pendingRuntimeRequest?.kind === "user_input"
+  );
 }
 
 export function presentThreadShell(

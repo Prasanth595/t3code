@@ -638,6 +638,8 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+  /** The agent keeps working past an async question. */
+  working?: boolean;
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -1068,11 +1070,13 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (threadHasOpenQuestion(thread) || thread.pendingSubagentRequest === "user_input") {
+    const working = threadWorksPastQuestion(thread);
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: threadWorksPastQuestion(thread),
+      pulse: working,
+      working,
     };
   }
 

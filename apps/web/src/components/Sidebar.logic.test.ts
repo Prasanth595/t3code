@@ -470,11 +470,15 @@ describe("resolveThreadStatusPill", () => {
     expect(resolveThreadStatusPill({ thread: asyncQuestion })).toMatchObject({
       label: "Awaiting Input",
       pulse: true,
+      working: true,
     });
-    expect(resolveThreadStatusPill({ thread: question(true) })).toMatchObject({
-      label: "Awaiting Input",
-      pulse: false,
-    });
+    for (const thread of [question(true), { ...asyncQuestion, blockedOnThreadWait: true }]) {
+      expect(resolveThreadStatusPill({ thread })).toMatchObject({
+        label: "Awaiting Input",
+        pulse: false,
+        working: false,
+      });
+    }
   });
 
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
