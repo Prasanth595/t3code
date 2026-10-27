@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   T3_MCP_TOOL_NAMES,
   resolveT3McpSummaryAction,
+  resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
 } from "./t3McpToolPresentation.ts";
 
@@ -34,6 +35,20 @@ describe("resolveT3McpToolPresentation", () => {
       resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_delegate_task")?.displayName,
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
+  });
+});
+
+describe("resolveT3McpToolDefinition", () => {
+  it("labels an action tool call as the action it ran", () => {
+    expect(
+      resolveT3McpToolDefinition("mcp__t3-code__preview_act", { action: "type" })?.labels,
+    ).toEqual(resolveT3McpToolDefinition("preview_type")?.labels);
+    expect(resolveT3McpToolDefinition("t3_thread_transfer", { action: "fork" })?.displayName).toBe(
+      resolveT3McpToolDefinition("t3_thread_fork")?.displayName,
+    );
+    expect(resolveT3McpToolDefinition("preview_act", { action: "unknown" })?.labels[2]).toBe(
+      "Used",
+    );
   });
 });
 
