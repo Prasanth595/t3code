@@ -13,7 +13,7 @@ import {
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import type { SaasChatConversation } from "@t3tools/contracts/saas";
 import { useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
+import { FileTextIcon, ImageIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
 import { createRef, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
@@ -50,7 +50,9 @@ const NO_TURN_ITEMS: ReadonlyArray<never> = [];
 const ignore = () => {};
 const ignoreImage = (_preview: ExpandedImagePreview) => {};
 
-// The timeline renders message markdown; stored files show as links to their relay copy.
+const markdownLabel = (name: string) => name.replace(/[[\]\\]/g, "\\$&");
+
+// The timeline renders message markdown; stored photos show inline and files link to their relay copy.
 const attachmentLinks = (
   attachments: ReadonlyArray<SaasChatAttachment> | undefined,
   relayUrl: string | null,
@@ -59,9 +61,11 @@ const attachmentLinks = (
     .map((file) =>
       relayUrl === null
         ? `📎 ${file.name}`
-        : `${file.kind === "image" ? "🖼️" : "📎"} [${file.name}](${chatAttachmentUrl(relayUrl, file.id)})`,
+        : file.kind === "image"
+          ? `![${markdownLabel(file.name)}](${chatAttachmentUrl(relayUrl, file.id)})`
+          : `📎 [${markdownLabel(file.name)}](${chatAttachmentUrl(relayUrl, file.id)})`,
     )
-    .join("\n");
+    .join("\n\n");
 
 const toTimelineMessages = (
   chat: SaasChatConversation | undefined,
@@ -300,6 +304,7 @@ function ChatReplyErrorNotice({
 interface PendingFile {
   readonly id: string;
   readonly name: string;
+  readonly image: boolean;
   readonly attachment: SaasChatAttachment | null;
 }
 
@@ -346,7 +351,10 @@ function ChatModeComposer({
         continue;
       }
       const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`;
-      setFiles((current) => [...current, { id, name: file.name, attachment: null }]);
+      setFiles((current) => [
+        ...current,
+        { id, name: file.name, image: SAAS_CHAT_IMAGE_TYPES.includes(file.type), attachment: null },
+      ]);
       void uploadMiraAttachment(file).then((result) => {
         if (result.ok) {
           setFiles((current) =>
@@ -388,6 +396,8 @@ function ChatModeComposer({
                     >
                       {file.attachment === null ? (
                         <Spinner size="sm" aria-hidden="true" />
+                      ) : file.image ? (
+                        <ImageIcon aria-hidden className="size-3.5 shrink-0" />
                       ) : (
                         <FileTextIcon aria-hidden className="size-3.5 shrink-0" />
                       )}
