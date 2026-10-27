@@ -227,7 +227,7 @@ export interface Seen {
   readonly interruption: Interruption | null;
   /** The newest branch a `session_launched`, `session_interrupted` or `session_rate_limited` line names: where the run's work is. */
   readonly lastBranch: string | null;
-  /** Milliseconds spent in `triage` and `building` in stints that have ended. */
+  /** Milliseconds spent in `triage` and `building` in stints that have ended, less the factory's gate. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
   readonly workingSince: number | null;
@@ -757,6 +757,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           opened.push(pr);
           lastPr = { pr, url };
           prReported = true;
+          // The run is the factory's until its gate sends it back: that wait is not charged.
+          if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
+          workingSince = null;
         }
         break;
       }
@@ -853,6 +856,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // The session is at work again: the run is a building run with no pull request reported
         // until the session reports it again, so it is time-limited, watched and read.
         prReported = false;
+        // The stint the pull request paused begins again; a run that is not building waits for
+        // its next state change to decide, and a clock already running keeps its start.
+        if (workingSince === null && (state === "triage" || state === "building")) {
+          workingSince = entry.ms;
+        }
         break;
       }
       case "gate_regate": {
