@@ -270,6 +270,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        title: run.title,
       },
     },
     "start",
@@ -279,7 +280,6 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
   state(4_500, { from: "triage", to: "building" }, "start", "session-started");
 
   switch (run.kind) {
-    case "claimed":
     case "building":
       break;
     case "gate":

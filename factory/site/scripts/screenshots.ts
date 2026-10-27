@@ -18,8 +18,8 @@ const OUT_DIR = NodePath.join(SITE, "public/screenshots");
 const FAILURE_PNG = NodePath.join(SITE, "screenshot-failure.png");
 const STARTUP_TIMEOUT_MS = 180_000;
 const STOP_TIMEOUT_MS = 15_000;
-/** Space kept around a shot of part of a page, in CSS pixels. */
-const PART_MARGIN = 24;
+/** Space kept around a shot of part of a page, in CSS pixels; under the 16 px gap below the belt. */
+const PART_MARGIN = 12;
 /** Where the web client keeps its own settings (apps/web/src/clientPersistenceStorage.ts). */
 const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
 /** The browser window, in CSS pixels; a shot may ask for a taller one. */
@@ -43,6 +43,9 @@ const SHOTS: ReadonlyArray<Shot> = [
     height: 1280,
     ready: async (page) => {
       await page.getByText("acme/storefront#57").first().waitFor();
+      // The page opens the newest run's post, Claimed, whose run has no title until it launches.
+      await page.locator('[data-post="building"]').click();
+      await page.getByText("Retry failed webhook deliveries").first().waitFor();
     },
   },
   {

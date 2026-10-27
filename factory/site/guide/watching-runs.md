@@ -6,8 +6,8 @@ The pages work in a phone's browser too, paired over your tailnet as described i
 
 ## The Factory page
 
-<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Claimed post open on its run, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
-<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Claimed post open on its run, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
+<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Building post open on its run and its issue title, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
+<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: the belt with one run each at Claimed, Building, Gate and PR open and none done today, the Building post open on its run and its issue title, then the Needs attention, Needs info and Stuck bins, and the runs table with every run's state, step, age and pull request" />
 
 Use it to see what the factory is doing now. The belt at the top has five posts, one per station a run passes: Claimed, Building, Gate, PR open and Done. Each unfinished run is a tile under its post, showing its issue number and how long it has been there; click a tile to open the run. Click a post to open a table of its runs under the rail, with each run's title, step and pull request and a Stop button. Done counts the runs whose pull request was merged or closed today. The belt reads status every 5 seconds while the page is open.
 
