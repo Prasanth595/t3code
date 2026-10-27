@@ -68,6 +68,7 @@ import {
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
+import { usesFloatingThreadControls } from "./ThreadFloatingControls";
 import { draftRouteIdentity } from "./thread-route-state";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
@@ -956,6 +957,9 @@ function ThreadRouteContent(
           connectionState: routeConnectionState,
         });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  // Android phones float the thread controls over the feed; an inspector pane
+  // keeps its own header, so it never floats them.
+  const floatingThreadControls = usesFloatingThreadControls(layout) && !props.inspectorPresentation;
   const renderThreadRouteBody = () => (
     <>
       <GitActionProgressOverlay
@@ -1059,6 +1063,7 @@ function ThreadRouteContent(
           dispatchingMessageId={composer.dispatchingQueuedMessageId}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
+          usesFloatingThreadControls={floatingThreadControls}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
           onPickDraftMedia={composer.onPickDraftMedia}

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Platform, View } from "react-native";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
+import { ThreadListDrawerGestureWrapper } from "./thread-list-drawer";
 
 type ThreadScreenContent =
   | { readonly props: ThreadDetailScreenProps }
@@ -41,7 +42,9 @@ function ThreadScreenOutlet() {
     <>
       {"props" in content ? content.props.header : content.header}
       {Platform.OS === "android" ? (
-        <View className="flex-1 overflow-hidden rounded-t-[28px] bg-thread-canvas">{body}</View>
+        <ThreadListDrawerGestureWrapper>
+          <View className="flex-1 overflow-hidden rounded-t-[28px] bg-thread-canvas">{body}</View>
+        </ThreadListDrawerGestureWrapper>
       ) : (
         body
       )}
