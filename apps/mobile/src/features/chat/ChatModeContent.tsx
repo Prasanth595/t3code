@@ -44,6 +44,7 @@ import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { CopyTextButton } from "../threads/CopyTextButton";
+import { ShimmeringWorkContent } from "../threads/thread-work-log";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   ComposerSurface,
@@ -189,11 +190,25 @@ function ChatMessages(props: {
         ),
       ]}
       {props.streaming !== null && (props.streaming.searching || props.streaming.text === "") ? (
-        <AppText className="mb-5 px-1 text-sm text-foreground-muted">
-          {props.streaming.searching ? "Searching the web…" : "Thinking…"}
-        </AppText>
+        <ChatWorkingRow searching={props.streaming.searching === true} />
       ) : null}
     </ScrollView>
+  );
+}
+
+// The thread feed's working row, so chat reads like agentic mode while Mira works.
+function ChatWorkingRow(props: { readonly searching: boolean }) {
+  const { color: iconColor } = useResolveClassNames("text-icon-subtle");
+  return (
+    <View className="mb-5 min-h-8 flex-row items-center px-1" accessible>
+      <ShimmeringWorkContent
+        key={props.searching ? "searching" : "thinking"}
+        icon={props.searching ? "globe" : "brain"}
+        iconSubtleColor={iconColor ?? "gray"}
+        label={props.searching ? "Searching the web" : "Thinking"}
+        showIcon
+      />
+    </View>
   );
 }
 
