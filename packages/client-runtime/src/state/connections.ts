@@ -120,6 +120,23 @@ export function createEnvironmentCatalogAtoms<R, E>(
     ),
   );
 
+  /**
+   * The generation of the environment's latest established session, kept while it reconnects.
+   * It changes only when a new session comes up, so a one-shot read that failed while the
+   * environment was unreachable can key on it, or watch it, to run again once it is back.
+   */
+  const sessionGenerationAtom = Atom.family((environmentId: EnvironmentIdType) =>
+    Atom.make((get): number => {
+      const state = Option.getOrElse(
+        AsyncResult.value(get(stateAtom(environmentId))),
+        () => AVAILABLE_CONNECTION_STATE,
+      );
+      return state.phase === "connected"
+        ? state.generation
+        : Option.getOrElse(get.self<number>(), () => 0);
+    }).pipe(Atom.withLabel(`environment-session-generation:${environmentId}`)),
+  );
+
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
     scheduler: commandScheduler,
@@ -197,6 +214,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    sessionGenerationAtom,
     register,
     remove,
     removeRoute,
