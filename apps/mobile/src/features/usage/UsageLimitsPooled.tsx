@@ -187,7 +187,13 @@ function PoolWindowCard({
       <View className="flex-row gap-1">
         {pool.columns.map((member, index) => {
           if (!member.window)
-            return <View key={member.account.key} className="h-7 min-w-0 flex-1" />;
+            return (
+              <View
+                key={member.account.key}
+                className="h-7 min-w-0"
+                style={{ flex: member.weight }}
+              />
+            );
           const { account, window } = member;
           const timeLeft = paceRemainingPercent(window, now);
           return (
@@ -197,7 +203,8 @@ function PoolWindowCard({
               accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
-              className="h-7 min-w-0 flex-1 rounded-md"
+              className="h-7 min-w-0 rounded-md"
+              style={{ flex: member.weight }}
             >
               <PaceGap timeLeft={timeLeft}>
                 <View className="absolute inset-0 rounded-md bg-subtle" />
