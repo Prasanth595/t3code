@@ -15,8 +15,8 @@ vi.mock("../../state/queries", () => ({
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
-  readComposerDraftSelection: vi.fn(),
   setComposerDraftContext: vi.fn(),
+  useComposerDraftSelection: vi.fn(),
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "context-id" }));
 vi.mock("../../state/server", () => ({
@@ -30,6 +30,7 @@ import {
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   useComposerCommandMenu,
+  resolveComposerMenuSelection,
 } from "./use-composer-command-menu";
 
 it("keeps a mention search loading until older threads finish", () => {
@@ -60,6 +61,41 @@ it("keeps a mention search loading until older threads finish", () => {
   search.threadPending = false;
   act(() => root.render(createElement(Probe)));
   expect(menu).toMatchObject({ items: [], isLoading: false });
+});
+
+describe("resolveComposerMenuSelection", () => {
+  it("prefers the caret an insertion placed in the current draft text", () => {
+    expect(
+      resolveComposerMenuSelection({
+        draftMessage: "hello @chip ",
+        ownerKey: "draft-a",
+        inserted: { start: 12, end: 12 },
+        local: { ownerKey: "draft-a", start: 2, end: 2 },
+      }),
+    ).toEqual({ start: 12, end: 12 });
+  });
+
+  it("clamps the composer's own caret when the draft shrinks", () => {
+    expect(
+      resolveComposerMenuSelection({
+        draftMessage: "hi",
+        ownerKey: "draft-a",
+        inserted: null,
+        local: { ownerKey: "draft-a", start: 5, end: 9 },
+      }),
+    ).toEqual({ start: 2, end: 2 });
+  });
+
+  it("starts at the end of the draft after switching owners", () => {
+    expect(
+      resolveComposerMenuSelection({
+        draftMessage: "other draft",
+        ownerKey: "draft-b",
+        inserted: null,
+        local: { ownerKey: "draft-a", start: 1, end: 1 },
+      }),
+    ).toEqual({ start: 11, end: 11 });
+  });
 });
 
 describe("mobile slash commands", () => {
