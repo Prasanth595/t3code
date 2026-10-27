@@ -9886,6 +9886,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           let replacementPrep:
             | {
                 readonly appendSystemPromptFileText: string | undefined;
+                readonly launchArgSettings: ClaudeSdkSettings | undefined;
                 readonly toolSearchOverride: "true" | undefined;
                 readonly subagentPromptCacheTtl: typeof ClaudePromptCacheTtl.Type | undefined;
               }
@@ -9962,6 +9963,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   cwd: turnInput.runtimePolicy.cwd,
                   attachmentsDir,
                   settings: adapterOptions.settings,
+                  ...(prep.launchArgSettings === undefined
+                    ? {}
+                    : { sdkSettings: prep.launchArgSettings }),
                   ...(prep.toolSearchOverride === undefined
                     ? {}
                     : { toolSearchOverride: prep.toolSearchOverride }),
@@ -10111,9 +10115,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             if (decision._tag === "Prepare") {
               // Read before closing the live process so a bad path leaves it running.
+              const launchArgSettings = yield* readClaudeLaunchArgSettings({
+                settings: adapterOptions.settings,
+                cwd: decision.turnInput.runtimePolicy.cwd,
+                fileSystem,
+                path,
+              });
               replacementPrep = {
+                launchArgSettings,
                 toolSearchOverride: yield* resolveToolSearchOverride(
                   decision.turnInput.runtimePolicy.cwd,
+                  launchArgSettings,
                 ),
                 appendSystemPromptFileText: yield* readClaudeAppendSystemPromptFile({
                   settings: adapterOptions.settings,
