@@ -3451,14 +3451,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
 
       const at = "2026-10-02T12:00:00.000Z";
-      const base = watchedPullRequestDetail({ projectId, number: key.number, at });
-      const detail = {
-        ...base,
-        checks: [
-          ...base.checks,
-          { name: "test", status: "pending" as const, description: null, url: null },
-        ],
-      };
+      const detail = watchedPullRequestDetail({ projectId, number: key.number, at });
       const initialWatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
       assert.isDefined(initialWatch);
       const remark: PullRequestComment = {
@@ -3562,11 +3555,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           messages.map((message) => message.notification?.summary),
           ["#7: checks failed"],
         );
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
         yield* TestClock.adjust("1 millis");
         recovering = true;
       }
       yield* reactor.sweep;
       const pagesBefore = pagesRead;
+      yield* TestClock.adjust("2 minutes");
       yield* reactor.sweep;
       assert.equal(pagesRead, pagesBefore);
 
@@ -3576,21 +3573,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           message.notification === undefined ? [] : [message.notification.summary],
         ),
         incomplete
-          ? ["#7: checks failed", "#7: new comments"]
-          : ["#7: checks failed, new comments"],
+          ? ["#7: checks failed", "#7: checks finished, new comments, stopped watching"]
+          : ["#7: checks failed, new comments", "#7: checks finished, stopped watching"],
       );
       if (mode !== "single page") {
-        const wake = messages.at(-1);
+        const wake = messages.find((message) => message.text.includes("3 new comments"));
         assert.include(wake?.text ?? "", "3 new comments");
         assert.include(wake?.text ?? "", "Eleventh reply.");
         assert.include(wake?.text ?? "", "Twelfth reply.");
       }
-      const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      const link = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0];
+      assert.isUndefined(link?.watch);
+      const watch = link?.endedWatch;
+      assert.isTrue(watch?.finished);
       assert.equal(watch?.remarksThrough, remark.createdAt);
       assert.deepEqual(watch?.remarkIds, [remark.id]);
       assert.deepEqual(
         { headSha: watch?.headSha, failedChecks: watch?.failedChecks, wakes: watch?.wakes },
-        { headSha: "abc1234def", failedChecks: ["lint"], wakes: incomplete ? 1 : 0 },
+        { headSha: "abc1234def", failedChecks: ["lint"], wakes: 0 },
       );
     }),
   );

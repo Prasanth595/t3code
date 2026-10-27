@@ -70,7 +70,7 @@ export function evaluatePullRequestWatch(
     const pending = detail.checks.some((check) => check.status === "pending");
     if (pending || passedNow) {
       finished = false;
-    } else if (newlyFailed.length === 0 && !finished) {
+    } else if (remarks !== null && newlyFailed.length === 0 && !finished) {
       changes.push({ kind: "checks-finished", count: detail.checks.length, failed });
       finished = true;
     }

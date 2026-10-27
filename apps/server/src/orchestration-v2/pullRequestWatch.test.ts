@@ -237,7 +237,10 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(first.next, partly, noRemarks).changes, []);
 
     const done = detail({ checks: [labels, check("test", "success"), check("lint", "success")] });
-    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    const incomplete = evaluatePullRequestWatch(first.next, done, null);
+    assert.deepEqual(incomplete.changes, []);
+    assert.isFalse(incomplete.next.finished);
+    const final = evaluatePullRequestWatch(incomplete.next, done, noRemarks);
     assert.deepEqual(final.changes, [{ kind: "checks-finished", count: 3, failed: [labels] }]);
     assert.isTrue(final.finished);
     assert.isTrue(final.next.finished);
