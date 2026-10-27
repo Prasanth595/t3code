@@ -246,11 +246,19 @@ Claude instances can also compact idle threads for you. See
 
 ### Thread and orchestration skills
 
-The repository includes optional `t3code-threads` and `t3code-orchestration`
-skills in [`.agents/skills`](../../.agents/skills). Copy the skill folders into
-your provider's project skill directory on the machine running the agent:
-`.agents/skills` for Codex or `.claude/skills` for Claude. Other providers use
-their own skill discovery locations. Restart the agent session after installing.
+Open **Settings → Skills**, choose the environment and provider, then install
+`t3code-threads` or `t3code-orchestration`. The manager supports Codex and Claude,
+including their configured skill directories. Installation applies to every
+project using that provider on the selected environment. Restart the agent
+session afterward so it loads the new skills.
+
+New skill versions ship with the T3 Code server. After updating that environment,
+use **Check for updates** and update any outdated copies. You can also remove
+managed copies here. Locally edited skills and copies installed outside T3 Code
+are preserved; move them before installing the bundled version.
+
+Other providers can install the folders from
+[`.agents/skills`](../../.agents/skills) in their own skill directories.
 
 Use `$t3code-threads` to hand work to an independent thread or move the current
 conversation into a managed worktree. Use `$t3code-orchestration` to coordinate
