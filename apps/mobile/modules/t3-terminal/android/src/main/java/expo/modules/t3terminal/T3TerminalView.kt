@@ -3,6 +3,7 @@ package expo.modules.t3terminal
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -84,8 +85,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   var fontSize: Float = 10f
     set(value) {
       field = value
-      terminalCanvas.fontSizeSp = value
-      inputView.textSize = max(value, 13f)
+      terminalCanvas.fontSize = value
+      inputView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, max(value, 13f))
       emitResize()
     }
 
@@ -149,7 +150,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
 
   init {
-    terminalCanvas.fontSizeSp = fontSize
+    terminalCanvas.fontSize = fontSize
     terminalCanvas.onRequestKeyboard = { requestKeyboardFocus() }
     terminalCanvas.onScrollRows = { delta ->
       if (terminalHandle != 0L) {
@@ -243,7 +244,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     inputView.setHintTextColor(Color.TRANSPARENT)
     inputView.setBackgroundColor(Color.TRANSPARENT)
     inputView.typeface = Typeface.MONOSPACE
-    inputView.textSize = max(fontSize, 13f)
+    inputView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, max(fontSize, 13f))
     inputView.alpha = 0.01f
     inputView.isFocusableInTouchMode = true
     inputView.imeOptions = EditorInfo.IME_ACTION_SEND or

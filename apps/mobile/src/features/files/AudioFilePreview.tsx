@@ -43,7 +43,7 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
   };
   return (
     <View className="flex-1 items-center justify-center gap-5 p-6">
-      <Text className="text-foreground-muted">
+      <Text textRole="footnote" className="text-foreground-muted">
         {timestamp(status.currentTime)} / {timestamp(status.duration)}
       </Text>
       <View className="flex-row items-center gap-4">
@@ -84,7 +84,7 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
       </View>
       {status.error || seekError ? (
         <View className="items-center gap-3">
-          <Text className="text-center text-foreground">
+          <Text textRole="footnote" className="text-center text-foreground">
             This audio could not be played. Try again or save it to open in another app.
           </Text>
           <View className="items-center">

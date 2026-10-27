@@ -53,6 +53,7 @@ export function Button(props: ButtonProps) {
         />
       ) : null}
       <AppText
+        textRole="footnote"
         className={cn(
           "min-w-0 shrink text-center font-t3-medium",
           disabled ? "text-foreground-muted" : labelClassName,

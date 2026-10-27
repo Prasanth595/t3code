@@ -152,7 +152,7 @@ export function ChoiceRowContent(props: ChoiceRowProps & RowSelectionProps) {
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
         {props.description ? (
-          <Text className="text-sm leading-5 text-foreground-muted">{props.description}</Text>
+          <Text className="text-sm text-foreground-muted">{props.description}</Text>
         ) : null}
       </View>
       {props.trailingSelection}

@@ -85,6 +85,7 @@ import { buildModelOptions, isModelSelectionUnavailable } from "../../lib/modelO
 import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
 import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
@@ -128,7 +129,13 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+export function useCompactComposerEditor(appText: ScaledTextRole, value: string) {
+  const scaleSystemFont = useSystemFontScale();
+  const text = {
+    ...appText,
+    fontSize: scaleSystemFont(appText.fontSize),
+    lineHeight: scaleSystemFont(appText.lineHeight),
+  };
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;

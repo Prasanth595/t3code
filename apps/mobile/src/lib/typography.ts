@@ -8,6 +8,7 @@ export const MOBILE_TYPOGRAPHY = {
   title: { fontSize: 21, lineHeight: 28 },
   largeTitle: { fontSize: 26, lineHeight: 32 },
   display: { fontSize: 30, lineHeight: 36 },
+  hero: { fontSize: 36, lineHeight: 40 },
 } as const;
 
 export const MOBILE_CODE_SURFACE = {
@@ -30,4 +31,5 @@ export const MOBILE_TEXT_CLASSES = {
   title: "text-xl",
   largeTitle: "text-2xl",
   display: "text-3xl",
+  hero: "text-4xl",
 } as const satisfies Record<keyof typeof MOBILE_TYPOGRAPHY, string>;

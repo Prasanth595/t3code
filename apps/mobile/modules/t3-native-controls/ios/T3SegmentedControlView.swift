@@ -14,6 +14,7 @@ final class T3SegmentedControlView: ExpoView {
       updateSelection()
     }
   }
+  var fontSize: CGFloat = 13 { didSet { if fontSize != oldValue { updateColors() } } }
   var selectedIndex = -1 { didSet { updateSelection() } }
   var trackColor: UIColor = .secondarySystemBackground { didSet { if trackColor != oldValue { control.backgroundColor = trackColor } } }
   var selectedColor: UIColor = .secondarySystemFill { didSet { if selectedColor != oldValue { control.selectedSegmentTintColor = selectedColor } } }
@@ -30,6 +31,7 @@ final class T3SegmentedControlView: ExpoView {
     super.init(appContext: appContext)
     addSubview(control)
     control.addTarget(self, action: #selector(selectionChanged), for: .valueChanged)
+    updateColors()
   }
 
   override func layoutSubviews() {
@@ -51,8 +53,8 @@ final class T3SegmentedControlView: ExpoView {
   }
 
   private func updateColors() {
-    control.setTitleTextAttributes([.foregroundColor: mutedColor], for: .normal)
-    control.setTitleTextAttributes([.foregroundColor: textColor], for: .selected)
+    control.setTitleTextAttributes([.foregroundColor: mutedColor, .font: UIFont.systemFont(ofSize: fontSize, weight: .medium)], for: .normal)
+    control.setTitleTextAttributes([.foregroundColor: textColor, .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold)], for: .selected)
   }
 
   @objc private func selectionChanged() {

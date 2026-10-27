@@ -1,3 +1,4 @@
+import { useSystemFontScale } from "../lib/useSystemFontScale";
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
@@ -24,7 +25,7 @@ import {
   contextRecordFileName,
 } from "../lib/composerChipPresentation";
 import { contextChipIconUri } from "../lib/contextChipIconSource";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -278,6 +279,8 @@ export function ComposerEditor({
     [nativeEventSnapshotsRef],
   );
   const { systemColorsActive } = useAppearancePreferences();
+  const bodyTypography = useScaledTextRole("body");
+  const scaleSystemFont = useSystemFontScale();
   const themeJson = JSON.stringify({
     ...createNativeComposerTheme(theme),
     selection: Platform.OS === "android" || systemColorsActive ? theme["--color-focus"] : null,
@@ -297,16 +300,16 @@ export function ComposerEditor({
             ? resolvedTextStyle.fontFamily
             : regularFontFamily
         }
-        fontSize={
+        fontSize={scaleSystemFont(
           typeof resolvedTextStyle.fontSize === "number"
             ? resolvedTextStyle.fontSize
-            : MOBILE_TYPOGRAPHY.body.fontSize
-        }
-        lineHeight={
+            : bodyTypography.fontSize,
+        )}
+        lineHeight={scaleSystemFont(
           typeof resolvedTextStyle.lineHeight === "number"
             ? resolvedTextStyle.lineHeight
-            : MOBILE_TYPOGRAPHY.body.lineHeight
-        }
+            : bodyTypography.lineHeight,
+        )}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
         editable={props.editable ?? true}

@@ -640,7 +640,7 @@ export function CommandPalette(props: {
                 })}
                 contentContainerClassName="pb-2"
                 ListEmptyComponent={
-                  <Text className="p-5 text-center text-foreground-muted">
+                  <Text textRole="footnote" className="p-5 text-center text-foreground-muted">
                     {search.isPending ? "Searching…" : "No results"}
                   </Text>
                 }

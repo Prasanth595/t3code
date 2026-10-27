@@ -1034,11 +1034,22 @@ private struct ReviewDiffGeometryConfiguration: Equatable {
   let collapsedFileIds: Set<String>
   let collapsedCommentIds: Set<String>
 
+  var commentLineHeight: CGFloat {
+    ceil(UIFont.systemFont(ofSize: style.fileHeaderSubtextFontSize, weight: style.fileHeaderSubtextFontWeight).lineHeight)
+  }
+
+  var commentTitleHeight: CGFloat { commentLineHeight + 4 }
+  var commentBodyTop: CGFloat { max(42, commentTitleHeight + 20) }
+
   func height(for row: ReviewDiffNativeRow) -> CGFloat {
     if row.kind == "file" { return style.fileHeaderHeight }
     if collapsedFileIds.contains(row.resolvedFileId) { return 0 }
     if row.kind == "notice" { return max(style.rowHeight * 2, 44) }
-    if row.kind == "comment" { return collapsedCommentIds.contains(row.id) ? 44 : 124 }
+    if row.kind == "comment" {
+      return collapsedCommentIds.contains(row.id)
+        ? max(44, commentTitleHeight + 24)
+        : max(124, 24 + commentBodyTop + 3 * (commentLineHeight + 2))
+    }
     return style.rowHeight
   }
 }
@@ -2150,15 +2161,16 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let countsGap = min(style.fileHeaderCountGap, 4)
     let countsWidth = deleteWidth + countsGap + addWidth
     let countsX = interactiveRects.checkbox.minX - 10 - countsWidth
+    let countsHeight = max(18, ceil(fileHeaderMetaFont.lineHeight))
     drawSingleLineText(
       deleteText,
-      rect: CGRect(x: countsX, y: centerY - 9, width: deleteWidth, height: 18),
+      rect: CGRect(x: countsX, y: centerY - countsHeight / 2, width: deleteWidth, height: countsHeight),
       color: theme.deleteText,
       font: fileHeaderMetaFont
     )
     drawSingleLineText(
       addText,
-      rect: CGRect(x: countsX + deleteWidth + countsGap, y: centerY - 9, width: addWidth, height: 18),
+      rect: CGRect(x: countsX + deleteWidth + countsGap, y: centerY - countsHeight / 2, width: addWidth, height: countsHeight),
       color: theme.addText,
       font: fileHeaderMetaFont
     )
@@ -2227,7 +2239,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     cardPath.lineWidth = 1
     cardPath.stroke()
 
-    let chevronRect = CGRect(x: cardRect.minX + 10, y: cardRect.minY + 11, width: 16, height: 16)
+    let titleHeight = geometryConfiguration.commentTitleHeight
+    let chevronRect = CGRect(x: cardRect.minX + 10, y: cardRect.minY + max(11, titleHeight / 2), width: 16, height: 16)
     drawDisclosureChevron(rect: chevronRect, color: theme.mutedText, collapsed: isCollapsed)
 
     let title = "Comment on \(row.commentRangeLabel ?? "line")"
@@ -2237,7 +2250,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         x: chevronRect.maxX + 10,
         y: cardRect.minY + 8,
         width: max(24, cardRect.width - chevronRect.maxX - 28),
-        height: fileHeaderSubtextFont.lineHeight + 4
+        height: titleHeight
       ),
       color: theme.mutedText,
       font: fileHeaderSubtextFont
@@ -2252,9 +2265,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       body.isEmpty ? "Comment" : body,
       rect: CGRect(
         x: cardRect.minX + 18,
-        y: cardRect.minY + 42,
+        y: cardRect.minY + geometryConfiguration.commentBodyTop,
         width: max(24, cardRect.width - 36),
-        height: max(20, cardRect.height - 56)
+        height: max(20, cardRect.height - geometryConfiguration.commentBodyTop - 14)
       ),
       color: theme.text,
       font: fileHeaderSubtextFont,
@@ -2287,7 +2300,12 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
     return ReviewDiffFileHeaderPathLayout(
       displayPath: displayPath,
-      rect: CGRect(x: pathX, y: centerY - 10, width: pathWidth, height: 20)
+      rect: CGRect(
+        x: pathX,
+        y: centerY - max(20, ceil(fileHeaderFont.lineHeight)) / 2,
+        width: pathWidth,
+        height: max(20, ceil(fileHeaderFont.lineHeight))
+      )
     )
   }
 
@@ -2704,7 +2722,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     maximumLineCount: Int
   ) {
     let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineBreakMode = .byTruncatingTail
+    paragraphStyle.lineBreakMode = .byWordWrapping
     paragraphStyle.lineSpacing = 2
 
     let attributes: [NSAttributedString.Key: Any] = [
@@ -2715,8 +2733,10 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     ]
     let maxHeight = CGFloat(maximumLineCount) * (font.lineHeight + paragraphStyle.lineSpacing)
     (text as NSString).draw(
-      in: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: min(rect.height, maxHeight)),
-      withAttributes: attributes
+      with: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: min(rect.height, maxHeight)),
+      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+      attributes: attributes,
+      context: nil
     )
   }
 

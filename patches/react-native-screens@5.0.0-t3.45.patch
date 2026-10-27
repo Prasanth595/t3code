@@ -1,0 +1,103 @@
+diff --git a/ios/header/RNSHeaderConfigDataProviding.h b/ios/header/RNSHeaderConfigDataProviding.h
+--- a/ios/header/RNSHeaderConfigDataProviding.h
++++ b/ios/header/RNSHeaderConfigDataProviding.h
+@@ -31,6 +31,7 @@
+ @property (nonatomic, readonly) UINavigationItemBackButtonDisplayMode backButtonDisplayMode;
+ @property (nonatomic, readonly) BOOL backButtonMenuEnabled;
+ @property (nonatomic, readonly, nullable) RNSHeaderMenuData *titleMenu;
++@property (nonatomic, readonly, nullable) NSNumber *controlFontSize;
+ @property (nonatomic, readonly, nullable) UINavigationBarAppearance *standardAppearance;
+ @property (nonatomic, readonly, nullable) UINavigationBarAppearance *scrollEdgeAppearance;
+ 
+diff --git a/ios/header/RNSHeaderConfigComponentView.h b/ios/header/RNSHeaderConfigComponentView.h
+--- a/ios/header/RNSHeaderConfigComponentView.h
++++ b/ios/header/RNSHeaderConfigComponentView.h
+@@ -37,6 +37,7 @@
+ @property (nonatomic, readonly) UINavigationItemBackButtonDisplayMode backButtonDisplayMode;
+ @property (nonatomic, readonly) BOOL backButtonMenuEnabled;
+ @property (nonatomic, readonly, nullable) RNSHeaderMenuData *titleMenu;
++@property (nonatomic, readonly, nullable) NSNumber *controlFontSize;
+ @property (nonatomic, readonly, nullable) UINavigationBarAppearance *standardAppearance;
+ @property (nonatomic, readonly, nullable) UINavigationBarAppearance *scrollEdgeAppearance;
+ @property (nonatomic, readonly) NSArray<id> *children;
+diff --git a/ios/header/RNSHeaderConfigComponentView.mm b/ios/header/RNSHeaderConfigComponentView.mm
+--- a/ios/header/RNSHeaderConfigComponentView.mm
++++ b/ios/header/RNSHeaderConfigComponentView.mm
+@@ -89,6 +89,7 @@
+   _backButtonDisplayMode = UINavigationItemBackButtonDisplayModeDefault;
+   _backButtonMenuEnabled = YES;
+   _titleMenu = nil;
++  _controlFontSize = nil;
+   _standardAppearance = nil;
+   _scrollEdgeAppearance = nil;
+ }
+@@ -544,8 +545,9 @@
+   }
+ 
+   if (oldHeaderProps.standardAppearance != newHeaderProps.standardAppearance) {
+-    _standardAppearance = [RNSHeaderAppearanceMapper
+-        appearanceFromDictionary:[self dictionaryFromAppearanceProp:newHeaderProps.standardAppearance]];
++    NSDictionary *appearance = [self dictionaryFromAppearanceProp:newHeaderProps.standardAppearance];
++    _controlFontSize = appearance[@"controlFontSize"];
++    _standardAppearance = [RNSHeaderAppearanceMapper appearanceFromDictionary:appearance];
+   }
+ 
+   if (oldHeaderProps.scrollEdgeAppearance != newHeaderProps.scrollEdgeAppearance) {
+diff --git a/ios/header/RNSHeaderCoordinator.mm b/ios/header/RNSHeaderCoordinator.mm
+--- a/ios/header/RNSHeaderCoordinator.mm
++++ b/ios/header/RNSHeaderCoordinator.mm
+@@ -565,6 +565,7 @@
+     controller.navigationController.toolbar.tintColor = _configDataProvider.tintColor;
+ #endif
+   }
++  [self applyControlFont];
+   navItem.title = _configDataProvider.title;
+   navItem.standardAppearance = _configDataProvider.standardAppearance;
+   navItem.scrollEdgeAppearance = _configDataProvider.scrollEdgeAppearance;
+@@ -616,6 +617,12 @@
+     // Dismiss the old presentation before releasing or replacing its controller.
+     navItem.searchController.active = NO;
+     navItem.searchController = searchController;
++  }
++
++  if (_configDataProvider.controlFontSize != nil) {
++    searchController.searchBar.searchTextField.adjustsFontForContentSizeCategory = NO;
++    searchController.searchBar.searchTextField.font =
++        [UIFont systemFontOfSize:_configDataProvider.controlFontSize.doubleValue];
+   }
+ 
+   navItem.hidesSearchBarWhenScrolling = searchBar == nil || searchBar.hideWhenScrolling;
+@@ -727,6 +734,25 @@
+ }
+ #endif
+ 
++- (void)applyControlFont
++{
++  NSNumber *size = _configDataProvider.controlFontSize;
++  if (size == nil) {
++    return;
++  }
++  UIFont *font = [UIFont systemFontOfSize:size.doubleValue];
++  for (NSArray<UIBarButtonItem *> *items in @[_leadingBarButtonItems, _trailingBarButtonItems, _toolbarBarButtonItems]) {
++    for (UIBarButtonItem *item in items) {
++      NSMutableDictionary *attributes = [[item titleTextAttributesForState:UIControlStateNormal] mutableCopy];
++      if (attributes == nil) {
++        attributes = [NSMutableDictionary new];
++      }
++      attributes[NSFontAttributeName] = font;
++      [item setTitleTextAttributes:attributes forState:UIControlStateNormal];
++    }
++  }
++}
++
+ - (void)applyItemsWithTitleView:(nullable UIView *)titleView
+                    subtitleView:(nullable UIView *)subtitleView
+               largeSubtitleView:(nullable UIView *)largeSubtitleView
+@@ -741,6 +767,7 @@
+   navItem.leftItemsSupplementBackButton = YES;
+ #endif // !TARGET_OS_TV
+ 
++  [self applyControlFont];
+   [navItem setLeftBarButtonItems:[_leadingBarButtonItems copy] animated:YES];
+   [navItem setRightBarButtonItems:[_trailingBarButtonItems copy] animated:YES];
+ 

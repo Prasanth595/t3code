@@ -55,7 +55,7 @@ export function PullRequestGuideContent({ params }: { readonly params: PullReque
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text textRole="footnote">Review guides are disabled for this server.</Text>
       ) : (
         <>
           <GuideNotice state={state} />
@@ -172,15 +172,17 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         >
           <View className="w-full max-w-[760px] self-center gap-5">
             {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
+              <Text textRole="footnote">Review guides are disabled for this server.</Text>
             ) : changedGuide ? (
-              <Text>This guide was rewritten. Go back to start the new tour.</Text>
+              <Text textRole="footnote">
+                This guide was rewritten. Go back to start the new tour.
+              </Text>
             ) : !stop ? (
-              <Text>{state.error ?? "Loading stop…"}</Text>
+              <Text textRole="footnote">{state.error ?? "Loading stop…"}</Text>
             ) : (
               <>
                 <GuideNotice state={state} />
-                <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
+                <Text className="text-2xl font-t3-semibold">{stop.title}</Text>
                 <PullRequestMarkdown markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
@@ -216,17 +218,25 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                     />
                   ))
                 )}
-                {diff.error ? <Text className="text-danger-foreground">{diff.error}</Text> : null}
+                {diff.error ? (
+                  <Text textRole="footnote" className="text-danger-foreground">
+                    {diff.error}
+                  </Text>
+                ) : null}
                 {notes.length ? (
                   <View className="gap-4">
-                    <Text className="font-t3-semibold">Notes on this stop</Text>
+                    <Text textRole="footnote" className="font-t3-semibold">
+                      Notes on this stop
+                    </Text>
                     {notes.map(({ marker, note }) => (
                       <View key={marker} className="flex-row gap-3">
                         <View className="h-7 w-7 items-center justify-center rounded-lg bg-grouped-card">
                           <Text className="text-xs font-t3-semibold">{marker}</Text>
                         </View>
                         <View className="min-w-0 flex-1 gap-2">
-                          <Text className="font-t3-semibold">{note.title}</Text>
+                          <Text textRole="footnote" className="font-t3-semibold">
+                            {note.title}
+                          </Text>
                           <Text className="text-xs text-foreground-muted">
                             {note.path.split("/").at(-1)}:{note.line}
                           </Text>
@@ -257,7 +267,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stop.questions.length ? (
                   <View className="gap-3">
-                    <Text className="font-t3-semibold">Questions to consider</Text>
+                    <Text textRole="footnote" className="font-t3-semibold">
+                      Questions to consider
+                    </Text>
                     {stop.questions.map((question) => (
                       <PullRequestMarkdown key={question} markdown={question} />
                     ))}

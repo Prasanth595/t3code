@@ -196,7 +196,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 />
               </View>
             ) : !activity.isPending ? (
-              <Text>This discussion is no longer available.</Text>
+              <Text textRole="footnote">This discussion is no longer available.</Text>
             ) : null}
             {comments.map((comment) => (
               <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">

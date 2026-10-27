@@ -328,7 +328,7 @@ export function ComposerDictationStatus(props: {
   if (!props.presentation.statusLabel) return null;
   const isError = props.presentation.statusKind === "error";
   return (
-    <View className="relative h-11 min-w-0 flex-1 justify-center">
+    <View className="relative min-h-11 min-w-0 flex-1 justify-center">
       {isError ? (
         <View className="min-w-0 flex-row items-center gap-1.5 px-2">
           <Text className="min-w-0 flex-1 text-sm text-danger-foreground" numberOfLines={2}>

@@ -1,3 +1,4 @@
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { Button, HStack, Picker, Popover, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
@@ -45,7 +46,7 @@ export function NumberField(props: NumberFieldProps) {
               ),
               frame({ minWidth: 64, minHeight: 44 }),
               foregroundStyle(colors["--color-primary-text"]),
-              font({ size: fontSize }),
+              font({ family: FONT_FAMILIES.regular, size: fontSize }),
             ]}
           >
             <Text>{String(props.value)}</Text>
@@ -68,7 +69,11 @@ export function NumberField(props: NumberFieldProps) {
               {values.map((value) => (
                 <Text
                   key={value}
-                  modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
+                  modifiers={[
+                    tag(value),
+                    font({ family: FONT_FAMILIES.regular, size: fontSize }),
+                    foregroundStyle(colors["--color-foreground"]),
+                  ]}
                 >
                   {props.formatValue?.(value) ?? String(value)}
                 </Text>

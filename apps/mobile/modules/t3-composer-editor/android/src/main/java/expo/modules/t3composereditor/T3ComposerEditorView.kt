@@ -277,7 +277,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setFontSize(fontSize: Float) {
-    editor.textSize = fontSize
+    editor.setTextSize(TypedValue.COMPLEX_UNIT_DIP, fontSize)
     applyLineHeight()
     applyTokenSpans()
     editor.applyPlaceholder()

@@ -179,7 +179,7 @@ export function ComponentCatalogScreen() {
               />
             </View>
             <View className="flex-row items-center justify-between">
-              <AppText>Count</AppText>
+              <AppText textRole="footnote">Count</AppText>
               <NumberField
                 label="Example count"
                 min={1}

@@ -1,3 +1,4 @@
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
 import { Platform, Text as NativeText, View } from "react-native";
 
 import { cn } from "../../lib/cn";
@@ -72,11 +73,13 @@ export function DiffTokenText(props: {
   readonly fontSize?: number;
   readonly lineHeight?: number;
 }) {
-  const fontSize = props.fontSize ?? MOBILE_CODE_SURFACE.fontSize;
-  const lineHeight = props.lineHeight ?? MOBILE_CODE_SURFACE.rowHeight;
+  const scaleSystemFont = useSystemFontScale();
+  const fontSize = props.fontSize ?? scaleSystemFont(MOBILE_CODE_SURFACE.fontSize);
+  const lineHeight = props.lineHeight ?? scaleSystemFont(MOBILE_CODE_SURFACE.rowHeight);
   if (!props.tokens || props.tokens.length === 0) {
     return (
       <NativeText
+        allowFontScaling={false}
         numberOfLines={1}
         selectable
         className={cn("font-normal text-foreground", props.className)}
@@ -93,6 +96,7 @@ export function DiffTokenText(props: {
 
   return (
     <NativeText
+      allowFontScaling={false}
       numberOfLines={1}
       selectable
       className={cn("font-normal text-foreground", props.className)}
@@ -119,6 +123,7 @@ export function DiffTokenText(props: {
 
           return (
             <NativeText
+              allowFontScaling={false}
               key={`${start}:${token.content.length}:${token.color ?? ""}:${token.fontStyle ?? ""}`}
               selectable
               style={{

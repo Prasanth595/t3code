@@ -83,7 +83,7 @@ export function GuideOutline({
               ) : null}
             </View>
             <View className="min-w-0 flex-1 gap-2 pb-7 pt-0.5">
-              <Text className="text-base leading-6 font-t3-medium">{stop.title}</Text>
+              <Text className="text-base font-t3-medium">{stop.title}</Text>
               <View className="flex-row items-center gap-1.5">
                 {stop.attention ? (
                   <SymbolView name="eye" size={14} tintColorClassName="accent-warning-foreground" />

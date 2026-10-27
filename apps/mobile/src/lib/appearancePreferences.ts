@@ -174,6 +174,7 @@ const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-xl": MOBILE_TYPOGRAPHY.title,
   "--text-2xl": MOBILE_TYPOGRAPHY.largeTitle,
   "--text-3xl": MOBILE_TYPOGRAPHY.display,
+  "--text-4xl": MOBILE_TYPOGRAPHY.hero,
 } as const;
 
 export function resolveTextScaleVariables(baseFontSize: number): Record<string, number> {

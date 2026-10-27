@@ -46,7 +46,9 @@ export function SettingsProviderAccountsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           {selectedTargets.length === 0 ? (
-            <Text className="text-foreground-muted">Select a connected environment.</Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              Select a connected environment.
+            </Text>
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
@@ -77,7 +79,7 @@ export function SettingsProviderAccountsRouteScreen() {
                         provider.setup?.canAuthenticate ||
                         (provider.driver === "acpRegistry" && provider.installed),
                     ) ? (
-                      <Text className="p-4 text-foreground-muted">
+                      <Text textRole="footnote" className="p-4 text-foreground-muted">
                         Configure a provider with in-app sign-in in web or desktop Settings.
                       </Text>
                     ) : null}
@@ -209,7 +211,7 @@ function ProviderAccount({
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
         ) : null}
         {interaction?.type === "deviceCode" ? (
-          <Text selectable className="text-foreground">
+          <Text textRole="footnote" selectable className="text-foreground">
             Enter code {interaction.userCode} on the sign-in page.
           </Text>
         ) : null}
@@ -272,7 +274,7 @@ function ProviderAccount({
           </>
         ) : null}
         {error || auth.error ? (
-          <Text accessibilityRole="alert" className="text-danger-foreground">
+          <Text textRole="footnote" accessibilityRole="alert" className="text-danger-foreground">
             {error ?? auth.error}
           </Text>
         ) : null}

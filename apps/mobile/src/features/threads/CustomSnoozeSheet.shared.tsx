@@ -72,8 +72,8 @@ export function CustomSnoozeSheet(props: {
                   className="min-h-12 flex-row items-center justify-between rounded-xl bg-subtle px-3"
                   onPress={() => setPicker(value)}
                 >
-                  <AppText>{value === "date" ? "Date" : "Time"}</AppText>
-                  <AppText>
+                  <AppText textRole="footnote">{value === "date" ? "Date" : "Time"}</AppText>
+                  <AppText textRole="footnote">
                     {value === "date"
                       ? date.toLocaleDateString()
                       : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
@@ -103,7 +103,7 @@ export function CustomSnoozeSheet(props: {
             </View>
           ) : (
             <View className="gap-3">
-              <AppText>Snooze for</AppText>
+              <AppText textRole="footnote">Snooze for</AppText>
               <TextInput
                 accessibilityLabel="Duration"
                 className="min-h-12 rounded-xl bg-subtle px-3 text-base text-foreground"
@@ -130,7 +130,7 @@ export function CustomSnoozeSheet(props: {
                       setError(null);
                     }}
                   >
-                    <AppText>
+                    <AppText textRole="footnote">
                       {value === "minutes" ? "Minutes" : value === "hours" ? "Hours" : "Days"}
                     </AppText>
                   </Pressable>
@@ -139,7 +139,11 @@ export function CustomSnoozeSheet(props: {
             </View>
           )}
           {error && (
-            <AppText accessibilityRole="alert" className="text-danger-foreground">
+            <AppText
+              textRole="footnote"
+              accessibilityRole="alert"
+              className="text-danger-foreground"
+            >
               {error}
             </AppText>
           )}

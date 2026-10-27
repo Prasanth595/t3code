@@ -472,7 +472,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.keyboardDismissMode = .interactive
     textView.alwaysBounceVertical = false
     textView.showsVerticalScrollIndicator = true
-    textView.adjustsFontForContentSizeCategory = true
+    textView.adjustsFontForContentSizeCategory = false
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
     }
@@ -510,7 +510,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     addSubview(textView)
 
     placeholderLabel.numberOfLines = 0
-    placeholderLabel.adjustsFontForContentSizeCategory = true
+    placeholderLabel.adjustsFontForContentSizeCategory = false
     addSubview(placeholderLabel)
     applyTypography()
     applyTheme()

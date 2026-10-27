@@ -408,11 +408,11 @@ function PairingInputRow({
   readonly label: string;
 }) {
   return (
-    <View collapsable={false} className="h-13 flex-row items-center gap-3 px-4">
+    <View collapsable={false} className="min-h-13 flex-row items-center gap-3 px-4">
       <Text
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        className="w-20 text-base leading-[23px] text-foreground-muted"
+        className="w-20 text-base text-foreground-muted"
       >
         {label}
       </Text>
@@ -421,7 +421,7 @@ function PairingInputRow({
         accessibilityLabel={label}
         autoCapitalize="none"
         autoCorrect={false}
-        className="min-h-0 flex-1 rounded-none border-0 bg-transparent p-0 text-base leading-[23px]"
+        className="min-h-0 flex-1 rounded-none border-0 bg-transparent p-0 text-base"
       />
     </View>
   );

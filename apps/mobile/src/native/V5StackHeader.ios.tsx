@@ -1,3 +1,4 @@
+import { useSystemFontScale } from "../lib/useSystemFontScale";
 import type {
   NativeStackHeaderItem,
   NativeStackHeaderItemMenu,
@@ -6,6 +7,8 @@ import type {
 import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
+import { DEFAULT_BASE_FONT_SIZE } from "../lib/appearancePreferences";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
@@ -275,6 +278,9 @@ export function V5StackHeader(props: {
     const frame = requestAnimationFrame(() => autofocusRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [searchOptions?.autoFocus, autofocusRef]);
+  const { appearance: fontPreferences } = useAppearancePreferences();
+  const textScale = fontPreferences.baseFontSize / DEFAULT_BASE_FONT_SIZE;
+  const scaleSystemFont = useSystemFontScale();
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
@@ -283,11 +289,12 @@ export function V5StackHeader(props: {
       ? undefined
       : (headerStyle?.backgroundColor ?? theme.colors.card),
     shadowColor: options.headerShadowVisible === false ? "transparent" : undefined,
-    titleFontSize: titleStyle?.fontSize,
+    controlFontSize: scaleSystemFont(17 * textScale),
+    titleFontSize: scaleSystemFont((titleStyle?.fontSize ?? 17) * textScale),
     titleFontFamily: titleStyle?.fontFamily,
     titleFontWeight: titleStyle?.fontWeight,
     titleFontColor: titleStyle?.color,
-    subtitleFontSize: options.headerSubtitleStyle?.fontSize,
+    subtitleFontSize: scaleSystemFont((options.headerSubtitleStyle?.fontSize ?? 12) * textScale),
     subtitleFontColor: options.headerSubtitleStyle?.color,
   };
   return (

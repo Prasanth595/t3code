@@ -99,7 +99,7 @@ export function ComposerContextAttachment(props: {
         </Pressable>
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (
-        <Text className="text-foreground-muted">
+        <Text textRole="footnote" className="text-foreground-muted">
           {error ?? "Attachment unavailable. Reconnect and try again."}
         </Text>
       ) : null}

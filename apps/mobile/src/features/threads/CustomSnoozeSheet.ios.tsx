@@ -1,3 +1,7 @@
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import {
   DatePicker,
@@ -60,8 +64,16 @@ export function CustomSnoozeSheet(props: {
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [error, setError] = useState<string | null>(null);
   const { themeVariables: colors, themeAppearance } = useAppearancePreferences();
+  const bodyTypography = useScaledTextRole("body");
+  const footnoteTypography = useScaledTextRole("footnote");
+  const scaleSystemFont = useSystemFontScale();
   const popoverWidth = Math.min(360, width - 32);
-  const popoverHeight = Math.min(error ? 364 : 324, height - 96);
+  const popoverHeight = Math.min(
+    324 +
+      Math.max(0, scaleSystemFont(bodyTypography.lineHeight) - 23) * 2 +
+      (error ? scaleSystemFont(footnoteTypography.lineHeight) * 2 + 12 : 0),
+    height - 96,
+  );
   const updateDate = (value: Date) => {
     setDate(value);
     setError(null);
@@ -116,21 +128,19 @@ export function CustomSnoozeSheet(props: {
                 spacing={16}
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
               >
-                <Picker
-                  label="Snooze mode"
-                  selection={mode}
-                  onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
-                    setMode(value);
-                    setError(null);
-                  }}
-                  modifiers={[pickerStyle("segmented")]}
-                >
-                  {modes.map((option) => (
-                    <Text key={option.value} modifiers={[tag(option.value)]}>
-                      {option.label}
-                    </Text>
-                  ))}
-                </Picker>
+                <RNHostView matchContents={{ vertical: true }}>
+                  <View style={{ width: popoverWidth - 32 }}>
+                    <SegmentedControl
+                      options={modes}
+                      selected={mode}
+                      onSelect={(value) => {
+                        setMode(value);
+                        setError(null);
+                      }}
+                      size="compact"
+                    />
+                  </View>
+                </RNHostView>
                 {mode === "date" ? (
                   <DatePicker
                     title="Snooze until"
@@ -162,7 +172,11 @@ export function CustomSnoozeSheet(props: {
                       {durationAmounts.map((value) => (
                         <Text
                           key={value}
-                          modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
+                          modifiers={[
+                            tag(value),
+                            font({ family: FONT_FAMILIES.regular, size: bodyTypography.fontSize }),
+                            foregroundStyle(colors["--color-foreground"]),
+                          ]}
                         >
                           {String(value)}
                         </Text>
@@ -187,6 +201,7 @@ export function CustomSnoozeSheet(props: {
                           key={option.value}
                           modifiers={[
                             tag(option.value),
+                            font({ family: FONT_FAMILIES.regular, size: bodyTypography.fontSize }),
                             foregroundStyle(colors["--color-foreground"]),
                           ]}
                         >
@@ -199,7 +214,7 @@ export function CustomSnoozeSheet(props: {
                 {error ? (
                   <Text
                     modifiers={[
-                      font({ textStyle: "footnote" }),
+                      font({ family: FONT_FAMILIES.regular, size: footnoteTypography.fontSize }),
                       foregroundStyle(colors["--color-danger-foreground"]),
                     ]}
                   >

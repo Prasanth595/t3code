@@ -1,3 +1,4 @@
+import { useSystemFontScale } from "../lib/useSystemFontScale";
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
@@ -160,6 +161,7 @@ export function ComposerEditor({
     setConfirmedTokens({ value: props.value, tokens });
   }
   const bodyText = useScaledTextRole("body");
+  const scaleSystemFont = useSystemFontScale();
   const theme = useUniwindTheme();
   const fontFamily = FONT_FAMILIES.regular;
 
@@ -292,16 +294,16 @@ export function ComposerEditor({
       fontFamily={
         typeof resolvedTextStyle.fontFamily === "string" ? resolvedTextStyle.fontFamily : fontFamily
       }
-      fontSize={
+      fontSize={scaleSystemFont(
         typeof resolvedTextStyle.fontSize === "number"
           ? resolvedTextStyle.fontSize
-          : bodyText.fontSize
-      }
-      lineHeight={
+          : bodyText.fontSize,
+      )}
+      lineHeight={scaleSystemFont(
         typeof resolvedTextStyle.lineHeight === "number"
           ? resolvedTextStyle.lineHeight
-          : bodyText.lineHeight
-      }
+          : bodyText.lineHeight,
+      )}
       contentInsetVertical={contentInsetVertical}
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}

@@ -41,13 +41,7 @@ export function WorkspaceListToolbarRow(props: {
             <WorkspaceConnectionTitle
               grow
               onPress={props.onOpenEnvironments}
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel={props.titleAccessibilityLabel}
-                  fit
-                />
-              }
+              brand={<CompactBrandTitle accessibilityLabel={props.titleAccessibilityLabel} fit />}
             />
           </View>
           <AndroidHeaderIconButton

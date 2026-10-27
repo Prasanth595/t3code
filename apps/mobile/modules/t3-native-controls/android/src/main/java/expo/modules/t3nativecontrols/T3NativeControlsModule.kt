@@ -2,6 +2,7 @@ package expo.modules.t3nativecontrols
 
 import android.content.Intent
 import android.text.format.DateFormat
+import android.util.TypedValue
 import androidx.core.content.FileProvider
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -19,6 +20,16 @@ class T3NativeControlsModule : Module() {
     Function("is24HourFormat") {
       val context = appContext.reactContext ?: error("The app is not active.")
       DateFormat.is24HourFormat(context)
+    }
+
+    Function("scaledFontSize") { size: Double ->
+      val context = appContext.reactContext ?: error("The app is not active.")
+      val metrics = context.resources.displayMetrics
+      TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        size.toFloat(),
+        metrics
+      ) / metrics.density
     }
 
     AsyncFunction("openFile") { uri: String, mimeType: String, promise: Promise ->

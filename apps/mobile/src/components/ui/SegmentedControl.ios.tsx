@@ -1,3 +1,4 @@
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
 import { requireNativeView } from "expo";
 import { View, type NativeSyntheticEvent, type ViewProps } from "react-native";
 
@@ -6,6 +7,7 @@ import {
   themeColorWithAlpha,
   themeColorWithContrast,
 } from "../../lib/mobileTheme";
+import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
 
@@ -14,6 +16,7 @@ export type { SegmentedControlProps } from "./SegmentedControl.types";
 const NativeSegmentedControl = requireNativeView<
   ViewProps & {
     labels: string[];
+    fontSize: number;
     selectedIndex: number;
     trackColor: string;
     selectedColor: string;
@@ -28,6 +31,8 @@ export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
   const { colors, colorScheme } = useControlTheme();
+  const typography = useScaledTextRole("label");
+  const scaleSystemFont = useSystemFontScale();
   const trackColor = flattenThemeColor(
     themeColorWithAlpha(colors["--color-prominent-action"], colorScheme === "dark" ? 0.18 : 0.07),
     colors["--color-screen"],
@@ -42,6 +47,7 @@ export function SegmentedControl<Value extends string | number>(
     <View className={props.className}>
       <NativeSegmentedControl
         labels={props.options.map((option) => option.label)}
+        fontSize={scaleSystemFont(typography.fontSize)}
         selectedIndex={props.options.findIndex((option) => option.value === props.selected)}
         trackColor={trackColor}
         selectedColor={selectedColor}
@@ -56,7 +62,12 @@ export function SegmentedControl<Value extends string | number>(
           const option = props.options[nativeEvent.index];
           if (option) props.onSelect(option.value);
         }}
-        style={{ height: props.size === "compact" ? 32 : 36 }}
+        style={{
+          height: Math.max(
+            props.size === "compact" ? 32 : 36,
+            scaleSystemFont(typography.lineHeight) + 12,
+          ),
+        }}
       />
     </View>
   );

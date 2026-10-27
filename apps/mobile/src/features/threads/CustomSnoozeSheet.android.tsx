@@ -31,6 +31,7 @@ import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
 
 import { OverlayPortal } from "../../components/ui/OverlayPortal";
+import { NativeThemeHost } from "../../components/ui/NativeThemeHost.android";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { CustomSnoozeSheet as SharedCustomSnoozeSheet } from "./CustomSnoozeSheet.shared";
@@ -70,6 +71,7 @@ export function CustomSnoozeSheet(props: Props) {
   const titleTypography = useScaledTextRole("title");
   const bodyTypography = useScaledTextRole("footnote");
   const { width: windowWidth } = useWindowDimensions();
+  const dialogWidth = Math.min(360, windowWidth - 32);
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
   const [picker, setPicker] = useState<"date" | "time">("date");
@@ -127,7 +129,7 @@ export function CustomSnoozeSheet(props: Props) {
         <BasicAlertDialog
           onDismissRequest={props.onClose}
           properties={{ usePlatformDefaultWidth: false }}
-          modifiers={[width(Math.min(360, windowWidth - 32))]}
+          modifiers={[width(dialogWidth)]}
         >
           <Surface
             color={colors["--color-card-alt"]}
@@ -178,6 +180,7 @@ export function CustomSnoozeSheet(props: Props) {
               {mode === "date" ? (
                 <Column horizontalAlignment="center" modifiers={[fillMaxWidth()]}>
                   <SnoozeDateTimePicker
+                    width={dialogWidth}
                     key={picker}
                     date={date}
                     picker={picker}
@@ -267,6 +270,7 @@ export function CustomSnoozeSheet(props: Props) {
 }
 
 function SnoozeDateTimePicker(props: {
+  readonly width: number;
   readonly date: Date;
   readonly picker: "date" | "time";
   readonly is24Hour: boolean;
@@ -278,13 +282,17 @@ function SnoozeDateTimePicker(props: {
     props.picker === "date" ? snoozeDateToPickerDate(props.date) : props.date.toISOString(),
   );
   return (
-    <DateTimePicker
-      initialDate={initialDate}
-      displayedComponents={props.picker === "date" ? "date" : "hourAndMinute"}
-      is24Hour={props.is24Hour}
-      showVariantToggle={false}
-      elementColors={props.colors}
-      onDateSelected={props.onChange}
-    />
+    <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
+      <NativeThemeHost matchContents={{ vertical: true }} style={{ width: props.width }}>
+        <DateTimePicker
+          initialDate={initialDate}
+          displayedComponents={props.picker === "date" ? "date" : "hourAndMinute"}
+          is24Hour={props.is24Hour}
+          showVariantToggle={false}
+          elementColors={props.colors}
+          onDateSelected={props.onChange}
+        />
+      </NativeThemeHost>
+    </RNHostView>
   );
 }

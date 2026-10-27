@@ -217,7 +217,9 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
               onPress={() => void Linking.openURL(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"
             >
-              <Text className="font-t3-medium text-primary-text">Project source</Text>
+              <Text textRole="footnote" className="font-t3-medium text-primary-text">
+                Project source
+              </Text>
               <SymbolView
                 name="arrow.up.right"
                 size={16}

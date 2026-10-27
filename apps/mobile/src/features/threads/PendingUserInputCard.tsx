@@ -211,7 +211,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         style={{ flexShrink: 1 }}
       >
         {!canRespond ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+          <Text className="font-sans text-sm text-foreground-muted">
             The provider process for this request is no longer available. Interrupt or restart the
             run to continue.
           </Text>
@@ -258,7 +258,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                           {option.label}
                         </Text>
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+                          <Text className="font-sans text-sm text-foreground-muted">
                             {description}
                           </Text>
                         ) : null}

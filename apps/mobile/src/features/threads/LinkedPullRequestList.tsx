@@ -10,7 +10,7 @@ import {
   type PullRequestListLine,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { memo, useMemo } from "react";
-import { Pressable, useWindowDimensions, View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -20,6 +20,7 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import type { LinkedPullRequestActions } from "./useLinkedPullRequestActions";
 import { pullRequestListReviewStatus } from "../pull-requests/pullRequestList";
@@ -83,7 +84,8 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const { shortLabel, singular } = (
     sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
   ).changeRequest;
-  const metaLineHeight = useScaledTextRole("label").lineHeight * useWindowDimensions().fontScale;
+  const scaleSystemFont = useSystemFontScale();
+  const metaLineHeight = scaleSystemFont(useScaledTextRole("label").lineHeight);
   const row = (
     <Pressable
       accessibilityRole="button"
@@ -157,7 +159,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           ) : null}
         </View>
         <Text
-          className="text-base leading-5 font-t3-medium text-foreground"
+          className="text-base font-t3-medium text-foreground"
           numberOfLines={2}
           ellipsizeMode="tail"
         >

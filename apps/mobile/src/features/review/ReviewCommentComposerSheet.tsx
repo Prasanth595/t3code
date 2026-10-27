@@ -205,10 +205,18 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                             style={{ height: codeSurface.rowHeight }}
                           >
                             <ReviewChangeBar change={line.change} height={codeSurface.rowHeight} />
-                            <Text className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted">
+                            <Text
+                              allowFontScaling={false}
+                              className="pr-1 text-right font-mono text-foreground-muted"
+                              style={{
+                                width: codeSurface.gutterWidth,
+                                fontSize: codeSurface.lineNumberFontSize,
+                                lineHeight: codeSurface.rowHeight,
+                              }}
+                            >
                               {lineNumber ?? ""}
                             </Text>
-                            <View className="min-w-0 flex-1 shrink-0 px-1 py-1">
+                            <View className="min-w-0 flex-1 shrink-0 px-1">
                               <DiffTokenText
                                 fallback={line.content}
                                 tokens={highlightedLinesById[line.id] ?? null}

@@ -3,6 +3,7 @@ import { I18nManager, Platform, Pressable, View } from "react-native";
 import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 
 import { AppText } from "./AppText";
+import { cn } from "../../lib/cn";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
 
@@ -56,12 +57,15 @@ export function SegmentedControl<Value extends string | number>(
               accessibilityLabel={option.accessibilityLabel ?? option.label}
               accessibilityState={{ selected }}
               onPress={() => props.onSelect(option.value)}
-              className="flex-1 items-center justify-center rounded-full px-2 py-1 active:opacity-70"
-              style={{ minHeight: minHeight - 6 }}
+              className="min-w-0 items-center justify-center rounded-full px-2 py-1 active:opacity-70"
+              style={{ minHeight: minHeight - 6, width: segmentWidth }}
             >
               <AppText
                 textRole="footnote"
-                className={selected ? "font-t3-bold" : "font-t3-medium"}
+                className={cn(
+                  "max-w-full self-stretch text-center",
+                  selected ? "font-t3-bold" : "font-t3-medium",
+                )}
                 style={{
                   color:
                     colors[selected ? "--color-secondary-foreground" : "--color-foreground-muted"],

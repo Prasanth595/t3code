@@ -416,7 +416,7 @@ function UsageUpdating({
           entering={FadeIn.delay(150).duration(150).reduceMotion(ReduceMotion.System)}
           accessibilityLiveRegion="polite"
           pointerEvents="none"
-          className="absolute right-4 top-4 h-5 max-w-[55%] flex-row items-center gap-1.5"
+          className="absolute right-4 top-4 min-h-5 max-w-[55%] flex-row items-center gap-1.5"
         >
           <AppActivityIndicator size="small" colorClassName="accent-adaptive-sky-600-400" />
           <Text className="shrink text-sm text-adaptive-sky-600-400" numberOfLines={1}>

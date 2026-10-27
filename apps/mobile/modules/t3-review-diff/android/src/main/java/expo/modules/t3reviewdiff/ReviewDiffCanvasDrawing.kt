@@ -43,6 +43,34 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     uiPaint.typeface = Typeface.DEFAULT_BOLD
   }
 
+  fun commentTextMetrics(style: DiffStyle): Paint.FontMetrics {
+    configureUiPaint(
+      paint = textPaint,
+      color = theme.mutedText,
+      size = style.fileHeaderSubtextFontSizePx,
+      weight = style.fileHeaderSubtextFontWeight,
+    )
+    return textPaint.fontMetrics
+  }
+
+  fun commentTitleBaseline(metrics: Paint.FontMetrics): Float =
+    max(22f * density, 8f * density - metrics.ascent)
+
+  fun commentBodyBaseline(metrics: Paint.FontMetrics): Float =
+    commentTitleBaseline(metrics) +
+      max(36f * density, metrics.descent - metrics.ascent + 12f * density)
+
+  fun commentRowHeight(style: DiffStyle, collapsed: Boolean): Int {
+    val metrics = commentTextMetrics(style)
+    return ceil(
+      if (collapsed) {
+        max(44f * density, commentTitleBaseline(metrics) + metrics.descent + 18f * density)
+      } else {
+        max(124f * density, commentBodyBaseline(metrics) + metrics.descent + 24f * density)
+      },
+    ).toInt()
+  }
+
   fun fileHeaderChevronRect(top: Int, bottom: Int, style: DiffStyle): RectF {
     val centerY = (top + bottom) / 2f
     val left = style.fileHeaderHorizontalPaddingPx

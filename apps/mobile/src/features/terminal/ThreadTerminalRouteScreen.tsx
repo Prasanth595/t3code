@@ -1000,7 +1000,9 @@ function ThreadTerminal(props: {
                   }}
                   className="px-4 py-2"
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+                  <Text className="text-sm" style={{ color: terminalTheme.foreground }}>
+                    Attach visible output
+                  </Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (

@@ -73,7 +73,6 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   private val density = resources.displayMetrics.density
-  private val scaledDensity = density * resources.configuration.fontScale
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
 
   init {
@@ -147,7 +146,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private var selectionEndCol = 0
   private var selectionEndRow = 0
 
-  var fontSizeSp: Float = 10f
+  var fontSize: Float = 10f
     set(value) {
       if (field == value) return
       field = value
@@ -283,7 +282,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   private fun updateCellMetrics() {
-    paint.textSize = fontSizeSp * scaledDensity
+    paint.textSize = fontSize * density
     paint.typeface = regularTypeface
     cellWidthPx = ceil(paint.measureText("M").toDouble()).toFloat().coerceAtLeast(1f)
     val metrics = paint.fontMetrics
@@ -303,7 +302,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
       italic -> italicTypeface
       else -> regularTypeface
     }
-    paint.textSize = fontSizeSp * scaledDensity
+    paint.textSize = fontSize * density
     paint.color = color
     paint.style = Paint.Style.FILL
     paint.isUnderlineText = flags and FLAG_UNDERLINE != 0

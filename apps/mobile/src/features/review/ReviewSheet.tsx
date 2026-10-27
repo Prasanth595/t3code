@@ -189,7 +189,9 @@ function ReviewSelectionActionBar(props: {
         tintColorClassName="accent-primary-foreground"
         type="monochrome"
       />
-      <Text className="text-base font-t3-bold text-primary-foreground">{props.title}</Text>
+      <Text className="min-w-0 flex-1 text-center text-base font-t3-bold text-primary-foreground">
+        {props.title}
+      </Text>
     </>
   );
 
@@ -208,13 +210,13 @@ function ReviewSelectionActionBar(props: {
     >
       {props.onOpenComment ? (
         <Pressable
-          className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5"
+          className="min-h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5 py-2"
           onPress={props.onOpenComment}
         >
           {content}
         </Pressable>
       ) : (
-        <View className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5">
+        <View className="min-h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5 py-2">
           {content}
         </View>
       )}

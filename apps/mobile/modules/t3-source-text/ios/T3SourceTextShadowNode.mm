@@ -22,7 +22,7 @@ Size T3SourceTextShadowNode::measureContent(
   baseTextAttributes.allowFontScaling = baseProps.allowFontScaling;
 
   Float fontSizeMultiplier = 1.0;
-  if (baseTextAttributes.allowFontScaling) {
+  if (baseProps.allowFontScaling) {
     fontSizeMultiplier = layoutContext.fontSizeMultiplier;
   }
 

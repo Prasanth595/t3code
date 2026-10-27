@@ -1,8 +1,10 @@
+import { useSystemFontScale } from "../../lib/useSystemFontScale";
 import type { TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
 import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useRef,
   useState,
@@ -90,6 +92,13 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   ...props
 }: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const scaleSystemFont = useSystemFontScale();
+  const effectiveFontSize = scaleSystemFont(fontSize);
+  const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
+  const resize = useEffectEvent(props.onResize);
+  useEffect(() => {
+    if (viewport) resize(estimateGridSize({ ...viewport, fontSize: effectiveFontSize }));
+  }, [viewport, effectiveFontSize]);
   const inputRef = useRef<TextInputInstance>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
@@ -101,7 +110,9 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
-    props.onResize(estimateGridSize({ width, height, fontSize }));
+    setViewport((previous) =>
+      previous?.width === width && previous.height === height ? previous : { width, height },
+    );
   };
 
   useImperativeHandle(ref, () => ({
@@ -210,6 +221,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
 
 const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const scaleSystemFont = useSystemFontScale();
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
@@ -286,7 +298,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
           initialBuffer={streaming ? "" : props.buffer}
-          fontSize={fontSize}
+          fontSize={scaleSystemFont(fontSize)}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}
           onInput={handleNativeInput}

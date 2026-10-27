@@ -678,9 +678,9 @@ internal data class DiffStyle(
           fallback.fileHeaderHorizontalPaddingPx,
           density,
         ),
-        codeFontSizePx = json.floatSp("codeFontSize", fallback.codeFontSizePx, density),
+        codeFontSizePx = json.floatDp("codeFontSize", fallback.codeFontSizePx, density),
         codeFontWeight = json.optString("codeFontWeight", fallback.codeFontWeight),
-        lineNumberFontSizePx = json.floatSp(
+        lineNumberFontSizePx = json.floatDp(
           "lineNumberFontSize",
           fallback.lineNumberFontSizePx,
           density,
@@ -689,9 +689,9 @@ internal data class DiffStyle(
           "lineNumberFontWeight",
           fallback.lineNumberFontWeight,
         ),
-        hunkFontSizePx = json.floatSp("hunkFontSize", fallback.hunkFontSizePx, density),
+        hunkFontSizePx = json.floatDp("hunkFontSize", fallback.hunkFontSizePx, density),
         hunkFontWeight = json.optString("hunkFontWeight", fallback.hunkFontWeight),
-        fileHeaderFontSizePx = json.floatSp(
+        fileHeaderFontSizePx = json.floatDp(
           "fileHeaderFontSize",
           fallback.fileHeaderFontSizePx,
           density,
@@ -700,7 +700,7 @@ internal data class DiffStyle(
           "fileHeaderFontWeight",
           fallback.fileHeaderFontWeight,
         ),
-        fileHeaderMetaFontSizePx = json.floatSp(
+        fileHeaderMetaFontSizePx = json.floatDp(
           "fileHeaderMetaFontSize",
           fallback.fileHeaderMetaFontSizePx,
           density,
@@ -709,7 +709,7 @@ internal data class DiffStyle(
           "fileHeaderMetaFontWeight",
           fallback.fileHeaderMetaFontWeight,
         ),
-        fileHeaderSubtextFontSizePx = json.floatSp(
+        fileHeaderSubtextFontSizePx = json.floatDp(
           "fileHeaderSubtextFontSize",
           fallback.fileHeaderSubtextFontSizePx,
           density,
@@ -977,11 +977,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   private fun rowHeight(row: DiffRow): Int = when (row.kind) {
     "file" -> style.fileHeaderHeightPx.toInt()
     "notice" -> max((style.rowHeightPx * 2f).toInt(), (44 * density).toInt())
-    "comment" -> if (collapsedCommentIds.contains(row.id)) {
-      (44 * density).toInt()
-    } else {
-      (124 * density).toInt()
-    }
+    "comment" -> drawing.commentRowHeight(style, collapsedCommentIds.contains(row.id))
     "line" -> codeWrap.rowHeight(row, style.rowHeightPx.toInt())
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
@@ -1108,6 +1104,10 @@ private class DiffCanvasView(context: Context) : View(context) {
     val pathX = iconRect.right + 10f * density
     val pathWidth = max(24f * density, countsX - pathX - 12f * density)
     val centerY = (top + bottom) / 2f
+    val pathHeight = max(
+      20f * density,
+      ceil(boldTextPaint.fontMetrics.descent - boldTextPaint.fontMetrics.ascent),
+    )
     val displayPath = if (
       !row.previousPath.isNullOrEmpty() && row.previousPath != row.filePath
     ) {
@@ -1117,7 +1117,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     return FileHeaderPathLayout(
       displayPath = displayPath,
-      rect = RectF(pathX, centerY - 10f * density, pathX + pathWidth, centerY + 10f * density),
+      rect = RectF(pathX, centerY - pathHeight / 2f, pathX + pathWidth, centerY + pathHeight / 2f),
     )
   }
 
@@ -1223,11 +1223,17 @@ private class DiffCanvasView(context: Context) : View(context) {
     borderPaint.style = Paint.Style.FILL
 
     val collapsed = collapsedCommentIds.contains(row.id)
+    val metrics = drawing.commentTextMetrics(style)
+    val titleBaseline = drawing.commentTitleBaseline(metrics)
+    val chevronTop = max(
+      11f * density,
+      titleBaseline + (metrics.ascent + metrics.descent) / 2f - 8f * density
+    )
     val chevronRect = RectF(
       cardRect.left + 10f * density,
-      cardRect.top + 11f * density,
+      cardRect.top + chevronTop,
       cardRect.left + 26f * density,
-      cardRect.top + 27f * density,
+      cardRect.top + chevronTop + 16f * density,
     )
     drawing.drawDisclosureChevron(canvas, chevronRect, theme.mutedText, collapsed)
     drawing.configureUiPaint(
@@ -1240,7 +1246,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     canvas.drawText(
       ellipsize(title, textPaint, cardRect.right - chevronRect.right - 20f * density),
       chevronRect.right + 10f * density,
-      cardRect.top + 22f * density,
+      cardRect.top + titleBaseline,
       textPaint,
     )
     if (!collapsed) {
@@ -1253,7 +1259,7 @@ private class DiffCanvasView(context: Context) : View(context) {
           cardRect.right - bodyX - 18f * density
         ),
         bodyX,
-        cardRect.top + 58f * density,
+        cardRect.top + drawing.commentBodyBaseline(metrics),
         textPaint,
       )
     }
@@ -1539,9 +1545,6 @@ private fun JSONObject.optNullableInt(key: String): Int? =
   if (isNull(key) || !has(key)) null else optInt(key)
 
 private fun JSONObject.floatDp(key: String, fallbackPx: Float, density: Float): Float =
-  if (has(key)) optDouble(key).toFloat() * density else fallbackPx
-
-private fun JSONObject.floatSp(key: String, fallbackPx: Float, density: Float): Float =
   if (has(key)) optDouble(key).toFloat() * density else fallbackPx
 
 @Suppress("ReturnCount")

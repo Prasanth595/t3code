@@ -2,7 +2,10 @@ import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/native
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
-import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+import {
+  DEFAULT_CODE_FONT_SIZE,
+  type ResolvedMobileCodeSurface,
+} from "../../lib/appearancePreferences";
 import { resolveHighlightLanguage } from "../../lib/highlightLanguage";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
@@ -69,6 +72,8 @@ export function createNativeReviewDiffStyle(
   codeSurface: ResolvedMobileCodeSurface,
   wordWrap: boolean,
 ) {
+  const scale = codeSurface.fontSize / DEFAULT_CODE_FONT_SIZE;
+  const scaled = (size: number) => Math.max(8, Math.round(size * scale));
   return {
     wordWrap,
     rowHeight: codeSurface.rowHeight,
@@ -77,29 +82,29 @@ export function createNativeReviewDiffStyle(
     gutterWidth: codeSurface.gutterWidth,
     codePadding: codeSurface.codePadding,
     textVerticalInset: codeSurface.textVerticalInset,
-    fileHeaderHeight: 56,
+    fileHeaderHeight: scaled(56),
     fileHeaderHorizontalMargin: 8,
     fileHeaderVerticalMargin: 6,
     fileHeaderCornerRadius: 10,
-    fileHeaderHorizontalPadding: 10,
-    fileHeaderPathRightPadding: 118,
-    fileHeaderCountColumnWidth: 38,
+    fileHeaderHorizontalPadding: scaled(10),
+    fileHeaderPathRightPadding: scaled(118),
+    fileHeaderCountColumnWidth: scaled(38),
     fileHeaderCountGap: 5,
     codeFontSize: codeSurface.fontSize,
     codeFontWeight: "regular",
     lineNumberFontSize: codeSurface.lineNumberFontSize,
     lineNumberFontWeight: "regular",
-    hunkFontSize: 11,
+    hunkFontSize: scaled(11),
     hunkFontWeight: "medium",
-    fileHeaderFontSize: 11,
+    fileHeaderFontSize: scaled(11),
     fileHeaderFontWeight: "semibold",
-    fileHeaderMetaFontSize: 10,
+    fileHeaderMetaFontSize: scaled(10),
     fileHeaderMetaFontWeight: "semibold",
-    fileHeaderSubtextFontSize: 11,
+    fileHeaderSubtextFontSize: scaled(11),
     fileHeaderSubtextFontWeight: "medium",
-    fileHeaderStatusFontSize: 9,
+    fileHeaderStatusFontSize: scaled(9),
     fileHeaderStatusFontWeight: "bold",
-    emptyStateFontSize: 12,
+    emptyStateFontSize: scaled(12),
     emptyStateFontWeight: "medium",
   } as const;
 }

@@ -136,7 +136,7 @@ export const PullRequestListRow = memo(
                 </Text>
               </View>
               <Text
-                className={cn("text-base leading-5 font-t3-medium", foreground)}
+                className={cn("text-base font-t3-medium", foreground)}
                 numberOfLines={2}
                 ellipsizeMode="tail"
               >

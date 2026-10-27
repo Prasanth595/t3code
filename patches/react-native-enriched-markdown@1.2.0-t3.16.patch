@@ -1,0 +1,30 @@
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/styles/StyleParser.kt b/android/src/main/java/com/swmansion/enriched/markdown/styles/StyleParser.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/styles/StyleParser.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/styles/StyleParser.kt
+@@ -1,6 +1,8 @@
+ package com.swmansion.enriched.markdown.styles
+ 
+ import android.content.Context
++import android.util.TypedValue
++import kotlin.math.min
+ import com.facebook.react.bridge.ColorPropConverter
+ import com.facebook.react.bridge.ReadableMap
+ import com.facebook.react.uimanager.PixelUtil
+@@ -75,12 +77,12 @@
+       return value * baseDensity
+     }
+ 
+-    var fontScale = metrics.scaledDensity / baseDensity
+-    if (maxFontSizeMultiplier >= 1.0f && fontScale > maxFontSizeMultiplier) {
+-      fontScale = maxFontSizeMultiplier
++    val scaled = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, metrics)
++    return if (maxFontSizeMultiplier >= 1.0f) {
++      min(scaled, value * baseDensity * maxFontSizeMultiplier)
++    } else {
++      scaled
+     }
+-
+-    return value * baseDensity * fontScale
+   }
+ 
+   fun toPixelFromDIP(value: Float): Float = PixelUtil.toPixelFromDIP(value)

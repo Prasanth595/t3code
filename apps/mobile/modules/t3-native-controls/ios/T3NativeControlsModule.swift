@@ -23,6 +23,7 @@ public final class T3NativeControlsModule: Module {
       ViewName("SegmentedControl")
       Events("onSelectionChange")
       Prop("labels") { (view: T3SegmentedControlView, value: [String]) in view.labels = value }
+      Prop("fontSize") { (view: T3SegmentedControlView, value: Double) in view.fontSize = CGFloat(value) }
       Prop("selectedIndex") { (view: T3SegmentedControlView, value: Int) in view.selectedIndex = value }
       Prop("trackColor") { (view: T3SegmentedControlView, value: UIColor) in view.trackColor = value }
       Prop("selectedColor") { (view: T3SegmentedControlView, value: UIColor) in view.selectedColor = value }

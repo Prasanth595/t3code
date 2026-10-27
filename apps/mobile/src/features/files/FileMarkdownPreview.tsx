@@ -124,7 +124,11 @@ export function FileMarkdownPreview(props: {
           accessibilityRole="link"
           accessibilityLabel={`Open ${name}`}
           onPress={() => openMedia(image.href, true)}
-          style={{ color: styles.nativeTextStyle.linkColor }}
+          style={{
+            color: styles.nativeTextStyle.linkColor,
+            fontSize: styles.nativeTextStyle.fontSize,
+            lineHeight: styles.nativeTextStyle.lineHeight,
+          }}
         >
           {name}
         </Text>

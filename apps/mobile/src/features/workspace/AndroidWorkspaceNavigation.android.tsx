@@ -129,7 +129,7 @@ export function AndroidWorkspaceNavigation(props: {
           props.onNewThread();
         }}
         onOverlayChange={(event) => props.onOverlayChange?.(event.nativeEvent.overlay)}
-        style={rail ? { flex: 1 } : { height: 80 * Math.max(1, scale) }}
+        style={rail ? { flex: 1 } : { height: 80 }}
       />
     </View>
   );

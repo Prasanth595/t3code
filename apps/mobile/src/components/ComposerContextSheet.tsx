@@ -98,7 +98,7 @@ export function ComposerContextSheet(props: {
   });
   const reviewColors = useReviewCommentColors();
   const insets = useSafeAreaInsets();
-  const { themeId, themeAppearance } = useAppearancePreferences();
+  const { themeId, themeAppearance, appearance } = useAppearancePreferences();
   const terminalTheme = getMobileTerminalTheme(themeId, themeAppearance);
   const record = props.record;
   const localAttachment =
@@ -207,12 +207,12 @@ export function ComposerContextSheet(props: {
           </Text>
         ) : null}
         {!record ? (
-          <Text className="text-foreground">
+          <Text textRole="footnote" className="text-foreground">
             Context unavailable. The reference was copied without its payload. Copy it again from
             the original message or remove it.
           </Text>
         ) : "payload" in record ? (
-          <Text className="text-foreground">
+          <Text textRole="footnote" className="text-foreground">
             This context type is not supported by this version of the app. Its payload will be
             preserved when sent.
           </Text>
@@ -233,8 +233,8 @@ export function ComposerContextSheet(props: {
                     className="text-sm text-foreground"
                     style={{
                       fontFamily: REVIEW_MONO_FONT_FAMILY,
-                      fontSize: 13,
-                      lineHeight: 20,
+                      fontSize: appearance.terminalFontSize,
+                      lineHeight: Math.round(appearance.terminalFontSize * 1.6),
                       color: terminalTheme.foreground,
                     }}
                   >
@@ -369,7 +369,9 @@ export function ComposerContextSheet(props: {
             }}
             className="rounded-xl bg-subtle p-4"
           >
-            <Text className="text-foreground">Open {changeRequestTerm}</Text>
+            <Text textRole="footnote" className="text-foreground">
+              Open {changeRequestTerm}
+            </Text>
           </Pressable>
         ) : null}
         {props.onOpenAttachment ? (

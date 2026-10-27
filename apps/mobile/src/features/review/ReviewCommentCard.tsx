@@ -209,6 +209,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
           contentContainerStyle={{ padding: 10 }}
         >
           <NativeText
+            allowFontScaling={false}
             selectable
             className="font-mono"
             style={{
@@ -222,11 +223,13 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
               ? snippetTokens.map(
                   (line, lineIndex) => (
                     /* oxlint-disable react/no-array-index-key -- Highlight tokens are stateless positions within this immutable snippet. */ <NativeText
+                      allowFontScaling={false}
                       key={lineIndex}
                     >
                       {lineIndex > 0 ? "\n" : ""}
                       {line.map((token, tokenIndex) => (
                         <NativeText
+                          allowFontScaling={false}
                           key={tokenIndex}
                           style={{
                             color: token.color ?? props.colors.text,

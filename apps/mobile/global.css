@@ -37,6 +37,8 @@
   --text-2xl--line-height: 32px;
   --text-3xl: 30px;
   --text-3xl--line-height: 36px;
+  --text-4xl: 36px;
+  --text-4xl--line-height: 40px;
 }
 
 /* ─── Custom utilities ──────────────────────────────────────────────── */

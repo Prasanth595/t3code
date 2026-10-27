@@ -43,7 +43,11 @@ vi.mock("expo", () => ({
   requireOptionalNativeModule: () =>
     mocks.revision === null ? {} : { outputRevision: mocks.revision },
 }));
-vi.mock("react-native", () => ({ View: ({ children }: { children: ReactNode }) => children }));
+vi.mock("react-native", () => ({
+  View: ({ children }: { children: ReactNode }) => children,
+  Platform: { OS: "ios" },
+  useWindowDimensions: () => ({ fontScale: 1 }),
+}));
 vi.mock("../../components/ui/AppText", () => ({ AppText: () => null }));
 vi.mock("../../lib/typography", () => ({ MOBILE_TYPOGRAPHY: { label: { fontSize: 10 } } }));
 vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
