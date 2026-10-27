@@ -289,7 +289,17 @@ export const make = Effect.gen(function* () {
           { role: "togglefullscreen" },
         ],
       },
-      { role: "windowMenu" },
+      environment.platform === "darwin"
+        ? { role: "windowMenu" }
+        : {
+            role: "windowMenu",
+            // The default Close binds mod+w, so closing the last tab would quit the app.
+            submenu: [
+              { role: "minimize" },
+              { role: "zoom" },
+              { label: "Close", click: (_item, window) => window?.close() },
+            ],
+          },
       {
         role: "help",
         submenu: [
