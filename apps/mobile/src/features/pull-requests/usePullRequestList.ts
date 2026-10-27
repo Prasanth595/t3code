@@ -161,7 +161,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const pageResult = registry.get(pageAtom);
     const refreshResult = registry.get(refreshAtom);
     if (pageResult.waiting || refreshResult.waiting) return;
-    if (!retry && (settledError(refreshResult) ?? settledError(pageResult))) return;
+    if (!retry && settledError(pageResult)) return;
     if (!continuations(registry, targets).length) return;
     registry.set(refreshAtom, Atom.Reset);
     registry.set(pageAtom, retry);
