@@ -6,9 +6,9 @@ import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contract
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 
-import { useEnvironmentServerConfig, useThreadShells } from "../../state/entities";
-import { useOlderSettledCount } from "../../state/olderSettledShelf";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
+import { useProjectHasThreads } from "../../state/project-has-threads";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
@@ -21,7 +21,6 @@ import { environmentSession } from "../../state/session";
  */
 export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
   const serverConfig = useEnvironmentServerConfig(project?.environmentId ?? null);
-  const threads = useThreadShells();
   const isScratch =
     project !== null && isScratchProject(project, serverConfig?.scratchWorkspaceRoot);
   const hasWorkspace = project !== null && project.workspaceRoot !== "";
@@ -59,14 +58,7 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     project,
     t3ProjectFile,
   );
-  const olderSettledCount = useOlderSettledCount(project);
-  const projectHasThreads =
-    project !== null &&
-    (olderSettledCount > 0 ||
-      threads.some(
-        (thread) =>
-          thread.environmentId === project.environmentId && thread.projectId === project.id,
-      ));
+  const projectHasThreads = useProjectHasThreads(project);
   const defaultWorkspaceMode = isScratch
     ? "local"
     : resolveNewThreadEnvMode({
