@@ -2288,11 +2288,8 @@ describe("timeLimit", () => {
 
   it.effect("does not charge the factory's gate to a run it sent back", () =>
     Effect.gen(function* () {
-      const back = [
-        ...STARTED,
-        PR_OPENED,
-        { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } },
-      ];
+      const sentBack: RunEvent = { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } };
+      const back = [...STARTED, PR_OPENED, sentBack];
       const at = [T0 + 20 * MINUTE, T0 + 90 * MINUTE];
       const rig = rigFor(back, {
         ms: (index) => (index < STARTED.length ? startedAtT0(index) : at[index - STARTED.length]!),
