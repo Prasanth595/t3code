@@ -871,7 +871,8 @@ export const advance = (
             }
             yield* append(out, { event: "pr_set_draft", data: { pr } }, "advance", "pr-set-draft");
           }
-          if (!seen.opened.includes(pr)) {
+          // Once per hand-off to the gate: the first report, and the report after each send-back.
+          if (!seen.opened.includes(pr) || !seen.prReported) {
             yield* append(
               out,
               { event: "pr_opened", data: { pr, url: prUrl } },

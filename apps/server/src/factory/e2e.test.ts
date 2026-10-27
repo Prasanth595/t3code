@@ -767,6 +767,7 @@ it.live("sends a failed gate back into the session, then passes it on the second
         "gate_finished attempt 1",
         "step_changed gate-sending 1 1",
         "gate_sent_back attempt 1 run 1",
+        `pr_opened #${PR} ${PR_URL}`,
         "gate_checkout attempt 2",
         `gate_command attempt 2 exit 0: ${command}`,
         "gate_finished attempt 2",

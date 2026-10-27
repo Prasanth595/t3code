@@ -30,7 +30,7 @@ Fix the cause, then an instructor sets `factory:ready` to start a new run. If an
 
 ## The time limit
 
-Each run may spend `limits.minutes` (180 by default) claimed and building. Time waiting at `factory:pr-open` doesn't count. Past the limit, the factory stops the session and sets `factory:stuck` with the reason "the run passed its time limit".
+Each run may spend `limits.minutes` (180 by default) claimed and building. Time waiting at `factory:pr-open` doesn't count, and neither does the factory's own gate: from the session reporting its pull request until the gate sends it back, queued or running. Past the limit, the factory stops the session and sets `factory:stuck` with the reason "the run passed its time limit".
 
 Other limits in the repo's [factory block](/guide/add-a-repo#_1-commit-the-factory-block) cap the gate retries and the wait for required checks. Each ends the run with `factory:stuck` when it runs out.
 

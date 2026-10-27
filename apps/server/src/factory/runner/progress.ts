@@ -171,7 +171,7 @@ export interface Seen {
   /** A `stop_requested` line: an operator asked for this run to be stopped by hand. */
   readonly stopRequested: boolean;
   readonly finished: boolean;
-  /** Every pull request a `pr_opened` line names, in order. */
+  /** Every pull request a `pr_opened` line names, once each, in the order first named. */
   readonly opened: ReadonlyArray<number>;
   /** The newest `pr_opened`: the number and the URL as the session wrote it. */
   readonly lastPr: { readonly pr: number; readonly url: string } | null;
@@ -227,7 +227,7 @@ export interface Seen {
   readonly interruption: Interruption | null;
   /** The newest branch a `session_launched`, `session_interrupted` or `session_rate_limited` line names: where the run's work is. */
   readonly lastBranch: string | null;
-  /** Milliseconds spent in `triage` and `building` in stints that have ended. */
+  /** Milliseconds spent in `triage` and `building` in stints that have ended, less the factory's gate. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
   readonly workingSince: number | null;
@@ -754,9 +754,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const pr = dataField(entry.data, "pr");
         const url = dataField(entry.data, "url");
         if (typeof pr === "number" && typeof url === "string") {
-          opened.push(pr);
+          if (!opened.includes(pr)) opened.push(pr);
           lastPr = { pr, url };
           prReported = true;
+          // The run is the factory's until its gate sends it back: that wait is not charged.
+          if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
+          workingSince = null;
         }
         break;
       }
@@ -853,6 +856,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // The session is at work again: the run is a building run with no pull request reported
         // until the session reports it again, so it is time-limited, watched and read.
         prReported = false;
+        // The stint the pull request paused begins again; a run that is not building waits for
+        // its next state change to decide. A clock already running keeps the time it counted.
+        if (state === "triage" || state === "building") {
+          if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
+          workingSince = entry.ms;
+        }
         break;
       }
       case "gate_regate": {
