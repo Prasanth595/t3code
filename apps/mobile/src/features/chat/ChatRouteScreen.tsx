@@ -1,4 +1,4 @@
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { CommonActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { ChatModeContent } from "./ChatModeContent";
@@ -12,10 +12,10 @@ export function ChatRouteScreen({ route }: StaticScreenProps<{ readonly chatId?:
   return (
     <>
       <NativeStackScreenOptions options={{ title }} />
+      {/* A new chat takes its id in place: replacing the screen slid it in again and closed the keyboard. */}
       <ChatModeContent
-        key={chatId ?? "new"}
         chatId={chatId}
-        onChatStarted={(id) => navigation.dispatch(StackActions.replace("Chat", { chatId: id }))}
+        onChatStarted={(id) => navigation.dispatch(CommonActions.setParams({ chatId: id }))}
       />
     </>
   );

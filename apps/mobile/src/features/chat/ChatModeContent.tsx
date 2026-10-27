@@ -68,6 +68,20 @@ const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
+const MESSAGE_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+// Older messages carry their day, so a reopened chat does not read as today's.
+const messageTime = (createdAt: string) => {
+  const at = new Date(Date.parse(createdAt));
+  return at.toDateString() === new Date().toDateString()
+    ? MESSAGE_TIME_FORMATTER.format(at)
+    : MESSAGE_DATE_TIME_FORMATTER.format(at);
+};
 
 /**
  * Chat mode: Mira answers from the account's model with no computer behind it, so it works on
@@ -223,7 +237,7 @@ function ChatMessageRow(props: { readonly message: SaasChatMessage; readonly str
       </View>
       <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
         <AppText className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-          {MESSAGE_TIME_FORMATTER.format(Date.parse(message.createdAt))}
+          {messageTime(message.createdAt)}
         </AppText>
         <CopyTextButton
           accessibilityLabel="Copy message"
