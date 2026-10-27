@@ -1165,6 +1165,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
                 options: [],
                 multiSelect: true,
               },
+              {
+                id: "note",
+                header: "Note",
+                question: "Anything else?",
+                options: [],
+                required: false,
+              },
             ],
           },
         },
@@ -1400,7 +1407,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         commandId: CommandId.make("runtime-async-question-answer"),
         threadId,
         requestId,
-        answers: { color: "  Blue  ", sizes: ["Small", "Large"] },
+        answers: { color: "  Blue  ", sizes: ["Small", "Large"], note: "" },
       };
       const accepted = yield* orchestrator.dispatch(command);
       const repeated = yield* orchestrator.dispatch(command);
@@ -1417,7 +1424,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           requestId,
           answers: command.answers,
           attachmentsByQuestionId: {},
-          questionTextById: { color: "Which color?", sizes: "Which sizes?" },
+          questionTextById: {
+            color: "Which color?",
+            sizes: "Which sizes?",
+            note: "Anything else?",
+          },
         });
       }
       assert.equal(answered.messages.length, 1);

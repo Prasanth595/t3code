@@ -8557,7 +8557,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "The provider for this project is disabled.",
           });
         }
-        if (!Object.values(answers ?? {}).every(isMessageQuestionAnswer)) {
+        const questionIds = new Set(approvalTurnItem.questions.map((question) => question.id));
+        if (
+          !Object.entries(answers ?? {}).every(
+            ([questionId, answer]) =>
+              questionIds.has(questionId) || isMessageQuestionAnswer(answer),
+          )
+        ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -8566,8 +8572,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         for (const question of approvalTurnItem.questions) {
           const answer = answers?.[question.id];
-          if (answer === undefined && question.required === false) continue;
-          if (!isMessageQuestionAnswer(answer)) {
+          const answered = isMessageQuestionAnswer(answer);
+          // Clients send "" for a skipped optional question, such as an attachment-only answer.
+          if (!answered && question.required === false) continue;
+          if (!answered) {
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,
