@@ -8371,7 +8371,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: queuedRootNode.id,
         providerInstanceId: queuedRun.providerInstanceId,
         occurredAt: now,
-        payload: { ...queuedRun, queuePosition: 1 },
+        payload: { ...queuedRun, queuePosition: 1, queuedAheadOfCompletions: false },
       });
       const stops =
         target !== undefined &&
@@ -8485,19 +8485,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Automatic completion deliveries cannot be reordered.",
       });
     }
-    const automaticRuns = queuedRuns.filter((run) => isAutomaticCompletionRun(projection, run));
-    if (
-      command.beforeRunId !== null &&
-      automaticRuns.some((run) => run.id === command.beforeRunId)
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Queued messages cannot be reordered ahead of automatic completion delivery.",
-      });
-    }
-    const reorderableRuns = queuedRuns.filter((run) => !isAutomaticCompletionRun(projection, run));
-    const withoutMoving = reorderableRuns.filter((run) => run.id !== command.runId);
+    const withoutMoving = queuedRuns.filter((run) => run.id !== command.runId);
     const beforeIndex =
       command.beforeRunId === null
         ? withoutMoving.length
@@ -8510,11 +8498,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const reordered = [
-      ...automaticRuns,
       ...withoutMoving.slice(0, beforeIndex),
       moving,
       ...withoutMoving.slice(beforeIndex),
     ];
+    const lastCompletionIndex = reordered.findLastIndex((run) =>
+      isAutomaticCompletionRun(projection, run),
+    );
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     yield* Effect.forEach(
@@ -8522,7 +8512,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (run, index) =>
         Effect.gen(function* () {
           const queuePosition = index + 1;
-          if (run.queuePosition === queuePosition) {
+          const aheadOfCompletions =
+            index < lastCompletionIndex && !isAutomaticCompletionRun(projection, run);
+          if (
+            run.queuePosition === queuePosition &&
+            (run.queuedAheadOfCompletions === true) === aheadOfCompletions
+          ) {
             return;
           }
           yield* emitEvent({
@@ -8535,6 +8530,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: {
               ...run,
               queuePosition,
+              ...(aheadOfCompletions || run.queuedAheadOfCompletions === true
+                ? { queuedAheadOfCompletions: aheadOfCompletions }
+                : {}),
             },
           });
         }),
@@ -10514,7 +10512,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     for (const [index, run] of others.entries()) {
       const queuePosition = index + 2;
-      if (run.queuePosition === queuePosition) continue;
+      if (run.queuePosition === queuePosition && run.queuedAheadOfCompletions !== true) continue;
       yield* emit(
         events,
         command,
@@ -10525,7 +10523,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
-        payload: { ...run, queuePosition },
+        payload: { ...run, queuePosition, queuedAheadOfCompletions: false },
       });
     }
     if (targetRunId === undefined) return undefined;
