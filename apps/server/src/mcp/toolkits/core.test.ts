@@ -73,6 +73,9 @@ const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
 );
+const layerNoProviders = Layer.mock(ProviderRegistry.ProviderRegistry)({
+  getProviders: Effect.succeed([]),
+});
 
 const threadId = ThreadId.make("mcp-core-thread");
 const scope: McpInvocationContext.McpInvocationScope = {
@@ -121,6 +124,7 @@ it.effect("checks capability through the production registration", () =>
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
       ),
     ),
@@ -156,6 +160,7 @@ it.effect("an answered question reports already answered instead of not found", 
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: () => Effect.succeed(shell),
@@ -315,6 +320,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
@@ -362,6 +368,7 @@ it.effect("keeps unexpected handler defects private through the production regis
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: () => Effect.die(new Error("private-storage-path")),
@@ -480,6 +487,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) =>
@@ -540,6 +548,7 @@ it.effect("a read-only client reads threads and is refused every write before it
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: () =>
@@ -570,6 +579,84 @@ it.effect("a read-only client reads threads and is refused every write before it
     ),
   ),
 );
+
+it.effect("t3_thread_configure refuses a model the provider instance does not advertise", () => {
+  const dispatchedModels: Array<string> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const configure = (instanceId: string, model: string) =>
+      server
+        .callTool({
+          name: "t3_thread_configure",
+          arguments: {
+            threadId: "other-project-thread",
+            modelSelection: { instanceId, model },
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const refused = yield* configure("codex", "not-advertised");
+    expect(declaredFailure(refused)).toMatchObject({ code: "model_unavailable" });
+    const unregistered = yield* configure("missing", "gpt-5.5");
+    expect(declaredFailure(unregistered)).toMatchObject({ code: "provider_unavailable" });
+    expect(dispatchedModels).toEqual([]);
+
+    const advertised = yield* configure("codex", "gpt-5.5");
+    expect(advertised.isError).toBe(false);
+    expect(dispatchedModels).toEqual(["gpt-5.5"]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([
+              {
+                instanceId: ProviderInstanceId.make("codex"),
+                enabled: true,
+                status: "ready",
+                models: [{ slug: "gpt-5.5", name: "GPT-5.5" }],
+              } as never,
+            ]),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  deletedAt: null,
+                },
+              } as never),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (
+                  command.type === "thread.model-selection.set" ||
+                  command.type === "provider.switch"
+                ) {
+                  dispatchedModels.push(command.modelSelection.model);
+                }
+                return { sequence: 7, storedEvents: [] };
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 const dispatched: Array<string> = [];
 
 it.effect("refuses act-as-caller tools to a client caller", () =>
