@@ -56,11 +56,12 @@ interface ProviderTransferBudget {
   readonly measuredTurnWebSocketMessages: number;
 }
 
+// The measured turn decodes to about 22 KB; without live body dedupe its repeated answer makes it 26 KB.
 const TRANSFER_BUDGET = {
   totalWireBytes: 7_000,
   threadSnapshotWireBytes: 5_000,
   measuredTurnWebSocketWireBytes: 2_000,
-  measuredTurnWebSocketDecodedBytes: 30_000,
+  measuredTurnWebSocketDecodedBytes: 25_000,
   measuredTurnWebSocketMessages: 8,
 } satisfies ProviderTransferBudget;
 
@@ -194,9 +195,9 @@ function legacyRows(
   measured: TimelineHttpMeasurement,
 ): string[] {
   return [
-    infoRow(provider, `${phase}, no opt-ins`, "HTTP wire", measured.http.wireBytes),
-    infoRow(provider, `${phase}, no opt-ins`, "HTTP decoded", measured.http.decodedBodyBytes),
-    infoRow(provider, `${phase}, no opt-ins`, "rows", measured.rows, String),
+    infoRow(provider, `${phase}, older client`, "HTTP wire", measured.http.wireBytes),
+    infoRow(provider, `${phase}, older client`, "HTTP decoded", measured.http.decodedBodyBytes),
+    infoRow(provider, `${phase}, older client`, "rows", measured.rows, String),
   ];
 }
 
@@ -262,7 +263,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are the SQL client's per-statement spans, counted across V2 persistence and the HTTP/WebSocket handlers.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     `The long-turn rows open a second thread through the compact bounded snapshot web and mobile use, then load one older page. Its last user turn holds ${LONG_TURN_WORK_ROWS} rows of reasoning, commands, file changes, MCP calls, progress messages, checkpoints, and subagents.`,
-    `The fleet shell rows read the cold-connect shell after ${SHELL_SETTLED_THREADS} settled threads and ${SHELL_IDLE_SUBAGENTS} idle subagent children are added. Budgeted reads send the opt-ins current clients send; "no opt-ins" rows show the same read from an older client.`,
+    `The fleet shell rows read the cold-connect shell after ${SHELL_SETTLED_THREADS} settled threads and ${SHELL_IDLE_SUBAGENTS} idle subagent children are added. Budgeted reads send the opt-ins current clients send; "older client" rows show the same read without the opt-ins added since row budgets.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",

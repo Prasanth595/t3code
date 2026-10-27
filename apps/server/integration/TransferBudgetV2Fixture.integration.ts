@@ -107,6 +107,9 @@ export function turnEvents(
   const events: OrchestrationV2DomainEvent[] = [
     { ...common, id: EventId.make(`run-${index}`), type: "run.created", payload: run },
   ];
+  const answer =
+    `Completed ${provider} inspection ${index}. ` +
+    "The projection preserves transcript text and bounds tool output. ".repeat(60);
   for (const role of ["user", "assistant"] as const) {
     events.push({
       ...common,
@@ -118,11 +121,7 @@ export function turnEvents(
         runId,
         nodeId,
         role,
-        text:
-          role === "user"
-            ? `Inspect transfer ${index}`
-            : `Completed ${provider} inspection ${index}. ` +
-              "The projection preserves transcript text and bounds tool output. ".repeat(60),
+        text: role === "user" ? `Inspect transfer ${index}` : answer,
         attachments: [],
         streaming: false,
         createdAt: now,
@@ -133,6 +132,22 @@ export function turnEvents(
     });
   }
   const toolCount = measured ? TRANSFER_MEASURED_TOOLS : TRANSFER_HISTORY_TOOLS_PER_TURN;
+  const item = (id: string, ordinal: number, title: string | null) => ({
+    id: TurnItemId.make(id),
+    threadId: THREAD_ID,
+    runId,
+    nodeId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  });
   for (let tool = 0; tool <= toolCount; tool++) {
     const mcp = tool === toolCount;
     const output = diagnosticOutput({
@@ -145,22 +160,11 @@ export function turnEvents(
           : TRANSFER_HISTORY_MCP_RESULT_BYTES
         : 4096,
     });
-    const base = {
-      id: TurnItemId.make(`item-${index}-${tool}`),
-      threadId: THREAD_ID,
-      runId,
-      nodeId,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: tool + 1,
-      status: "completed" as const,
-      title: mcp ? "MCP search" : `Inspect source ${tool}`,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    };
+    const base = item(
+      `item-${index}-${tool}`,
+      tool + 1,
+      mcp ? "MCP search" : `Inspect source ${tool}`,
+    );
     events.push({
       ...common,
       id: EventId.make(`tool-${index}-${tool}`),
@@ -182,6 +186,20 @@ export function turnEvents(
           },
     });
   }
+  // The live turn repeats its answer in a turn item, as adapters do, so live dedupe has work.
+  if (measured)
+    events.push({
+      ...common,
+      id: EventId.make(`answer-item-${index}`),
+      type: "turn-item.updated",
+      payload: {
+        ...item(`item-${index}-answer`, toolCount + 2, null),
+        type: "assistant_message",
+        messageId: MessageId.make(`assistant-${index}`),
+        text: answer,
+        streaming: false,
+      },
+    });
   events.push({
     ...common,
     id: EventId.make(`complete-${index}`),
@@ -272,7 +290,9 @@ export function longTurnThreadBatches(
       { ...common, id: EventId.make(`long-turn-run-${index}`), type: "run.created", payload: run },
     ];
     const message = (role: "user" | "assistant", row: string, messageText: string) => {
-      const messageId = MessageId.make(`long-turn-${role}-${index}-${row}`);
+      const messageId = MessageId.make(
+        `message:provider:${provider}:native-item:msg_01LongTurn${index}x${row}`,
+      );
       const createdBy = role === "user" ? ("user" as const) : ("agent" as const);
       events.push(
         {

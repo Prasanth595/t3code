@@ -55,6 +55,7 @@ import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from ".
 import {
   measureHttpGet,
   openMeasuredWsClient,
+  type HttpTransferMeasurement,
   type MeasuredWsClient,
 } from "./NetworkTransferMeasurement.integration.ts";
 import { makeSqlStatementCounter } from "./SqlStatementCounter.integration.ts";
@@ -371,45 +372,47 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             measureHttpGet({
               url: `${base}${path}`,
               headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
-            });
+            }).pipe(Effect.tap((http) => Effect.sync(() => assert.equal(http.status, 200))));
+          const decoded = (http: HttpTransferMeasurement) =>
+            Buffer.from(http.decodedBody).toString();
           const longTurnPath = `/api/orchestration/threads/${LONG_TURN_THREAD_ID}`;
-          const coldOpen = yield* Effect.forEach(
-            ["compactTurnItems=1", CLIENT_BOUNDED_QUERY],
-            Effect.fnUntraced(function* (query) {
+          const readColdOpen = (query: string) =>
+            Effect.gen(function* () {
               const http = yield* get(`${longTurnPath}/bounded?${query}`);
-              assert.equal(http.status, 200);
-              const snapshot = yield* decodeBoundedSnapshot(
-                Buffer.from(http.decodedBody).toString(),
-              );
-              return { http, rows: snapshot.projection.visibleTurnItems.length, snapshot };
-            }),
-          );
-          const cursor = coldOpen[1]!.snapshot.historyCursor;
-          if (cursor === null) return yield* Effect.die("Expected older long-turn history");
-          const historyPage = yield* Effect.forEach(
-            ["", `&${CLIENT_HISTORY_QUERY}`],
-            Effect.fnUntraced(function* (query) {
+              const snapshot = yield* decodeBoundedSnapshot(decoded(http));
+              const rows = snapshot.projection.visibleTurnItems.length;
+              return { http, rows, cursor: snapshot.historyCursor };
+            });
+          const readHistoryPage = (cursor: string, query: string) =>
+            Effect.gen(function* () {
               const http = yield* get(
                 `${longTurnPath}/history?cursor=${encodeURIComponent(cursor)}${query}`,
               );
-              assert.equal(http.status, 200);
-              const page = yield* decodeHistoryPage(Buffer.from(http.decodedBody).toString());
+              const page = yield* decodeHistoryPage(decoded(http));
               assert.isTrue(page.hasMoreHistory);
               return { http, rows: page.items.length };
-            }),
-          );
-
-          yield* sink.write({ events: shellFleetEvents(provider) });
-          const fleetShell = yield* Effect.forEach(
-            ["", `?${CLIENT_SHELL_QUERY}`],
-            Effect.fnUntraced(function* (query) {
+            });
+          const readShell = (query: string) =>
+            Effect.gen(function* () {
               const http = yield* get(`/api/orchestration/shell${query}`);
-              assert.equal(http.status, 200);
-              const snapshot = yield* decodeShellSnapshot(Buffer.from(http.decodedBody).toString());
-              return { http, rows: snapshot.threads.length };
-            }),
+              return { http, rows: (yield* decodeShellSnapshot(decoded(http))).threads.length };
+            });
+
+          const longTurnColdOpenLegacy = yield* readColdOpen("compactTurnItems=1");
+          const longTurnColdOpen = yield* readColdOpen(CLIENT_BOUNDED_QUERY);
+          const { cursor } = longTurnColdOpen;
+          if (cursor === null) return yield* Effect.die("Expected older long-turn history");
+          const longTurnHistoryPageLegacy = yield* readHistoryPage(cursor, "");
+          const longTurnHistoryPage = yield* readHistoryPage(cursor, `&${CLIENT_HISTORY_QUERY}`);
+
+          const earlierThreads = decodedShell.threads.length + 1;
+          yield* sink.write({ events: shellFleetEvents(provider) });
+          const fleetShellLegacy = yield* readShell("");
+          const fleetShell = yield* readShell(`?${CLIENT_SHELL_QUERY}`);
+          assert.equal(
+            fleetShellLegacy.rows,
+            earlierThreads + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS,
           );
-          assert.equal(fleetShell[0]!.rows, 2 + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS);
           return {
             provider,
             threadSnapshot,
@@ -421,12 +424,12 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             reconnectThread,
             reconnectShell,
             reconnectSqlStatements,
-            longTurnColdOpenLegacy: coldOpen[0]!,
-            longTurnColdOpen: coldOpen[1]!,
-            longTurnHistoryPageLegacy: historyPage[0]!,
-            longTurnHistoryPage: historyPage[1]!,
-            fleetShellLegacy: fleetShell[0]!,
-            fleetShell: fleetShell[1]!,
+            longTurnColdOpenLegacy,
+            longTurnColdOpen,
+            longTurnHistoryPageLegacy,
+            longTurnHistoryPage,
+            fleetShellLegacy,
+            fleetShell,
           } satisfies TransferBudgetRun;
         }).pipe(
           Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),
