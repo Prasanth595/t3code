@@ -290,13 +290,14 @@ describe("readProgress: the time worked", () => {
     assert.strictEqual(seen.workingSince, 0);
   });
 
-  it("keeps the start of a clock already running when a gate is sent back", () => {
+  it("restarts a clock already running at a gate sent back, keeping the time before it", () => {
     const seen = readProgress([
       line(0, "claimed", {}),
       moved(0, "triage", "building"),
       sentBack(10 * MINUTE),
     ]);
-    assert.strictEqual(seen.workingSince, 0);
+    assert.strictEqual(seen.workedMs, 10 * MINUTE);
+    assert.strictEqual(seen.workingSince, 10 * MINUTE);
   });
 
   it("never counts a pull request reported before the stint began", () => {
