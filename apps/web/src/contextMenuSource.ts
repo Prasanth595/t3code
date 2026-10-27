@@ -1,6 +1,8 @@
 import type { ContextMenuSource } from "@t3tools/contracts";
 
-// Chromium fires a keyboard-opened `contextmenu` (Menu key, Shift+F10) with no button.
-export function contextMenuSourceOf(event: Pick<MouseEvent, "button">): ContextMenuSource {
-  return event.button === -1 ? "keyboard" : "mouse";
+// Chromium uses no button for keyboard context menus and zero clicks for keyboard activation.
+export function contextMenuSourceOf(
+  event: Pick<MouseEvent, "type" | "button" | "detail">,
+): ContextMenuSource {
+  return (event.type === "click" ? event.detail === 0 : event.button === -1) ? "keyboard" : "mouse";
 }
