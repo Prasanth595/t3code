@@ -305,6 +305,24 @@ describe("ChatHistory", () => {
     expect(result).toMatchObject({ ok: false, code: "network" });
   });
 
+  it("keeps syncing when one chat fails to save", async () => {
+    const { history } = makeHistory({});
+    const stuck = await history.send(null, "Stuck");
+    const fine = await history.send(null, "Fine");
+    const { remote, store } = memoryRemote("account", [
+      remoteChat("other", "2026-10-25T00:00:00.000Z"),
+    ]);
+    await history.setRemote({
+      ...remote,
+      save: async (chat) => {
+        if (chat.id === stuck) throw new Error("refused");
+        await remote.save(chat);
+      },
+    });
+    expect(store.has(fine)).toBe(true);
+    expect(history.getSnapshot().chats.map((chat) => chat.id)).toContain("other");
+  });
+
   it("keeps chats older than the relay's listing window", async () => {
     const listed = Array.from({ length: SAAS_MAX_LISTED_CHATS }, (_, index) =>
       remoteChat(

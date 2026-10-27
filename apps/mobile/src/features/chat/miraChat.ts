@@ -13,6 +13,7 @@ import { ManagedRelay, managedRelaySessionAtom } from "@t3tools/client-runtime/r
 import type { SaasAccountResponse } from "@t3tools/contracts/saas";
 import * as Effect from "effect/Effect";
 import { getRandomBytes } from "expo-crypto";
+import { File, Paths } from "expo-file-system";
 import { fetch as expoFetch } from "expo/fetch";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Linking } from "react-native";
@@ -25,6 +26,7 @@ import { chatFileBody } from "./chatFiles";
 export { hasAgenticAccess } from "@t3tools/client-runtime/chat";
 
 const STORAGE_KEY = "mira.chatHistory.v1";
+const HISTORY_FILE_NAME = "mira-chat-history.json";
 // The paid plan Upgrade buys; admins set its Stripe price in the admin page.
 const UPGRADE_PLAN_ID = "pro";
 
@@ -70,8 +72,14 @@ const relayUrl = () =>
 export const miraChatHistory = new ChatHistory({
   randomBytes: getRandomBytes,
   storage: {
-    load: () => AsyncStorage.getItem(STORAGE_KEY),
-    save: (value) => AsyncStorage.setItem(STORAGE_KEY, value),
+    load: async () => {
+      const file = new File(Paths.document, HISTORY_FILE_NAME);
+      // Android's AsyncStorage cannot read back a value past 2 MB, so the history moved to a file.
+      return file.exists ? file.text() : AsyncStorage.getItem(STORAGE_KEY);
+    },
+    save: async (value) => {
+      new File(Paths.document, HISTORY_FILE_NAME).write(value);
+    },
   },
   requestReply: async (request, deviceId) => {
     const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);

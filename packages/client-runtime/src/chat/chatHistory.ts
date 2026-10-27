@@ -179,7 +179,8 @@ export class ChatHistory {
   private async syncOnce() {
     const remote = this.remote;
     if (remote === null) return;
-    for (const id of this.stored.dirty) await this.push(remote, id);
+    // A chat the relay refuses stays dirty for the next sync without holding back the others.
+    for (const id of this.stored.dirty) await this.push(remote, id).catch(() => {});
     const summaries = await remote.list();
     if (this.remote !== remote) return;
     const remoteIds = new Set(summaries.map((summary) => summary.id));

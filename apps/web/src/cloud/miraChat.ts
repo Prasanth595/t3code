@@ -18,6 +18,40 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 export { hasAgenticAccess } from "@t3tools/client-runtime/chat";
 
 const STORAGE_KEY = "mira:chat-history:v1";
+const DATABASE_NAME = "mira-chat";
+const STORE_NAME = "history";
+
+// localStorage caps an origin at about 5 MB, which a history with visuals outgrows.
+let database: Promise<IDBDatabase> | undefined;
+function openDatabase() {
+  return (database ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DATABASE_NAME, 1);
+    request.addEventListener("upgradeneeded", () => request.result.createObjectStore(STORE_NAME));
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  }));
+}
+
+async function historyStore(mode: IDBTransactionMode) {
+  return (await openDatabase()).transaction(STORE_NAME, mode).objectStore(STORE_NAME);
+}
+
+function settled<A>(request: IDBRequest<A>) {
+  return new Promise<A>((resolve, reject) => {
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  });
+}
+
+async function loadHistory(): Promise<string | null> {
+  const stored: unknown = await settled((await historyStore("readonly")).get(STORAGE_KEY));
+  return typeof stored === "string" ? stored : window.localStorage.getItem(STORAGE_KEY);
+}
+
+async function saveHistory(value: string) {
+  await settled((await historyStore("readwrite")).put(value, STORAGE_KEY));
+  window.localStorage.removeItem(STORAGE_KEY);
+}
 
 /** The signed-in Clerk token, or null without an account. */
 function readMiraClerkToken(): Promise<string | null> {
@@ -34,10 +68,7 @@ const relayUrl = () =>
   );
 
 export const miraChatHistory = new ChatHistory({
-  storage: {
-    load: async () => window.localStorage.getItem(STORAGE_KEY),
-    save: async (value) => window.localStorage.setItem(STORAGE_KEY, value),
-  },
+  storage: { load: loadHistory, save: saveHistory },
   requestReply: async (request, deviceId) => {
     const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);
     return requestChatReply({ ...request, relayUrl: url, clerkToken, deviceId });
