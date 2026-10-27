@@ -117,7 +117,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? undefined
       : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel)
+    ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
@@ -156,7 +156,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     return {
       ...selection,
       entry,
-      label: model ? `${getTriggerDisplayModelName(model)}${unavailable}` : selection.model,
+      label: model
+        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
+        : selection.model,
       fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
     };
   });
