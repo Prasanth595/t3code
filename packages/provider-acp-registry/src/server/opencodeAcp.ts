@@ -107,8 +107,10 @@ export const extractOpenCodeElicitationForm: NonNullable<
         value: option.const,
       }));
     } else if (isTextQuestion(field)) {
-      // A malformed choice question must fall back instead of silently losing its options.
-      if ("oneOf" in field || "anyOf" in field || "items" in field) return undefined;
+      // A choice field we do not fully understand must fall back instead of losing its options.
+      if ("enum" in field || "oneOf" in field || "anyOf" in field || "items" in field) {
+        return undefined;
+      }
       header = field.title;
       description = field.description?.trim();
       options = [];

@@ -211,6 +211,24 @@ describe("OpenCode ACP question form", () => {
     expect(form?.respond({ q0: ["red", "blue"] })).toEqual({ action: "cancel" });
   });
 
+  it("leaves enum-based choices to the generic mapping", () => {
+    expect(
+      extractOpenCodeElicitationForm(
+        request({
+          q0: { type: "string", title: "Color", description: "Pick one", enum: ["red", "blue"] },
+          q0_custom: colorCompanion,
+          q1: {
+            type: "string",
+            title: "Size",
+            description: "Pick one",
+            oneOf: [{ const: "small", title: "Small" }],
+          },
+          q1_custom: { ...colorCompanion, title: "Size (other)" },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
   it("leaves unrelated and incomplete forms to the generic mapping", () => {
     expect(
       extractOpenCodeElicitationForm(request({ name: { type: "string", title: "Name" } })),
