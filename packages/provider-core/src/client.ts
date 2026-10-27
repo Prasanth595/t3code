@@ -42,6 +42,8 @@ export interface ProviderClientDefinition {
   readonly badgeLabel?: string;
   /** `false` lists the provider under Add provider's "Show more" instead of up front. */
   readonly featured?: boolean;
+  /** ACP Registry entries for this same agent, left out of Add provider's Registry list. */
+  readonly acpRegistryAgentIds?: ReadonlyArray<string>;
 }
 
 export function defineProviderClient<const Definition extends ProviderClientDefinition>(
