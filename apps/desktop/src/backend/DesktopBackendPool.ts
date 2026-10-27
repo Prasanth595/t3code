@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -138,7 +139,8 @@ export const layer = Layer.effect(
       httpBaseUrl: URL,
       pid: number,
     ) {
-      if (!(yield* fileSystem.exists(updateMarkerPath).pipe(Effect.orElseSucceed(() => false)))) {
+      const marker = yield* fileSystem.readFileString(updateMarkerPath).pipe(Effect.option);
+      if (Option.isNone(marker)) {
         return;
       }
       yield* fileSystem.readFileString(serverRuntimePath).pipe(
@@ -151,8 +153,14 @@ export const layer = Layer.effect(
         }),
         Effect.timeoutOption(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS)),
       );
-      yield* fileSystem.remove(updateMarkerPath, { force: true }).pipe(Effect.ignore);
+      // A later update may have replaced the marker; that handoff is not ours to end.
+      const current = yield* fileSystem.readFileString(updateMarkerPath).pipe(Effect.option);
+      if (Option.isSome(current) && current.value === marker.value) {
+        yield* fileSystem.remove(updateMarkerPath, { force: true }).pipe(Effect.ignore);
+      }
     });
+    // One wait at a time: each run's shutdown or readiness ends the previous run's wait.
+    const updateMarkerWait = yield* FiberHandle.make<void>();
 
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
@@ -201,8 +209,7 @@ export const layer = Layer.effect(
       configResolve: configuration.resolvePrimary,
       // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl, pid) =>
-        releaseUpdateMarker(httpBaseUrl, pid).pipe(
-          Effect.forkIn(layerScope),
+        FiberHandle.run(updateMarkerWait, releaseUpdateMarker(httpBaseUrl, pid)).pipe(
           Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
           // Only once the main window exists, so the recovery window never closes into nothing.
           Effect.andThen(SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" })),
@@ -214,7 +221,10 @@ export const layer = Layer.effect(
         ),
       onStartupFailure: (failure) =>
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
-      onShutdown: () => desktopWindow.handleBackendNotReady,
+      onShutdown: () =>
+        FiberHandle.clear(updateMarkerWait).pipe(
+          Effect.andThen(desktopWindow.handleBackendNotReady),
+        ),
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
         electronDialog

@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -135,7 +136,8 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
     const ready = yield* Deferred.make<void>();
     const runtimeChecked = yield* Deferred.make<void>();
     const markerRemoved = yield* Deferred.make<void>();
-    const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const readyRuns = yield* Queue.unbounded<void>();
+    let nextPid = 123;
     const files = new Map([[markerPath, JSON.stringify({ startedAt: 0, expiresAt: 60_000 })]]);
     const removed: string[] = [];
     const config: DesktopBackendStartConfig = {
@@ -180,22 +182,27 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
           ),
       },
       spawner: ChildProcessSpawner.make(() =>
-        Effect.succeed(
-          ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(123),
+        Effect.gen(function* () {
+          const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const exit = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
+            Effect.asVoid,
+          );
+          // Like the real spawner, closing the run's scope ends the process.
+          yield* Effect.addFinalizer(() => exit);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(nextPid++),
             stdout: Stream.empty,
             stderr: Stream.empty,
             all: Stream.empty,
             exitCode: Deferred.await(exited),
             isRunning: Effect.succeed(true),
-            kill: () =>
-              Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+            kill: () => exit,
             stdin: Sink.drain,
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
             unref: Effect.succeed(Effect.void),
-          }),
-        ),
+          });
+        }),
       ),
       httpClient: HttpClient.make((request) =>
         Deferred.succeed(probeStarted, undefined).pipe(
@@ -203,7 +210,10 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
           Effect.as(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
         ),
       ),
-      onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+      onReady: Deferred.succeed(ready, undefined).pipe(
+        Effect.andThen(Queue.offer(readyRuns, undefined)),
+        Effect.asVoid,
+      ),
     });
     const publishRuntime = (pid: number) =>
       files.set(
@@ -223,6 +233,7 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
       probeStarted,
       allowReady,
       ready,
+      readyRuns,
       runtimeChecked,
       markerRemoved,
       publishRuntime,
@@ -308,6 +319,58 @@ describe("DesktopBackendPool", () => {
           yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
           assert.isTrue(fixture.files.has(markerPath));
           yield* TestClock.adjust(Duration.seconds(1));
+          yield* Deferred.await(fixture.markerRemoved);
+          assert.deepEqual(fixture.removed, [markerPath]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("leaves a replacement update marker written while an earlier wait is pending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeUpdateMarkerFixture("native");
+        yield* Effect.gen(function* () {
+          const pool = yield* DesktopBackendPool.DesktopBackendPool;
+          const primary = yield* pool.primary;
+          yield* primary.start;
+          yield* Deferred.succeed(fixture.allowReady, undefined);
+          yield* Deferred.await(fixture.ready);
+          yield* Deferred.await(fixture.runtimeChecked);
+          yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
+          const replacement = JSON.stringify({ startedAt: 59_000, expiresAt: 119_000 });
+          fixture.files.set(markerPath, replacement);
+          yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS));
+          assert.equal(fixture.files.get(markerPath), replacement);
+          assert.deepEqual(fixture.removed, []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a later backend run's readiness supersedes the earlier run's marker wait", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeUpdateMarkerFixture("native");
+        yield* Effect.gen(function* () {
+          const pool = yield* DesktopBackendPool.DesktopBackendPool;
+          const primary = yield* pool.primary;
+          yield* primary.start;
+          yield* Deferred.succeed(fixture.allowReady, undefined);
+          yield* Queue.take(fixture.readyRuns);
+          yield* Deferred.await(fixture.runtimeChecked);
+          yield* TestClock.adjust(Duration.seconds(30));
+          yield* primary.stop();
+          yield* primary.start;
+          yield* Queue.take(fixture.readyRuns);
+          yield* TestClock.adjust(Duration.seconds(31));
+          assert.isTrue(
+            fixture.files.has(markerPath),
+            "the earlier run's wait must not end the later run's handoff",
+          );
+          assert.deepEqual(fixture.removed, []);
+          fixture.publishRuntime(124);
+          yield* TestClock.adjust(Duration.millis(100));
           yield* Deferred.await(fixture.markerRemoved);
           assert.deepEqual(fixture.removed, [markerPath]);
         }).pipe(Effect.provide(fixture.layer));
