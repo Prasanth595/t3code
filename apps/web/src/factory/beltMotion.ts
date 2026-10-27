@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { holdBins, placesOf, tileMotions, type Belt, type Place, type TileMotion } from "./belt";
 
@@ -101,6 +101,7 @@ function createMotion() {
   const tiles = new Map<string, HTMLElement>();
   const departed = new Map<string, Departed>();
   let clearing = false;
+  let played: ReadonlyArray<TileMotion> | null = null;
 
   /** On every tile, with its run's key in `data-tile`. */
   const tileRef = (node: HTMLElement | null) => {
@@ -130,7 +131,9 @@ function createMotion() {
     landed: (keys: ReadonlyArray<string>) => void,
   ) => {
     const root = layer.parentElement;
-    if (root === null) return;
+    // Each read plays once, however often the layer's ref is set again.
+    if (root === null || motions === played) return;
+    played = motions;
     const find = (selector: string) => root.querySelector(selector);
     const immediate: Array<string> = [];
     for (const motion of motions) {
@@ -171,14 +174,10 @@ function createMotion() {
 }
 
 /**
- * Motion for the belt's tiles, from the belt as each poll derives it: a run that changed post slides
- * from its old tile to its new one and the post flashes; one that finished slides into its bin,
- * which counts it when the slide ends; a new one fades in. Nothing moves on the first read, and
- * nothing at all under `prefers-reduced-motion`.
- *
- * Give `shown` to what draws the belt, `tileRef` to every tile (with the run's key in `data-tile`)
- * and `layerRef` to an empty, last child of the element the tiles and bins are in, laid over it.
- * `live` is false until the belt has a first read to show.
+ * Motion for the belt's tiles, from the belt as each poll derives it. Draw `shown`, put `tileRef` on
+ * every tile (the run's key in `data-tile`) and `layerRef` on an empty last child of the element
+ * holding the tiles and bins. `live` is false until the belt has a first read; that one, and
+ * `prefers-reduced-motion`, move nothing.
  */
 export function useBeltMotion(belt: Belt, live: boolean) {
   const [motion] = useState(createMotion);
@@ -194,21 +193,17 @@ export function useBeltMotion(belt: Belt, live: boolean) {
     }
   }
 
-  // Its identity changes with the motions only, so that it plays each read once, after every tile
-  // ref of the commit that shows it (the layer being the last child).
-  const layerRef = useCallback(
-    (layer: HTMLDivElement | null) => {
-      if (layer === null) return;
-      motion.play(layer, seen.motions, (keys) =>
-        setSeen((current) => {
-          const landing = new Set(current.landing);
-          for (const key of keys) landing.delete(key);
-          return { ...current, landing };
-        }),
-      );
-    },
-    [motion, seen.motions],
-  );
+  // Last child of the belt, so it is set after every tile ref of the commit that shows the motions.
+  const layerRef = (layer: HTMLDivElement | null) => {
+    if (layer === null) return;
+    motion.play(layer, seen.motions, (keys) =>
+      setSeen((current) => {
+        const landing = new Set(current.landing);
+        for (const key of keys) landing.delete(key);
+        return { ...current, landing };
+      }),
+    );
+  };
 
   return { shown: holdBins(belt, seen.landing), tileRef: motion.tileRef, layerRef };
 }

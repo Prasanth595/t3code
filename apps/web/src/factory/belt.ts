@@ -258,8 +258,8 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
 export type Place = Station | "stuck" | "info";
 
 /** The posts with a lane of tiles: every post but Done, whose runs are counted in a bin. */
-export type LaneStation = Exclude<Station, "done">;
-export type Bin = "done" | "stuck" | "info";
+type LaneStation = Exclude<Station, "done">;
+type Bin = "done" | "stuck" | "info";
 
 /** Where each run of the belt is, by key. */
 export function placesOf(belt: Belt): ReadonlyMap<string, Place> {

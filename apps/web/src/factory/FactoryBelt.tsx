@@ -208,8 +208,7 @@ function Environments({
  * The control station at the top of the Factory page: environments, control bar, the rail with the
  * picked post's readout, then Attention, Needs info and Stuck. The rail spans every environment
  * (the selected one's tiles solid), the control bar acts on the selected one, and the layout keys
- * off the belt's own width, as the app's sidebar takes some of the page's. A run that changes post
- * or finishes slides there, in a layer laid over the belt (see `useBeltMotion`).
+ * off the belt's own width, as the app's sidebar takes some of the page's.
  */
 export function FactoryBelt({
   environments,

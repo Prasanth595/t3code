@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon, FlagIcon, InboxIcon, ShieldCheckIcon, WrenchIcon } from "lucide-react";
-import { Fragment, useState, type ComponentType, type Ref } from "react";
+import { Fragment, useState, type ComponentType, type RefCallback } from "react";
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -160,7 +160,7 @@ function Tile({
   /** Whether the run is in the environment picked in the belt: solid, else hollow. */
   mine: boolean;
   nowMs: number;
-  tileRef: Ref<HTMLElement>;
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const elapsed = elapsedOf(run.forMs, nowMs);
   return (
@@ -227,7 +227,7 @@ function Lane({
   nowMs: number;
   dim: boolean;
   onOpen: () => void;
-  tileRef: Ref<HTMLElement>;
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const [width, setWidth] = useState<number | null>(null);
   const slots =
@@ -336,7 +336,7 @@ export function BeltRail({
   stopping: ReadonlySet<string>;
   onStop: (run: BeltRun) => void;
   /** On every tile: how the belt's motion finds the element of a run. */
-  tileRef: Ref<HTMLElement>;
+  tileRef: RefCallback<HTMLElement>;
 }) {
   const paused = pausedSince !== null;
   const noteOf = (station: Station) => {
