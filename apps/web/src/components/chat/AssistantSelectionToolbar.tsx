@@ -19,16 +19,7 @@ import {
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
-
-const CITE_ACTION_SELECTOR = "button[data-cite-selection-action]:enabled";
-
-/**
- * Whether this key press is R while the Cite action is shown. Type-to-focus
- * checks it so the key cites instead of being typed into the composer.
- */
-export function isCiteSelectionShortcut(event: KeyboardEvent): boolean {
-  return event.key.toLowerCase() === "r" && document.querySelector(CITE_ACTION_SELECTOR) !== null;
-}
+import { isCiteSelectionShortcut } from "./composerFocusRedirect";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -152,7 +143,6 @@ export function AssistantSelectionToolbar({
       onDismiss: clear,
     });
     actionsRef.current = actions;
-    // While the action is shown, Tab focuses it and R cites straight into the comment editor.
     const handleShortcut = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current;
       if (

@@ -1,5 +1,3 @@
-import { isCiteSelectionShortcut } from "./AssistantSelectionToolbar";
-
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -65,6 +63,13 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   return true;
+}
+
+export function isCiteSelectionShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key.toLowerCase() === "r" &&
+    document.querySelector("button[data-cite-selection-action]:enabled") !== null
+  );
 }
 
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
