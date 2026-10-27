@@ -1145,7 +1145,11 @@ export default function ChatView(props: ChatViewProps) {
     .filter(projectScriptReservesPort)
     .map((script) => script.id);
   const scriptPorts = useEnvironmentQuery(
-    canOperateTerminal && activeThreadRef && activeProject && previewScriptIds.length > 0
+    isServerThread &&
+      canOperateTerminal &&
+      activeThreadRef &&
+      activeProject &&
+      previewScriptIds.length > 0
       ? projectEnvironment.scriptPorts({
           environmentId: activeThreadRef.environmentId,
           input: {
