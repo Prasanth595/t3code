@@ -29,7 +29,7 @@ import {
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
@@ -66,6 +66,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
+  resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
@@ -762,15 +763,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozePreferences = useAtomValue(mobilePreferencesAtom, (result) =>
     AsyncResult.isSuccess(result) ? (result.value.snoozePreferences ?? null) : null,
   );
-  const snoozePresets = useMemo(
-    () => {
-      if (swipeActions.secondary !== "snooze") return [] as const;
-      // oxlint-disable-next-line react/purity -- The memo recomputes on the snoozePresetMinute tick, so preset times refresh every minute.
-      return resolveSnoozePresets(new Date(), snoozePreferences);
-    },
-    // oxlint-disable-next-line react/memo-dependencies -- The minute tick refreshes relative snooze times while the row remains mounted.
-    [props.snoozePresetMinute, swipeActions.secondary, snoozePreferences],
-  );
+  const snoozePresets = resolveThreadListV2SnoozePresets({
+    secondary: swipeActions.secondary,
+    now: props.snoozePresetMinute || snoozeGateNow,
+    preferences: snoozePreferences,
+  });
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
       ...snoozePresets.map((preset) => ({
