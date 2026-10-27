@@ -4,6 +4,7 @@ import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
 import { isNewTaskDraftKey } from "./new-task-draft-key";
 import type { ComposerDraft } from "./use-composer-drafts";
+import { fillNewTaskWorkspaceBranch } from "../features/threads/new-task-context-presentation";
 
 export type PendingNewTask = PendingQueuedTask | PendingDraftTask;
 
@@ -28,7 +29,6 @@ export interface PendingDraftTask {
   readonly projectId: ProjectId;
   readonly projectTitle: undefined;
   readonly projectCwd: undefined;
-  readonly branch: string | null;
   readonly title: string;
   readonly createdAt: string;
   readonly draftKey: string;
@@ -45,6 +45,31 @@ function draftTitle(draft: ComposerDraft): string {
   }
   const count = draft.attachments.length;
   return count === 1 ? "1 attachment" : `${count} attachments`;
+}
+
+/**
+ * True when the draft's branch is derived from refs rather than stored, so the list must load
+ * refs to show it.
+ */
+export function pendingDraftBranchNeedsRefs(draft: ComposerDraft): boolean {
+  return draft.workspaceSelection !== undefined && draft.workspaceSelection.branch === null;
+}
+
+/** The branch a draft will start on, derived the same way the new-task flow and send path do. */
+export function resolvePendingDraftBranch(input: {
+  readonly draft: ComposerDraft;
+  readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
+  readonly projectCwd: string | null;
+}): string | null {
+  const selection = input.draft.workspaceSelection;
+  if (selection === undefined) return null;
+  return fillNewTaskWorkspaceBranch({
+    selection,
+    branches: input.branches,
+    projectCwd: input.projectCwd,
+    // The draft names its mode, so no provisional t3.json default can replace it.
+    worktreeDefaultSettled: true,
+  }).branch;
 }
 
 export function buildPendingNewTasks(input: {
@@ -81,7 +106,6 @@ export function buildPendingNewTasks(input: {
       projectId: draft.project.projectId,
       projectTitle: undefined,
       projectCwd: undefined,
-      branch: draft.workspaceSelection?.branch ?? null,
       title: draftTitle(draft),
       createdAt: draft.project.createdAt,
       draftKey,
