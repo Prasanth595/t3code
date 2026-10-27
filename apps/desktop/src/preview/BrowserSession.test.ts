@@ -256,6 +256,8 @@ describe("BrowserSession", () => {
         "https://allowed.test wants to see text and images copied to the clipboard",
       );
       assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
+      // Enter must not accept a prompt the page raised while the user was typing.
+      assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
 
       assert.isTrue(yield* readClipboard("https://allowed.test/other"));
       assert.isTrue(checkClipboard("https://allowed.test"));

@@ -214,7 +214,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           {
             type: "question",
             buttons: [...prompt.buttons],
-            defaultId: 0,
+            // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
+            defaultId: 1,
             cancelId: 1,
             message: prompt.message,
             ...(prompt.detail === undefined ? {} : { detail: prompt.detail }),
