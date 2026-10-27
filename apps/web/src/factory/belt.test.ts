@@ -164,6 +164,15 @@ describe("nextPassText", () => {
     expect(nextPassText(passes({ running: true, at: null }), NOW)).toBe("pass running");
   });
 
+  it("says the pass is overdue when the server calls the last pass stale", () => {
+    expect(nextPassText(passes({ stale: true }), NOW + 600_000)).toBe("pass overdue");
+    expect(nextPassText(passes({ stale: false }), NOW)).toBe("next pass in 48s");
+  });
+
+  it("says a running pass is running even when the last one is stale", () => {
+    expect(nextPassText(passes({ stale: true, running: true }), NOW)).toBe("pass running");
+  });
+
   it("says nothing without a last pass or a poll", () => {
     expect(nextPassText(passes({ at: null }), NOW)).toBeNull();
     expect(nextPassText(passes({ poll_seconds: null }), NOW)).toBeNull();
