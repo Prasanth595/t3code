@@ -50,7 +50,7 @@ export function transitionShareImport(
   return TRANSITIONS[phase][event] ?? phase;
 }
 
-export function isShareImportInFlight(phase: ShareImportPhase): boolean {
+function isShareImportInFlight(phase: ShareImportPhase): boolean {
   return phase === "reserving" || phase === "attaching" || phase === "consuming";
 }
 
@@ -153,6 +153,17 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
       ),
     ).pipe(Atom.withLabel("mobile:incoming-share-imported:route")),
   );
+  // One flow key per running attempt, abandoned ones included: an abandoned
+  // attempt can still be inside a draft write when the screen's target goes away.
+  const runningAtom = Atom.make<ReadonlyArray<string>>([]).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("mobile:incoming-share-import-running"),
+  );
+  const isRunningAtom = Atom.family((flowKey: string) =>
+    Atom.make((get) => get(runningAtom).includes(flowKey)).pipe(
+      Atom.withLabel("mobile:incoming-share-import-running:route"),
+    ),
+  );
 
   function notify(entry: Entry): void {
     // Listeners rebuild their node, which re-registers them; iterate a copy.
@@ -238,7 +249,13 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
   function begin(key: string, entry: Entry): void {
     entry.backup ??= deps.readDraft(entry.target.draftKey);
     advance(entry, "start");
-    entry.run = runImport(key, entry);
+    const { flowKey } = entry.target;
+    deps.registry.set(runningAtom, [...deps.registry.get(runningAtom), flowKey]);
+    entry.run = runImport(key, entry).finally(() => {
+      const running = [...deps.registry.get(runningAtom)];
+      running.splice(running.indexOf(flowKey), 1);
+      deps.registry.set(runningAtom, running);
+    });
   }
 
   function abandon(key: string, entry: Entry): void {
@@ -317,6 +334,15 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
         return entry.phase;
       }).pipe(Atom.withLabel("mobile:incoming-share-import")),
     ),
+    /**
+     * Whether an import for this route is still running, including one whose
+     * target the screen no longer renders.
+     */
+    inFlightAtom: isRunningAtom,
+    /** Resolves once the target's current attempt stops. */
+    settled(target: ShareImportTarget): Promise<void> {
+      return entries.get(keyOf(target))?.run ?? Promise.resolve();
+    },
     /** Whether this route already moved the share into one of its drafts. */
     importedAtom(flowKey: string, shareId: string) {
       return isImportedAtom(JSON.stringify([flowKey, shareId]));
@@ -356,6 +382,6 @@ export const idleShareImportPhaseAtom = Atom.make<ShareImportPhase>("idle").pipe
   Atom.withLabel("mobile:incoming-share-import:idle"),
 );
 
-export const idleImportedShareAtom = Atom.make(false).pipe(
-  Atom.withLabel("mobile:incoming-share-imported:idle"),
+export const idleShareFlagAtom = Atom.make(false).pipe(
+  Atom.withLabel("mobile:incoming-share-flag:idle"),
 );

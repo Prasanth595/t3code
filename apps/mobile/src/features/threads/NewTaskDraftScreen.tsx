@@ -88,11 +88,7 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
-import {
-  idleImportedShareAtom,
-  idleShareImportPhaseAtom,
-  isShareImportInFlight,
-} from "./incomingShareImport";
+import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 
@@ -282,7 +278,7 @@ export function NewTaskDraftScreen(props: {
   const routeImportedShare = useAtomValue(
     flowKey !== undefined && props.incomingShareId
       ? incomingShareImports.importedAtom(flowKey, props.incomingShareId)
-      : idleImportedShareAtom,
+      : idleShareFlagAtom,
   );
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
@@ -325,7 +321,11 @@ export function NewTaskDraftScreen(props: {
       ? idleShareImportPhaseAtom
       : incomingShareImports.phaseAtom(shareImportTarget),
   );
-  const isImportingShare = isShareImportInFlight(shareImportPhase);
+  // Locks on the route, not the target: the target turns null when server config
+  // drops or the project stops matching, while the import keeps writing the draft.
+  const isImportingShare = useAtomValue(
+    flowKey === undefined ? idleShareFlagAtom : incomingShareImports.inFlightAtom(flowKey),
+  );
   const isIncomingShareTransferPending = Boolean(
     incomingShare && shareImportPhase !== "cancelled" && !isIncomingShareAwaitingServerConfig,
   );

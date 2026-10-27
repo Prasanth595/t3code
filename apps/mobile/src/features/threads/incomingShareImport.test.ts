@@ -114,14 +114,16 @@ describe("incoming share imports", () => {
   it("reserves, attaches and consumes once, releasing files the draft did not keep", async () => {
     const kept = fileAttachment("kept");
     const skipped = fileAttachment("skipped");
-    const { deps, calls, drafts, inbox, watch } = setup({
+    const { deps, calls, drafts, inbox, imports, watch } = setup({
       selectAttachments: () => ({ status: "ready", attachments: [kept], warnings: ["too big"] }),
     });
     inbox.set("share-1", share([kept, skipped]));
-    const watched = watch(importTarget());
+    const target = importTarget();
+    const watched = watch(target);
 
     expect(watched.phase()).toBe("reserving");
-    await vi.waitFor(() => expect(watched.phase()).toBe("done"));
+    await imports.settled(target);
+    expect(watched.phase()).toBe("done");
 
     expect(calls).toEqual(["reserve", "merge", "consume"]);
     expect(drafts.get("draft-a")?.attachments).toEqual([kept]);
@@ -144,7 +146,8 @@ describe("incoming share imports", () => {
     tasks.splice(0).forEach((task) => task());
     expect(registry.getNodes().size).toBe(0);
     const unmount = registry.mount(atom);
-    await vi.waitFor(() => expect(registry.get(atom)).toBe("done"));
+    await imports.settled(importTarget());
+    expect(registry.get(atom)).toBe("done");
     unmount();
 
     expect(deps.reserve).toHaveBeenCalledTimes(1);
@@ -159,7 +162,8 @@ describe("incoming share imports", () => {
     });
     const target = importTarget();
     const watched = watch(target);
-    await vi.waitFor(() => expect(watched.phase()).toBe("failed"));
+    await imports.settled(target);
+    expect(watched.phase()).toBe("failed");
     expect(deps.onImportFailure).toHaveBeenCalledWith(target, new Error("disk full"));
 
     await imports.cancel(target);
@@ -185,7 +189,8 @@ describe("incoming share imports", () => {
     });
     const target = importTarget();
     const watched = watch(target);
-    await vi.waitFor(() => expect(watched.phase()).toBe("failed"));
+    await imports.settled(target);
+    expect(watched.phase()).toBe("failed");
 
     await imports.cancel(target);
     expect(watched.phase()).toBe("failed");
@@ -200,10 +205,17 @@ describe("incoming share imports", () => {
   });
 
   it("stops before consuming once its route leaves the stack", async () => {
+    const mergeStarted = Promise.withResolvers<void>();
     const merged = Promise.withResolvers<{ readonly skippedAttachmentCount: number }>();
-    const { deps, imports, watch } = setup({ mergeIntoDraft: () => merged.promise });
+    const { deps, imports, watch } = setup({
+      mergeIntoDraft: () => {
+        mergeStarted.resolve();
+        return merged.promise;
+      },
+    });
     const watched = watch(importTarget());
-    await vi.waitFor(() => expect(watched.phase()).toBe("attaching"));
+    await mergeStarted.promise;
+    expect(watched.phase()).toBe("attaching");
 
     const pruned = imports.prune(new Set(["flow-b"]));
     merged.resolve({ skippedAttachmentCount: 0 });
@@ -225,7 +237,8 @@ describe("incoming share imports", () => {
     });
     const target = importTarget();
     const watched = watch(target);
-    await vi.waitFor(() => expect(watched.phase()).toBe("failed"));
+    await imports.settled(target);
+    expect(watched.phase()).toBe("failed");
     watched.unmount();
     await imports.prune(new Set());
 
@@ -238,15 +251,41 @@ describe("incoming share imports", () => {
 
   it("a route switching drafts abandons the in-flight import", async () => {
     const reserved = Promise.withResolvers<void>();
-    const { deps, watch } = setup({
+    const { deps, imports, watch } = setup({
       reserve: vi.fn().mockReturnValueOnce(reserved.promise).mockResolvedValue(undefined),
     });
     watch(importTarget()).unmount();
-    const second = watch(importTarget({ draftKey: "draft-b" }));
+    const secondTarget = importTarget({ draftKey: "draft-b" });
+    const second = watch(secondTarget);
     reserved.resolve();
 
-    await vi.waitFor(() => expect(second.phase()).toBe("done"));
+    await imports.settled(secondTarget);
+    expect(second.phase()).toBe("done");
     expect(deps.mergeIntoDraft).toHaveBeenCalledTimes(1);
     expect(deps.mergeIntoDraft).toHaveBeenCalledWith("draft-b", expect.anything());
+  });
+
+  it("stays in flight for its route after the screen stops rendering its target", async () => {
+    const mergeStarted = Promise.withResolvers<void>();
+    const merged = Promise.withResolvers<{ readonly skippedAttachmentCount: number }>();
+    const { imports, registry, watch } = setup({
+      mergeIntoDraft: () => {
+        mergeStarted.resolve();
+        return merged.promise;
+      },
+    });
+    const inFlight = imports.inFlightAtom("flow-a");
+    const unmountInFlight = registry.mount(inFlight);
+    const target = importTarget();
+    const watched = watch(target);
+    await mergeStarted.promise;
+
+    watched.unmount();
+    expect(registry.get(inFlight)).toBe(true);
+
+    merged.resolve({ skippedAttachmentCount: 0 });
+    await imports.settled(target);
+    expect(registry.get(inFlight)).toBe(false);
+    unmountInFlight();
   });
 });
