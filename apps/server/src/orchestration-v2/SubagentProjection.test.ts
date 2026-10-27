@@ -117,6 +117,40 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
+it.each(["provider", "mcp"] as const)(
+  "does not inherit parent settlement protections for a %s subagent",
+  (creationSource) => {
+    const parentThread = {
+      ...makeParentThread(),
+      pinnedAt: parentCreatedAt,
+      pinOrderKey: "parent-pin-order",
+      autoSettleDisabledAt: parentCreatedAt,
+    };
+    const childThread = makeSubagentChildThread({
+      parentThread,
+      childThreadId,
+      parentNodeId: NodeId.make("node:protected-parent"),
+      activeProviderThreadId: null,
+      providerInstanceId: childProviderInstanceId,
+      modelSelection: childModelSelection,
+      title: "Independent child",
+      now: childCreatedAt,
+      createdBy: "agent",
+      creationSource,
+    });
+
+    assert.isNull(childThread.pinnedAt);
+    assert.isNull(childThread.pinOrderKey);
+    assert.isNull(childThread.autoSettleDisabledAt);
+    assert.deepEqual(parentThread.pinnedAt, parentCreatedAt);
+    assert.equal(parentThread.pinOrderKey, "parent-pin-order");
+    assert.deepEqual(parentThread.autoSettleDisabledAt, parentCreatedAt);
+    assert.equal(childThread.branch, parentThread.branch);
+    assert.equal(childThread.worktreePath, parentThread.worktreePath);
+    assert.equal(childThread.lineage.parentThreadId, parentThread.id);
+  },
+);
+
 function taskFixture() {
   const projection = emptyProjection({
     type: "thread.created",
