@@ -190,7 +190,7 @@ function ProviderAccount({
     );
   }
   const name = provider.displayName ?? provider.driver;
-  const email = signedIn && !active ? provider.auth.email?.trim() : undefined;
+  const email = signedIn && !active && provider.enabled ? provider.auth.email?.trim() : undefined;
   const methods = state?.methods ?? [];
   // The status line says why a provider that is missing or turned off can't sign in.
   const canSignIn =
@@ -207,14 +207,14 @@ function ProviderAccount({
   const status =
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message
-      : signedIn
-        ? "Signed in"
-        : isDiscovering
-          ? "Discovering sign-in methods…"
-          : needsExternalSetup
-            ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-            : !provider.enabled
-              ? "Turned off"
+      : !provider.enabled
+        ? "Turned off"
+        : signedIn
+          ? "Signed in"
+          : isDiscovering
+            ? "Discovering sign-in methods…"
+            : needsExternalSetup
+              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
               : !provider.installed
                 ? "Not installed"
                 : "Not signed in";
@@ -465,7 +465,17 @@ function ProviderAccountSummary({
       </Text>
     </>
   );
-  if (!email) return <View className="min-w-0 shrink grow gap-0.5">{content}</View>;
+  if (!email) {
+    return (
+      <View
+        accessible
+        accessibilityLabel={[name, status].filter(Boolean).join(", ")}
+        className="min-w-0 shrink grow gap-0.5"
+      >
+        {content}
+      </View>
+    );
+  }
   return (
     <Pressable
       accessibilityRole="button"
