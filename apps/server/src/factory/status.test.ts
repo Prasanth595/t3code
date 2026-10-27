@@ -344,8 +344,8 @@ describe("buildStatus: runs and slots", () => {
     const dir = tempDir();
     writeRun(dir, "rawphp__softfac__1__1", [
       claimed(ago(3 * HOUR)),
-      launched(ago(2 * HOUR), "thread:a", "Old title"),
-      launched(ago(90 * MIN), "thread:b", "Fix the thing"),
+      launched(ago(2 * HOUR), "thread:a", "Fix the thing"),
+      launched(ago(90 * MIN), "thread:b", "Later title"),
       line(ago(10 * MIN), "gate_command", { command: "vp check" }),
     ]);
     writeRun(dir, "rawphp__softfac__2__1", [

@@ -212,8 +212,9 @@ export interface RunSummary {
   /** The event of the last readable line; null for a file with no readable line. */
   readonly lastEvent: string | null;
   /**
-   * The issue title recorded on the newest `session_launched` line that has one; null for none (a run
-   * launched before titles were recorded, or not yet) and for a file that could not be read.
+   * The issue title recorded on the first `session_launched` line that has one (every launch of a
+   * run writes the same title); null for none (a run launched before titles were recorded, or not
+   * yet) and for a file that could not be read.
    */
   readonly title: string | null;
   /**
@@ -283,12 +284,13 @@ const REASON_SOURCE = {
 const reasonSource = (state: State | null) =>
   state === "stuck" || state === "needs-info" ? REASON_SOURCE[state] : null;
 
+const isTitledLaunch = (entry: Entry) =>
+  entry.event === "session_launched" && dataText(entry.data, "title") !== null;
+
 /** The summary of a run read whole: its progress, plus what the progress does not carry. */
 const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
   const end = record.entries.findLast((entry) => entry.event === "finished");
-  const titled = record.entries.findLast(
-    (entry) => entry.event === "session_launched" && dataText(entry.data, "title") !== null,
-  );
+  const titled = record.entries.find(isTitledLaunch);
   const source = reasonSource(seen.state);
   const reason =
     source === null
@@ -318,16 +320,17 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
 /**
  * The summary of a finished run file without reading it whole, equal to {@link summarise} of the
  * whole read. A finished file is never appended to, so the first line, the `finished` line, the
- * last `state_changed`, the newest title, the newest line the reason comes from (the scan keeps
- * one of each) and (if `finished` has no PR URL) the last `pr_opened` say everything.
+ * last `state_changed`, the newest line the reason comes from (the scan keeps one of each) and
+ * (if `finished` has no PR URL) the last `pr_opened` say everything. The title is read forwards
+ * from the start: a launch writes it early, so the backward scan must not go looking for it.
  */
 const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
   withRunFile(path, (fd) => {
     const first = firstEntry(fd);
+    const title = dataText(firstEntry(fd, undefined, isTitledLaunch)?.data, "title");
     let end: Entry | undefined;
     let state: State | null | undefined;
     let prUrl: string | null = null;
-    let title: string | null = null;
     // The text of the newest `stuck` and `questions_posted` lines; undefined until one is seen.
     let stuckReason: string | null | undefined;
     let questions: string | null | undefined;
@@ -343,8 +346,6 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
       } else if (entry.event === "pr_opened" && prUrl === null) {
         const url = dataField(entry.data, "url");
         if (typeof dataField(entry.data, "pr") === "number" && typeof url === "string") prUrl = url;
-      } else if (entry.event === "session_launched") {
-        title ??= dataText(entry.data, "title");
       } else if (entry.event === "stuck" && stuckReason === undefined) {
         stuckReason = dataText(entry.data, "reason");
       } else if (entry.event === "questions_posted" && questions === undefined) {
@@ -357,9 +358,7 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
           : state === "needs-info"
             ? questions !== undefined
             : true;
-      return state !== undefined && prUrl !== null && title !== null && reasonFound
-        ? "stop"
-        : "continue";
+      return state !== undefined && prUrl !== null && reasonFound ? "stop" : "continue";
     });
     return {
       firstMs: first?.ms ?? null,
