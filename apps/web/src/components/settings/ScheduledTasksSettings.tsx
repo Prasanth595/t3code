@@ -95,7 +95,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { TraitsPicker } from "../chat/TraitsPicker";
+import { readPromptUltrathink, TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -1491,7 +1491,11 @@ function ScheduledTaskEditorForm({
                   models={activeEntry.models}
                   model={activeSelection.model}
                   modelOptions={activeSelection.options ?? []}
-                  allowPromptInjectedEffort={false}
+                  // Ultrathink is a prompt prefix, not a stored option, so it edits the task prompt.
+                  promptUltrathink={readPromptUltrathink(draft.prompt)}
+                  onPromptEdit={(edit) =>
+                    setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
+                  }
                   planModeEnabled={settings.planModeEnabled}
                   disabled={saving || !connected}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
