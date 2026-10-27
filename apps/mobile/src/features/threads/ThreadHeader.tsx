@@ -1,3 +1,4 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -7,16 +8,48 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { resolveThreadPrBadgeAction } from "../../state/thread-pr-presentation";
+import { useThreadPr } from "../../state/use-thread-pr";
+import { useOpenThreadPullRequests } from "./use-open-thread-pull-requests";
+
+type ThreadHeaderProps = Parameters<typeof useThreadHeaderOptions>[0] & {
+  readonly hasThreadCwd: boolean;
+  readonly hasWorkspaceRoot: boolean;
+  readonly fileInspectorSupported: boolean;
+  readonly inspectorMode: ThreadInspectorMode | null;
+  readonly onToggleInspector: () => void;
+  readonly onOpenGitInspector: () => void;
+  readonly onOpenFilesInspector: () => void;
+};
+
+/**
+ * The thread header plus the thread list's PR badge action. In Android portrait the header
+ * folds every action but one into its overflow menu, so without this the thread's PRs are
+ * unreachable from an open thread.
+ */
+export function ThreadRouteHeader(
+  props: ThreadHeaderProps & { readonly thread: EnvironmentThreadShell },
+) {
+  const { thread, ...headerProps } = props;
+  const pr = useThreadPr(thread);
+  const openThreadPullRequests = useOpenThreadPullRequests();
+  const pullRequestAction = useMemo<AppBarAction | null>(
+    () =>
+      pr === null
+        ? null
+        : {
+            accessibilityLabel: resolveThreadPrBadgeAction(pr).accessibilityLabel,
+            icon: PullRequestGlyph.pullRequest,
+            onPress: () => openThreadPullRequests(thread, pr),
+          },
+    [openThreadPullRequests, pr, thread],
+  );
+  return <ThreadHeader {...headerProps} pullRequestAction={pullRequestAction} />;
+}
 
 export function ThreadHeader(
-  props: Parameters<typeof useThreadHeaderOptions>[0] & {
-    readonly hasThreadCwd: boolean;
-    readonly hasWorkspaceRoot: boolean;
-    readonly fileInspectorSupported: boolean;
-    readonly inspectorMode: ThreadInspectorMode | null;
-    readonly onToggleInspector: () => void;
-    readonly onOpenGitInspector: () => void;
-    readonly onOpenFilesInspector: () => void;
+  props: ThreadHeaderProps & {
+    readonly pullRequestAction?: AppBarAction | null;
   },
 ) {
   const goBack = useWorkspaceBackNavigation("threads");
@@ -54,6 +87,7 @@ export function ThreadHeader(
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
+    if (props.pullRequestAction) actions.push(props.pullRequestAction);
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -63,6 +97,7 @@ export function ThreadHeader(
     }
     return actions;
   }, [
+    props.pullRequestAction,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

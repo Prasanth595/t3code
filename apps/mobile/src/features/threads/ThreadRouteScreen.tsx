@@ -100,7 +100,7 @@ import {
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
-import { ThreadHeader } from "./ThreadHeader";
+import { ThreadRouteHeader } from "./ThreadHeader";
 import {
   useAndroidWorkspaceBack,
   useWorkspaceBackNavigation,
@@ -977,7 +977,8 @@ function ThreadRouteContent(
         <ThreadScreenBinding
           header={
             props.inspectorPresentation ? null : (
-              <ThreadHeader
+              <ThreadRouteHeader
+                thread={selectedThread}
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
                 headerColor={headerColor}
