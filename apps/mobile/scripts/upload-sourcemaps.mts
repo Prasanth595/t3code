@@ -1,18 +1,12 @@
 #!/usr/bin/env node
-/**
- * Uploads mobile JavaScript source maps so the relay can symbolicate crashes.
- *
- *   node scripts/upload-sourcemaps.mts ota dist   # after `eas update --emit-metadata`
- *   node scripts/upload-sourcemaps.mts build      # EAS Build's eas-build-on-success hook
- *
- * Credentials come from the MOBILE_SOURCEMAPS_R2 secret. A missing secret or
- * map, or a failed upload, is a warning and never a failure: an unreadable
- * stack is not worth failing a store build or an OTA publish over.
- */
+// Usage: `ota <dist>` after `eas update --emit-metadata`, or `build` from eas-build-on-success.
+// Problems are warnings, never failures: an unreadable stack is not worth failing a release over.
 import {
+  buildDsymUpload,
   buildSourceMapUpload,
   otaSourceMapUploads,
   parseCredentials,
+  uploadDsym,
   uploadSourceMap,
   type SourceMapUpload,
 } from "./sourcemap-upload.mts";
@@ -47,6 +41,18 @@ async function main() {
     } catch (error) {
       warn(`Could not upload ${upload.key}: ${errorMessage(error)}`);
     }
+  }
+  if (mode !== "build" || process.env.EAS_BUILD_PLATFORM !== "ios") return;
+  const dsym = buildDsymUpload(process.env, process.cwd());
+  if (!dsym) {
+    warn("Found no dSYM under ios/build; native iOS frames from this build stay unreadable.");
+    return;
+  }
+  try {
+    const bytes = await uploadDsym(credentials, dsym);
+    console.log(`Uploaded ${dsym.key} (${(bytes / 1e6).toFixed(1)} MB)`);
+  } catch (error) {
+    warn(`Could not upload ${dsym.key}: ${errorMessage(error)}`);
   }
 }
 

@@ -98,30 +98,65 @@ export function buildSourceMapUpload(
   };
 }
 
-/** Source text stays out of the bucket; positions and file names are enough. */
-function stripSourcesContent(text: string): string {
-  const map: unknown = JSON.parse(text);
-  if (!isRecord(map)) throw new Error("Source map is not a JSON object.");
-  const { sourcesContent: _sourcesContent, ...rest } = map;
-  return JSON.stringify(rest);
+/**
+ * EAS writes the app's debug symbols next to the `.ipa`, so native frames in iOS crash
+ * reports can be read with `atos`. Undefined when the build left none.
+ */
+export function buildDsymUpload(
+  env: Readonly<Record<string, string | undefined>>,
+  projectDir: string,
+): SourceMapUpload | undefined {
+  if (env.EAS_BUILD_PLATFORM !== "ios" || !env.EAS_BUILD_ID) return undefined;
+  const buildDir = NodePath.join(projectDir, "ios/build");
+  const dsym = NodeFS.existsSync(buildDir)
+    ? NodeFS.readdirSync(buildDir).find((name) => name.endsWith(".app.dSYM.zip"))
+    : undefined;
+  if (!dsym) return undefined;
+  return { key: `ios/dsym/${env.EAS_BUILD_ID}.zip`, path: NodePath.join(buildDir, dsym) };
 }
 
-export async function uploadSourceMap(
+/** Only what the relay reads: source text stays out of the bucket, and the rest is dead weight. */
+function stripToMappings(text: string): string {
+  const map: unknown = JSON.parse(text);
+  if (!isRecord(map)) throw new Error("Source map is not a JSON object.");
+  const { version, sources, sourceRoot, mappings } = map;
+  return JSON.stringify({ version, sources, sourceRoot, mappings });
+}
+
+export function uploadSourceMap(
   credentials: UploadCredentials,
   upload: SourceMapUpload,
 ): Promise<number> {
-  const body = stripSourcesContent(NodeFS.readFileSync(upload.path, "utf8"));
+  return putObject(
+    credentials,
+    upload.key,
+    stripToMappings(NodeFS.readFileSync(upload.path, "utf8")),
+    "application/json",
+  );
+}
+
+export function uploadDsym(credentials: UploadCredentials, upload: SourceMapUpload) {
+  const body = new Uint8Array(NodeFS.readFileSync(upload.path));
+  return putObject(credentials, upload.key, body, "application/zip");
+}
+
+async function putObject(
+  credentials: UploadCredentials,
+  key: string,
+  body: string | Uint8Array<ArrayBuffer>,
+  contentType: string,
+): Promise<number> {
   const client = new AwsClient({
     accessKeyId: credentials.accessKeyId,
     secretAccessKey: credentials.secretAccessKey,
     service: "s3",
     region: "auto",
   });
-  const url = `${credentials.endpoint.replace(/\/$/u, "")}/${credentials.bucketName}/${upload.key}`;
+  const url = `${credentials.endpoint.replace(/\/$/u, "")}/${credentials.bucketName}/${key}`;
   const response = await client.fetch(url, {
     method: "PUT",
     body,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": contentType },
   });
   if (!response.ok) {
     throw new Error(`R2 answered ${response.status}: ${(await response.text()).slice(0, 500)}`);

@@ -17,7 +17,13 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { RelayApi, type RelayMobileTelemetrySignal } from "@t3tools/contracts/relay";
 
-import { applySymbolication, bundleSourceMapKey, collectJsExceptions } from "./otlpLogs.ts";
+import {
+  applySymbolication,
+  bundleSourceMapKey,
+  collectJsExceptions,
+  markJsFatalCrashes,
+  type SourceMapMiss,
+} from "./otlpLogs.ts";
 import { decodeSourceMap, type CompactSourceMap } from "./sourceMap.ts";
 
 /** Observe splits batches the endpoint answers 413 for, so this only bounds one request. */
@@ -29,7 +35,7 @@ const UPSTREAM_TIMEOUT = Duration.seconds(7);
 const MAX_UPSTREAM_RESPONSE_BYTES = 64 * 1024;
 /** A decoded production map is about 20 MB; two fit an isolate and cover iOS and Android. */
 const SOURCE_MAP_CACHE_CAPACITY = 2;
-/** About twice a stripped production map; a larger object is skipped unread. */
+/** Our iOS map is about 12 MB once uploads drop what the relay never reads; larger is skipped unread. */
 const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
 /** A request can carry thousands of frames, each rewritten to a longer source path. */
 const MAX_SYMBOLICATION_GROWTH = 1024 * 1024;
@@ -82,7 +88,7 @@ interface FoundSourceMap {
 export class SourceMaps extends Context.Service<
   SourceMaps,
   {
-    readonly find: (key: string) => Effect.Effect<FoundSourceMap | undefined>;
+    readonly find: (key: string) => Effect.Effect<FoundSourceMap | SourceMapMiss>;
   }
 >()("t3code-relay/mobileTelemetry/MobileTelemetry/SourceMaps") {}
 
@@ -101,27 +107,29 @@ const makeSourceMaps = Effect.gen(function* () {
     (key: string) =>
       Effect.gen(function* () {
         const stored = yield* objects.get(key);
-        if (stored === undefined) return undefined;
+        if (stored === undefined) return "source_map_missing" as const;
         if (stored.size > MAX_SOURCE_MAP_BYTES) {
           yield* Effect.logWarning("Stored mobile source map is too large", {
             key,
             size: stored.size,
           });
-          return undefined;
+          return "source_map_too_large" as const;
         }
         const map = decodeSourceMap(parseJson(yield* stored.text));
-        if (map) return { key, map } satisfies FoundSourceMap;
-        yield* Effect.logWarning("Stored mobile source map could not be decoded", { key });
-        return undefined;
+        if (typeof map !== "string") return { key, map } satisfies FoundSourceMap;
+        yield* Effect.logWarning("Stored mobile source map could not be decoded", { key, map });
+        return map === "too_large"
+          ? ("source_map_too_large" as const)
+          : ("source_map_invalid" as const);
       }).pipe(Semaphore.withPermit(decoding)),
     {
       capacity: SOURCE_MAP_CACHE_CAPACITY,
       timeToLive: (exit) =>
         Exit.isFailure(exit)
           ? FAILED_SOURCE_MAP_TTL
-          : exit.value
-            ? Duration.infinity
-            : MISSING_SOURCE_MAP_TTL,
+          : typeof exit.value === "string"
+            ? MISSING_SOURCE_MAP_TTL
+            : Duration.infinity,
     },
   );
   return SourceMaps.of({
@@ -129,7 +137,7 @@ const makeSourceMaps = Effect.gen(function* () {
       return yield* Cache.get(cache, key).pipe(
         Effect.catch((error) =>
           Effect.logWarning("Mobile source map lookup failed", { key: error.key }).pipe(
-            Effect.as(undefined),
+            Effect.as("source_map_unavailable" as const),
           ),
         ),
       );
@@ -192,7 +200,8 @@ const make = Effect.gen(function* () {
   ) {
     const payload = parseJson(new TextDecoder().decode(body));
     const exceptions = collectJsExceptions(payload);
-    if (exceptions.length === 0) return undefined;
+    const jsFatalCrashes = markJsFatalCrashes(payload);
+    if (exceptions.length === 0 && jsFatalCrashes === 0) return undefined;
     let symbolicated = 0;
     let growthLeft = MAX_SYMBOLICATION_GROWTH;
     const keys = new Set<string>();
@@ -201,7 +210,11 @@ const make = Effect.gen(function* () {
       if (key !== undefined && keys.size < MAX_SOURCE_MAPS_PER_REQUEST) keys.add(key);
       const outcome = applySymbolication(
         exception,
-        key === undefined || !keys.has(key) ? undefined : yield* sourceMaps.find(key),
+        key === undefined
+          ? "no_bundle_id"
+          : keys.has(key)
+            ? yield* sourceMaps.find(key)
+            : "source_map_limit",
         growthLeft,
       );
       growthLeft -= outcome.growth;
@@ -210,6 +223,7 @@ const make = Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({
       "relay.mobile_telemetry.exceptions": exceptions.length,
       "relay.mobile_telemetry.symbolicated": symbolicated,
+      "relay.mobile_telemetry.js_fatal_crashes": jsFatalCrashes,
     });
     return new TextEncoder().encode(encodeJson(payload));
   });

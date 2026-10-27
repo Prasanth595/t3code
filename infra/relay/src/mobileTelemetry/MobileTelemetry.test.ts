@@ -269,6 +269,76 @@ describe("MobileTelemetry", () => {
     }),
   );
 
+  it.effect("says why a stack stayed minified, without the iOS install path", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ objects: { [`ios/build/${BUILD_ID}.map`]: "{}" } });
+      const iosStack =
+        "Error: x\n    at render (address at /private/var/containers/Bundle/Application/" +
+        "0C1D/T3Code.app/main.jsbundle:1:12)";
+      const record = (stack: string) => ({
+        scopeLogs: [{ logRecords: [{ attributes: [str("exception.stacktrace", stack)] }] }],
+      });
+      const body = encodeJson({
+        resourceLogs: [
+          { resource: { attributes: [str("os.type", "linux")] }, ...record(STACK) },
+          {
+            resource: {
+              attributes: [str("os.type", "darwin"), str("expo.eas_build.id", BUILD_ID)],
+            },
+            ...record(iosStack),
+          },
+        ],
+      });
+      expect((yield* harness.send(ingest("logs", body))).status).toBe(200);
+      expect(forwardedExceptions(harness.sent[0]!)).toEqual([
+        { "exception.stacktrace": STACK, "relay.symbolication.status": "no_bundle_id" },
+        {
+          "exception.stacktrace": "Error: x\n    at render (address at main.jsbundle:1:12)",
+          "relay.symbolication.status": "source_map_invalid",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("marks the native abort that follows a fatal JS error in the same session", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      const fatal = { key: "expo.error.is_fatal", value: { boolValue: true } };
+      const crash = (session: string, source: string) => ({
+        attributes: [str("expo.error.source", source), str("session.id", session), fatal],
+      });
+      const body = encodeJson({
+        resourceLogs: [
+          {
+            resource: { attributes: [str("os.type", "darwin")] },
+            scopeLogs: [
+              {
+                logRecords: [
+                  crash("a", "global"),
+                  crash("a", "nativeCrash"),
+                  crash("b", "nativeCrash"),
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      expect((yield* harness.send(ingest("logs", body))).status).toBe(200);
+      const records = (
+        decodeJson(sentText(harness.sent[0]!)) as {
+          resourceLogs: Array<{
+            scopeLogs: Array<{ logRecords: Array<{ attributes: Array<{ key: string }> }> }>;
+          }>;
+        }
+      ).resourceLogs[0]!.scopeLogs[0]!.logRecords;
+      expect(
+        records.map((record) =>
+          record.attributes.some((attribute) => attribute.key === "relay.crash.js_fatal"),
+        ),
+      ).toEqual([false, true, false]);
+    }),
+  );
+
   it.effect("answers 413 for a body over the cap without forwarding it", () =>
     Effect.gen(function* () {
       const harness = makeHarness();
@@ -305,7 +375,7 @@ describe("MobileTelemetry", () => {
       const second = yield* Effect.forkChild(sourceMaps.find("second"), { startImmediately: true });
       yield* Deferred.succeed(releaseFirst, undefined);
       yield* Fiber.join(first);
-      expect((yield* Fiber.join(second))?.key).toBe("second");
+      expect(yield* Fiber.join(second)).toMatchObject({ key: "second" });
       expect(secondSawFirstDone).toBe(true);
     }),
   );

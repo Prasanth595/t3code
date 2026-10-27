@@ -179,11 +179,37 @@ Hermes stacks from release builds are minified bytecode offsets. On the way thro
 rewrites each JavaScript exception's `exception.stacktrace` with the bundle's source map from R2
 and records the outcome on the log record:
 
-- `relay.symbolication.status`: `symbolicated`, `source_map_missing`, or `no_bundle_frames`
+- `relay.symbolication.status`: `symbolicated`, or why not. `no_bundle_id` is a development or
+  local build. `source_map_missing` means no map was uploaded for the bundle;
+  `source_map_too_large`, `source_map_invalid` and `source_map_unavailable` (R2 unreadable, retried
+  shortly) mean one was. `source_map_limit` is a request naming more bundles than the relay decodes
+  at once, and `no_bundle_frames` a stack with no frames from the bundle.
 - `relay.symbolication.source_map`: the R2 key used
 - `relay.symbolication.raw_stacktrace`: the original stack, when it was rewritten
 
-Native crash stacks (`expo.error.source == 'nativeCrash'`) are not symbolicated.
+iOS frames lose their install path (`/private/var/containers/Bundle/Application/<uuid>/...`), which
+differs per install, so `exception.stacktrace` groups across users.
+
+A fatal JavaScript error ends in a native abort, which Observe reports as a second crash with a
+generic React Native stack. The relay marks that one `relay.crash.js_fatal` when both arrive in one
+request, as they do on the next launch. Leave it out to count real native crashes:
+
+```apl
+['t3-code-mobile-logs-prod']
+| where ['attributes.expo.error.source'] == 'nativeCrash'
+| where isnull(['attributes.relay.crash.js_fatal'])
+| summarize count() by ['attributes.exception.type'], ['attributes.exception.message']
+```
+
+Native crash stacks (`expo.error.source == 'nativeCrash'`) are not symbolicated. On iOS, app frames
+read like `main (T3Code + 19476)`: the offset into the app binary. The build hook uploads that
+build's dSYMs to `ios/dsym/<easBuildId>.zip`; download it with an account R2 token, then:
+
+```sh
+unzip <easBuildId>.zip
+atos -arch arm64 -o T3Code.app.dSYM/Contents/Resources/DWARF/T3Code -l 0x100000000 \
+  $(printf '0x%x' $((0x100000000 + 19476)))
+```
 
 Maps are keyed by the bundle that crashed: `<platform>/ota/<updateId>.map` for OTA updates and
 `<platform>/build/<easBuildId>.map` for the bundle embedded in a store build. The production

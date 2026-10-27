@@ -7,6 +7,22 @@ const appVariant: unknown = Constants.expoConfig?.extra?.appVariant;
 
 export const crashReportingAvailable = typeof relayUrl === "string" && relayUrl.trim() !== "";
 
+interface PromiseRejectionTracker {
+  readonly enablePromiseRejectionTracker?: (options: {
+    readonly allRejections: boolean;
+    readonly onUnhandled: (id: number, rejection: unknown) => void;
+  }) => void;
+}
+
+// React Native tracks unhandled rejections only in development, for LogBox; Observe has no hook.
+if (!__DEV__) {
+  const hermes: PromiseRejectionTracker | undefined = Reflect.get(globalThis, "HermesInternal");
+  hermes?.enablePromiseRejectionTracker?.({
+    allRejections: true,
+    onUnhandled: (_id, rejection) => Observe.reportError(rejection),
+  });
+}
+
 let latestConfiguration = 0;
 
 // While sending is off, a dispatch pass drops what it finds, so one runs before turning it back on.

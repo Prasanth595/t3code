@@ -5,7 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { buildSourceMapUpload, otaSourceMapUploads, uploadSourceMap } from "./sourcemap-upload.mts";
+import {
+  buildDsymUpload,
+  buildSourceMapUpload,
+  otaSourceMapUploads,
+  uploadSourceMap,
+} from "./sourcemap-upload.mts";
 
 const directories: Array<string> = [];
 const tempDir = () => {
@@ -23,7 +28,7 @@ afterEach(() => {
 });
 
 describe("uploadSourceMap", () => {
-  it("PUTs each published update's map, without sources, under its update id", async () => {
+  it("PUTs each published update's map, only what the relay reads, under its update id", async () => {
     const dist = tempDir();
     writeFile(
       NodePath.join(dist, "metadata.json"),
@@ -54,6 +59,8 @@ describe("uploadSourceMap", () => {
           version: 3,
           sources: [`${platform}.ts`],
           sourcesContent: ["secret"],
+          names: ["render"],
+          x_facebook_sources: [[null]],
           mappings: "",
         }),
       );
@@ -116,5 +123,14 @@ describe("buildSourceMapUpload", () => {
         project,
       ),
     ).toEqual({ key: "ios/build/build-2.map", path: "/tmp/main.map" });
+  });
+
+  it("names an iOS build's dSYMs under its build id", () => {
+    const project = tempDir();
+    const dsym = NodePath.join(project, "ios/build/T3Code.app.dSYM.zip");
+    writeFile(dsym, "zip");
+    expect(
+      buildDsymUpload({ EAS_BUILD_PLATFORM: "ios", EAS_BUILD_ID: "build-3" }, project),
+    ).toEqual({ key: "ios/dsym/build-3.zip", path: dsym });
   });
 });

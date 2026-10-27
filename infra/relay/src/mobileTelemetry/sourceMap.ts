@@ -33,43 +33,22 @@ interface OriginalPosition {
 const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-/** Undefined for anything but a version 3 map, including index maps, which React Native never emits. */
-export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const version = Reflect.get(raw, "version");
-  const mappings = Reflect.get(raw, "mappings");
-  const sources = Reflect.get(raw, "sources");
-  const sourceRoot = Reflect.get(raw, "sourceRoot");
-  if (version !== 3 || typeof mappings !== "string" || !isStringArray(sources)) return undefined;
-
-  // Every segment ends at a separator or at the end, so this bounds the count.
-  let capacity = 1;
-  let lineCount = 1;
-  for (let index = 0; index < mappings.length; index += 1) {
-    const code = mappings.charCodeAt(index);
-    if (code === COMMA) capacity += 1;
-    else if (code === SEMICOLON) {
-      capacity += 1;
-      lineCount += 1;
-    }
-  }
-
-  const prefixLength = typeof sourceRoot === "string" ? sourceRoot.length + 1 : 0;
-  let sourceChars = 0;
-  for (const source of sources) sourceChars += source.length + prefixLength;
-  // A path takes up to two bytes a character, plus its string header and array slot.
-  const decodedBytes = capacity * 16 + (lineCount + 1) * 4 + sourceChars * 2 + sources.length * 32;
-  if (decodedBytes > MAX_DECODED_BYTES) return undefined;
-
-  const lineStarts = new Int32Array(lineCount + 1);
-  const generatedColumns = new Int32Array(capacity);
-  const sourceIndexes = new Int32Array(capacity);
-  const originalLines = new Int32Array(capacity);
-  const originalColumns = new Int32Array(capacity);
-
+/**
+ * Calls `visit` per segment in order; `sourceIndex` is -1 for a segment that maps to no source.
+ * False if a segment is malformed.
+ */
+function walkSegments(
+  mappings: string,
+  visit: (
+    line: number,
+    generatedColumn: number,
+    sourceIndex: number,
+    originalLine: number,
+    originalColumn: number,
+  ) => void,
+): boolean {
   // Names keep the running offsets right but are not stored: they name an identifier, not the function.
   const fields = [0, 0, 0, 0, 0];
-  let segmentCount = 0;
   let line = 0;
   let generatedColumn = 0;
   let sourceIndex = 0;
@@ -77,11 +56,10 @@ export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
   let originalColumn = 0;
   let index = 0;
 
-  while (index <= mappings.length) {
-    const code = index < mappings.length ? mappings.charCodeAt(index) : SEMICOLON;
+  while (index < mappings.length) {
+    const code = mappings.charCodeAt(index);
     if (code === SEMICOLON) {
       line += 1;
-      lineStarts[line] = segmentCount;
       generatedColumn = 0;
       index += 1;
       continue;
@@ -101,7 +79,7 @@ export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
       do {
         const char = mappings.charCodeAt(index);
         digit = char < 128 ? BASE64_VALUES[char]! : -1;
-        if (digit === -1) return undefined;
+        if (digit === -1) return false;
         value += (digit & 31) * 2 ** shift;
         shift += 5;
         index += 1;
@@ -111,21 +89,93 @@ export function decodeSourceMap(raw: unknown): CompactSourceMap | undefined {
       if (fieldCount < fields.length) fields[fieldCount] = negative ? -value : value;
       fieldCount += 1;
     }
-    if (fieldCount !== 1 && fieldCount !== 4 && fieldCount !== 5) return undefined;
+    if (fieldCount !== 1 && fieldCount !== 4 && fieldCount !== 5) return false;
 
     generatedColumn += fields[0]!;
-    generatedColumns[segmentCount] = generatedColumn;
     if (fieldCount === 1) {
-      sourceIndexes[segmentCount] = -1;
+      visit(line, generatedColumn, -1, 0, 0);
     } else {
       sourceIndex += fields[1]!;
       originalLine += fields[2]!;
       originalColumn += fields[3]!;
-      sourceIndexes[segmentCount] = sourceIndex;
-      originalLines[segmentCount] = originalLine;
-      originalColumns[segmentCount] = originalColumn;
+      visit(line, generatedColumn, sourceIndex, originalLine, originalColumn);
     }
-    segmentCount += 1;
+  }
+  return true;
+}
+
+/**
+ * `too_large` past the decode budget; `invalid` for anything but a version 3 map, including
+ * index maps, which React Native never emits.
+ */
+export function decodeSourceMap(raw: unknown): CompactSourceMap | "too_large" | "invalid" {
+  if (typeof raw !== "object" || raw === null) return "invalid";
+  const version = Reflect.get(raw, "version");
+  const mappings = Reflect.get(raw, "mappings");
+  const sources = Reflect.get(raw, "sources");
+  const sourceRoot = Reflect.get(raw, "sourceRoot");
+  if (version !== 3 || typeof mappings !== "string" || !isStringArray(sources)) return "invalid";
+
+  // Hermes maps most bytecode instructions to the same position as the one before; a lookup
+  // lands on the earlier segment instead with the same answer. Dropping them shrinks our iOS
+  // map from 2.1M segments to 1.2M, so the first pass counts what the second keeps.
+  let lineCount = 1;
+  for (let index = 0; index < mappings.length; index += 1) {
+    if (mappings.charCodeAt(index) === SEMICOLON) lineCount += 1;
+  }
+  let kept = 0;
+  let lastLine = -1;
+  let lastSource = -2;
+  let lastOriginalLine = 0;
+  let lastOriginalColumn = 0;
+  const repeats = (line: number, source: number, originalLine: number, originalColumn: number) => {
+    const same =
+      line === lastLine &&
+      source === lastSource &&
+      (source === -1 ||
+        (originalLine === lastOriginalLine && originalColumn === lastOriginalColumn));
+    lastLine = line;
+    lastSource = source;
+    lastOriginalLine = originalLine;
+    lastOriginalColumn = originalColumn;
+    return same;
+  };
+  const counted = walkSegments(mappings, (line, _column, source, originalLine, originalColumn) => {
+    if (!repeats(line, source, originalLine, originalColumn)) kept += 1;
+  });
+  if (!counted) return "invalid";
+
+  const prefixLength = typeof sourceRoot === "string" ? sourceRoot.length + 1 : 0;
+  let sourceChars = 0;
+  for (const source of sources) sourceChars += source.length + prefixLength;
+  // A path takes up to two bytes a character, plus its string header and array slot.
+  const decodedBytes = kept * 16 + (lineCount + 1) * 4 + sourceChars * 2 + sources.length * 32;
+  if (decodedBytes > MAX_DECODED_BYTES) return "too_large";
+
+  const lineStarts = new Int32Array(lineCount + 1);
+  const generatedColumns = new Int32Array(kept);
+  const sourceIndexes = new Int32Array(kept);
+  const originalLines = new Int32Array(kept);
+  const originalColumns = new Int32Array(kept);
+  let segment = 0;
+  let currentLine = 0;
+  lastLine = -1;
+  lastSource = -2;
+  walkSegments(mappings, (line, generatedColumn, source, originalLine, originalColumn) => {
+    if (repeats(line, source, originalLine, originalColumn)) return;
+    while (currentLine < line) {
+      currentLine += 1;
+      lineStarts[currentLine] = segment;
+    }
+    generatedColumns[segment] = generatedColumn;
+    sourceIndexes[segment] = source;
+    originalLines[segment] = originalLine;
+    originalColumns[segment] = originalColumn;
+    segment += 1;
+  });
+  while (currentLine < lineCount) {
+    currentLine += 1;
+    lineStarts[currentLine] = segment;
   }
 
   const prefix = typeof sourceRoot === "string" && sourceRoot !== "" ? sourceRoot : undefined;
@@ -172,9 +222,27 @@ function originalPositionFor(
 
 /**
  * `at render (address at index.android.bundle:1:48213)`: Hermes prints the bytecode offset,
- * the composed map's generated column. `InternalBytecode.js` is Hermes's own runtime, not in the map.
+ * the composed map's generated column. On iOS the path is absolute, and an OTA bundle's
+ * contains a space (`Application Support`).
  */
-const BUNDLE_FRAME = /address at (?!InternalBytecode\.js:)([^\s()]+):(\d+):(\d+)/u;
+const BUNDLE_FRAME = /address at (.+?):(\d+):(\d+)(?=\)?$)/u;
+/** Hermes's own runtime, not in the map. */
+const HERMES_RUNTIME = "InternalBytecode.js";
+
+const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** iOS bundle paths carry per-install container UUIDs, which split one crash into many groups. */
+export function stripBundlePaths(stack: string): string {
+  return stack
+    .split("\n")
+    .map((line) => {
+      const match = BUNDLE_FRAME.exec(line);
+      if (!match || !match[1]!.includes("/")) return line;
+      const start = match.index + "address at ".length;
+      return line.slice(0, start) + baseName(match[1]!) + line.slice(start + match[1]!.length);
+    })
+    .join("\n");
+}
 
 interface SymbolicatedStack {
   readonly stack: string;
@@ -198,7 +266,7 @@ export function symbolicateStack(
   let exhausted = false;
   const lines = stack.split("\n").map((line) => {
     const match = BUNDLE_FRAME.exec(line);
-    if (!match) return line;
+    if (!match || baseName(match[1]!) === HERMES_RUNTIME) return line;
     bundleFrames += 1;
     if (exhausted) return line;
     const position = originalPositionFor(map, Number(match[2]), Number(match[3]));
