@@ -5,6 +5,8 @@ import {
   CommandId,
   type EventId,
   type ModelSelection,
+  type MessageId,
+  type OrchestrationV2ConversationMessage,
   type NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
@@ -994,6 +996,7 @@ export const layer: Layer.Layer<
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         // A planned detach closes ingestion before the adapter can end its open root items.
         const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
+        const streamingRootMessages = new Map<MessageId, OrchestrationV2ConversationMessage>();
         const routeIdentity: ProviderEventRouteIdentity = {
           threadId: input.run.threadId,
           runId: input.run.id,
@@ -1298,7 +1301,7 @@ export const layer: Layer.Layer<
               ? Stream.fail(detached)
               : Stream.unwrap(
                   Effect.gen(function* () {
-                    if (yield* Ref.get(rootRunFinalized)) return Stream.empty;
+                    const rootFinalized = yield* Ref.get(rootRunFinalized);
                     yield* Ref.set(
                       interruptionMessage,
                       "Run interrupted because the workspace changed",
@@ -1348,7 +1351,13 @@ export const layer: Layer.Layer<
                           updatedAt: completedAt,
                         },
                       })),
-                      ...(providerTurn?.status === "running" || providerTurn?.status === "pending"
+                      ...[...streamingRootMessages.values()].map((message) => ({
+                        type: "message.updated" as const,
+                        driver: input.providerThread.driver,
+                        message: { ...message, streaming: false, updatedAt: completedAt },
+                      })),
+                      ...(!rootFinalized &&
+                      (providerTurn?.status === "running" || providerTurn?.status === "pending")
                         ? [
                             {
                               type: "provider_turn.updated" as const,
@@ -1361,7 +1370,7 @@ export const layer: Layer.Layer<
                             },
                           ]
                         : []),
-                      terminal,
+                      ...(!rootFinalized ? [terminal] : []),
                     ]);
                   }),
                 ),
@@ -1450,6 +1459,16 @@ export const layer: Layer.Layer<
                 event.providerTurn.providerThreadId === input.providerThread.id
               ) {
                 yield* Ref.set(latestRootProviderTurn, event.providerTurn);
+              }
+              if (
+                event.type === "message.updated" &&
+                event.message.threadId === input.run.threadId &&
+                event.message.runId === input.run.id &&
+                event.message.role === "assistant"
+              ) {
+                if (event.message.streaming)
+                  streamingRootMessages.set(event.message.id, event.message);
+                else streamingRootMessages.delete(event.message.id);
               }
               let storedEventCount = 0;
               const deliveredEvent = filterAssistantEvent(
