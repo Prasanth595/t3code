@@ -777,32 +777,35 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   )(function* (input) {
     const host = yield* resolveHost(input.hostId);
     const key = deviceKey(host.id, input.deviceId);
-    const claimed = yield* lifecycleLock.withPermit(
-      Effect.gen(function* () {
-        const { state } = yield* SynchronizedRef.get(stateRef);
-        if (
-          state.sessions.some(
-            (session) => session.hostId === host.id && session.deviceId === input.deviceId,
+    return yield* Effect.acquireUseRelease(
+      lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          if (
+            state.sessions.some(
+              (session) => session.hostId === host.id && session.deviceId === input.deviceId,
+            )
           )
-        )
-          return false;
-        shutdownEpoch += 1;
-        shutdownClaims.set(key, shutdownEpoch);
-        shutdownsInFlight.set(key, (shutdownsInFlight.get(key) ?? 0) + 1);
-        return true;
-      }),
-    );
-    if (!claimed) return false;
-    yield* shutdown({ ...input, hostId: host.id }).pipe(
-      Effect.ensuring(
+            return false;
+          shutdownClaims.set(key, ++shutdownEpoch);
+          shutdownsInFlight.set(key, (shutdownsInFlight.get(key) ?? 0) + 1);
+          return true;
+        }),
+      ),
+      (claimed) =>
+        claimed
+          ? shutdown({ ...input, hostId: host.id }).pipe(Effect.as(true))
+          : Effect.succeed(false),
+      (claimed) =>
         Effect.sync(() => {
+          if (!claimed) return;
           const remaining = (shutdownsInFlight.get(key) ?? 1) - 1;
           if (remaining === 0) shutdownsInFlight.delete(key);
           else shutdownsInFlight.set(key, remaining);
+          // Opens started during shutdown must also retry after it finishes.
+          shutdownClaims.set(key, ++shutdownEpoch);
         }),
-      ),
     );
-    return true;
   });
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(

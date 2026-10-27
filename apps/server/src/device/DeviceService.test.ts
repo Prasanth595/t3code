@@ -49,7 +49,11 @@ const fixture = Effect.fn("fixture")(function* (
     | DeviceHost.AgentDeviceStartError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
-  options: { readonly endsDevices?: boolean; readonly onShutdown?: Effect.Effect<void> } = {},
+  options: {
+    readonly endsDevices?: boolean;
+    readonly onShutdown?: Effect.Effect<void>;
+    readonly onAttach?: Effect.Effect<void>;
+  } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -89,6 +93,7 @@ const fixture = Effect.fn("fixture")(function* (
         );
       }
       if (request.url.endsWith("/grid/api/start")) {
+        yield* options.onAttach ?? Effect.void;
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
       }
       return HttpClientResponse.fromWeb(
@@ -627,6 +632,68 @@ it.effect("a device no thread has open is not turned off under an open racing it
     expect(opening._tag).toBe("Failure");
     expect(String(opening)).toContain("turned off while it was opening");
     expect((yield* service.state).sessions).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("an open started during shutdown cannot register after shutdown completes", () =>
+  Effect.gen(function* () {
+    const shutdownStarted = yield* Deferred.make<void>();
+    const finishShutdown = yield* Deferred.make<void>();
+    const openStarted = yield* Deferred.make<void>();
+    const finishOpen = yield* Deferred.make<void>();
+    let pause = false;
+    const { service, devices } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        onShutdown: Deferred.succeed(shutdownStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(finishShutdown)),
+        ),
+        onAttach: Effect.suspend(() =>
+          pause
+            ? Deferred.succeed(openStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(finishOpen)),
+              )
+            : Effect.void,
+        ),
+      },
+    );
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("late-open");
+    devices.push({
+      id: DeviceId.make("ios-race"),
+      name: "iPhone",
+      platform: "ios",
+      version: "26",
+      booted: true,
+      physical: false,
+    });
+    const { deviceId, platform } = yield* service.open({
+      threadId,
+      deviceId: "ios-race",
+      platform: "ios",
+    });
+    yield* service.close({ threadId, deviceId });
+    const shuttingDown = yield* service
+      .shutdownUnlessOpen({ deviceId, platform })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(shutdownStarted);
+    pause = true;
+    const opening = yield* service.open({ threadId, deviceId, platform }).pipe(Effect.forkChild);
+    yield* Deferred.await(openStarted);
+    yield* Deferred.succeed(finishShutdown, undefined);
+    expect(yield* Fiber.join(shuttingDown)).toBe(true);
+    yield* Deferred.succeed(finishOpen, undefined);
+    const result = yield* Effect.exit(Fiber.join(opening));
+    expect(result._tag).toBe("Failure");
+    expect(String(result)).toContain("turned off while it was opening");
+    expect((yield* service.state).sessions).toEqual([]);
+    pause = false;
+    expect((yield* service.open({ threadId, deviceId, platform })).deviceId).toBe(deviceId);
   }).pipe(Effect.scoped),
 );
 
