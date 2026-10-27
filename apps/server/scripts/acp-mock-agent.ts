@@ -24,6 +24,7 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitV2Fidelity = process.env.T3_ACP_EMIT_V2_FIDELITY === "1";
+const emitNotice = process.env.T3_ACP_EMIT_NOTICE === "1";
 const vibeRetryOutcome = process.env.T3_ACP_VIBE_RETRY_OUTCOME;
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitPostSettleMonitorFlow = process.env.T3_ACP_EMIT_POST_SETTLE_MONITOR_FLOW === "1";
@@ -937,21 +938,20 @@ const program = Effect.gen(function* () {
             },
           });
         });
-        yield* Effect.sleep("1200 millis")
-          .pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                writeJsonRpcNotification("_x.ai/task_completed", {
-                  sessionId: cancelledSessionId,
-                  update: {
-                    sessionUpdate: "task_completed",
-                    task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
-                  },
-                });
-              }),
-            ),
-          )
-          .pipe(Effect.forkDetach);
+        yield* Effect.sleep("1200 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              writeJsonRpcNotification("_x.ai/task_completed", {
+                sessionId: cancelledSessionId,
+                update: {
+                  sessionUpdate: "task_completed",
+                  task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
+                },
+              });
+            }),
+          ),
+          Effect.forkDetach,
+        );
       }
     }),
   );
@@ -1168,6 +1168,30 @@ const program = Effect.gen(function* () {
             content: { type: "text", text: "Recovered answer" },
           },
         });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
+      if (emitNotice) {
+        // A notice in fx 0.0.14's shape for a skipped skill, between two chunks of one message.
+        const chunk = (text: string) =>
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "mock-notice-message",
+              content: { type: "text", text },
+            },
+          });
+        chunk("before the notice, ");
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "notice",
+            severity: "info",
+            title: "skill discovery warning: candidate was skipped because its metadata is invalid",
+          },
+        });
+        chunk("after the notice");
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 

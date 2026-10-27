@@ -7,6 +7,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
+  type EnvironmentContextRecord,
   type EnvironmentId,
   type MessageId,
   type OrchestrationMessageContext,
@@ -19,7 +20,7 @@ import {
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { Atom } from "effect/reactivity";
-import { useRef, useState, type RefObject } from "react";
+import type { RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import {
   DraftId,
@@ -76,6 +77,7 @@ export interface QueuedRunEditContent {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
 }
 
 function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {
@@ -133,6 +135,7 @@ async function submitQueuedRunEdit(input: {
         reviewComments: content.reviewComments,
         previewAnnotations: content.previewAnnotations,
         threadContexts: content.threadContexts,
+        environmentContexts: content.environmentContexts,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
@@ -193,8 +196,7 @@ export function useQueuedRunEdit(input: {
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
-  const saveInFlightRef = useRef(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const isSaving = useAtomValue(queuedRunEdits.savingAtom)[editKey] === true;
   const draftTarget =
     editing === null ? threadDraftTarget : queuedEditDraftTarget(routeThreadRef, editing.runId);
 
@@ -299,7 +301,7 @@ export function useQueuedRunEdit(input: {
     content: QueuedRunEditContent,
     setThreadError: (threadId: ThreadId, error: string | null) => void,
   ) => {
-    if (editing === null || saveInFlightRef.current) return;
+    if (editing === null || isSaving) return;
     const newAttachments = [...content.images, ...content.files];
     if (
       editing.existingAttachments.length + newAttachments.length >
@@ -318,10 +320,9 @@ export function useQueuedRunEdit(input: {
     ) {
       return;
     }
-    saveInFlightRef.current = true;
-    setIsSaving(true);
     // The save's result decides the edit's fate, even if the run starts meanwhile.
-    queuedRunEdits.suspendExitWatch(editKey);
+    const finishSave = queuedRunEdits.startSave(editKey);
+    if (finishSave === null) return;
     const error = await submitQueuedRunEdit({
       environmentId,
       draftTarget,
@@ -329,18 +330,15 @@ export function useQueuedRunEdit(input: {
       content,
       editQueuedRun: editQueuedRunCommand,
     });
-    saveInFlightRef.current = false;
-    setIsSaving(false);
     setThreadError(editing.threadId, error);
-    if (error !== null) {
-      queuedRunEdits.resumeExitWatch(editKey);
-      return;
-    }
+    const current = finishSave(error === null);
+    if (error !== null) return;
     releaseDraftAttachments(newAttachments);
+    // The edit was cancelled or begun again while this save ran; its drafts are the newer edit's.
+    if (!current) return;
     promptRef.current = "";
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();
-    queuedRunEdits.end(editKey);
     focusComposerSoon();
   };
 
