@@ -18,7 +18,10 @@ import {
   useThreadUndoNotice,
 } from "./thread-undo-notice";
 
-export function ThreadUndoNotice(props: { readonly visible: boolean }) {
+export function ThreadUndoNotice(props: {
+  readonly visible: boolean;
+  readonly bottomClearance?: number;
+}) {
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const notice = useThreadUndoNotice();
   const insets = useSafeAreaInsets();
@@ -49,7 +52,8 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
     rootMetrics.horizontalSizeClass === "compact" &&
     workspace?.state.tabs.threads.searchMode === "resting";
   const bottom =
-    Platform.OS === "ios"
+    props.bottomClearance ??
+    (Platform.OS === "ios"
       ? foldedResting
         ? Math.max(rootMetrics.safeArea.bottom, keyboardHeight) + 8
         : rootMetrics?.hasHinge && rootMetrics.verticalBarEdge !== "none"
@@ -68,7 +72,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
             ) + 8
       : floatingTabsEnabled && keyboardHeight === 0
         ? Math.max(insets.bottom + 12, workspace?.bottomClearance ?? 0)
-        : insets.bottom + 12;
+        : insets.bottom + 12);
   return (
     <View
       key={instance.key}

@@ -268,8 +268,8 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const dismissalIdRef = useRef(0);
   const activeTranslationRef = useRef<SharedValue<number> | null>(null);
   const content = useMemo(
-    () => ({ resetKey: props.resetKey, threadKey: props.threadKey }),
-    [props.resetKey, props.threadKey],
+    () => ({ resetKey: props.resetKey, threadKey: props.threadKey, side: swipeRowSide }),
+    [props.resetKey, props.threadKey, swipeRowSide],
   );
   const contentRef = useRef(content);
   const [isDismissing, setIsDismissing] = useState(false);
@@ -345,17 +345,21 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       };
       actionOpacity.set(withTiming(0, timing));
       translation.set(
-        withTiming(Math.min(translation.value, -rowWidth.value), timing, (finished) => {
-          if (!finished) return;
-          collapse.set(
-            withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
-              if (collapsed) runOnJS(finishDismiss)(id);
-            }),
-          );
-        }),
+        withTiming(
+          revealMultiplier * Math.max(translation.value * revealMultiplier, rowWidth.value),
+          timing,
+          (finished) => {
+            if (!finished) return;
+            collapse.set(
+              withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
+                if (collapsed) runOnJS(finishDismiss)(id);
+              }),
+            );
+          },
+        ),
       );
     },
-    [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
+    [actionOpacity, collapse, dismissing, finishDismiss, revealMultiplier, rowWidth],
   );
   useLayoutEffect(
     () =>
@@ -457,6 +461,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       onDelete,
       secondaryAction,
       threadTitle,
+      swipeRowSide,
     ];
     const cached = rightActions.current;
     if (cached && deps.every((dep, index) => Object.is(dep, cached.deps[index]))) {
@@ -510,7 +515,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           childrenContainerStyle={childrenContainerStyle}
           containerStyle={swipeableContainerStyle}
           {...(swipeRowSide === "left"
-            ? { dragOffsetFromLeft: -8, overshootLeft: true, leftThreshold: actionsWidth * 0.42 }
+            ? { dragOffsetFromLeft: 8, overshootLeft: true, leftThreshold: actionsWidth * 0.42 }
             : {
                 dragOffsetFromRight: -8,
                 overshootRight: true,
@@ -589,7 +594,8 @@ function SwipeActionButton(props: {
       transform: [
         {
           translateX:
-            interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch),
+            revealMultiplier *
+            (interpolate(entryProgress, [0, 1], [-22, 0]) + (stretchesOnFullSwipe ? 0 : stretch)),
         },
         { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
@@ -600,7 +606,7 @@ function SwipeActionButton(props: {
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
-      transform: [{ translateX: -stretch }],
+      transform: [{ translateX: revealMultiplier * stretch }],
       width: circleSize + stretch,
     };
   });
@@ -615,7 +621,7 @@ function SwipeActionButton(props: {
     );
 
     return {
-      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.5) }],
+      transform: [{ translateX: revealMultiplier * stretch * (0.5 + armedProgress * 0.5) }],
     };
   });
   const labelStyle = useAnimatedStyle(() => {
@@ -632,7 +638,7 @@ function SwipeActionButton(props: {
         [1, 0],
         Extrapolation.CLAMP,
       ),
-      transform: [{ translateX: -stretch * 0.5 }],
+      transform: [{ translateX: revealMultiplier * stretch * 0.5 }],
     };
   });
 
@@ -662,7 +668,7 @@ function SwipeActionButton(props: {
             {
               borderRadius: 999,
               height: circleSize,
-              left: 0,
+              ...(props.side === "left" ? { right: 0 } : { left: 0 }),
               position: "absolute",
               top: 0,
             },
@@ -761,14 +767,14 @@ export function ThreadSwipeActions(props: {
         runOnJS(onFullSwipeArmedChange)(armed);
       }
     },
-    [fullSwipeThreshold, onFullSwipeArmedChange, translation],
+    [fullSwipeThreshold, onFullSwipeArmedChange, revealMultiplier, translation],
   );
 
   return (
     <View
       style={{
         backgroundColor: props.backgroundColor,
-        flexDirection: "row",
+        flexDirection: props.side === "left" ? "row-reverse" : "row",
         height: "100%",
         width: actionsWidth,
       }}

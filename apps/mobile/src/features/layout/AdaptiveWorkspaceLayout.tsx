@@ -1037,34 +1037,30 @@ function AdaptiveWorkspaceLayoutContent(
             </View>
             <ThreadListDrawerHost width={threadListDrawerPanelWidth}>
               {(drawer) => (
-                <AndroidHomeFabLayout
-                  sidebar
+                <ThreadNavigationSidebar
+                  width={threadListDrawerPanelWidth}
+                  visible={drawer.open}
+                  onRequestVisibility={revealPrimarySidebar}
+                  selectedThreadKey={selectedThreadKey}
+                  onOpenSettings={handleOpenSettings}
+                  onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                  onOpenHome={handleOpenHome}
                   onStartNewTask={() => {
                     drawer.closeDrawer();
                     handleStartNewTask();
                   }}
-                >
-                  <ThreadNavigationSidebar
-                    width={threadListDrawerPanelWidth}
-                    visible={drawer.open}
-                    onRequestVisibility={revealPrimarySidebar}
-                    selectedThreadKey={selectedThreadKey}
-                    onOpenSettings={handleOpenSettings}
-                    onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                    onOpenHome={handleOpenHome}
-                    onNewThreadInProject={handleNewThreadInProject}
-                    onNewThreadOnBranch={handleNewThreadOnBranch}
-                    onOpenPendingTask={handleOpenPendingTask}
-                    // Close first, so the thread opens with the chat already behind it.
-                    onSelectThread={(thread) => {
-                      drawer.closeDrawer();
-                      handleSelectThread(thread);
-                    }}
-                    onOpenThreadPullRequests={handleOpenThreadPullRequests}
-                    onSearchQueryChange={setPrimarySidebarSearchQuery}
-                    searchQuery={primarySidebarSearchQuery}
-                  />
-                </AndroidHomeFabLayout>
+                  onNewThreadInProject={handleNewThreadInProject}
+                  onNewThreadOnBranch={handleNewThreadOnBranch}
+                  onOpenPendingTask={handleOpenPendingTask}
+                  // Close first, so the thread opens with the chat already behind it.
+                  onSelectThread={(thread) => {
+                    drawer.closeDrawer();
+                    handleSelectThread(thread);
+                  }}
+                  onOpenThreadPullRequests={handleOpenThreadPullRequests}
+                  onSearchQueryChange={setPrimarySidebarSearchQuery}
+                  searchQuery={primarySidebarSearchQuery}
+                />
               )}
             </ThreadListDrawerHost>
           </WindowHingeContext>

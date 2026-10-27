@@ -15,7 +15,8 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
@@ -25,6 +26,7 @@ import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-worksp
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
 
+import { NewThreadButton } from "../../components/NewThreadButton";
 import { AppText as Text } from "../../components/ui/AppText";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { Menu } from "../../components/ui/Menu";
@@ -103,6 +105,7 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenEnvironmentSettings: () => void;
   /** Android drawer: tapping the brand returns to the home thread list. */
   readonly onOpenHome?: () => void;
+  readonly onStartNewTask?: () => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
   readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
@@ -151,6 +154,11 @@ function ThreadNavigationSidebarPane(
   const projects = useProjects();
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
+  const footerGradientId = `sidebar-footer-${useId().replaceAll(":", "")}`;
+  const hasFooter =
+    Platform.OS === "android" && props.onStartNewTask !== undefined && catalogState.hasConnections;
+  const footerBottom = insets.bottom + 12;
+  const footerClearance = footerBottom + fabSize + 40;
   const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInputInstance>(null);
   const searchBarRef = useRef<SearchBarCommands>(null);
@@ -819,11 +827,13 @@ function ThreadNavigationSidebarPane(
                   {
                     paddingBottom:
                       Platform.OS === "android"
-                        ? floatingTabsEnabled
-                          ? FLOATING_TABS.bottom +
-                            FLOATING_TABS.edge +
-                            Math.max(floatingTabs.height, floatingTabs.fabOffset + fabSize)
-                          : Math.max(insets.bottom, 16) + fabClearance - insets.bottom
+                        ? hasFooter
+                          ? footerClearance - insets.bottom
+                          : floatingTabsEnabled
+                            ? FLOATING_TABS.bottom +
+                              FLOATING_TABS.edge +
+                              Math.max(floatingTabs.height, floatingTabs.fabOffset + fabSize)
+                            : Math.max(insets.bottom, 16) + fabClearance - insets.bottom
                         : 16 + insets.bottom,
                     paddingTop: Platform.OS === "android" ? 6 : topListInset,
                   },
@@ -907,7 +917,42 @@ function ThreadNavigationSidebarPane(
           </View>
         </View>
       )}
-      <ThreadUndoNotice visible={props.visible} />
+      {hasFooter ? (
+        <View
+          className="absolute bottom-0"
+          pointerEvents="box-none"
+          style={{ left: 4, right: 4, height: footerClearance }}
+        >
+          <View
+            className="absolute inset-0"
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id={footerGradientId} x1="0%" x2="0%" y1="0%" y2="100%">
+                  <Stop offset="0%" stopColor={drawerColor} stopOpacity={0} />
+                  <Stop offset="58%" stopColor={drawerColor} stopOpacity={0.85} />
+                  <Stop offset="100%" stopColor={drawerColor} stopOpacity={0.98} />
+                </LinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill={`url(#${footerGradientId})`} />
+            </Svg>
+          </View>
+          <NewThreadButton
+            extended
+            expanded={false}
+            onPress={props.onStartNewTask}
+            className="absolute"
+            style={{ right: 12, bottom: footerBottom }}
+          />
+        </View>
+      ) : null}
+      <ThreadUndoNotice
+        visible={props.visible}
+        bottomClearance={hasFooter ? footerClearance : undefined}
+      />
     </View>
   );
 }
