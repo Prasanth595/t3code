@@ -30,6 +30,7 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  advanceShellLaunchers,
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
@@ -175,9 +176,9 @@ export const withRunningThreadContinuation = Effect.fn(
 });
 
 /**
- * A server starting from the runtime its launcher settled on means runtimes left by earlier
- * updates can go. The boot service says so through its IPC context. The SSH launcher and the
- * install script's `t3` start this home's pinned runtime directly, without one.
+ * Runtimes left by earlier updates can go once a server starts from its home's pinned runtime or
+ * under the boot service. A boot-service server first moves older `t3` launchers to its version,
+ * since an update from the app reaches the service but not the CLI on PATH.
  */
 export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
   function* (input: { readonly baseDir: string; readonly managed: boolean }) {
@@ -190,6 +191,18 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
     if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
       return [];
+    }
+    if (input.managed) {
+      const advanced = yield* advanceShellLaunchers({
+        baseDir: input.baseDir,
+        version: packageJson.version,
+      });
+      if (advanced.length > 0) {
+        yield* Effect.logInfo("Moved t3 launchers to the running version.", {
+          version: packageJson.version,
+          launchers: advanced,
+        });
+      }
     }
     const removed = yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
