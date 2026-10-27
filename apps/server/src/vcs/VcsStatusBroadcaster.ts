@@ -527,12 +527,12 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
-    // Full invalidation also bypasses GitManager's slow PR cache.
+    // Refresh the visible branch's PR without expiring unrelated branch lookups.
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
         const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
-        yield* workflow.invalidateStatus(cwd);
+        yield* workflow.invalidateStatus(cwd, { currentBranchOnly: true });
         // Local after remote: the fetch can move the base that the Changes totals compare with.
         const remote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream });
         const local = yield* workflow.localStatus({ cwd });
