@@ -50,6 +50,7 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  pullRequestUrl?: string | null;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -58,6 +59,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.pullRequestUrl !== undefined ? { pullRequestUrl: options.pullRequestUrl } : {}),
   };
 }
 
@@ -75,13 +77,7 @@ export function createNewThreadHandler(router: AnyRouter) {
 
   return (
     projectRef: ScopedProjectRef,
-    options?: {
-      branch?: string | null;
-      worktreePath?: string | null;
-      envMode?: DraftThreadEnvMode;
-      startFromOrigin?: boolean;
-      replace?: boolean;
-    },
+    options?: NewThreadWorkspaceOptions & { replace?: boolean },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
@@ -364,6 +360,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         createdAt,
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
+        ...(options?.pullRequestUrl ? { pullRequestUrl: options.pullRequestUrl } : {}),
         envMode: initialEnvMode,
         startFromOrigin:
           options?.startFromOrigin ??
