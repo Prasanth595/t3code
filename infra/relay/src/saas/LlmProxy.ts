@@ -29,6 +29,8 @@ import {
   MAX_SEARCH_ROUNDS,
   ModelTurnReader,
   SHOW_VISUAL_TOOL,
+  VISUAL_FAILED_RESULT,
+  VISUAL_SHOWN_RESULT,
   WEB_SEARCH_TOOL,
   contentEvent,
   doneEvent,
@@ -36,6 +38,7 @@ import {
   searchQuery,
   searchRequestBody,
   searchingEvent,
+  visualHtml,
 } from "./chatSearch.ts";
 import * as SaasAccounts from "./SaasAccounts.ts";
 import * as SaasChat from "./SaasChat.ts";
@@ -466,7 +469,7 @@ export const make = Effect.gen(function* () {
             (call) => {
               if (call.name === SHOW_VISUAL_TOOL.function.name) {
                 return Effect.succeed(
-                  "Shown to the user in the reply. Continue without repeating what it shows.",
+                  visualHtml(call) === undefined ? VISUAL_FAILED_RESULT : VISUAL_SHOWN_RESULT,
                 );
               }
               if (round >= MAX_SEARCH_ROUNDS) {

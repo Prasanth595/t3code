@@ -42,7 +42,11 @@ export const SHOW_VISUAL_TOOL = {
 
 // Longer than any fence the page itself is likely to contain, so its HTML cannot close the block.
 const VISUAL_FENCE = "````";
-const VISUAL_FALLBACK_HTML = "<p>The visual could not be shown.</p>";
+/** What the model hears back from show_visual. */
+export const VISUAL_SHOWN_RESULT =
+  "Shown to the user in the reply. Continue without repeating what it shows.";
+export const VISUAL_FAILED_RESULT =
+  "The visual was not shown: its HTML was cut off or invalid. Call show_visual again with a smaller page, well under 15 KB.";
 
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -77,6 +81,9 @@ export class ModelTurnReader {
   private readonly calls = new Map<number, { id: string; name: string; arguments: string }>();
   /** The show_visual call whose fence is open in the streamed text. */
   private openVisual: { id: string; name: string; arguments: string } | undefined;
+  private readonly openedVisuals = new Set<number>();
+  /** Text the model writes while a visual is open, held until the fence closes. */
+  private heldText = "";
   content = "";
   reasoning = "";
   inputTokens = 0;
@@ -102,7 +109,10 @@ export class ModelTurnReader {
     const call = this.openVisual;
     if (call === undefined) return "";
     this.openVisual = undefined;
-    return `${visualHtml(call)}\n${VISUAL_FENCE}\n\n`;
+    const held = this.heldText;
+    this.heldText = "";
+    // A cut-off page shows nothing; the model hears it failed and sends it again.
+    return `${visualHtml(call) ?? ""}\n${VISUAL_FENCE}\n\n${held}`;
   }
 
   get toolCalls(): ReadonlyArray<ToolCall> {
@@ -138,17 +148,21 @@ export class ModelTurnReader {
         const index = typeof call?.index === "number" ? call.index : 0;
         const current = this.calls.get(index) ?? { id: "", name: "", arguments: "" };
         if (typeof call?.id === "string") current.id = call.id;
-        const named = current.name !== "";
         if (typeof fn?.name === "string") current.name += fn.name;
         if (typeof fn?.arguments === "string") current.arguments += fn.arguments;
         this.calls.set(index, current);
-        if (!named && current.name === SHOW_VISUAL_TOOL.function.name) {
+        if (current.name === SHOW_VISUAL_TOOL.function.name && !this.openedVisuals.has(index)) {
+          this.openedVisuals.add(index);
           fences += `${this.closeVisual()}\n\n${VISUAL_FENCE}${CHAT_VISUAL_LANGUAGE}\n`;
           this.openVisual = current;
         }
       }
     }
     this.content += text;
+    if (fences === "" && this.openVisual !== undefined) {
+      this.heldText += text;
+      return "";
+    }
     return text + fences;
   }
 }
@@ -160,10 +174,13 @@ export const searchQuery = (call: ToolCall): string | undefined => {
   return query === "" ? undefined : query.slice(0, MAX_QUERY_LENGTH);
 };
 
-const visualHtml = (call: ToolCall): string => {
+/** The page a show_visual call carries; none when its arguments were cut off or hold no HTML. */
+export const visualHtml = (call: ToolCall): string | undefined => {
   const args = record(Option.getOrUndefined(parseJson(call.arguments)));
   const html = typeof args?.html === "string" ? args.html.trim() : "";
-  return html === "" ? VISUAL_FALLBACK_HTML : html;
+  // Models sometimes wrap the page in a markdown fence, which would show as text.
+  const page = /^```[\w-]*\n([\s\S]*?)\n?```$/.exec(html)?.[1]?.trim() ?? html;
+  return page === "" ? undefined : page;
 };
 
 export const searchRequestBody = (query: string) => ({ query, count: SEARCH_RESULT_COUNT });

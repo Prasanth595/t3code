@@ -441,9 +441,16 @@ export function injectHtmlRenderBootstrap(html: string, theme?: HtmlRenderTheme)
 const CHAT_VISUAL_CSS =
   "<style>html,body{background:transparent!important}body>div:only-of-type{background:transparent!important;border:0!important;box-shadow:none!important}</style>";
 
+// Visuals run in an opaque origin, where touching localStorage throws and stops the page's script.
+const CHAT_VISUAL_STORAGE_SCRIPT = `<script>(function(){function m(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){var k=Object.keys(d)[i];return k===undefined?null:k},get length(){return Object.keys(d).length}}}["localStorage","sessionStorage"].forEach(function(n){try{if(window[n])return}catch(e){}try{Object.defineProperty(window,n,{value:m(),configurable:true})}catch(e){}})})();</script>`;
+
 /** A chat visual as a page with the app theme and no background of its own. */
 export function chatVisualDocument(html: string, theme?: HtmlRenderTheme): string {
-  return injectHtmlRenderBootstrap(html + CHAT_VISUAL_CSS, theme);
+  // Ahead of the theme sheet, so the storage stand-in exists before any of the page's scripts.
+  return injectHtmlRenderBootstrap(html + CHAT_VISUAL_CSS, theme).replace(
+    '<style id="t3-theme">',
+    `${CHAT_VISUAL_STORAGE_SCRIPT}<style id="t3-theme">`,
+  );
 }
 
 /** Fence language for HTML visuals written inline in a chat reply. */
@@ -459,6 +466,7 @@ export const CHAT_VISUAL_GUIDE = [
   "Keep the HTML compact, well under 15 KB: no comments, shared CSS classes instead of repeated inline styles. A longer reply gets cut off and the visual is lost.",
   "Keep a short text answer around it, but do not repeat what the visual already shows.",
   "It sits directly on the chat with no background or frame of its own; never wrap it in an outer card.",
+  "Earlier visuals appear in the conversation only as [Visual: …] summaries. Never write one yourself; to show or change a visual, call `show_visual` again with the full HTML.",
   HTML_RENDER_LAYOUT_GUIDE,
   HTML_RENDER_THEME_GUIDE,
 ].join(" ");
@@ -544,7 +552,9 @@ export function splitChatVisuals(text: string): ReadonlyArray<ChatVisualSegment>
       continue;
     }
     if (closes) {
-      segments.push({ kind: "visual", html: fence.visual.join("\n"), complete: true });
+      const html = fence.visual.join("\n");
+      // The relay closes a visual whose page was cut off with nothing in it.
+      if (html.trim() !== "") segments.push({ kind: "visual", html, complete: true });
       fence = null;
       continue;
     }
