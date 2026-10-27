@@ -35,6 +35,7 @@ import {
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { rootNavigationRef } from "../../lib/rootNavigation";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -42,9 +43,12 @@ import {
   appendComposerDraftAttachments,
   type ComposerDraftInsertion,
   type ComposerDraftWorkspaceSelection,
+  composerDraftsAtom,
   composerDraftsLoadedAtom,
   createNewTaskDraft,
+  findResumableNewTaskDraftKey,
   getComposerDraftSnapshot,
+  isComposerDraftInUse,
   isNewTaskDraftKey,
   removeComposerDraftAttachment,
   replaceComposerDraftAttachments,
@@ -94,6 +98,7 @@ import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
+  boundNewTaskDraftKeys,
   INACTIVE_FLOW_KEY,
   type NewTaskFlowState,
   newTaskFlowStateAtom,
@@ -101,8 +106,10 @@ import {
   resolveRouteDraft,
   type RouteDraftResolution,
   stampedEnvironmentProjectsLoading,
+  unsentDraftResumeDue,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
+import type { NewTaskDraftRouteParams } from "./thread-route-state";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
@@ -217,7 +224,7 @@ export function NewTaskFlowProvider(
     active?: boolean;
     /** Identifies the draft route this flow serves; a new key starts a fresh flow. */
     flowKey?: string;
-    routeDraftId?: string;
+    routeDraft?: NewTaskDraftRouteParams;
   }>,
 ) {
   const projects = useProjects();
@@ -238,12 +245,15 @@ export function NewTaskFlowProvider(
   });
 
   const flowKey = props.flowKey ?? INACTIVE_FLOW_KEY;
+  const routeDraftId = Array.isArray(props.routeDraft?.draftId)
+    ? props.routeDraft.draftId[0]
+    : props.routeDraft?.draftId;
   const storedFlowState = useAtomValue(newTaskFlowStateAtom(flowKey));
   const draftsLoaded = useAtomValue(composerDraftsLoadedAtom);
   // A draft route opened from a list row, a deep link, or restored state binds
   // its draft here until the flow's first write stores the binding.
   const routeDraft = useComposerDraft(
-    storedFlowState.draftKey === null ? (props.routeDraftId ?? null) : null,
+    storedFlowState.draftKey === null ? (routeDraftId ?? null) : null,
   );
   // Readiness of the environment the route's draft is stamped to; another
   // environment's projects loading first says nothing about it.
@@ -268,7 +278,7 @@ export function NewTaskFlowProvider(
   ): RouteDraftResolution =>
     resolveRouteDraft({
       flow,
-      routeDraftId: props.routeDraftId,
+      routeDraftId,
       draftsLoaded: loaded,
       stamp,
       projects,
@@ -290,9 +300,7 @@ export function NewTaskFlowProvider(
     const resolution = resolveRoute(
       stored,
       appAtomRegistry.get(composerDraftsLoadedAtom),
-      props.routeDraftId === undefined
-        ? undefined
-        : getComposerDraftSnapshot(props.routeDraftId).project,
+      routeDraftId === undefined ? undefined : getComposerDraftSnapshot(routeDraftId).project,
     );
     return resolution.kind === "open" ? resolution.flow : stored;
   };
@@ -388,29 +396,42 @@ export function NewTaskFlowProvider(
   })();
 
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
+  const resumeUnsentDraft = unsentDraftResumeDue({
+    route: props.routeDraft,
+    flow: flowState,
+    draftsLoaded,
+    selectedProject,
+  });
   useEffect(() => {
     // A route that names a draft binds that draft, or returns to the picker.
-    if (
-      props.active === false ||
-      props.routeDraftId !== undefined ||
-      activeDraftKey !== null ||
-      selectedProject === null
-    ) {
+    if (props.active === false || routeDraftId !== undefined || selectedProject === null) {
       return;
     }
-    // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
+    const project = { environmentId: selectedProject.environmentId, projectId: selectedProject.id };
+    if (activeDraftKey === null) {
+      // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
+      updateNewTaskFlowState(flowKey, { draftKey: createNewTaskDraft(project) });
+      return;
+    }
+    if (!resumeUnsentDraft) return;
+    // Work the user started before drafts loaded wins over an older unsent draft.
+    const unsentDraftKey = isComposerDraftInUse(activeDraftKey)
+      ? null
+      : findResumableNewTaskDraftKey(
+          appAtomRegistry.get(composerDraftsAtom),
+          project,
+          boundNewTaskDraftKeys(rootNavigationRef.getRootState()),
+        );
     updateNewTaskFlowState(flowKey, {
-      draftKey: createNewTaskDraft({
-        environmentId: selectedProject.environmentId,
-        projectId: selectedProject.id,
-      }),
+      unsentDraftChecked: true,
+      ...(unsentDraftKey === null ? {} : { draftKey: unsentDraftKey }),
     });
-  }, [activeDraftKey, flowKey, selectedProject, props.active, props.routeDraftId]);
+  }, [activeDraftKey, flowKey, selectedProject, props.active, resumeUnsentDraft, routeDraftId]);
   const activePendingKey =
     props.active === false
       ? null
-      : props.routeDraftId
-        ? `draft-task:${props.routeDraftId}`
+      : routeDraftId
+        ? `draft-task:${routeDraftId}`
         : selectedProjectDraftKey
           ? `draft-task:${selectedProjectDraftKey}`
           : null;
@@ -860,8 +881,7 @@ export function NewTaskFlowProvider(
     providerGroups,
     setProject,
     getSelectedProjectKey: () => readFlow().projectKey,
-    missingRouteDraftId:
-      routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
+    missingRouteDraftId: routeDraftResolution.kind === "missing" ? (routeDraftId ?? null) : null,
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,
