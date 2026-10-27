@@ -8,7 +8,17 @@ export type PullRequestBodySegment =
       readonly kind: "attachment";
       readonly url: string;
       readonly media: "video" | "image" | "unknown";
+    }
+  | {
+      readonly id: string;
+      readonly kind: "table";
+      readonly rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
     };
+
+export type PullRequestBodyTableCell = {
+  readonly header: boolean;
+  readonly segments: ReadonlyArray<PullRequestBodySegment>;
+};
 
 const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)$/u;
 /**
@@ -27,6 +37,14 @@ const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)[
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+
+/** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
+const TABLE_MAX_LINES = 64;
+const TABLE_START_PATTERN = /^\s*<table\b/iu;
+const TABLE_END_PATTERN = /<\/table>\s*$/iu;
+const TABLE_TAG_PATTERN = /<table\b/giu;
+const TABLE_ROW_PATTERN = /<tr\b[^>]*>([\s\S]*?)<\/tr>/giu;
+const TABLE_CELL_PATTERN = /<(td|th)\b[^>]*>([\s\S]*?)<\/\1>/giu;
 
 function isWebUrl(url: string): boolean {
   try {
@@ -48,6 +66,31 @@ function attachmentFromLine(
   }
   if (IMAGE_EXTENSION_PATTERN.test(url)) return { url, media: "image" };
   return null;
+}
+
+/** Lifting attachment links out of a table's cells would tear the table apart. */
+function mediaTableAt(
+  lines: ReadonlyArray<string>,
+  start: number,
+): { end: number; rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>> } | null {
+  const lastCandidate = Math.min(start + TABLE_MAX_LINES, lines.length) - 1;
+  let end = start;
+  while (end < lastCandidate && !TABLE_END_PATTERN.test(lines[end]!)) {
+    end += 1;
+  }
+  if (!TABLE_END_PATTERN.test(lines[end]!)) return null;
+  const html = lines.slice(start, end + 1).join("\n");
+  if ((html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
+  const rows = Array.from(html.matchAll(TABLE_ROW_PATTERN), ([, row]) =>
+    Array.from(row!.matchAll(TABLE_CELL_PATTERN), ([, tag, content]) => ({
+      header: tag!.toLowerCase() === "th",
+      segments: splitPullRequestBody(content!),
+    })),
+  ).filter((cells) => cells.length > 0);
+  const hasMedia = rows.some((cells) =>
+    cells.some((cell) => cell.segments.some((segment) => segment.kind === "attachment")),
+  );
+  return hasMedia ? { end, rows } : null;
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
@@ -89,6 +132,14 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
       markdown.push(line);
+      continue;
+    }
+
+    const table = TABLE_START_PATTERN.test(line) ? mediaTableAt(lines, index) : null;
+    if (table !== null) {
+      flushMarkdown();
+      segments.push({ id: `table:${segments.length}`, kind: "table", rows: table.rows });
+      index = table.end;
       continue;
     }
 

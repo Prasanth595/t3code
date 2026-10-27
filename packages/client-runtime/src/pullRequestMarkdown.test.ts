@@ -122,6 +122,50 @@ describe("media on custom hosts", () => {
       { id: "markdown:0", kind: "markdown", text: body },
     ]);
   });
+  it("keeps a before/after table of videos together, splitting each cell", () => {
+    const before =
+      "https://github.com/user-attachments/assets/c69c7c1c-ef2f-47dd-97e8-fe42e40712eb";
+    const after = "https://github.com/user-attachments/assets/1867b6ec-4f88-4248-b2df-6b0f9808105b";
+    expect(
+      splitPullRequestBody(
+        `Intro\n\n<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr>\n<td>\n\n${before}\n\n</td>\n<td>\n\n${after}\n\n</td>\n</tr>\n</table>\n\nOutro`,
+      ),
+    ).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "Intro" },
+      {
+        id: "table:1",
+        kind: "table",
+        rows: [
+          [
+            { header: true, segments: [{ id: "markdown:0", kind: "markdown", text: "Before" }] },
+            { header: true, segments: [{ id: "markdown:0", kind: "markdown", text: "After" }] },
+          ],
+          [
+            {
+              header: false,
+              segments: [{ id: "attachment:0", kind: "attachment", url: before, media: "video" }],
+            },
+            {
+              header: false,
+              segments: [{ id: "attachment:0", kind: "attachment", url: after, media: "video" }],
+            },
+          ],
+        ],
+      },
+      { id: "markdown:2", kind: "markdown", text: "Outro" },
+    ]);
+  });
+
+  it("leaves a table without media, or an unclosed one, as markdown", () => {
+    const plain = "<table>\n<tr><td>a</td><td>b</td></tr>\n</table>";
+    expect(splitPullRequestBody(plain)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: plain },
+    ]);
+    expect(splitPullRequestBody("<table>\n<tr><td>\n\nhttps://example.com/a.mp4")).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "<table>\n<tr><td>" },
+      { id: "attachment:1", kind: "attachment", url: "https://example.com/a.mp4", media: "video" },
+    ]);
+  });
 });
 
 describe("change request reference autolinks", () => {

@@ -1,4 +1,7 @@
-import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -96,19 +99,55 @@ export function PullRequestMarkdown(props: {
   readonly imageGroupMarkdown?: string;
 }) {
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const imageGroupMarkdown = props.imageGroupMarkdown ?? props.markdown;
   return (
     <View style={{ gap: 12 }}>
-      {segments.map((segment) =>
-        segment.kind === "markdown" ? (
-          <PullRequestMarkdownContent
-            key={segment.id}
-            markdown={segment.text}
-            imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
-          />
-        ) : (
-          <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />
-        ),
-      )}
+      {segments.map((segment) => (
+        <PullRequestBodySegmentView
+          key={segment.id}
+          segment={segment}
+          imageGroupMarkdown={imageGroupMarkdown}
+        />
+      ))}
+    </View>
+  );
+}
+
+function PullRequestBodySegmentView(props: {
+  readonly segment: PullRequestBodySegment;
+  readonly imageGroupMarkdown: string;
+}) {
+  const { segment } = props;
+  if (segment.kind === "markdown") {
+    return (
+      <PullRequestMarkdownContent
+        markdown={segment.text}
+        imageGroupMarkdown={props.imageGroupMarkdown}
+      />
+    );
+  }
+  if (segment.kind === "attachment") {
+    return <PullRequestMedia url={segment.url} kind={segment.media} />;
+  }
+  return (
+    <View style={{ gap: 12 }}>
+      {segment.rows.map((cells, rowIndex) => (
+        // oxlint-disable-next-line react/no-array-index-key -- rows have no identity besides position
+        <View key={rowIndex} style={{ flexDirection: "row", gap: 12 }}>
+          {cells.map((cell, cellIndex) => (
+            // oxlint-disable-next-line react/no-array-index-key -- cells have no identity besides position
+            <View key={cellIndex} style={{ flex: 1, minWidth: 0, gap: 12 }}>
+              {cell.segments.map((cellSegment) => (
+                <PullRequestBodySegmentView
+                  key={cellSegment.id}
+                  segment={cellSegment}
+                  imageGroupMarkdown={props.imageGroupMarkdown}
+                />
+              ))}
+            </View>
+          ))}
+        </View>
+      ))}
     </View>
   );
 }
