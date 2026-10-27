@@ -26,15 +26,10 @@ import { makeManagedServerProvider } from "@t3tools/provider-core/server/managed
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
 import type { MuseSubscriptionUsage } from "./protocol.ts";
-import {
-  museStatusUsageLimits,
-  museUsageAccount,
-  museUsageWindows,
-  nextMuseUsageAccount,
-  type MuseUsageAccount,
-} from "./usageLimits.ts";
+import { museUsageAccount, museUsageWindows, type MuseUsageAccount } from "./usageLimits.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { museUsageReader } from "./usage.ts";
+import { refreshMuseUsage } from "./usageProbe.ts";
 import type * as MuseUsageHome from "./MuseUsageHome.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -117,10 +112,7 @@ export const MuseDriver: ProviderDriver<
       continuationGroupKey: continuationIdentity.continuationKey,
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-    // Meta reports subscription usage only with a model response, and a status
-    // check makes none. Keep the newest report from any of this instance's
-    // sessions so a refresh re-derives the windows instead of dropping them.
-    // Each report counts for the account generation its host started under.
+    // Keep CLI observations and streamed reports in the same account generation.
     const usageAccount = yield* Ref.make<MuseUsageAccount>({
       generation: 0,
       identity: undefined,
@@ -134,22 +126,17 @@ export const MuseDriver: ProviderDriver<
     const withUsageLimits = Effect.fn("MuseDriver.withUsageLimits")(function* (
       provider: ServerProviderDraft,
     ) {
-      const { generation } = yield* Ref.updateAndGet(usageAccount, (account) =>
-        nextMuseUsageAccount(account, provider.auth),
-      );
-      const { retained, dropped } = yield* Ref.modify(latestUsage, (current) => {
-        const drop = current !== undefined && current.generation !== generation;
-        const kept = drop ? undefined : current;
-        return [{ retained: kept, dropped: drop }, kept] as const;
+      const refreshed = yield* refreshMuseUsage({
+        settings: effectiveConfig,
+        environment: processEnvironment,
+        cwd,
+        provider,
+        account: yield* Ref.get(usageAccount),
+        latestUsage: yield* Ref.get(latestUsage),
       });
-      const usageLimits = museStatusUsageLimits({
-        auth: provider.auth,
-        enabled: provider.enabled,
-        observation: retained?.usage,
-        dropped,
-        nowMs: DateTime.toEpochMillis(yield* DateTime.now),
-      });
-      return usageLimits ? { ...provider, usageLimits } : provider;
+      yield* Ref.set(usageAccount, refreshed.account);
+      yield* Ref.set(latestUsage, refreshed.latestUsage);
+      return refreshed.provider;
     }, usagePermit.withPermits(1));
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {

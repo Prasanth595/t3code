@@ -46,9 +46,11 @@ can use under **Custom models** in the instance settings.
 ## Usage limits
 
 **Usage → Limits** shows your Meta subscription's session and weekly windows.
-Muse reports them with each reply, so they appear after Muse's first reply
-since the T3 server started. The same Meta account signed in on several hosts
-counts once.
+T3 Code checks them when provider status refreshes, without sending a model
+message, on Muse versions supporting `muse usage --json` (1.4.13 or newer).
+Replies also update the windows. If the command is unavailable or Meta has not
+reported an allowance yet, limits appear after Muse's next reply. The same
+Meta account signed in on several hosts counts once.
 
 With an API key, Limits shows none: a key names no Meta account to count
 them against.
