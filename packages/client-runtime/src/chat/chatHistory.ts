@@ -316,8 +316,10 @@ export class ChatHistory {
         code: "network",
         message: "Could not reach Mira. Check your internet connection.",
       }));
-    if (result.ok && result.text !== "") {
-      const latest = this.find(chat.id) ?? chat;
+    const latest = this.find(chat.id);
+    if (latest === undefined) {
+      this.publish({ streaming: null });
+    } else if (result.ok && result.text !== "") {
       const repliedAt = this.now();
       this.write({
         ...latest,

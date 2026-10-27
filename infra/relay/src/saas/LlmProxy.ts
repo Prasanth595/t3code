@@ -499,10 +499,10 @@ export const make = Effect.gen(function* () {
           ];
           const response = yield* modelTurn({ ...input, messages: following });
           if (response.status !== 200) {
-            yield* Effect.logWarning("Chat model refused a search follow-up", {
+            yield* Effect.logWarning("Chat model refused a follow-up turn", {
               status: response.status,
             });
-            return Stream.make(contentEvent("Mira could not finish searching. Try again."));
+            return Stream.make(contentEvent("Mira could not finish this answer. Try again."));
           }
           return turn(response, following, round + 1);
         }),
