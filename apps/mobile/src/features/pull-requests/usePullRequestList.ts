@@ -153,8 +153,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const refreshAtom = refreshLoadFamily(scopeKey);
   const page = useAtomValue(pageAtom);
   const refresh = useAtomValue(refreshAtom);
-  // Starting one kind of load clears the other, so at most one holds an error.
-  const loadError = settledError(refresh) ?? settledError(page);
+  const loadError = settledError(page);
 
   const loadMore = (retry = false) => {
     if (page.waiting || refresh.waiting || (!retry && loadError)) return;
