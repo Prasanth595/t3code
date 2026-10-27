@@ -24,6 +24,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
+  threadWorksPastQuestion,
 } from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
@@ -82,6 +83,12 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
+const WORKING_STATUS_LABEL: StatusLabel = {
+  label: "Working",
+  icon: "circle.dashed",
+  className: "text-adaptive-sky-600-400",
+  iconTintClassName: "accent-adaptive-sky-600-400",
+};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -101,12 +108,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-fuchsia-600-300",
     iconTintClassName: "accent-adaptive-fuchsia-600-300",
   },
-  working: {
-    label: "Working",
-    icon: "circle.dashed",
-    className: "text-adaptive-sky-600-400",
-    iconTintClassName: "accent-adaptive-sky-600-400",
-  },
+  working: WORKING_STATUS_LABEL,
   waiting: {
     label: "Waiting",
     icon: "circle.dashed.inset.filled",
@@ -680,6 +682,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
+  const worksPastQuestion = status === "input" && threadWorksPastQuestion(thread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
@@ -1116,6 +1119,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
                 ) : null}
               </Text>
+              {worksPastQuestion ? (
+                <>
+                  <SymbolView
+                    name={WORKING_STATUS_LABEL.icon}
+                    size={13}
+                    tintColorClassName={
+                      selected
+                        ? selectedThreadRowColors.iconTintClassName
+                        : WORKING_STATUS_LABEL.iconTintClassName
+                    }
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                  <Text
+                    className={cn(
+                      "text-xs font-t3-bold tabular-nums",
+                      selected
+                        ? selectedThreadRowColors.foregroundClassName
+                        : WORKING_STATUS_LABEL.className,
+                    )}
+                  >
+                    <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+                  </Text>
+                </>
+              ) : null}
             </View>
           ) : (
             <Text

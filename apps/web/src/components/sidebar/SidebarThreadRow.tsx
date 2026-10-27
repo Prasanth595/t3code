@@ -18,6 +18,7 @@ import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import {
   formatWorkingDurationLabel,
   resolveThreadProviderStack,
+  threadWorksPastQuestion,
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -683,6 +684,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const worksPastQuestion = status === "input" && threadWorksPastQuestion(thread);
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -964,7 +966,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel: worksPastQuestion ? "Input, Working" : (topStatus?.label ?? null),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1384,6 +1386,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           ) : status === "waiting" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
+                            </span>
+                          ) : worksPastQuestion ? (
+                            <span
+                              aria-hidden
+                              className="inline-flex items-center gap-1 text-info-foreground"
+                            >
+                              <CircleDashedIcon className="size-4 shrink-0" />
+                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                             </span>
                           ) : null}
                         </span>

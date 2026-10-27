@@ -1,6 +1,7 @@
 import {
   resolveThreadWorkingStartedAt,
   threadHasOpenQuestion,
+  threadWorksPastQuestion,
 } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -1071,7 +1072,7 @@ export function resolveThreadStatusPill(input: {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
+      pulse: threadWorksPastQuestion(thread),
     };
   }
 

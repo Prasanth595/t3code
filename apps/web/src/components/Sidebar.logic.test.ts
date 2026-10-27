@@ -449,24 +449,31 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
-  it("shows Input for an async question while the agent keeps working", () => {
-    const asyncQuestion = presentThreadShell(localEnvironmentId, {
-      ...makeThreadFixture().source,
-      latestRunId: RunId.make("run-async-question"),
-      activeRunId: RunId.make("run-async-question"),
-      status: "running",
-      pendingRuntimeRequest: {
-        id: RuntimeRequestId.make("request-async-question"),
-        kind: "user_input",
-        createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
-        blocking: false,
-      },
-    });
+  it("shows Input for an async question and keeps pulsing while the agent works", () => {
+    const question = (blocking: boolean) =>
+      presentThreadShell(localEnvironmentId, {
+        ...makeThreadFixture().source,
+        latestRunId: RunId.make("run-question"),
+        activeRunId: RunId.make("run-question"),
+        status: "running",
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-question"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
+          blocking,
+        },
+      });
+    const asyncQuestion = question(false);
 
     expect(asyncQuestion.hasPendingUserInput).toBe(false);
     expect(resolveSidebarThreadStatus(asyncQuestion)).toBe("input");
     expect(resolveThreadStatusPill({ thread: asyncQuestion })).toMatchObject({
       label: "Awaiting Input",
+      pulse: true,
+    });
+    expect(resolveThreadStatusPill({ thread: question(true) })).toMatchObject({
+      label: "Awaiting Input",
+      pulse: false,
     });
   });
 

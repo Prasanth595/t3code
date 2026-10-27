@@ -251,13 +251,18 @@ export function scopeProject(
 
 export type PendingSubagentRequest = "approval" | "user_input";
 
+type OpenQuestionShell = Pick<EnvironmentThreadShell, "hasPendingUserInput"> & {
+  readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest"> | undefined;
+};
+
 /** Thread lists show Input even for async questions the agent keeps working past. */
-export function threadHasOpenQuestion(
-  thread: Pick<EnvironmentThreadShell, "hasPendingUserInput"> & {
-    readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest"> | undefined;
-  },
-): boolean {
-  return thread.hasPendingUserInput || thread.source?.pendingRuntimeRequest?.kind === "user_input";
+export function threadHasOpenQuestion(thread: OpenQuestionShell): boolean {
+  return thread.hasPendingUserInput || threadWorksPastQuestion(thread);
+}
+
+/** An async question during active work; lists pair Input with a Working cue. */
+export function threadWorksPastQuestion(thread: OpenQuestionShell): boolean {
+  return !thread.hasPendingUserInput && thread.source?.pendingRuntimeRequest?.kind === "user_input";
 }
 
 export function presentThreadShell(

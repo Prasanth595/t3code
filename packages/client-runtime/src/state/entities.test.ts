@@ -12,7 +12,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
+import {
+  presentThreadShell,
+  resolveThreadWorkingStartedAt,
+  threadWorksPastQuestion,
+} from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { isThreadWorking } from "./threadInbox.ts";
@@ -40,6 +44,7 @@ describe("V2 client presentation", () => {
     };
     const active = presentThreadShell(environmentId, running);
     expect(active.hasPendingUserInput).toBe(false);
+    expect(threadWorksPastQuestion(active)).toBe(true);
     expect(isThreadWorking(active)).toBe(true);
     expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
 
@@ -49,6 +54,7 @@ describe("V2 client presentation", () => {
       status: "completed",
     });
     expect(completed.hasPendingUserInput).toBe(true);
+    expect(threadWorksPastQuestion(completed)).toBe(false);
     expect(isThreadWorking(completed)).toBe(false);
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
@@ -68,6 +74,7 @@ describe("V2 client presentation", () => {
         },
       });
       expect(shell.hasPendingUserInput).toBe(true);
+      expect(threadWorksPastQuestion(shell)).toBe(false);
       expect(isThreadWorking(shell)).toBe(false);
     }
   });
