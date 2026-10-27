@@ -219,6 +219,7 @@ const make = Effect.gen(function* () {
       id: source.id,
       title: source.title,
       description: source.description,
+      ...(source.requirements ? { requirements: source.requirements } : {}),
       path: target,
       ...(yield* observe(target, source)),
     };

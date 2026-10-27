@@ -1,7 +1,17 @@
 import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-export const BundledSkillId = Schema.Literals(["t3code-threads", "t3code-orchestration"]);
+export const BundledSkillId = Schema.Literals([
+  "t3code-threads",
+  "t3code-orchestration",
+  "t3code-browser",
+  "t3code-computer-use",
+  "t3code-linear",
+  "t3code-jira",
+  "t3code-ios",
+  "t3code-android",
+  "t3code-workspace-setup",
+]);
 export const ManagedSkillStatus = Schema.Literals([
   "not_installed",
   "installed",
@@ -13,6 +23,7 @@ export const ManagedSkill = Schema.Struct({
   id: BundledSkillId,
   title: Schema.String,
   description: Schema.String,
+  requirements: Schema.optional(Schema.String),
   path: Schema.String,
   status: ManagedSkillStatus,
   fingerprint: Schema.String,

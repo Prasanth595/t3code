@@ -97,6 +97,7 @@ it.layer(NodeServices.layer)("bundled skill installation", (it) => {
         expect((yield* skill(manager)).status).toBe("not_installed");
         const installed = yield* install(manager);
         expect(installed.status).toBe("installed");
+        expect(installed.requirements).toBe(source.requirements);
         expect(yield* fs.readFileString(`${installed.path}/SKILL.md`)).toBe("original skill\n");
         const next = yield* getManager(home, [
           { ...source, files: { ...source.files, "SKILL.md": "updated skill\n" } },
