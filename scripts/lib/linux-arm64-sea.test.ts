@@ -1,5 +1,6 @@
+// TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
 import { describe, expect, it } from "@effect/vitest";
-import { assertLinuxArm64PageCompatibility } from "./cli-sea.ts";
+import { assertLinuxArm64PageCompatibility } from "./linux-arm64-sea.ts";
 
 function elf(loads: Array<{ offset: bigint; address: bigint; size: bigint }>) {
   const bytes = new Uint8Array(64 + loads.length * 56);

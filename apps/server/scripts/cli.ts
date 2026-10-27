@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import * as NodeModule from "node:module";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -7,12 +6,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import { injectLinuxArm64Sea } from "../../../scripts/lib/linux-arm64-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -22,10 +21,7 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
-  ServerCliNodeVersionError,
 } from "./cliErrors.ts";
-
-const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -45,62 +41,6 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
     });
   }
 });
-
-// Node's --build-sea puts linux-arm64 segments on 4 KiB boundaries, which 16 and 64 KiB page
-// kernels refuse to load. postject keeps the ELF layout page-compatible.
-const injectLinuxArm64Sea = Effect.fn("injectLinuxArm64Sea")(function* (
-  bundlePath: string,
-  outputPath: string,
-  verbose: boolean,
-) {
-  // The copied execPath is the shipped runtime; vp pack only checks its own Node.
-  if (process.versions.node !== rootPackageJson.engines.node) {
-    return yield* new ServerCliNodeVersionError({
-      expected: rootPackageJson.engines.node,
-      actual: process.versions.node,
-    });
-  }
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sea-" });
-  const blobPath = path.join(temp, "sea.blob");
-  const configPath = path.join(temp, "sea.json");
-  const stdout = verbose ? "inherit" : "ignore";
-  yield* fs.writeFileString(
-    configPath,
-    yield* encodeJson({
-      main: bundlePath,
-      output: blobPath,
-      mainFormat: "module",
-      disableExperimentalSEAWarning: true,
-      // Node SEA useCodeCache breaks import(), which the server needs.
-      useCodeCache: false,
-    }),
-  );
-  yield* runCommand(
-    ChildProcess.make(process.execPath, ["--experimental-sea-config", configPath], {
-      stdout,
-      stderr: "inherit",
-    }),
-  );
-  yield* fs.copyFile(process.execPath, outputPath);
-  yield* fs.chmod(outputPath, 0o755);
-  const require = NodeModule.createRequire(import.meta.url);
-  yield* runCommand(
-    ChildProcess.make(
-      process.execPath,
-      [
-        require.resolve("postject/dist/cli.js"),
-        outputPath,
-        "NODE_SEA_BLOB",
-        blobPath,
-        "--sentinel-fuse",
-        "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
-      ],
-      { stdout, stderr: "inherit" },
-    ),
-  );
-}, Effect.scoped);
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
   repoRoot: string,
@@ -181,6 +121,7 @@ const buildExeCmd = Command.make(
 
       yield* Effect.log("[cli] Building single-executable...");
       const target = Option.getOrUndefined(config.target);
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
       const linuxArm64 =
         !target &&
         (yield* HostProcess.Platform) === "linux" &&
@@ -207,7 +148,12 @@ const buildExeCmd = Command.make(
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
       if (linuxArm64) {
-        yield* injectLinuxArm64Sea(bundlePath, path.join(serverDir, "dist-exe/t3"), config.verbose);
+        yield* injectLinuxArm64Sea({
+          bundlePath,
+          outputPath: path.join(serverDir, "dist-exe/t3"),
+          nodeVersion: rootPackageJson.engines.node,
+          verbose: config.verbose,
+        });
       }
       yield* Effect.log(
         "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
