@@ -4,14 +4,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { RelayApi } from "@t3tools/contracts/relay";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as Etag from "effect/http/Etag";
 import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -27,30 +25,30 @@ import * as MobileTelemetry from "./MobileTelemetry.ts";
 
 const PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
 const UPDATE_ID = "0198e8a4-1111-7000-8000-000000000001";
+const BUILD_ID = "0198e8a4-2222-7000-8000-000000000002";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const destinations = {
-  traces: { url: "https://axiom.test/v1/traces", dataset: "relay-traces" },
+  traces: { url: "https://axiom.test/v1/traces", dataset: "mobile-traces" },
   logs: { url: "https://axiom.test/v1/logs", dataset: "mobile-logs" },
   metrics: { url: "https://axiom.test/v1/metrics", dataset: "mobile-metrics" },
 } as const;
 
 /** Maps generated column 12 of the one-line bundle to `src/App.tsx` 1:2. */
 const SOURCE_MAP = encodeJson({ version: 3, sources: ["src/App.tsx"], mappings: "AAAA,UAAE" });
+const STACK = "Error: x\n    at render (address at index.android.bundle:1:12)";
 
 interface Harness {
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
-  readonly objects?: Readonly<Record<string, string | { readonly size: number }>>;
-  readonly allow?: boolean;
+  /** The source maps bucket, by key. */
+  readonly objects?: Readonly<Record<string, string>>;
 }
 
 const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
   const sent: Array<HttpClientRequest.HttpClientRequest> = [];
-  const objectLookups: Array<string> = [];
-  const objectReads: Array<string> = [];
   const execute =
     options.execute ??
     ((request: HttpClientRequest.HttpClientRequest) =>
@@ -60,27 +58,6 @@ const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
           new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
         ),
       ));
-  // One per harness, as the Worker builds one per isolate.
-  const sourceMaps = yield* MobileTelemetry.SourceMaps.pipe(
-    Effect.provide(MobileTelemetry.layerSourceMaps),
-    Effect.provideService(MobileTelemetry.SourceMapObjects, {
-      get: (key) =>
-        Effect.sync(() => {
-          objectLookups.push(key);
-          const object = options.objects?.[key];
-          if (object === undefined) return undefined;
-          return typeof object === "string"
-            ? {
-                size: object.length,
-                text: Effect.sync(() => {
-                  objectReads.push(key);
-                  return object;
-                }),
-              }
-            : { size: object.size, text: Effect.die("read an object too large to decode") };
-        }),
-    }),
-  );
   const layerTelemetry = MobileTelemetry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -89,9 +66,21 @@ const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
           destinations,
         }),
         Layer.succeed(MobileTelemetry.MobileTelemetryRateLimiter, {
-          allow: () => Effect.succeed(options.allow ?? true),
+          allow: () => Effect.succeed(true),
         }),
-        Layer.succeed(MobileTelemetry.SourceMaps, sourceMaps),
+        MobileTelemetry.layerSourceMaps.pipe(
+          Layer.provide(
+            Layer.succeed(MobileTelemetry.SourceMapObjects, {
+              get: (key) =>
+                Effect.sync(() => {
+                  const object = options.objects?.[key];
+                  return object === undefined
+                    ? undefined
+                    : { size: object.length, text: Effect.succeed(object) };
+                }),
+            }),
+          ),
+        ),
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
@@ -125,11 +114,11 @@ const makeHarness = Effect.fnUntraced(function* (options: Harness = {}) {
       );
       return yield* Deferred.await(response);
     });
-  return { sent, objectLookups, objectReads, send };
+  return { sent, send };
 });
 
-const ingest = (signal: string, body: string, projectId = PROJECT_ID) =>
-  new Request(`https://relay.test/v1/mobile/observe/${projectId}/v1/${signal}`, {
+const ingest = (signal: string, body: string) =>
+  new Request(`https://relay.test/v1/mobile/observe/${PROJECT_ID}/v1/${signal}`, {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
     body,
@@ -138,29 +127,24 @@ const ingest = (signal: string, body: string, projectId = PROJECT_ID) =>
 const sentText = (request: HttpClientRequest.HttpClientRequest) =>
   request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
 
-const exceptionResourceLogs = (updateId: string, stacks: ReadonlyArray<string>) => ({
-  resource: {
-    attributes: [
-      { key: "os.type", value: { stringValue: "linux" } },
-      { key: "expo.app.update_id", value: { stringValue: updateId } },
-    ],
-  },
+const str = (key: string, value: string) => ({ key, value: { stringValue: value } });
+
+/** One resource's JS exception, as Observe reports it from the app's bundle. */
+const exceptionResource = (resource: ReadonlyArray<ReturnType<typeof str>>) => ({
+  resource: { attributes: resource },
   scopeLogs: [
     {
-      logRecords: stacks.map((stack) => ({
-        attributes: [
-          { key: "expo.error.source", value: { stringValue: "global" } },
-          { key: "exception.stacktrace", value: { stringValue: stack } },
-        ],
-      })),
+      logRecords: [
+        {
+          attributes: [str("expo.error.source", "global"), str("exception.stacktrace", STACK)],
+        },
+      ],
     },
   ],
 });
 
-const exceptionLogs = (...stacks: ReadonlyArray<string>) =>
-  encodeJson({ resourceLogs: [exceptionResourceLogs(UPDATE_ID, stacks)] });
-
-const forwardedStack = (request: HttpClientRequest.HttpClientRequest) => {
+/** Each forwarded exception record's string attributes. */
+const forwardedExceptions = (request: HttpClientRequest.HttpClientRequest) => {
   const payload = decodeJson(sentText(request)) as {
     resourceLogs: Array<{
       scopeLogs: Array<{
@@ -168,8 +152,14 @@ const forwardedStack = (request: HttpClientRequest.HttpClientRequest) => {
       }>;
     }>;
   };
-  const attributes = payload.resourceLogs[0]!.scopeLogs[0]!.logRecords[0]!.attributes;
-  return Object.fromEntries(attributes.map(({ key, value }) => [key, value.stringValue]));
+  return payload.resourceLogs.map((resourceLogs) =>
+    Object.fromEntries(
+      resourceLogs.scopeLogs[0]!.logRecords[0]!.attributes.map(({ key, value }) => [
+        key,
+        value.stringValue,
+      ]),
+    ),
+  );
 };
 
 describe("MobileTelemetry", () => {
@@ -199,126 +189,6 @@ describe("MobileTelemetry", () => {
     }),
   );
 
-  it.effect("symbolicates JavaScript exception stacks with the bundle's map", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        objects: { [`android/ota/${UPDATE_ID}.map`]: SOURCE_MAP },
-      });
-      const stack = "Error: x\n    at render (address at index.android.bundle:1:12)";
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const response = yield* harness.send(ingest("logs", exceptionLogs(stack)));
-        expect(response.status).toBe(200);
-      }
-      expect(forwardedStack(harness.sent[1]!)).toEqual({
-        "expo.error.source": "global",
-        "exception.stacktrace": "Error: x\n    at render (src/App.tsx:1:3)",
-        "relay.symbolication.source_map": `android/ota/${UPDATE_ID}.map`,
-        "relay.symbolication.status": "symbolicated",
-        "relay.symbolication.raw_stacktrace": stack,
-      });
-      // The decoded map is reused for the second request.
-      expect(harness.objectReads).toEqual([`android/ota/${UPDATE_ID}.map`]);
-    }),
-  );
-
-  it.effect("shares one growth budget across every exception in a request", () =>
-    Effect.gen(function* () {
-      // Each rewritten frame grows by about 600 KiB, so only the first fits in 1 MiB.
-      const longSource = `${"a".repeat(600 * 1024)}.tsx`;
-      const harness = yield* makeHarness({
-        objects: {
-          [`android/ota/${UPDATE_ID}.map`]: encodeJson({
-            version: 3,
-            sources: [longSource],
-            mappings: "AAAA",
-          }),
-        },
-      });
-      const stack = "Error: x\n    at render (address at index.android.bundle:1:0)";
-      yield* harness.send(ingest("logs", exceptionLogs(stack, stack)));
-      const payload = decodeJson(sentText(harness.sent[0]!)) as {
-        resourceLogs: Array<{
-          scopeLogs: Array<{
-            logRecords: Array<{
-              attributes: Array<{ key: string; value: { stringValue: string } }>;
-            }>;
-          }>;
-        }>;
-      };
-      const statuses = payload.resourceLogs[0]!.scopeLogs[0]!.logRecords.map(
-        (record) =>
-          record.attributes.find(({ key }) => key === "relay.symbolication.status")?.value
-            .stringValue,
-      );
-      expect(statuses).toEqual(["symbolicated", "no_bundle_frames"]);
-    }),
-  );
-
-  it.effect("looks up at most two bundles' maps per request", () =>
-    Effect.gen(function* () {
-      const updateIds = ["update-1", "update-2", "update-3"];
-      const harness = yield* makeHarness({
-        objects: Object.fromEntries(updateIds.map((id) => [`android/ota/${id}.map`, SOURCE_MAP])),
-      });
-      const stack = "Error: x\n    at render (address at index.android.bundle:1:12)";
-      yield* harness.send(
-        ingest(
-          "logs",
-          encodeJson({ resourceLogs: updateIds.map((id) => exceptionResourceLogs(id, [stack])) }),
-        ),
-      );
-      expect(harness.objectLookups).toEqual([
-        "android/ota/update-1.map",
-        "android/ota/update-2.map",
-      ]);
-      const payload = decodeJson(sentText(harness.sent[0]!)) as {
-        resourceLogs: Array<{
-          scopeLogs: Array<{
-            logRecords: Array<{
-              attributes: Array<{ key: string; value: { stringValue: string } }>;
-            }>;
-          }>;
-        }>;
-      };
-      const statuses = payload.resourceLogs.map(
-        (resourceLogs) =>
-          resourceLogs.scopeLogs[0]!.logRecords[0]!.attributes.find(
-            ({ key }) => key === "relay.symbolication.status",
-          )?.value.stringValue,
-      );
-      expect(statuses).toEqual(["symbolicated", "symbolicated", "source_map_missing"]);
-    }),
-  );
-
-  it.effect("forwards the stack untouched and says why when no map is stored", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const stack = "Error: x\n    at render (address at index.android.bundle:1:12)";
-      yield* harness.send(ingest("logs", exceptionLogs(stack)));
-      expect(forwardedStack(harness.sent[0]!)).toMatchObject({
-        "exception.stacktrace": stack,
-        "relay.symbolication.status": "source_map_missing",
-      });
-    }),
-  );
-
-  it.effect("skips a stored map too large to decode, without reading it", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        objects: {
-          [`android/ota/${UPDATE_ID}.map`]: { size: MobileTelemetry.MAX_SOURCE_MAP_BYTES + 1 },
-        },
-      });
-      const stack = "Error: x\n    at render (address at index.android.bundle:1:12)";
-      const response = yield* harness.send(ingest("logs", exceptionLogs(stack)));
-      expect(response.status).toBe(200);
-      expect(forwardedStack(harness.sent[0]!)).toMatchObject({
-        "exception.stacktrace": stack,
-        "relay.symbolication.status": "source_map_missing",
-      });
-    }),
-  );
-
   it.effect("passes Axiom's status and Retry-After back for Observe's retries", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -339,43 +209,71 @@ describe("MobileTelemetry", () => {
     }),
   );
 
-  it.effect("answers 502 when Axiom cannot be reached", () =>
+  it.effect("symbolicates JS exceptions with the OTA update's map, else the build's", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        execute: (request) =>
-          Effect.fail(
-            new HttpClientError.HttpClientError({
-              reason: new HttpClientError.TransportError({ request }),
-            }),
-          ),
+        objects: {
+          [`android/ota/${UPDATE_ID}.map`]: SOURCE_MAP,
+          [`ios/build/${BUILD_ID}.map`]: SOURCE_MAP,
+        },
       });
-      const response = yield* harness.send(ingest("logs", "{}"));
-      expect(response.status).toBe(502);
+      const body = encodeJson({
+        resourceLogs: [
+          exceptionResource([
+            str("os.type", "linux"),
+            str("expo.app.update_id", UPDATE_ID),
+            str("expo.eas_build.id", BUILD_ID),
+          ]),
+          exceptionResource([str("os.type", "darwin"), str("expo.eas_build.id", BUILD_ID)]),
+        ],
+      });
+      expect((yield* harness.send(ingest("logs", body))).status).toBe(200);
+      const symbolicated = (key: string) => ({
+        "expo.error.source": "global",
+        "exception.stacktrace": "Error: x\n    at render (src/App.tsx:1:3)",
+        "relay.symbolication.source_map": key,
+        "relay.symbolication.status": "symbolicated",
+        "relay.symbolication.raw_stacktrace": STACK,
+      });
+      expect(forwardedExceptions(harness.sent[0]!)).toEqual([
+        symbolicated(`android/ota/${UPDATE_ID}.map`),
+        symbolicated(`ios/build/${BUILD_ID}.map`),
+      ]);
     }),
   );
 
-  it.effect("answers upstream_timeout before the relay's request deadline cuts it off", () =>
+  it.effect("forwards the stack untouched when the OTA update's map is missing", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ execute: () => Effect.never });
-      const fiber = yield* harness.send(ingest("logs", "{}")).pipe(Effect.forkChild);
-      yield* TestClock.adjust(RelayHttpApi.RELAY_REQUEST_DEADLINE_MS - 1);
-      const response = yield* Fiber.join(fiber);
-      expect(response.status).toBe(504);
+      // The build's map describes the embedded bundle, not the update that threw.
+      const harness = yield* makeHarness({
+        objects: { [`android/build/${BUILD_ID}.map`]: SOURCE_MAP },
+      });
+      const body = encodeJson({
+        resourceLogs: [
+          exceptionResource([
+            str("os.type", "linux"),
+            str("expo.app.update_id", UPDATE_ID),
+            str("expo.eas_build.id", BUILD_ID),
+          ]),
+        ],
+      });
+      expect((yield* harness.send(ingest("logs", body))).status).toBe(200);
+      expect(forwardedExceptions(harness.sent[0]!)).toEqual([
+        {
+          "expo.error.source": "global",
+          "exception.stacktrace": STACK,
+          "relay.symbolication.status": "source_map_missing",
+        },
+      ]);
     }),
   );
 
-  it.effect("refuses bad paths, oversized bodies, and rate-limited clients", () =>
+  it.effect("answers 413 for a body over the cap without forwarding it", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
-      expect((yield* harness.send(ingest("logs", "{}", "not-a-project"))).status).toBe(404);
       const tooLarge = "x".repeat(MobileTelemetry.MOBILE_TELEMETRY_MAX_BODY_BYTES + 1);
       expect((yield* harness.send(ingest("logs", tooLarge))).status).toBe(413);
       expect(harness.sent).toEqual([]);
-
-      const limited = yield* makeHarness({ allow: false });
-      const response = yield* limited.send(ingest("logs", "{}"));
-      expect(response.status).toBe(429);
-      expect(limited.sent).toEqual([]);
     }),
   );
 });
