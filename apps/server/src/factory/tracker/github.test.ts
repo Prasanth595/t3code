@@ -4369,6 +4369,147 @@ it.effect("openPullRequestsOnHead refuses an answer it cannot read", () =>
   }),
 );
 
+/**
+ * The `headPulls` answer for each head in order: its open pull requests, those open onto it, and
+ * its ended ones.
+ */
+const headPullsReply = (
+  heads: ReadonlyArray<{
+    open: number;
+    onto?: number;
+    ended: ReadonlyArray<{ state: string; headRefOid: string; isCrossRepository: boolean }>;
+  }>,
+) =>
+  JSON.stringify({
+    data: {
+      repository: Object.fromEntries(
+        heads.flatMap((head, i) => [
+          [`o${i}`, { totalCount: head.open }],
+          [`b${i}`, { totalCount: head.onto ?? 0 }],
+          [`e${i}`, { nodes: head.ended }],
+        ]),
+      ),
+    },
+  });
+
+it.effect("headPulls reads the open and the ended pull requests of each head", () =>
+  Effect.gen(function* () {
+    const other = "1".repeat(40);
+    const t = setup(
+      reply(
+        headPullsReply([
+          { open: 1, ended: [] },
+          // A stacked pull request onto the branch uses it as much as one from it.
+          { open: 0, onto: 2, ended: [] },
+          {
+            open: 0,
+            ended: [
+              { state: "MERGED", headRefOid: BASE_SHA, isCrossRepository: false },
+              { state: "CLOSED", headRefOid: other, isCrossRepository: false },
+              // A fork's pull request from a branch of the same name is not this repo's.
+              { state: "MERGED", headRefOid: other, isCrossRepository: true },
+            ],
+          },
+        ]),
+      ),
+    );
+    const pulls = yield* t.ok(t.github.headPulls(["t3/draft", "t3/base", "t3/done"]));
+    assert.deepStrictEqual(
+      pulls,
+      new Map([
+        ["t3/draft", { open: 1, ended: [] }],
+        ["t3/base", { open: 2, ended: [] }],
+        [
+          "t3/done",
+          {
+            open: 0,
+            ended: [
+              { merged: true, headSha: BASE_SHA },
+              { merged: false, headSha: other },
+            ],
+          },
+        ],
+      ]),
+    );
+    const [call] = t.calls();
+    assert.deepStrictEqual(call!.slice(0, 2), ["api", "graphql"]);
+    // The names travel as variables, never in the query text.
+    assert.deepStrictEqual(call!.slice(4), [
+      "-f",
+      "owner=rawphp",
+      "-f",
+      "name=softfac",
+      "-f",
+      "h0=t3/draft",
+      "-f",
+      "h1=t3/base",
+      "-f",
+      "h2=t3/done",
+    ]);
+    const query = call![3]!;
+    assert.notInclude(query, "t3/");
+    // GitHub's OPEN state counts drafts too.
+    assert.include(query, "o1: pullRequests(headRefName: $h1, states: OPEN, first: 1)");
+    assert.include(query, "b1: pullRequests(baseRefName: $h1, states: OPEN, first: 1)");
+  }),
+);
+
+it.effect("headPulls asks about 50 heads a call", () =>
+  Effect.gen(function* () {
+    const heads = Array.from({ length: 51 }, (_, i) => `t3/b${i}`);
+    const none = { open: 0, ended: [] };
+    const t = setup(
+      reply(headPullsReply(Array.from({ length: 50 }, () => none))),
+      reply(headPullsReply([none])),
+    );
+    const pulls = yield* t.ok(t.github.headPulls(heads));
+    assert.strictEqual(pulls.size, 51);
+    assert.deepStrictEqual(
+      t.calls().map((call) => call.at(-1)),
+      ["h49=t3/b49", "h0=t3/b50"],
+    );
+  }),
+);
+
+it.effect("headPulls refuses a name that is not a plain ref name, before calling gh", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("{}"));
+    const error = yield* t.err(t.github.headPulls(["t3/ok", "-x"]));
+    assert.strictEqual(error._tag, "GitHubInvalidArgument");
+    assert.deepStrictEqual(t.calls(), []);
+  }),
+);
+
+it.effect("headPulls refuses an answer that lacks a head", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(headPullsReply([{ open: 0, ended: [] }])));
+    const error = yield* t.err(t.github.headPulls(["t3/a", "t3/b"]));
+    assert.strictEqual(error._tag, "GitHubParse");
+  }),
+);
+
+it.effect("deleteBranch deletes the branch with the exact call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(""));
+    yield* t.ok(t.github.deleteBranch("t3/a b"));
+    assert.deepStrictEqual(t.calls(), [
+      ["api", "-X", "DELETE", "repos/rawphp/softfac/git/refs/heads/t3/a%20b"],
+    ]);
+  }),
+);
+
+it.effect("deleteBranch counts a branch already gone as deleted", () =>
+  Effect.gen(function* () {
+    const t = setup(fail(1, "gh: Reference does not exist (HTTP 422)"));
+    yield* t.ok(t.github.deleteBranch("t3/gone"));
+    const refused = setup(fail(1, "gh: Resource not accessible by integration (HTTP 403)"));
+    assert.strictEqual(
+      (yield* refused.err(refused.github.deleteBranch("t3/kept")))._tag,
+      "GitHubFailed",
+    );
+  }),
+);
+
 const dropOf = (id: string, reason: DropReason): Dropped => ({ id, reason });
 const argsOf = (error: GitHubError): ReadonlyArray<string> => ("args" in error ? error.args : []);
 

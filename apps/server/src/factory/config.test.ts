@@ -445,6 +445,8 @@ describe("machine config", () => {
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
       modelFallbacks: {},
+      pruneBranchesAfterDays: 14,
+      pruneBranchesDryRun: false,
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
   });
@@ -546,6 +548,25 @@ describe("machine config", () => {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "deploy_wait_minutes", bad)));
       assertOne(errs, "deploy_wait_minutes", MFILE);
     }
+  });
+
+  it("machine prune_branches_after_days defaults to 14 and must be a whole number of at least one", () => {
+    expect(
+      machine(edit(MACHINE, (t) => set(t, "prune_branches_after_days", "30")))
+        .pruneBranchesAfterDays,
+    ).toBe(30);
+    for (const bad of ["0", "-1", "1.5", '"two"']) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "prune_branches_after_days", bad)));
+      assertOne(errs, "prune_branches_after_days", MFILE);
+    }
+  });
+
+  it("machine prune_branches_dry_run defaults to false and must be a boolean", () => {
+    expect(
+      machine(edit(MACHINE, (t) => set(t, "prune_branches_dry_run", "true"))).pruneBranchesDryRun,
+    ).toBe(true);
+    const errs = machineErr(edit(MACHINE, (t) => set(t, "prune_branches_dry_run", '"yes"')));
+    assertOne(errs, "prune_branches_dry_run", MFILE);
   });
 
   it("machine model_fallbacks defaults to none and maps a model to the one its sessions move to", () => {
@@ -834,6 +855,8 @@ describe("loaders", () => {
             maxLoadPerCore: 1,
             deployWaitMinutes: 120,
             modelFallbacks: {},
+            pruneBranchesAfterDays: 14,
+            pruneBranchesDryRun: false,
           },
         }),
       );

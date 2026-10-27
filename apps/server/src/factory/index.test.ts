@@ -84,6 +84,7 @@ const stubSessions = Sessions.FactorySessions.of({
   removeWorktree: () => Effect.die("not removed"),
   brokenWorktrees: Effect.succeed([]),
   runningThreads: Effect.succeed(0),
+  liveBranches: Effect.succeed(new Set()),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
@@ -139,6 +140,7 @@ const freeingShared = (freed: Queue.Queue<string>): LiveShared => {
     configSkips: new Map(),
     lastGood: new Map(),
     cooldowns: new Map(),
+    prunedAt: new Map(),
   };
 };
 
@@ -778,6 +780,8 @@ describe("liveWorld", () => {
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
     modelFallbacks: {},
+    pruneBranchesAfterDays: 14,
+    pruneBranchesDryRun: false,
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1338,6 +1342,7 @@ describe("liveWorld", () => {
           withLastGood ? [[REPO.toLowerCase(), { project: timeLimitOnlyProjectConfig() }]] : [],
         ),
         cooldowns: new Map(),
+        prunedAt: new Map(),
       },
     );
     return Effect.result(world.project({ repo, path: root })).pipe(
@@ -1772,6 +1777,8 @@ describe("the gate in the background", () => {
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
     modelFallbacks: {},
+    pruneBranchesAfterDays: 14,
+    pruneBranchesDryRun: false,
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2116,6 +2123,8 @@ describe("the gate in the background", () => {
     maxLoadPerCore: 0,
     deployWaitMinutes: 120,
     modelFallbacks: {},
+    pruneBranchesAfterDays: 14,
+    pruneBranchesDryRun: false,
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2201,6 +2210,7 @@ describe("the gate in the background", () => {
         configSkips: new Map<string, number>(),
         lastGood: new Map(),
         cooldowns: new Map(),
+        prunedAt: new Map(),
       };
       const build = () =>
         liveWorld(
@@ -2463,6 +2473,8 @@ describe("the gate in the background", () => {
         maxLoadPerCore: 0,
         deployWaitMinutes: 120,
         modelFallbacks: {},
+        pruneBranchesAfterDays: 14,
+        pruneBranchesDryRun: false,
       };
       const world = liveWorld(
         machine,
@@ -2522,6 +2534,8 @@ describe("the gate in the background", () => {
             maxLoadPerCore: 0,
             deployWaitMinutes: 120,
             modelFallbacks: {},
+            pruneBranchesAfterDays: 14,
+            pruneBranchesDryRun: false,
           },
           dataDir,
           { run: () => Effect.die("no gh") },
