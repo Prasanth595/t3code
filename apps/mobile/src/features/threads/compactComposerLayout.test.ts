@@ -16,8 +16,7 @@ function composer(
   input: {
     readonly rowWidth?: number;
     readonly isFocused?: boolean;
-    readonly isAndroid?: boolean;
-    readonly keyboardVisible?: boolean;
+    readonly keyboardDismissed?: boolean;
     readonly keepsSettingsOpen?: boolean;
     readonly value?: string;
     readonly contentSize?: { readonly width: number; readonly height: number };
@@ -34,8 +33,7 @@ function composer(
       attachmentCount: input.measuredAttachmentCount ?? input.attachmentCount ?? 0,
     },
     isFocused: input.isFocused ?? false,
-    isAndroid: input.isAndroid ?? false,
-    keyboardShowing: input.keyboardVisible ?? false,
+    keyboardDismissed: input.keyboardDismissed ?? false,
     keepsSettingsOpen: input.keepsSettingsOpen ?? false,
     value: input.value ?? "",
     contentSize: input.contentSize ?? { width: 0, height: LINE_HEIGHT },
@@ -50,10 +48,8 @@ describe("compact composer layout", () => {
   it("opens the card with the model label when a narrow composer is focused", () => {
     expect(composer()).toEqual({ isExpanded: false, modelIconOnly: true });
     expect(composer({ isFocused: true })).toEqual({ isExpanded: true, modelIconOnly: false });
-    expect(composer({ isFocused: true, isAndroid: true }).isExpanded).toBe(false);
-    expect(composer({ isFocused: true, isAndroid: true, keyboardVisible: true }).isExpanded).toBe(
-      true,
-    );
+    // Android's Back hides the keyboard but leaves the editor focused.
+    expect(composer({ isFocused: true, keyboardDismissed: true }).isExpanded).toBe(false);
     expect(composer({ keepsSettingsOpen: true })).toEqual({
       isExpanded: true,
       modelIconOnly: false,

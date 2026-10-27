@@ -151,6 +151,10 @@ export function useCompactComposerEditor(
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [slot, setSlot] = useState(EMPTY_COMPACT_COMPOSER_SLOT);
   const keyboardShowing = useAndroidKeyboardShowing();
+  // Only a keyboard that showed since focus and then hid closes the card, so a refocus that
+  // is still waiting for its keyboard (after the model sheet) keeps it open.
+  const [keyboardShownSinceFocus, setKeyboardShownSinceFocus] = useState(false);
+  if (keyboardShowing && !keyboardShownSinceFocus) setKeyboardShownSinceFocus(true);
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -161,8 +165,7 @@ export function useCompactComposerEditor(
   const { isExpanded, modelIconOnly, labelShownAtRest } = resolveCompactComposerLayout({
     ...state,
     slot,
-    isAndroid: Platform.OS === "android",
-    keyboardShowing,
+    keyboardDismissed: keyboardShownSinceFocus && !keyboardShowing,
     value,
     contentSize,
     lineHeight: text.lineHeight,
@@ -209,6 +212,7 @@ export function useCompactComposerEditor(
         );
       }
     },
+    onEditorFocus: () => setKeyboardShownSinceFocus(false),
     onModelControlLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       const { width } = event.nativeEvent.layout;
       setSlot((current) =>
@@ -677,6 +681,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = () => {
     setIsFocused(true);
+    compactEditor.onEditorFocus();
     settingsSheetPresentation.onEditorFocusChange(true);
     onEditorFocusChange?.(true);
     setComposerEditing(true);

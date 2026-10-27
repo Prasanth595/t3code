@@ -52,9 +52,8 @@ export function compactSlotAfterLabelLayout(
 export function resolveCompactComposerLayout(input: {
   readonly slot: CompactComposerSlot;
   readonly isFocused: boolean;
-  readonly isAndroid: boolean;
   /** Android's Back hides the keyboard without blurring the editor. */
-  readonly keyboardShowing: boolean;
+  readonly keyboardDismissed: boolean;
   readonly keepsSettingsOpen: boolean;
   readonly value: string;
   readonly contentSize: { readonly width: number; readonly height: number };
@@ -74,7 +73,7 @@ export function resolveCompactComposerLayout(input: {
   const opensOnFocus =
     rowWidth > 0 &&
     !isWide &&
-    ((input.isFocused && (!input.isAndroid || input.keyboardShowing)) || input.keepsSettingsOpen);
+    ((input.isFocused && !input.keyboardDismissed) || input.keepsSettingsOpen);
   const wraps = input.contentSize.height > input.lineHeight * 1.5;
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too, a character early, so widening cannot loop.
