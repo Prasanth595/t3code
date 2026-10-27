@@ -56,6 +56,14 @@ min_free_gib: 10
 # with an agent at work is interrupted too; you continue it in T3.
 # deploy_wait_minutes: 120
 
+# Once an hour the factory deletes each watched repo's t3/* branches that are merged or
+# abandoned, and keeps any a worktree, a live thread, a factory run or an open pull request still
+# uses. An unmerged branch with no pull request goes this many days after its last commit (default
+# 14, at least 1). Each deletion is logged first in branch-prune.jsonl beside this file, with the
+# commit, so `git branch <name> <sha>` brings it back. true only logs what it would delete.
+# prune_branches_after_days: 14
+# prune_branches_dry_run: false
+
 # A macOS notification when something needs a person. false keeps the list on the
 # Factory page and turns the notification off.
 notify: true

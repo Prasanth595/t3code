@@ -41,6 +41,7 @@ export interface SeededThread {
   readonly archived?: boolean;
   readonly deleted?: boolean;
   readonly pullRequests?: boolean;
+  readonly branch?: string;
 }
 
 /** The thread id of the n-th seeded thread (from 1). */
@@ -225,6 +226,7 @@ export const seedProjection = Effect.fn("seedProjection")(function* (
               '$.archivedAt', ${spec.archived ? sql`updated_at` : sql`NULL`},
               '$.deletedAt', ${spec.deleted ? sql`updated_at` : sql`NULL`}
               ${spec.pullRequests ? sql`, '$.pullRequests', json(${pullRequestJson})` : sql``}
+              ${spec.branch === undefined ? sql`` : sql`, '$.branch', ${spec.branch}`}
             )
           FROM orchestration_v2_projection_threads WHERE thread_id = ${TPL.thread}
         `;

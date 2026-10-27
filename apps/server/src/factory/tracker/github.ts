@@ -88,6 +88,52 @@ const PullRequestList = Schema.Array(ListedPullRequest);
 /** The fields `openPullRequestsOnHead` asks `gh pr list` for, in the order of `ListedPullRequest`. */
 const PR_LIST_FIELDS = "number,url,headRefName,baseRefName,isCrossRepository,author";
 
+/** How many heads one `headPulls` query asks about. */
+const HEAD_PULLS_BATCH = 50;
+
+/**
+ * Per head, how many open pull requests there are and the newest ten that ended, each in a
+ * connection of its own. The names go in as variables `$h0`, `$h1`, ….
+ */
+const headPullsQuery = (count: number): string => {
+  const vars = Array.from({ length: count }, (_, i) => `, $h${i}: String!`).join("");
+  const fields = Array.from(
+    { length: count },
+    (_, i) =>
+      ` o${i}: pullRequests(headRefName: $h${i}, states: OPEN, first: 1) { totalCount }` +
+      ` e${i}: pullRequests(headRefName: $h${i}, states: [MERGED, CLOSED], first: 10, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { state headRefOid isCrossRepository } }`,
+  ).join("");
+  return `query($owner: String!, $name: String!${vars}) { repository(owner: $owner, name: $name) {${fields} } }`;
+};
+
+const HeadPullsAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        totalCount: Schema.optional(Schema.Number),
+        nodes: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              state: Schema.String,
+              headRefOid: Schema.String,
+              isCrossRepository: Schema.Boolean,
+            }),
+          ),
+        ),
+      }),
+    ),
+  }),
+});
+
+/** The pull requests from one branch name: see `headPulls`. */
+export interface HeadPulls {
+  /** Open pull requests, drafts and forks included. */
+  readonly open: number;
+  /** This repo's merged and closed pull requests, newest first, at most ten. */
+  readonly ended: ReadonlyArray<{ readonly merged: boolean; readonly headSha: string }>;
+}
+
 const listedPullRequest = (node: typeof ListedPullRequest.Type): OpenPullRequest => ({
   number: node.number,
   url: node.url,
@@ -1500,6 +1546,75 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
+   * The pull requests from each of `heads`, by name, in one GraphQL call per 50 names. A name
+   * that is not a plain ref name (`isPlainRefName`) is refused before any call.
+   */
+  const headPulls = Effect.fn("GitHub.headPulls")(function* (
+    heads: ReadonlyArray<string>,
+  ): GitHubGen<ReadonlyMap<string, HeadPulls>> {
+    const bad = heads.find((head) => !isPlainRefName(head));
+    if (bad !== undefined) {
+      return yield* new GitHubInvalidArgument({ argument: bad, expected: "a plain branch name" });
+    }
+    const slash = repo.indexOf("/");
+    if (slash < 0) {
+      return yield* parseError(["api", "graphql"], `a repo written as owner/name, got \`${repo}\``);
+    }
+    const out = new Map<string, HeadPulls>();
+    for (let start = 0; start < heads.length; start += HEAD_PULLS_BATCH) {
+      const batch = heads.slice(start, start + HEAD_PULLS_BATCH);
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${headPullsQuery(batch.length)}`,
+        "-f",
+        `owner=${repo.slice(0, slash)}`,
+        "-f",
+        `name=${repo.slice(slash + 1)}`,
+        ...batch.flatMap((head, i) => ["-f", `h${i}=${head}`]),
+      ];
+      const answer = yield* ghJson(args, HeadPullsAnswer, "a GraphQL response with pull requests");
+      const found = answer.data.repository;
+      for (const [i, head] of batch.entries()) {
+        const open = found[`o${i}`]?.totalCount;
+        const ended = found[`e${i}`]?.nodes;
+        if (open === undefined || ended === undefined) {
+          return yield* parseError(args, `the pull requests of every head (${head} had none)`);
+        }
+        out.set(head, {
+          open,
+          ended: ended
+            .filter((pull) => !pull.isCrossRepository)
+            .map((pull) => ({ merged: pull.state === "MERGED", headSha: pull.headRefOid })),
+        });
+      }
+    }
+    return out;
+  });
+
+  /** Deletes the branch on GitHub. One GitHub no longer has counts as deleted. */
+  const deleteBranch = Effect.fn("GitHub.deleteBranch")(function* (
+    branch: string,
+  ): GitHubGen<void> {
+    const encoded = encodeBranch(branch);
+    if (encoded === null) {
+      return yield* new GitHubInvalidArgument({
+        argument: branch,
+        expected: "a branch name without empty or dot segments",
+      });
+    }
+    yield* gh(["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${encoded}`]).pipe(
+      Effect.catchTags({
+        GitHubFailed: (error) =>
+          error.stderr.includes("Reference does not exist")
+            ? Effect.succeed("")
+            : Effect.fail(error),
+      }),
+    );
+  });
+
+  /**
    * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`). An
    * unknown ref (404) is null. Only the status is read, so a long history costs one small answer.
    * A ref with an empty or dot segment, or `..` anywhere, is refused before the call so it cannot
@@ -2268,6 +2383,8 @@ export const makeGitHub = (options: GitHubOptions) => {
     closedBy,
     openPullRequestsClosing,
     openPullRequestsOnHead,
+    headPulls,
+    deleteBranch,
     compare,
     checks,
     openBlockers,

@@ -78,6 +78,8 @@ describe("editMachineConfig", () => {
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
       modelFallbacks: {},
+      pruneBranchesAfterDays: 14,
+      pruneBranchesDryRun: false,
     });
   });
 
@@ -102,6 +104,8 @@ describe("editMachineConfig", () => {
       maxLoadPerCore: 1,
       deployWaitMinutes: 120,
       modelFallbacks: {},
+      pruneBranchesAfterDays: 14,
+      pruneBranchesDryRun: false,
     });
   });
 
@@ -176,6 +180,15 @@ describe("editMachineConfig", () => {
     it("keeps a hand-written deploy_wait_minutes through an edit", () => {
       const text = edited(COMMENTED + "deploy_wait_minutes: 240\n", { poll_seconds: 90 });
       assert.include(text, "deploy_wait_minutes: 240");
+    });
+
+    it("keeps a hand-written branch prune age and dry run through an edit", () => {
+      const text = edited(
+        COMMENTED + "prune_branches_after_days: 30\nprune_branches_dry_run: true\n",
+        { poll_seconds: 90 },
+      );
+      assert.include(text, "prune_branches_after_days: 30");
+      assert.include(text, "prune_branches_dry_run: true");
     });
 
     it("keeps a hand-written model_fallbacks through an edit", () => {

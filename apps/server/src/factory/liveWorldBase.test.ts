@@ -75,6 +75,8 @@ const machine: MachineConfig = {
   maxLoadPerCore: 0,
   deployWaitMinutes: 120,
   modelFallbacks: {},
+  pruneBranchesAfterDays: 14,
+  pruneBranchesDryRun: false,
 };
 
 const repo: Repo = {
@@ -93,6 +95,7 @@ const stubSessions = Sessions.FactorySessions.of({
   removeWorktree: () => Effect.die("not removed"),
   brokenWorktrees: Effect.succeed([]),
   runningThreads: Effect.succeed(0),
+  liveBranches: Effect.succeed(new Set()),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 
@@ -182,6 +185,7 @@ describe("liveWorld: a model that cools down", () => {
             configSkips: new Map(),
             lastGood: new Map(),
             cooldowns,
+            prunedAt: new Map(),
           },
         );
         assert.strictEqual(world.cooldowns, cooldowns);

@@ -95,10 +95,10 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys an edit keeps: the form's, `notify`, `keep_versions`, `min_free_gib`,
- * `max_load_per_core`, `deploy_wait_minutes` and `model_fallbacks` (hand edits), and the retired
- * keys (the model keys and `repos`). Those stay so that a rollback to a version that still requires
- * them loads the file; a key that is not here is dropped by an edit.
+ * The keys an edit keeps: the form's, the hand edits (`notify`, `keep_versions`, `min_free_gib`,
+ * `max_load_per_core`, `deploy_wait_minutes`, `model_fallbacks`, `prune_branches_*`) and the retired
+ * keys (the model keys and `repos`), which stay so a rollback to a version that still requires them
+ * loads the file. A key that is not here is dropped by an edit.
  */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
@@ -108,6 +108,8 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "deploy_wait_minutes",
   "max_load_per_core",
   "model_fallbacks",
+  "prune_branches_after_days",
+  "prune_branches_dry_run",
   ...RETIRED_MACHINE_KEYS,
 ]);
 

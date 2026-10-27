@@ -33,6 +33,7 @@ import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
   PENDING_STALE_MS,
+  PRUNE_EVERY_MS,
   STUCK_READ_EVERY_MS,
   UNSETTLED_READ_EVERY_MS,
   runPass,
@@ -60,6 +61,7 @@ import type { FeedbackStep } from "./runner/feedback.ts";
 import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
+import type { PruneReport } from "./t3/branchPrune.ts";
 import {
   MessageRejectedError,
   SessionsError,
@@ -91,6 +93,8 @@ const machine = (max: number): MachineConfig => ({
   maxLoadPerCore: 1,
   deployWaitMinutes: 120,
   modelFallbacks: {},
+  pruneBranchesAfterDays: 14,
+  pruneBranchesDryRun: false,
 });
 
 const GIB = 1024 ** 3;
@@ -212,6 +216,11 @@ class Fake implements PassWorld {
   /** The issues GitHub has closed, per `"<repo>#<issue>"`; `"error"` is a read that fails. Open otherwise. */
   closedIssues: Record<string, boolean | "error"> = {};
   stuckReads = new Map<string, number>();
+  /** What `pruneBranches` answers per repo; nothing pruned otherwise. */
+  prunes: Record<string, PruneReport | PassError> = {};
+  prunedAt = new Map<string, number>();
+  /** The machine's `prune_branches_dry_run` for the passes `pass` runs. */
+  pruneDryRun = false;
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedProject> = [];
   /** The repos whose every T3 project was deleted since the reader watched them. */
@@ -631,6 +640,12 @@ class Fake implements PassWorld {
     return this.now;
   }
 
+  pruneBranches(repo: Repo) {
+    this.calls.push(`prune ${repo.watched.repo}`);
+    const answer = this.prunes[repo.watched.repo] ?? { pruned: [], left: [] };
+    return "kind" in answer ? Effect.fail(answer) : Effect.succeed(answer);
+  }
+
   recordError(run: RunId, step: CauseStep, kind: ErrorKind, message: string) {
     if (this.runErrorFails) {
       return Effect.fail(
@@ -726,6 +741,7 @@ const pass = (
         maxLoadPerCore: fake.maxLoadPerCore,
         deployWaitMinutes: fake.deployWaitMinutes,
         modelFallbacks: fake.modelFallbacks,
+        pruneBranchesDryRun: fake.pruneDryRun,
       },
       (line) => lines.push(line),
     );
@@ -5961,6 +5977,89 @@ describe("a provider rate limit", () => {
       assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
       assert.equal(coolingLines(lines).length, 1);
       assert.ok(coolingLines(lines)[0]!.endsWith("; its sessions wait for it to end"));
+    }),
+  );
+});
+
+describe("pruning t3/* branches", () => {
+  const prunes = (fake: Fake) => fake.calls.filter((c) => c.startsWith("prune "));
+  const SHA = "a".repeat(40);
+
+  it.effect("prunes each watched repo's branches at most once an hour", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      yield* pass(fake, [REPO, OTHER], 1);
+      fake.now += PRUNE_EVERY_MS - 1;
+      yield* pass(fake, [REPO, OTHER], 1);
+      assert.deepEqual(prunes(fake), [`prune ${REPO}`, `prune ${OTHER}`]);
+      fake.now += 1;
+      yield* pass(fake, [REPO, OTHER], 1);
+      assert.deepEqual(prunes(fake), [
+        `prune ${REPO}`,
+        `prune ${OTHER}`,
+        `prune ${REPO}`,
+        `prune ${OTHER}`,
+      ]);
+    }),
+  );
+
+  it.effect("prunes after the pass has claimed and launched", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [3];
+      fake.pushStart(`${REPO}#3`, started(3));
+      yield* pass(fake, [REPO], 1);
+      const start = fake.calls.indexOf(`start ${REPO}#3`);
+      assert.isAbove(start, -1);
+      assert.isAbove(fake.calls.indexOf(`prune ${REPO}`), start);
+    }),
+  );
+
+  it.effect("prunes nothing while the ledger cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runsError = true;
+      yield* pass(fake, [REPO], 1);
+      assert.deepEqual(prunes(fake), []);
+    }),
+  );
+
+  it.effect("says what it pruned and what it left", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.prunes[REPO] = {
+        pruned: [{ ref: "refs/heads/t3/a", sha: SHA, scope: "local", reason: "merged" }],
+        left: [{ ref: "refs/remotes/origin/t3/b", why: "it moved on GitHub" }],
+      };
+      const { lines, report } = yield* pass(fake, [REPO], 1);
+      assert.include(lines, `${REPO}: pruned refs/heads/t3/a at ${SHA} (merged)`);
+      assert.include(lines, `${REPO}: left refs/remotes/origin/t3/b: it moved on GitHub`);
+      assert.equal(report.errors, 0);
+    }),
+  );
+
+  it.effect("says what a dry run would prune", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.pruneDryRun = true;
+      fake.prunes[REPO] = {
+        pruned: [{ ref: "refs/heads/t3/a", sha: SHA, scope: "local", reason: "stale" }],
+        left: [],
+      };
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.include(lines, `${REPO}: would prune refs/heads/t3/a at ${SHA} (stale)`);
+    }),
+  );
+
+  it.effect("a prune that fails is an error line, tried again an hour later", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.prunes[REPO] = { kind: "git", message: "cannot write the prune log" };
+      const { lines, report } = yield* pass(fake, [REPO], 1);
+      assert.include(lines, `error: ${REPO}: branch prune: cannot write the prune log`);
+      assert.equal(report.errors, 1);
+      yield* pass(fake, [REPO], 1);
+      assert.deepEqual(prunes(fake), [`prune ${REPO}`]);
     }),
   );
 });

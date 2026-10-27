@@ -70,6 +70,7 @@ const DEFAULT_MIN_FREE_GIB = 10;
 /** Minutes a waiting autodeploy build may hold claims back; see {@link MachineConfig.deployWaitMinutes}. */
 const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
 const DEFAULT_MAX_LOAD_PER_CORE = 1;
+const DEFAULT_PRUNE_BRANCHES_AFTER_DAYS = 14;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -175,6 +176,10 @@ export interface MachineConfig {
    * id, on the same provider instance: `model_fallbacks`. Empty keeps the plain backoff.
    */
   readonly modelFallbacks: Readonly<Record<string, string>>;
+  /** Days after its last commit an unmerged `t3/*` branch with no pull request is pruned. */
+  readonly pruneBranchesAfterDays: number;
+  /** The branch prune only logs what it would delete. */
+  readonly pruneBranchesDryRun: boolean;
 }
 
 type Mapping = Record<string, unknown>;
@@ -454,6 +459,8 @@ const MACHINE_KEYS = [
   "max_load_per_core",
   "deploy_wait_minutes",
   "model_fallbacks",
+  "prune_branches_after_days",
+  "prune_branches_dry_run",
 ] as const;
 
 /**
@@ -517,6 +524,14 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const modelFallbacks = fallbacksFrom(c, root);
+  const pruneBranchesAfterDays = c.optionalUint(
+    root,
+    "",
+    "prune_branches_after_days",
+    DEFAULT_PRUNE_BRANCHES_AFTER_DAYS,
+    1,
+  );
+  const pruneBranchesDryRun = c.optionalBoolean(root, "", "prune_branches_dry_run", false);
   checkUnknownKeys(c, root);
 
   if (
@@ -530,7 +545,9 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     minFreeGib === undefined ||
     maxLoadPerCore === undefined ||
     deployWaitMinutes === undefined ||
-    modelFallbacks === undefined
+    modelFallbacks === undefined ||
+    pruneBranchesAfterDays === undefined ||
+    pruneBranchesDryRun === undefined
   ) {
     return undefined;
   }
@@ -545,6 +562,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxLoadPerCore,
     deployWaitMinutes,
     modelFallbacks,
+    pruneBranchesAfterDays,
+    pruneBranchesDryRun,
   };
 };
 

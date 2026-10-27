@@ -50,6 +50,7 @@ import { unchangedSince, type GateStepError, type LastPass } from "./runner/gati
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { Model, SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
+import type { PruneReport } from "./t3/branchPrune.ts";
 import { sanitize } from "./text.ts";
 import {
   LIST_LIMIT,
@@ -311,6 +312,10 @@ export interface PassWorld {
    * a pass runs on when a re-read fails in a way that says GitHub never received the call.
    */
   readonly lastGood: Map<string, LastGood>;
+  /** Prunes the repo's stale `t3/*` branches: `t3/branchPrune.ts`. */
+  readonly pruneBranches: (repo: Repo) => Effect.Effect<PruneReport, PassError>;
+  /** When each repo's branches were last pruned, by lower-cased `owner/name`; kept from pass to pass. */
+  readonly prunedAt: Map<string, number>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -716,6 +721,8 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
     // takes a gate slot.
     yield* prOpenRuns(world, repos, known, pass);
+    // After every claim and launch of the pass, so none is under way while a repo is pruned.
+    yield* pruneStaleBranches(world, repos, machine, pass);
     // A run-bound attention item whose run is no longer unfinished (stopped, abandoned, timed
     // out, claimed on) is over. `stuck` and `needs-info` items are about finished runs and stay.
     if (!known.lost) {
@@ -777,6 +784,39 @@ const closedStuck = Effect.fn("Pass.closedStuck")(function* (
     } else if (closed.success) {
       yield* world.attention.clear((open) => open.id === item.id);
       world.stuckReads.delete(item.id);
+    }
+  }
+});
+
+/** How often a repo's `t3/*` branches are pruned at most. */
+export const PRUNE_EVERY_MS = 60 * 60 * 1000;
+
+/** Prunes each loaded repo's stale `t3/*` branches, at most once every `PRUNE_EVERY_MS`. */
+const pruneStaleBranches = Effect.fn("Pass.pruneStaleBranches")(function* (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  machine: MachineConfig,
+  pass: Pass,
+) {
+  const now = world.nowMs();
+  for (const loaded of repos) {
+    if (loaded.kind !== "ready") continue;
+    const name = loaded.repo.watched.repo;
+    const last = world.prunedAt.get(asciiLower(name));
+    if (last !== undefined && now >= last && now - last < PRUNE_EVERY_MS) continue;
+    world.prunedAt.set(asciiLower(name), now);
+    const result = yield* Effect.result(world.pruneBranches(loaded.repo));
+    if (result._tag === "Failure") {
+      const { kind, message } = result.failure;
+      yield* pass.fail(null, passError(kind, `${name}: branch prune: `, message));
+      continue;
+    }
+    const verb = machine.pruneBranchesDryRun ? "would prune" : "pruned";
+    for (const { ref, sha, reason } of result.success.pruned) {
+      pass.line(plain(`${name}: ${verb} ${ref} at ${sha} (${reason})`));
+    }
+    for (const { ref, why } of result.success.left) {
+      pass.line(plain(`${name}: left ${ref}: ${why}`));
     }
   }
 });

@@ -195,6 +195,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "remove-worktree",
     "broken-worktrees",
     "running-threads",
+    "live-branches",
     "worktrees-directory",
   ]),
   cause: Schema.Defect(),
@@ -380,6 +381,8 @@ export class FactorySessions extends Context.Service<
      * preparing, starting or running. A run waiting on a person does not count.
      */
     readonly runningThreads: Effect.Effect<number, SessionsError>;
+    /** The branches of the threads that are neither archived nor deleted, a person's or the factory's. */
+    readonly liveBranches: Effect.Effect<ReadonlySet<string>, SessionsError>;
     /**
      * The folder T3 makes a new thread's worktree under now: the one Settings → Storage names,
      * else `defaultDir`. Null for a setting T3 cannot make a worktree under.
@@ -741,6 +744,20 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
   );
 
+  const liveBranches: FactorySessions["Service"]["liveBranches"] = sql<{
+    readonly branch: string;
+  }>`
+    SELECT DISTINCT json_extract(payload_json, '$.branch') AS branch
+    FROM orchestration_v2_projection_threads
+    WHERE deleted_at IS NULL
+      AND json_extract(payload_json, '$.archivedAt') IS NULL
+      AND json_extract(payload_json, '$.branch') IS NOT NULL
+  `.pipe(
+    Effect.map((rows) => new Set(rows.map((row) => row.branch))),
+    NodeSqliteClient.readOnly,
+    Effect.mapError((cause) => new SessionsError({ operation: "live-branches", cause })),
+  );
+
   const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
     "Sessions.worktreesDirectory",
   )(
@@ -761,6 +778,7 @@ const make = Effect.gen(function* () {
     removeWorktree,
     brokenWorktrees,
     runningThreads,
+    liveBranches,
     worktreesDirectory,
   });
 });

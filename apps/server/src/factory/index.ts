@@ -2,6 +2,7 @@
 // @effect-diagnostics globalDate:off - the ledger stamps lines with the wall clock, as softfac does.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -100,6 +101,7 @@ import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { runProject } from "./runner/run.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
+import { pruneBranches, unfinishedRunBranches } from "./t3/branchPrune.ts";
 import * as Events from "./t3/events.ts";
 import * as ServerExitService from "./t3/exit.ts";
 import * as Paths from "./t3/paths.ts";
@@ -111,6 +113,7 @@ import {
   makeGitHub,
   type GitHubError,
   type IssueSummary,
+  isNotFound,
   isNotReceived,
 } from "./tracker/github.ts";
 
@@ -385,6 +388,7 @@ export interface LiveShared {
   readonly configSkips: Map<string, number>;
   readonly lastGood: Map<string, LastGood>;
   readonly cooldowns: Map<string, Cooldown>;
+  readonly prunedAt: Map<string, number>;
 }
 
 /**
@@ -399,6 +403,11 @@ export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
  * are read by the start they belong to, whatever their age.
  */
 const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Where each pruned branch is logged with its sha, under the data dir, before it is deleted. */
+const BRANCH_PRUNE_LOG = "branch-prune.jsonl";
 
 /**
  * The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock.
@@ -419,7 +428,16 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads, brokenThreads, configSkips, lastGood, cooldowns }: LiveShared = {
+  {
+    gating,
+    claimMemo,
+    stuckReads,
+    brokenThreads,
+    configSkips,
+    lastGood,
+    cooldowns,
+    prunedAt,
+  }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
@@ -427,6 +445,7 @@ export const liveWorld = (
     configSkips: new Map(),
     lastGood: new Map(),
     cooldowns: new Map(),
+    prunedAt: new Map(),
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const load = live.readLoad ?? readLoad;
@@ -730,6 +749,31 @@ export const liveWorld = (
     lastGood,
     archiveThread: (threadId) =>
       sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
+    pruneBranches: (repo) => {
+      const tracker = trackerFor(repo.watched);
+      return pruneBranches({
+        repo: repo.watched.repo,
+        path: repo.watched.path,
+        defaultBranch: repo.project.base,
+        logFile: NodePath.join(dataDir, BRANCH_PRUNE_LOG),
+        dryRun: machine.pruneBranchesDryRun,
+        maxAgeMs: machine.pruneBranchesAfterDays * DAY_MS,
+        nowMs: clock(),
+        threads: sessions.liveBranches,
+        runs: unfinishedRunBranches(dataDir, repo.watched.repo),
+        github: {
+          pulls: tracker.headPulls,
+          tip: (name) =>
+            tracker.branchTip(name).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null))),
+          remove: tracker.deleteBranch,
+        },
+      }).pipe(
+        Effect.provide(files),
+        withProcess,
+        Effect.mapError((error): PassError => ({ kind: "git", message: error.message })),
+      );
+    },
+    prunedAt,
     nowMs: clock,
     attention,
     record: (event: MachineEvent) =>
@@ -901,6 +945,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     configSkips: new Map(),
     lastGood: new Map(),
     cooldowns: new Map(),
+    prunedAt: new Map(),
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.
