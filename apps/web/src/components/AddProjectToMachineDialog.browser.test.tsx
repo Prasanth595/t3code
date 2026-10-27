@@ -8,6 +8,11 @@ const project = vi.hoisted(() => {
   let value: unknown = null;
   const listeners = new Set<() => void>();
   return {
+    // Each test starts from no project and no listeners left by an earlier test.
+    setup: (initial: unknown) => {
+      value = initial;
+      listeners.clear();
+    },
     get: () => value,
     set: (next: unknown) => {
       value = next;
@@ -64,7 +69,7 @@ const PROJECT = {
 
 describe("AddProjectToMachineDialog", () => {
   it("closes when its project goes away", async () => {
-    project.set(PROJECT);
+    project.setup(PROJECT);
     await using screen = await render(<AddProjectToMachineDialogHost />);
 
     await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
@@ -76,7 +81,7 @@ describe("AddProjectToMachineDialog", () => {
   });
 
   it("does not reopen for a project that vanished before the dialog showed", async () => {
-    project.set(PROJECT);
+    project.setup(PROJECT);
     await using screen = await render(<AddProjectToMachineDialogHost />);
 
     await act(() => {
