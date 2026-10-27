@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -17,6 +19,25 @@ const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
     Effect.map(Context.get(SqlClient.SqlClient)),
   );
+
+// Counts statements and fetched data values, the expensive column a warm cache skips.
+const countQueries = Effect.acquireRelease(
+  Effect.sync(() => {
+    const counts = { statements: 0, dataRows: 0 };
+    const originalAll = NodeSqlite.StatementSync.prototype.all;
+    const spy = vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+      this: NodeSqlite.StatementSync,
+      ...params
+    ) {
+      const rows = originalAll.apply(this, params);
+      counts.statements += 1;
+      counts.dataRows += rows.filter((row) => "data" in row).length;
+      return rows;
+    });
+    return { counts, spy };
+  }),
+  ({ spy }) => Effect.sync(() => spy.mockRestore()),
+).pipe(Effect.map(({ counts }) => counts));
 
 describe("readOpenCodeUsage", () => {
   it.effect("bounds raw history allocations while counting every eligible message once", () =>
@@ -116,26 +137,13 @@ describe("readOpenCodeUsage", () => {
           [rowId, id, data, sinceMs],
         );
       }
-      let statements = 0;
-      const originalAll = NodeSqlite.StatementSync.prototype.all;
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-            this: NodeSqlite.StatementSync,
-            ...params
-          ) {
-            statements += 1;
-            return originalAll.apply(this, params);
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
+      const counts = yield* countQueries;
       const result = yield* readOpenCodeUsage(dir, sinceMs);
       assert.deepStrictEqual(
         result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
         ["opencode:a", "opencode:b", "opencode:c"],
       );
-      assert.isBelow(statements, 10);
+      assert.isBelow(counts.statements, 10);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -333,6 +341,7 @@ describe("openCodeUsageReader", () => {
           awaitRefresh: true,
         })
         .pipe(
+          Effect.provide(TestProviderHost.layer()),
           Effect.provideService(HostProcess.Environment, {}),
           Effect.provideService(HostProcess.HomeDirectory, home),
         );
@@ -340,6 +349,60 @@ describe("openCodeUsageReader", () => {
         sources.map((source) => source.dir).sort(),
         [defaultRoot, instanceRoot, xdgRoot].sort(),
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("restores parsed rows after a restart and ignores unreadable cache files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "usage-reader-persist-test-",
+      });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+      );
+      const data = JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 7 } });
+      yield* db.unsafe("INSERT INTO message VALUES ('a', 's', 1, 1, ?)", [data]);
+      const counts = yield* countQueries;
+      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const reader = openCodeUsageReader;
+      const scan = (cacheFile?: string) =>
+        Effect.gen(function* () {
+          const host = yield* ProviderHost.ProviderHost;
+          const cachePath = path.join(host.paths.stateDir, "usage-opencode-cache-v1.json");
+          if (cacheFile !== undefined) yield* fileSystem.writeFileString(cachePath, cacheFile);
+          counts.dataRows = 0;
+          const [source] = yield* reader.scan({
+            instances: [
+              {
+                instanceId: ProviderInstanceId.make("opencode"),
+                config: undefined,
+                environment: { OPENCODE_DATA_DIR: dir },
+                configured: true,
+              },
+            ],
+            settings: DEFAULT_SERVER_SETTINGS,
+            windowStartMs: 0,
+            retentionCutoffMs: 0,
+            awaitRefresh: true,
+          });
+          const records = source?.files?.flatMap((file) => file.records);
+          return {
+            records,
+            dataRows: counts.dataRows,
+            saved: yield* fileSystem.readFileString(cachePath),
+          };
+        }).pipe(Effect.provide(TestProviderHost.layer()));
+
+      const first = yield* scan();
+      assert.strictEqual(first.records?.[0]?.totals.uncachedInputTokens, 7);
+      // Each host has its own state dir, so seeding its cache file stands in for a restart.
+      assert.deepStrictEqual(yield* scan(first.saved), { ...first, dataRows: 0 });
+      for (const bad of ["{", '[["key",[[1,{"fingerprint":1}]]]]']) {
+        assert.deepStrictEqual(yield* scan(bad), first);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
@@ -367,27 +430,13 @@ describe("readOpenCodeUsage cache", () => {
       yield* insert("old", sinceMs - 86_400_000, 1);
       yield* insert("a", sinceMs, 2);
       yield* insert("b", sinceMs + 1, 3);
-      let dataRows = 0;
-      const originalAll = NodeSqlite.StatementSync.prototype.all;
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-            this: NodeSqlite.StatementSync,
-            ...params
-          ) {
-            const rows = originalAll.apply(this, params);
-            dataRows += rows.filter((row) => "data" in row).length;
-            return rows;
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
+      const counts = yield* countQueries;
       const cache = { rows: new Map(), retentionCutoffMs: sinceMs - 10 * 86_400_000 };
       const read = (windowStartMs: number) =>
         Effect.gen(function* () {
-          dataRows = 0;
+          counts.dataRows = 0;
           const cached = yield* readOpenCodeUsage(dir, windowStartMs, cache);
-          const fetched = dataRows;
+          const fetched = counts.dataRows;
           assert.deepStrictEqual(cached, yield* readOpenCodeUsage(dir, windowStartMs));
           const inputs = cached.files
             .flatMap((file) => file.records)

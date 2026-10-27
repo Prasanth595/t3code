@@ -1,9 +1,12 @@
+import { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   totalTokens,
   type ProviderUsageReader,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
@@ -11,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { OpenCodeSettings } from "../settings.ts";
@@ -358,10 +362,38 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
   return [...canonical];
 });
 
-export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
+export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path | ProviderHost.ProviderHost;
 
-// Refreshes re-read only rows whose time_updated or size changed.
-const rowCache: OpenCodeUsageCache = new Map();
+// Rename when parseOpenCodeMessage output or the fingerprint changes; a bad file reads as empty.
+const CACHE_FILE_NAME = "usage-opencode-cache-v1.json";
+const CacheFile = Schema.fromJsonString(
+  Schema.toCodecJson(
+    Schema.ReadonlyMap(
+      Schema.String,
+      Schema.ReadonlyMap(
+        Schema.Number,
+        Schema.Struct({
+          fingerprint: Schema.NullOr(Schema.String),
+          created: Schema.NullOr(Schema.Number),
+          record: Schema.NullOr(
+            Schema.Struct({
+              provider: UsageProviderKind,
+              timestampMs: Schema.Number,
+              model: Schema.String,
+              sessionId: Schema.String,
+              totals: UsageTokenTotals,
+              reportedCostUsd: Schema.NullOr(Schema.Number),
+              speed: Schema.Literals(["standard", "fast", "ultrafast"]),
+              dedupeKey: Schema.NullOr(Schema.String),
+            }),
+          ),
+        }),
+      ),
+    ),
+  ),
+);
+// Parsed rows by cache file, so refreshes and restarts re-read only rows that changed.
+const rowCaches = new Map<string, OpenCodeUsageCache>();
 
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
@@ -371,11 +403,23 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
     windowStartMs,
     retentionCutoffMs,
   }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cachePath = path.join((yield* ProviderHost.ProviderHost).paths.stateDir, CACHE_FILE_NAME);
+    if (!rowCaches.has(cachePath)) {
+      const loaded = yield* fileSystem.readFileString(cachePath).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(CacheFile)),
+        Effect.orElseSucceed(() => []),
+      );
+      if (!rowCaches.has(cachePath)) rowCaches.set(cachePath, new Map(loaded));
+    }
+    const rowCache = rowCaches.get(cachePath)!;
+    const before = new Map(rowCache);
     const roots = new Set<string>();
     for (const instance of instances) {
       for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
     }
-    return yield* Effect.forEach(
+    const scans = yield* Effect.forEach(
       roots,
       (dir) =>
         readOpenCodeUsage(dir, windowStartMs, { rows: rowCache, retentionCutoffMs }).pipe(
@@ -388,5 +432,15 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
         ),
       { concurrency: "unbounded" },
     );
+    if (
+      rowCache.size !== before.size ||
+      rowCache.entries().some(([key, rows]) => before.get(key) !== rows)
+    ) {
+      yield* Schema.encodeEffect(CacheFile)(rowCache).pipe(
+        Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+        Effect.ignore,
+      );
+    }
+    return scans;
   }),
 };
