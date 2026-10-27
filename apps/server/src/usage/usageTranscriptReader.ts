@@ -210,32 +210,53 @@ export async function readTranscriptRecords<State>(
     let scanOffset = start;
     let pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
-    let streaming: ReturnType<typeof createTranscriptJsonReader> | undefined;
-    let decoder: NodeStringDecoder.StringDecoder | undefined;
+    let oversized = false;
+    let carriesUsage = false;
+    let markerTail = Buffer.alloc(0);
+    const markerOverlap =
+      Math.max(...format.usageMarkers.map((marker) => Buffer.byteLength(marker))) - 1;
     const selectPath = selectUsageFields(format.selectFields);
 
+    const checkMarkers = (segment: Buffer) => {
+      if (carriesUsage) return;
+      const boundary = Buffer.concat([markerTail, segment.subarray(0, markerOverlap)]);
+      carriesUsage = mightCarryUsage(segment) || mightCarryUsage(boundary);
+      markerTail = Buffer.from(
+        segment.length >= markerOverlap
+          ? segment.subarray(segment.length - markerOverlap)
+          : Buffer.concat([markerTail, segment]).subarray(-markerOverlap),
+      );
+    };
     const append = (segment: Buffer) => {
-      if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
+      if (!oversized && pendingBytes + segment.length <= streamingThresholdBytes) {
         if (segment.length > 0) pendingChunks.push(segment);
         pendingBytes += segment.length;
         return;
       }
-      if (!streaming) {
-        // Usage has no import-history budget; retain selected fields regardless of surrounding tool payload size.
-        streaming = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
-        decoder = new NodeStringDecoder.StringDecoder("utf8");
-        for (const pending of pendingChunks) streaming.write(decoder.write(pending));
+      if (!oversized) {
+        oversized = true;
+        for (const pending of pendingChunks) checkMarkers(pending);
         pendingChunks = [];
         pendingBytes = 0;
       }
-      streaming.write(decoder!.write(segment));
+      checkMarkers(segment);
     };
-    const finish = (lineState: State, out: UsageRecord[]) => {
-      if (streaming) {
-        streaming.write(decoder!.end());
+    const finish = async (lineState: State, out: UsageRecord[], end: number) => {
+      if (oversized && carriesUsage) {
+        // Replay only usage-bearing oversized lines; tool output can otherwise cost minutes of JSON tokenization.
+        const streaming = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
+        const decoder = new NodeStringDecoder.StringDecoder("utf8");
+        const line = handle.createReadStream({
+          start: resumeOffset,
+          end: end - 1,
+          autoClose: false,
+          highWaterMark: 1024 * 1024,
+        }) as AsyncIterable<Buffer>;
+        for await (const chunk of line) streaming.write(decoder.write(chunk));
+        streaming.write(decoder.end());
         const projected = streaming.finish();
         for (const record of format.parseProjected(projected, lineState)) out.push(record);
-      } else if (pendingBytes > 0) {
+      } else if (!oversized && pendingBytes > 0) {
         const line =
           pendingChunks.length === 1
             ? pendingChunks[0]!
@@ -244,13 +265,14 @@ export async function readTranscriptRecords<State>(
       }
       pendingChunks = [];
       pendingBytes = 0;
-      streaming = undefined;
-      decoder = undefined;
+      oversized = false;
+      carriesUsage = false;
+      markerTail = Buffer.alloc(0);
     };
     const stream = handle.createReadStream({
       start,
       autoClose: false,
-      highWaterMark: 256 * 1024,
+      highWaterMark: 1024 * 1024,
     }) as AsyncIterable<Buffer>;
     for await (const chunk of stream) {
       let lineStart = 0;
@@ -260,11 +282,15 @@ export async function readTranscriptRecords<State>(
           append(chunk.subarray(lineStart));
           break;
         }
-        if (!streaming && pendingBytes === 0) {
+        if (
+          !oversized &&
+          pendingBytes === 0 &&
+          newlineIndex - lineStart <= streamingThresholdBytes
+        ) {
           parseLine(chunk.subarray(lineStart, newlineIndex), state, records);
         } else {
           append(chunk.subarray(lineStart, newlineIndex));
-          finish(state, records);
+          await finish(state, records, scanOffset + newlineIndex);
         }
         lineStart = newlineIndex + 1;
         resumeOffset = scanOffset + lineStart;
@@ -277,7 +303,7 @@ export async function readTranscriptRecords<State>(
     const tailRecords: UsageRecord[] = [];
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
-    finish(tailState, tailRecords);
+    await finish(tailState, tailRecords, scanOffset);
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;

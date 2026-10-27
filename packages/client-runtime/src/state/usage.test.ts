@@ -5,6 +5,7 @@ import {
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type ServerProvider,
+  type UsagePricing,
   type UsageSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -24,7 +25,12 @@ const input = {
   untilDay: UsageDay.make("2026-09-05"),
   timeZone: "UTC",
 };
-const pricing = { status: "fresh" as const, source: "test", fetchedAt: null, knownModels: 1 };
+const pricing: UsagePricing = {
+  status: "fresh" as const,
+  source: "test",
+  fetchedAt: null,
+  knownModels: 1,
+};
 const summary: UsageSummary = {
   ...input,
   contractVersion: USAGE_CONTRACT_VERSION,
@@ -90,28 +96,31 @@ function harness(ids = ["a"]) {
 }
 
 describe("manual usage refresh", () => {
-  it.each(["success", "failure"])("waits for the rescan after a pricing %s", async (result) => {
-    const {
-      environments: [environment],
-      refresh,
-    } = harness();
-    const entry = environment!;
-    let finished = false;
-    const refreshing = refresh().then(() => {
-      finished = true;
-    });
-    expect(finished).toBe(false);
-    entry.rates.resolve(
-      result === "success"
-        ? AsyncResult.success(pricing)
-        : AsyncResult.fail(new Error("Pricing offline")),
-    );
-    await entry.scanStarted.promise;
-    expect(finished).toBe(false);
-    entry.scan.resolve(summary);
-    await refreshing;
-    expect(finished).toBe(true);
-  });
+  it.each(["success", "failure"])(
+    "reads usage while pricing is pending and waits for both after a pricing %s",
+    async (result) => {
+      const {
+        environments: [environment],
+        refresh,
+      } = harness();
+      const entry = environment!;
+      let finished = false;
+      const refreshing = refresh().then(() => {
+        finished = true;
+      });
+      expect(finished).toBe(false);
+      await entry.scanStarted.promise;
+      entry.rates.resolve(
+        result === "success"
+          ? AsyncResult.success(pricing)
+          : AsyncResult.fail(new Error("Pricing offline")),
+      );
+      expect(finished).toBe(false);
+      entry.scan.resolve(summary);
+      await refreshing;
+      expect(finished).toBe(true);
+    },
+  );
 
   it("settles when an environment disconnects during the rescan", async () => {
     const {
@@ -166,10 +175,10 @@ describe("manual usage refresh", () => {
     const unmount = registry.mount(query);
     expect(reads).toBe(1);
     const refreshing = refresh();
-    entry.rates.resolve(AsyncResult.success(pricing));
+    entry.rates.resolve(AsyncResult.success({ ...pricing, fetchedAt: "2026-09-05T13:00:00Z" }));
     await rescanned.promise;
     await refreshing;
-    expect(reads).toBe(2);
+    expect(reads).toBe(3);
     unmount();
   });
 });
