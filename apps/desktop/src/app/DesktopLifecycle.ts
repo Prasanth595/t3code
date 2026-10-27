@@ -246,6 +246,14 @@ export const make = DesktopLifecycle.of({
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
     const quit: QuitState = { phase: "running", waitingSinceNanos: 0n };
+    // Restore the persisted theme before the first window is created so the
+    // initial window background and title bar match the saved preference.
+    yield* electronTheme.setSource(yield* electronTheme.source).pipe(
+      Effect.catchCause((cause) =>
+        logLifecycleError("failed to restore the persisted theme", { cause }),
+      ),
+      Effect.withSpan("desktop.lifecycle.themeRestore"),
+    );
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),

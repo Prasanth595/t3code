@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+import Store from "electron-store";
 
 export class ElectronThemeSetSourceError extends Schema.TaggedError<ElectronThemeSetSourceError>()(
   "ElectronThemeSetSourceError",
@@ -19,10 +20,28 @@ export class ElectronThemeSetSourceError extends Schema.TaggedError<ElectronThem
   }
 }
 
+interface ThemeStoreShape {
+  readonly theme: DesktopTheme;
+}
+
+const isDesktopTheme = Schema.is(DesktopThemeSchema);
+
+// electron-store resolves app paths when constructed, so the store is built
+// on first use instead of when this module is imported.
+let themeStore: Store<ThemeStoreShape> | null = null;
+const getThemeStore = (): Store<ThemeStoreShape> => {
+  themeStore ??= new Store<ThemeStoreShape>({
+    name: "theme",
+    defaults: { theme: "system" },
+  });
+  return themeStore;
+};
+
 export class ElectronTheme extends Context.Service<
   ElectronTheme,
   {
     readonly shouldUseDarkColors: Effect.Effect<boolean>;
+    readonly source: Effect.Effect<DesktopTheme>;
     readonly setSource: (theme: DesktopTheme) => Effect.Effect<void, ElectronThemeSetSourceError>;
     readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -31,10 +50,15 @@ export class ElectronTheme extends Context.Service<
 /** @public */
 export const make = ElectronTheme.of({
   shouldUseDarkColors: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors),
+  source: Effect.sync(() => {
+    const stored: unknown = getThemeStore().get("theme");
+    return isDesktopTheme(stored) ? stored : "system";
+  }),
   setSource: Effect.fn("ElectronTheme.setSource")(function (theme) {
     return Effect.try({
       try: () => {
         Electron.nativeTheme.themeSource = theme;
+        getThemeStore().set("theme", theme);
       },
       catch: (cause) => new ElectronThemeSetSourceError({ source: theme, cause }),
     });
