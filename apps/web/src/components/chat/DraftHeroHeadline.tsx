@@ -74,8 +74,9 @@ export function DraftHeroHeadline({
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const draftPrompt = useComposerDraftStore((store) =>
-    draftId ? (store.getComposerDraft(draftId)?.prompt ?? "") : "",
+  // A boolean, so typing in a draft does not re-render the hero.
+  const isTriageDraftPrompt = useComposerDraftStore((store) =>
+    draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
   );
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
@@ -341,7 +342,7 @@ export function DraftHeroHeadline({
       </Tooltip>
     ) : null;
 
-  if (isScratchDraft && isTriagePrompt(draftPrompt)) {
+  if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
       (entry) => entry.environmentId === activeProject.environmentId,
     );

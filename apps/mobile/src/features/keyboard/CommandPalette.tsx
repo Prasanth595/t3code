@@ -58,6 +58,8 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import { useStartTriage } from "../triage/useStartTriage";
+import { useNewTaskFlow } from "../threads/new-task-flow-provider";
+import { useActiveNewTask } from "../../state/active-new-task";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -266,7 +268,12 @@ export function CommandPalette(props: {
   );
   const serverConfigs = useServerConfigs();
   const startTriage = useStartTriage();
-  const triageEnvironmentId = activeThread?.environmentId ?? searchEnvironmentIds[0] ?? null;
+  const newTaskFlow = useNewTaskFlow();
+  // Triage the machine on screen: the open thread's, or the open draft's.
+  const draftEnvironmentId =
+    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
+  const triageEnvironmentId =
+    activeThread?.environmentId ?? draftEnvironmentId ?? searchEnvironmentIds[0] ?? null;
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     triageEnvironmentId !== null &&
@@ -344,6 +351,8 @@ export function CommandPalette(props: {
         key: "triage",
         kind: "action",
         title: "Triage an issue",
+        // Mobile has no triage hero, so name the machine before it starts.
+        detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
         searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
         run: () => void startTriage(triageEnvironmentId),
       });

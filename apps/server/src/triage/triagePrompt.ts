@@ -242,10 +242,11 @@ The server could not clone the source for its version (${clone.serverVersion}): 
 Clone it as step 4 describes.
 `;
   }
-  const status =
-    clone._tag === "cloned"
-      ? "The server cloned the source for its own version"
-      : "The server is cloning the source for its own version";
+  const verb = clone._tag === "cloned" ? "The server cloned" : "The server is cloning";
+  const what =
+    clone.ref === "main"
+      ? `main, since its version (${clone.serverVersion}) has no release tag`
+      : `the source for its own version (${clone.serverVersion})`;
   const wait =
     clone._tag === "cloned"
       ? ""
@@ -257,7 +258,7 @@ describes.
   return `
 ## Source
 
-${status} (${clone.serverVersion}):
+${verb} ${what}:
 
     ${clone.directory}  (${clone.ref}, commit ${clone.commit})
 ${wait}

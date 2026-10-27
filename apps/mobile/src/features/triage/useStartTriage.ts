@@ -42,6 +42,18 @@ export function useStartTriage() {
     error instanceof Error ? error.message : fallback;
 
   return async (environmentId: EnvironmentId) => {
+    const scratch = await openScratch({ environmentId, input: {} });
+    if (scratch._tag === "Failure") {
+      if (!isAtomCommandInterrupted(scratch)) {
+        fail(
+          errorMessage(
+            squashAtomCommandFailure(scratch),
+            "This machine cannot start threads without a project.",
+          ),
+        );
+      }
+      return;
+    }
     const prepared = await prepare({
       environmentId,
       input: { client: authClientMetadata(Constants.expoConfig?.version) },
@@ -49,15 +61,6 @@ export function useStartTriage() {
     if (prepared._tag === "Failure") {
       if (!isAtomCommandInterrupted(prepared)) {
         fail(errorMessage(squashAtomCommandFailure(prepared), "The server could not prepare it."));
-      }
-      return;
-    }
-    const scratch = await openScratch({ environmentId, input: {} });
-    if (scratch._tag === "Failure") {
-      if (!isAtomCommandInterrupted(scratch)) {
-        fail(
-          errorMessage(squashAtomCommandFailure(scratch), "No project threads are not available."),
-        );
       }
       return;
     }

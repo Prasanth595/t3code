@@ -41,7 +41,7 @@ export function useStartTriage() {
       stackedThreadToast({
         type: "error",
         title: "Could not start triage",
-        description: `${description} Run ${TRIAGE_CLI_COMMAND} in a terminal instead.`,
+        description: `${description} Run ${TRIAGE_CLI_COMMAND} in a terminal on that machine instead.`,
         timeout: 0,
         actionProps: { children: "Copy command", onClick: () => void copyTriageCliCommand() },
       }),
@@ -59,20 +59,41 @@ export function useStartTriage() {
       fail("This environment cannot start threads without a project.");
       return;
     }
-    const prepared = await prepare({
-      environmentId,
-      input: { client: currentClientMetadata() },
-    });
-    if (prepared._tag === "Failure") return failWith(prepared);
-    const project = await openScratch({ environmentId, input: {} });
-    if (project._tag === "Failure") return failWith(project);
-    const opened = await handleNewThread(
-      scopeProjectRef(project.value.environmentId, project.value.id),
-    ).catch(() => null);
-    if (opened === null) {
-      fail("T3 Code could not open a new thread.");
-      return;
+    // The palette is already closed, and a slow network can hold up the source
+    // lookup, so say something when the draft does not open at once.
+    let pendingToastId: ReturnType<typeof toastManager.add> | undefined;
+    const pendingTimer = setTimeout(() => {
+      pendingToastId = toastManager.add({
+        type: "loading",
+        title: "Starting triage…",
+        timeout: 0,
+        data: { hideCopyButton: true },
+      });
+    }, 400);
+    try {
+      const prepared = await prepare({
+        environmentId,
+        input: { client: currentClientMetadata() },
+      });
+      if (prepared._tag === "Failure") return failWith(prepared);
+      const project = await openScratch({ environmentId, input: {} });
+      if (project._tag === "Failure") return failWith(project);
+      const opened = await handleNewThread(
+        scopeProjectRef(project.value.environmentId, project.value.id),
+      ).then(
+        (draft) => ({ draft }),
+        () => null,
+      );
+      if (opened === null) {
+        fail("T3 Code could not open a new thread.");
+        return;
+      }
+      // No draft: the user went somewhere else meanwhile.
+      if (opened.draft === null) return;
+      useComposerDraftStore.getState().setPrompt(opened.draft.draftId, prepared.value.prompt);
+    } finally {
+      clearTimeout(pendingTimer);
+      if (pendingToastId !== undefined) toastManager.close(pendingToastId);
     }
-    useComposerDraftStore.getState().setPrompt(opened.draftId, prepared.value.prompt);
   };
 }

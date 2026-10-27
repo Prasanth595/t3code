@@ -65,6 +65,10 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const sourceDir = triageSourceCacheDir(config.baseDir, path);
+  // Beside the cache, not in it: the playbook has agents prune the cache, and a
+  // clone in progress must not look like a stale entry. Same filesystem, so the
+  // finished clone moves in with a rename.
+  const stagingDir = `${sourceDir}-staging`;
   const serverVersion = packageJson.version;
 
   const runGit = (operation: string, cwd: string, args: ReadonlyArray<string>, timeoutMs: number) =>
@@ -73,11 +77,14 @@ const make = Effect.gen(function* () {
   // Clones outlive the request that started them: a fresh clone takes tens of
   // seconds, and the user is writing their description meanwhile.
   const serviceScope = yield* Effect.scope;
+  // Clones a previous server process left half done.
+  yield* fs.remove(stagingDir, { recursive: true }).pipe(Effect.ignore);
 
   // Fetches the exact commit `ls-remote` resolved, so the folder the session
   // names is the one that appears even when main moves meanwhile.
   const cloneSource = Effect.fn("TriageService.cloneSource")(function* (commit: string) {
-    const staging = yield* fs.makeTempDirectory({ directory: sourceDir, prefix: ".clone-" });
+    yield* fs.makeDirectory(stagingDir, { recursive: true });
+    const staging = yield* fs.makeTempDirectory({ directory: stagingDir, prefix: "clone-" });
     const directory = path.join(sourceDir, commit);
     yield* Effect.gen(function* () {
       yield* runGit("initSource", staging, ["init", "--quiet"], 10_000);
@@ -108,19 +115,33 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // The playbook's own layout: one folder per commit under the source cache, so
-  // the agent finds and reuses this clone instead of making another. The folder
-  // appears only once the clone is complete.
-  const startSourceClone = Effect.fn("TriageService.startSourceClone")(function* () {
-    yield* fs.makeDirectory(sourceDir, { recursive: true });
+  // Release tags never move, so one lookup serves every later session. Builds
+  // with no tag track main, which does move, so they look it up each time.
+  let releaseSource: { readonly ref: string; readonly commit: string } | undefined;
+  const resolveSource = Effect.fn("TriageService.resolveSource")(function* () {
+    if (releaseSource !== undefined) return releaseSource;
     const tag = `refs/tags/v${serverVersion}`;
     const listed = yield* runGit(
       "resolveSourceRef",
       sourceDir,
       ["ls-remote", T3CODE_REPOSITORY_URL, tag, `${tag}^{}`, "refs/heads/main"],
-      30_000,
+      // Triage still starts without source; a dead network should not stall it.
+      5_000,
     );
     const source = pickSourceRef(listed.stdout, serverVersion);
+    if (source?.ref !== "main") releaseSource = source;
+    return source;
+  });
+
+  // Commits with a clone running, so sessions started meanwhile share it.
+  const cloning = new Set<string>();
+
+  // The playbook's own layout: one folder per commit under the source cache, so
+  // the agent finds and reuses this clone instead of making another. The folder
+  // appears only once the clone is complete.
+  const startSourceClone = Effect.fn("TriageService.startSourceClone")(function* () {
+    yield* fs.makeDirectory(sourceDir, { recursive: true });
+    const source = yield* resolveSource();
     if (source === undefined) {
       return {
         _tag: "failed",
@@ -132,10 +153,14 @@ const make = Effect.gen(function* () {
     if (yield* fs.exists(directory)) {
       return { _tag: "cloned", directory, serverVersion, ...source } as const;
     }
-    yield* cloneSource(source.commit).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(serviceScope),
-    );
+    if (!cloning.has(source.commit)) {
+      cloning.add(source.commit);
+      yield* cloneSource(source.commit).pipe(
+        Effect.ignoreCause({ log: true }),
+        Effect.ensuring(Effect.sync(() => cloning.delete(source.commit))),
+        Effect.forkIn(serviceScope),
+      );
+    }
     return { _tag: "cloning", directory, serverVersion, ...source } as const;
   });
 

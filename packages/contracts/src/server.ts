@@ -324,13 +324,13 @@ export const ServerPrepareTriageResult = Schema.Struct({
   /** Composer text that links the session's prompt file. */
   prompt: Schema.String,
 });
+export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
 
 /**
  * The prompt file links as a chip in the user's message; clients spot a triage
  * draft by it.
  */
 export const TRIAGE_PROMPT_FILE_NAME = "triage-playbook.md";
-export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
 
 export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTriageError>()(
   "ServerPrepareTriageError",

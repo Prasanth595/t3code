@@ -163,7 +163,7 @@ export const triageCommand = Command.make("triage", {
         selected = yield* pickAgent(installed);
       }
 
-      // Windows .cmd shims cannot carry multiline argv; prompt.md also serves as the paste fallback.
+      // Windows .cmd shims cannot carry multiline argv; the prompt file also serves as the paste fallback.
       const { sessionDir, promptFilePath, contextFilePath } = session;
 
       if (selected === undefined) {
