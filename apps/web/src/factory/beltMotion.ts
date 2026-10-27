@@ -100,7 +100,8 @@ function fly(
 function createMotion() {
   const tiles = new Map<string, HTMLElement>();
   const departed = new Map<string, Departed>();
-  let clearing = false;
+  // Where every tile was when the commit removed its first one, by key.
+  const before = new Map<string, DOMRect>();
   let played: ReadonlyArray<TileMotion> | null = null;
 
   /** On every tile, with its run's key in `data-tile`. */
@@ -110,17 +111,18 @@ function createMotion() {
     tiles.set(key, node);
     return () => {
       if (tiles.get(key) !== node) return;
-      tiles.delete(key);
-      // React runs this while the element is still in the page: its last place can be measured.
-      departed.set(key, { rect: node.getBoundingClientRect(), node });
-      // Such a place is good for the commit it was taken in, not for a later move.
-      if (!clearing) {
-        clearing = true;
+      // React runs this while the element is still in the page. The first removal of a commit
+      // measures every tile, as a lane closes up behind each tile it loses.
+      if (before.size === 0) {
+        for (const [tileKey, tile] of tiles) before.set(tileKey, tile.getBoundingClientRect());
+        // Such places are good for the commit they were taken in, not for a later move.
         queueMicrotask(() => {
-          clearing = false;
+          before.clear();
           departed.clear();
         });
       }
+      tiles.delete(key);
+      departed.set(key, { rect: before.get(key) ?? node.getBoundingClientRect(), node });
     };
   };
 
