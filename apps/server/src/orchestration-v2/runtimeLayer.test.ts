@@ -1122,12 +1122,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         dispatchMode: { type: "start_immediately" },
       });
       yield* dispatchFollowUp("other-model", "Use another model for this.", "other-model");
+      yield* dispatchFollowUp("rejected", "This promotion was already rejected.");
+      const rejectedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[2]!;
+      yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make(`command:system:startup-steer:${rejectedRun.id}`),
+          threadId,
+          queuedRunId: rejectedRun.id,
+          targetRunId: (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id,
+        })
+        .pipe(Effect.flip);
       yield* dispatchFollowUp("goal", "Check the goal.");
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-startup-steer-goal-edit"),
         threadId,
-        runId: (yield* orchestrator.getThreadProjection(threadId)).runs[2]!.id,
+        runId: (yield* orchestrator.getThreadProjection(threadId)).runs[3]!.id,
         text: "/goal finish the work",
       });
       yield* dispatchFollowUp("steer", "Also do this.");
@@ -1209,7 +1220,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         (yield* orchestrator.getThreadProjection(threadId)).runs.map(
           (candidate) => candidate.status,
         ),
-        ["running", "queued", "queued", "cancelled"],
+        ["running", "queued", "queued", "queued", "cancelled"],
       );
     }),
   );
