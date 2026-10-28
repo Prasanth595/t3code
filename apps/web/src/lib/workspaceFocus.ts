@@ -1,6 +1,7 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { dismissContextMenu } from "../contextMenuFallback";
 import { useRightPanelStore } from "../rightPanelStore";
+import { TIMELINE_ITEM_SELECTOR } from "./timelineNavigation";
 
 const AREA_SELECTOR = "[data-workspace-area]";
 const FOCUS_BOUNDARY_SELECTOR =
@@ -143,13 +144,31 @@ export function createWorkspaceFocusController(doc: Document) {
         )
       : undefined;
     // Moving the timeline to an old control would also stop it following a running turn,
-    // so the conversation reuses a control only while it is still in view.
+    // so the conversation reuses a control only while it is still in view. Its list offers
+    // the Tab-stop item when in view, else the lowest item in view.
     const isConversation = area.dataset.workspaceArea === "conversation";
+    const listItems = isConversation
+      ? Array.from(area.querySelectorAll<HTMLElement>(TIMELINE_ITEM_SELECTOR)).filter(
+          (item) => belongs(item) && isInScrollView(item),
+        )
+      : [];
+    const listEntry =
+      listItems.find((item) => item.tabIndex === 0) ??
+      listItems.reduce<HTMLElement | undefined>(
+        (lowest, item) =>
+          !lowest || item.getBoundingClientRect().top > lowest.getBoundingClientRect().top
+            ? item
+            : lowest,
+        undefined,
+      );
     const targets = new Set([
-      previous && belongs(previous) && (!isConversation || isInScrollView(previous))
+      previous &&
+      belongs(previous) &&
+      (!isConversation || (previous !== area && isInScrollView(previous)))
         ? previous
         : undefined,
       isConversation ? undefined : restored,
+      listEntry,
       preferred,
       surfaceControl,
       isConversation ? undefined : fallback,
@@ -157,6 +176,7 @@ export function createWorkspaceFocusController(doc: Document) {
     ]);
     for (const target of targets) {
       if (!target) continue;
+      if (target === listEntry && target.tabIndex !== 0) target.tabIndex = 0;
       target.focus({ preventScroll: true });
       const root = target.getRootNode();
       const active = root instanceof ShadowRoot ? root.activeElement : doc.activeElement;

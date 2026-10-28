@@ -1,6 +1,6 @@
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import { stubGlobal } from "../../../test/render";
 import {
   EnvironmentId,
@@ -388,6 +388,242 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+describe("MessagesTimeline keyboard navigation", () => {
+  const CONVERSATION = [
+    message("First question", {}, "q1"),
+    message(
+      "First answer, see [the guide](https://example.com/guide).",
+      { role: "assistant" },
+      "a1",
+    ),
+    message("Second question", {}, "q2"),
+    message(
+      "Second answer, see [the docs](https://example.com/docs).",
+      { role: "assistant" },
+      "a2",
+    ),
+  ];
+
+  function renderWithNeighbours(entries: ReadonlyArray<Entry>, props: Partial<TimelineProps> = {}) {
+    return renderElement(
+      <>
+        <button type="button">Before</button>
+        <MessagesTimeline {...baseProps()} timelineEntries={entries as Entry[]} {...props} />
+        <button type="button">After</button>
+      </>,
+    );
+  }
+
+  const focusedItem = () => document.activeElement?.closest("[data-timeline-item]");
+  const focusedText = () => focusedItem()?.textContent ?? "";
+
+  async function focusedAccessibleName() {
+    // Tests run in Vitest's iframe, which the page's own tree only references.
+    const { frameTree } = (await cdp().send("Page.getFrameTree")) as {
+      frameTree: { childFrames: ReadonlyArray<{ frame: { id: string } }> };
+    };
+    const { nodes } = (await cdp().send("Accessibility.getFullAXTree", {
+      frameId: frameTree.childFrames[0]!.frame.id,
+    })) as {
+      nodes: ReadonlyArray<{
+        role?: { value: string };
+        name?: { value: string };
+        properties?: ReadonlyArray<{ name: string; value: { value: unknown } }>;
+      }>;
+    };
+    // The document reports focus too; the focused element comes after it.
+    const focused = nodes
+      .filter((node) =>
+        node.properties?.some((property) => property.name === "focused" && property.value.value),
+      )
+      .at(-1);
+    return { role: focused?.role?.value, name: focused?.name?.value };
+  }
+
+  it("enters on the latest message and moves between messages with the arrow keys", async () => {
+    setup();
+    await using screen = await renderWithNeighbours(CONVERSATION);
+    await expect.element(screen.getByRole("list", { name: "Messages" })).toBeVisible();
+    const items = screen.container.querySelectorAll("[data-timeline-item]");
+    expect(
+      [...items].map((item) => [
+        item.getAttribute("role"),
+        item.getAttribute("aria-posinset"),
+        item.getAttribute("aria-setsize"),
+      ]),
+    ).toEqual([
+      ["listitem", "1", "4"],
+      ["listitem", "2", "4"],
+      ["listitem", "3", "4"],
+      ["listitem", "4", "4"],
+    ]);
+
+    screen.button("Before").focus();
+    await userEvent.tab();
+    expect(focusedItem()).toBe(document.activeElement);
+    expect(focusedText()).toContain("Second answer");
+    expect(await focusedAccessibleName()).toEqual({
+      role: "listitem",
+      // Chromium names a focusable list item from its content, the heading first.
+      name: expect.stringMatching(/^T3 Code Second answer, see /),
+    });
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focusedText()).toContain("Second answer");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(focusedText()).toContain("Second question");
+    await userEvent.keyboard("{Home}");
+    expect(focusedText()).toContain("First question");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(focusedText()).toContain("First question");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focusedText()).toContain("First answer");
+    await userEvent.keyboard("{End}");
+    expect(focusedText()).toContain("Second answer");
+  });
+
+  it("tabs from the focused message to its own controls and then out of the list", async () => {
+    setup();
+    await using screen = await renderWithNeighbours(CONVERSATION);
+    await expect.element(screen.getByRole("list", { name: "Messages" })).toBeVisible();
+    screen.button("Before").focus();
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+    expect(focusedText()).toContain("First answer");
+    const answer = focusedItem()!;
+
+    const stops: HTMLElement[] = [];
+    for (let step = 0; step < 10 && document.activeElement !== screen.button("After"); step++) {
+      await userEvent.tab();
+      stops.push(document.activeElement as HTMLElement);
+    }
+    expect(stops.at(-1)).toBe(screen.button("After"));
+    // Past its own controls, Tab skips every other message's (the minimap is outside the list).
+    expect(
+      stops
+        .filter((stop) => stop.closest("[data-timeline-item]"))
+        .map((stop) => [
+          answer.contains(stop),
+          stop.getAttribute("aria-label") ?? stop.textContent,
+        ]),
+    ).toEqual([
+      [true, "the guide"],
+      [true, "Copy message"],
+    ]);
+    expect(
+      screen.container.querySelector<HTMLElement>('a[href="https://example.com/docs"]')!.tabIndex,
+    ).toBe(-1);
+
+    for (const _stop of stops) await userEvent.tab({ shift: true });
+    expect(document.activeElement).toBe(answer);
+  });
+
+  it("reaches an answer's copy button, shown below its work, by Tab from the answer", async () => {
+    setup();
+    const [prompt, work, answer] = makeStreamingTimelineFixture().visibleTurnItems;
+    await using screen = await renderWithNeighbours(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [prompt!, { ...answer!, position: 1 }, { ...work!, position: 2 }],
+        optimisticMessages: [],
+      }),
+    );
+    await expect.element(screen.getByRole("list", { name: "Messages" })).toBeVisible();
+    const meta = screen.container.querySelector<HTMLElement>("[data-timeline-controls-for]")!;
+    expect(meta.getAttribute("role")).toBeNull();
+    expect(screen.container.querySelectorAll('[role="listitem"]')).toHaveLength(3);
+    const copy = meta.querySelector<HTMLElement>('[aria-label="Copy message"]')!;
+    screen.button("Before").focus();
+    await userEvent.tab();
+    expect(focusedText()).toContain("vp test");
+    expect(copy.tabIndex).toBe(-1);
+    await userEvent.keyboard("{ArrowUp}");
+    expect(focusedText()).toContain("Done");
+    expect(focusedItem()!.getAttribute("data-timeline-item")).toBe(
+      meta.dataset.timelineControlsFor,
+    );
+    await userEvent.tab();
+    expect(document.activeElement).toBe(copy);
+  });
+
+  it("keeps each message's heading and links in the accessibility tree", async () => {
+    setup();
+    await using screen = await renderWithNeighbours(CONVERSATION);
+    const firstAnswer = screen.getByRole("listitem").nth(1);
+    await expect.element(firstAnswer.getByRole("heading", { name: "T3 Code" })).toBeInTheDocument();
+    await expect.element(firstAnswer.getByRole("link", { name: "the guide" })).toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("listitem").nth(0).getByRole("heading", { name: "You" }))
+      .toBeInTheDocument();
+  });
+
+  it("moves up into history that the list has not mounted", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      message(
+        `Turn ${index}:\n\n${"x ".repeat(200)}`,
+        { role: index % 2 === 0 ? "user" : "assistant" },
+        `turn-${index}`,
+      ),
+    );
+    await using screen = await renderElement(
+      <>
+        <button type="button">Before</button>
+        <MessagesTimeline {...props} timelineEntries={entries} />
+      </>,
+    );
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
+    screen.button("Before").focus();
+    await userEvent.tab();
+    expect(focusedText()).toContain("Turn 119:");
+    expect(focusedItem()?.getAttribute("aria-posinset")).toBe("120");
+
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(async () => {
+      await act(() => {
+        viewport.scrollTop = 0;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      expect(screen.container.querySelector('[data-timeline-item="entry-turn-118"]')).toBeNull();
+    });
+    expect(focusedText()).toContain("Turn 119:");
+
+    await userEvent.keyboard("{ArrowUp}");
+    await vi.waitFor(() => expect(focusedText()).toContain("Turn 118:"));
+    const row = focusedItem()!.getBoundingClientRect();
+    const view = viewport.getBoundingClientRect();
+    expect(row.top).toBeLessThan(view.bottom);
+    expect(row.bottom).toBeGreaterThan(view.top);
+  });
+
+  it("counts loaded messages as part of an unknown total and moves up to load earlier turns", async () => {
+    setup();
+    await using screen = await renderWithNeighbours(CONVERSATION.slice(2), {
+      historyControls: {
+        hasMoreHistory: true,
+        loading: false,
+        error: null,
+        onLoadEarlier: () => {},
+      },
+    });
+    await expect.element(screen.getByRole("list", { name: "Messages" })).toBeVisible();
+    expect(
+      [...screen.container.querySelectorAll("[data-timeline-item]")].map((item) =>
+        item.getAttribute("aria-setsize"),
+      ),
+    ).toEqual(["-1", "-1"]);
+    screen.button("Before").focus();
+    await userEvent.tab();
+    // The history button comes first in Tab order, before the list's own stop.
+    expect(document.activeElement).toBe(screen.button("Load earlier turns"));
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(focusedText()).toContain("Second question");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(screen.button("Load earlier turns"));
   });
 });
 

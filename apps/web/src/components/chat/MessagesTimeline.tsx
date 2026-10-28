@@ -24,6 +24,12 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import {
+  TIMELINE_LIST_PROPS,
+  installTimelineControls,
+  timelineItemSelector,
+  timelineRevealDelta,
+} from "~/lib/timelineNavigation";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
@@ -422,6 +428,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => new Map(),
   );
   const [fullscreenAppRowId, setFullscreenAppRowId] = useState<string | null>(null);
+  const [chosenTabStop, setChosenTabStop] = useState<string | null>(null);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
@@ -442,6 +449,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // A viewer pinned in another thread must not keep live follow off here,
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
+    setChosenTabStop(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -683,6 +691,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
+  const timelineItems = timelineItemsFor(rows);
+  const tabStopRowId =
+    chosenTabStop !== null && timelineItems.positions.has(chosenTabStop)
+      ? chosenTabStop
+      : timelineItems.ids.at(-1);
+  const tabStopMetaRowId =
+    tabStopRowId === undefined ? undefined : timelineItems.metaRowIds.get(tabStopRowId);
   const unmatchedPendingApprovals = new Map(pendingApprovalsByRequestId);
   if (unmatchedPendingApprovals.size > 0) {
     for (const row of rows) {
@@ -788,14 +803,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // last messages mounted lets heading navigation wrap to either end.
   const firstMessageRow = rows.find(isMessageRow);
   const lastMessageRow = rows.findLast(isMessageRow);
+  // The Tab stop stays mounted so focus is never unmounted under the reader, and Tab can enter.
   const alwaysRenderKeys = [
-    ...(firstMessageRow ? [firstMessageRow.id] : []),
-    ...(lastMessageRow && lastMessageRow !== firstMessageRow ? [lastMessageRow.id] : []),
-    ...(citationAlwaysRender?.keys ?? []),
-    ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
-    ...new Set(
-      [...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
-    ),
+    ...new Set([
+      ...(firstMessageRow ? [firstMessageRow.id] : []),
+      ...(lastMessageRow ? [lastMessageRow.id] : []),
+      ...(tabStopRowId === undefined ? [] : [tabStopRowId]),
+      ...(tabStopMetaRowId === undefined ? [] : [tabStopMetaRowId]),
+      ...(citationAlwaysRender?.keys ?? []),
+      ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
+      ...[...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
+    ]),
   ];
   const alwaysRender =
     alwaysRenderIndices.length === 0 && alwaysRenderKeys.length === 0
@@ -1120,6 +1138,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
     const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const stopTimelineControls = scrollNode ? installTimelineControls(scrollNode) : undefined;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
@@ -1144,6 +1163,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .listen("totalSize", () => scheduleContentSizeChanged());
     scheduleContentSizeChanged();
     return () => {
+      stopTimelineControls?.();
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
@@ -1211,26 +1231,134 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   });
-  const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
-    <TimelineRowCtx value={sharedState}>
-      <div
-        className="messages-timeline-row-frame"
-        onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
-      >
+  const pendingItemFocusRef = useRef<{ readonly id: string; readonly from: Element } | null>(null);
+  // Focus a row that scrollToIndex is mounting, unless focus moved elsewhere meanwhile.
+  const focusPendingItem = useStableCallback((element: HTMLDivElement | null) => {
+    const pending = pendingItemFocusRef.current;
+    if (!element || !pending || element.dataset.timelineItem !== pending.id) return;
+    pendingItemFocusRef.current = null;
+    const active = document.activeElement;
+    if (active === pending.from || active === document.body || active === null)
+      element.focus({ preventScroll: true });
+  });
+  const revealInTimeline = (element: HTMLElement) => {
+    const scrollNode = listRef.current?.getScrollableNode();
+    if (!scrollNode) return;
+    const delta = timelineRevealDelta(
+      scrollNode.getBoundingClientRect(),
+      element.getBoundingClientRect(),
+      contentInsetEndAdjustment,
+    );
+    if (delta === 0) return;
+    navigateTimeline();
+    scrollNode.scrollTop += delta;
+  };
+  const focusTimelineItem = (id: string, from: HTMLElement) => {
+    setChosenTabStop(id);
+    const element = listRef.current
+      ?.getScrollableNode()
+      ?.querySelector<HTMLElement>(timelineItemSelector(id));
+    if (element) {
+      pendingItemFocusRef.current = null;
+      revealInTimeline(element);
+      element.tabIndex = 0;
+      element.focus({ preventScroll: true });
+      return;
+    }
+    pendingItemFocusRef.current = { id, from };
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index: rows.findIndex((row) => row.id === id),
+      animated: false,
+    });
+  };
+  const onTimelineItemKeyDown = useStableCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const item = event.currentTarget;
+    if (
+      event.target !== item ||
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    )
+      return;
+    const { ids } = timelineItems;
+    const index = ids.indexOf(item.dataset.timelineItem ?? "");
+    if (index < 0) return;
+    if (event.key === "ArrowUp" && index === 0) {
+      const loadEarlier = listRef.current
+        ?.getScrollableNode()
+        ?.querySelector<HTMLButtonElement>("[data-timeline-load-earlier]:enabled");
+      if (!loadEarlier) return;
+      event.preventDefault();
+      revealInTimeline(loadEarlier);
+      loadEarlier.focus({ preventScroll: true });
+      return;
+    }
+    const target =
+      event.key === "ArrowDown"
+        ? ids[index + 1]
+        : event.key === "ArrowUp"
+          ? ids[index - 1]
+          : event.key === "Home"
+            ? ids[0]
+            : event.key === "End"
+              ? ids.at(-1)
+              : undefined;
+    if (target === undefined) return;
+    event.preventDefault();
+    focusTimelineItem(target, item);
+  });
+  // Unknown while earlier turns are not loaded.
+  const timelineItemSetSize = historyControls?.hasMoreHistory ? -1 : timelineItems.ids.length;
+  const renderItem = ({ item }: { item: MessagesTimelineRow }) => {
+    const position = timelineItems.positions.get(item.id);
+    const owner = timelineItems.owners.get(item.id);
+    return (
+      <TimelineRowCtx value={sharedState}>
         <div
-          ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
+          ref={focusPendingItem}
+          className={cn(
+            "messages-timeline-row-frame",
+            position !== undefined && "group/timeline-item outline-none",
+          )}
+          {...(position === undefined
+            ? { "data-timeline-controls-for": owner }
+            : {
+                role: "listitem",
+                "data-timeline-item": item.id,
+                "aria-posinset": position,
+                "aria-setsize": timelineItemSetSize,
+                tabIndex: item.id === tabStopRowId ? 0 : undefined,
+              })}
+          onFocus={() => {
+            const id = position === undefined ? owner : item.id;
+            if (id !== undefined) setChosenTabStop(id);
+          }}
+          onKeyDown={position === undefined ? undefined : onTimelineItemKeyDown}
+          onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
         >
-          <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
-          </AudioPreviewUnmountContext>
+          <div
+            ref={observeLaneWidth}
+            className={cn(
+              "chat-content-lane overflow-x-clip",
+              position !== undefined &&
+                "rounded-lg group-focus-visible/timeline-item:outline-2 group-focus-visible/timeline-item:-outline-offset-2 group-focus-visible/timeline-item:outline-ring",
+            )}
+            data-timeline-root="true"
+          >
+            <AudioPreviewUnmountContext value={onAudioUnmount}>
+              <TimelineRowContent row={item} />
+            </AudioPreviewUnmountContext>
+          </div>
         </div>
-      </div>
-    </TimelineRowCtx>
-  );
+      </TimelineRowCtx>
+    );
+  };
   const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
   const timelineListFooter = (
     <TimelineListFooter
@@ -1299,6 +1427,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               />
             ) : null}
             <LegendList<MessagesTimelineRow>
+              {...TIMELINE_LIST_PROPS}
               ref={setTimelineList}
               data={rows}
               extraData={listExtraData}
@@ -1379,6 +1508,7 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
             type="button"
             disabled={props.loading}
             aria-label="Load earlier turns"
+            data-timeline-load-earlier
             onClick={() => props.onLoadEarlier()}
             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
@@ -1397,6 +1527,42 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
       </div>
     </div>
   );
+}
+
+const timelineItemsCache = new WeakMap<
+  ReadonlyArray<MessagesTimelineRow>,
+  ReturnType<typeof deriveTimelineItems>
+>();
+function timelineItemsFor(rows: ReadonlyArray<MessagesTimelineRow>) {
+  let items = timelineItemsCache.get(rows);
+  if (!items) {
+    items = deriveTimelineItems(rows);
+    timelineItemsCache.set(rows, items);
+  }
+  return items;
+}
+
+/** Every row but assistant-meta is a list item; a meta row's controls belong to its message. */
+function deriveTimelineItems(rows: ReadonlyArray<MessagesTimelineRow>) {
+  const ids: string[] = [];
+  const positions = new Map<string, number>();
+  const owners = new Map<string, string>();
+  const metaRowIds = new Map<string, string>();
+  const messageRowIds = new Map<MessageId, string>();
+  for (const row of rows) {
+    if (row.kind === "assistant-meta") {
+      const owner = messageRowIds.get(row.message.id);
+      if (owner !== undefined) {
+        owners.set(row.id, owner);
+        metaRowIds.set(owner, row.id);
+      }
+      continue;
+    }
+    if (row.kind === "message") messageRowIds.set(row.message.id, row.id);
+    ids.push(row.id);
+    positions.set(row.id, ids.length);
+  }
+  return { ids, positions, owners, metaRowIds };
 }
 
 function isMessageRow(row: MessagesTimelineRow) {

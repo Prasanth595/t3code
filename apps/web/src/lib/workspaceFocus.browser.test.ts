@@ -186,7 +186,7 @@ describe("workspace area focus", () => {
     expect(rect.bottom > box.top && rect.top < box.bottom).toBe(true);
   });
 
-  it("does not scroll the conversation to an old control", () => {
+  it("does not scroll the conversation to an old control or message", () => {
     using fixture = setup();
     const conversation = fixture.area("conversation", 1);
     const timeline = document.createElement("div");
@@ -204,6 +204,36 @@ describe("workspace area focus", () => {
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(conversation.element);
     expect(timeline.scrollTop).toBe(300);
+
+    const message = (id: string) => {
+      const element = document.createElement("div");
+      element.dataset.timelineItem = id;
+      element.style.height = "20px";
+      element.textContent = id;
+      return element;
+    };
+    const [first, earlier, latest] = [message("first"), message("earlier"), message("latest")];
+    first.tabIndex = 0;
+    timeline.replaceChildren(
+      first,
+      Object.assign(document.createElement("div"), { style: "height: 400px" }),
+      earlier,
+      latest,
+    );
+    timeline.scrollTop = timeline.scrollHeight;
+    const end = timeline.scrollTop;
+    composer.button.focus();
+    // The Tab-stop message is out of view, so the lowest message in view takes focus.
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(latest);
+    expect(latest.tabIndex).toBe(0);
+    expect(timeline.scrollTop).toBe(end);
+
+    fixture.controller.move(1);
+    timeline.scrollTop = 0;
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(first);
+    expect(timeline.scrollTop).toBe(0);
   });
 
   it("returns focus to the area when its focused control disappears", async () => {

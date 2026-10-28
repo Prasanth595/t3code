@@ -35,3 +35,11 @@ keys to move through it, Enter to choose, and Escape to close it.
 
 The Settings section list works the same way: Up and Down move between sections, and Enter
 opens one.
+
+## Browse messages
+
+Tab enters the conversation once, on the message you last focused or else the latest one.
+`F6` enters on a message already in view. Up and Down move between messages and work entries;
+Home and End jump to the first and last loaded ones. Up from the first loaded message moves to
+**Load earlier turns**. Tab moves from the focused message to its links and buttons, such as
+Copy, and then out of the conversation.
