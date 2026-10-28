@@ -208,6 +208,43 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.00925, 9);
     expect(result.buckets[0]?.unpricedRecords).toBe(0);
   });
+
+  it("prices each session once and keeps the partition equal to the buckets", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      collectSessions: true,
+    });
+    aggregator.add(record({ sessionId: "parent", dedupeKey: "message-1" }));
+    aggregator.add(
+      record({
+        sessionId: "fork-copy",
+        dedupeKey: "message-1",
+        timestampMs: Date.parse("2026-08-07T05:00:00.000Z"),
+      }),
+    );
+    aggregator.add(record({ sessionId: "child", dedupeKey: "message-2" }));
+    aggregator.add(record({ sessionId: "", dedupeKey: "message-3" }));
+    aggregator.add(
+      record({
+        sessionId: "parent",
+        dedupeKey: "old",
+        timestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      }),
+    );
+    const result = aggregator.finish();
+    const sessions = aggregator.finishSessions();
+
+    expect(sessions.map((session) => session.sessionId)).toEqual(["child", "parent"]);
+    expect(sessions.find((session) => session.sessionId === "parent")?.records).toBe(1);
+    const sessionCost = sessions.reduce((sum, session) => sum + session.costUsd, 0);
+    const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
+    // The unnamed session stays in the dashboard buckets and cannot be assigned.
+    expect(bucketCost - sessionCost).toBeCloseTo(0.004625, 9);
+    expect(sessionCost).toBeCloseTo(0.00925, 9);
+  });
 });
 
 describe("resolveModelAliases", () => {

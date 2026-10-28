@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -132,6 +137,64 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
 });
 export type UsageSummary = typeof UsageSummary.Type;
+
+/** A provider transcript session. This is not a T3 thread id. */
+export const UsageSessionRef = Schema.Struct({
+  provider: UsageProviderKind,
+  sessionId: TrimmedNonEmptyString,
+});
+export type UsageSessionRef = typeof UsageSessionRef.Type;
+
+export const UsageSessionSpend = Schema.Struct({
+  provider: UsageProviderKind,
+  sessionId: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  categoryCostUsd: Schema.optional(UsageCategoryCost),
+  costSource: UsageCostSource,
+  records: NonNegativeInt,
+  unpricedRecords: NonNegativeInt,
+});
+export type UsageSessionSpend = typeof UsageSessionSpend.Type;
+
+/** Threads one spend request may name. The web prices the newest threads of a project under it. */
+export const MAX_SESSION_SPEND_THREADS = 150 as const;
+
+/** Same day window as a summary. `sessions` selects rows after the scan is deduped. */
+export const UsageSessionSpendInput = Schema.Struct({
+  sinceDay: UsageDay,
+  untilDay: UsageDay,
+  timeZone: TrimmedNonEmptyString,
+  awaitRefresh: Schema.optional(Schema.Boolean),
+  sessions: Schema.Array(UsageSessionRef),
+  /**
+   * T3 threads this environment resolves to provider sessions, unioned with `sessions`. Callers
+   * that hold every thread of a scope do not have to open each thread to price it.
+   */
+  threadIds: Schema.optional(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(MAX_SESSION_SPEND_THREADS)),
+  ),
+});
+export type UsageSessionSpendInput = typeof UsageSessionSpendInput.Type;
+
+export const UsageSessionSpendResult = Schema.Struct({
+  readAt: Schema.String,
+  sinceDay: UsageDay,
+  untilDay: UsageDay,
+  sources: ForwardCompatibleArray(UsageSource),
+  pricing: UsagePricing,
+  sessions: ForwardCompatibleArray(UsageSessionSpend),
+  /** Sessions dropped because the request named more than the server prices at once. */
+  truncatedSessions: Schema.optional(NonNegativeInt),
+  /**
+   * A usage source covering a priced session was partial or failed, so every total here is a
+   * lower bound. The server answers this because it resolves which sessions a request reaches.
+   */
+  incomplete: Schema.optional(Schema.Boolean),
+  /** T3 threads in the request whose provider sessions could not be resolved. */
+  unresolvedThreads: Schema.optional(NonNegativeInt),
+});
+export type UsageSessionSpendResult = typeof UsageSessionSpendResult.Type;
 
 export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),

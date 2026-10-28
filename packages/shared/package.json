@@ -363,6 +363,10 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
+    "./usageSessionRefs": {
+      "types": "./src/usageSessionRefs.ts",
+      "import": "./src/usageSessionRefs.ts"
+    },
     "./usageLimits": {
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"

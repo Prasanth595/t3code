@@ -7,6 +7,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
   ThreadId,
+  UsageDay,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -329,6 +330,64 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
         requiredPermission: AuthFilesystemReadScope,
       });
     }
+    expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires orchestration read only when a spend read names threads", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverGetSessionSpend
+        > => tag !== WS_METHODS.serverGetSessionSpend,
+      ),
+    );
+    let handled = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.serverGetSessionSpend, () =>
+            Effect.sync(() => {
+              handled++;
+              return {
+                readAt: "2026-10-28T00:00:00.000Z",
+                sinceDay: UsageDay.make("2026-07-28"),
+                untilDay: UsageDay.make("2026-10-28"),
+                sources: [],
+                pricing: {
+                  status: "cached" as const,
+                  source: "test",
+                  fetchedAt: null,
+                  knownModels: 0,
+                },
+                sessions: [],
+              };
+            }),
+          ),
+          RpcAuthorization.layer([AuthDiagnosticsReadScope]),
+        ),
+      ),
+    );
+
+    yield* client[WS_METHODS.serverGetSessionSpend]({
+      sinceDay: UsageDay.make("2026-07-28"),
+      untilDay: UsageDay.make("2026-10-28"),
+      timeZone: "UTC",
+      sessions: [],
+    });
+    expect(
+      yield* client[WS_METHODS.serverGetSessionSpend]({
+        sinceDay: UsageDay.make("2026-07-28"),
+        untilDay: UsageDay.make("2026-10-28"),
+        timeZone: "UTC",
+        sessions: [],
+        threadIds: [ThreadId.make("thread")],
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredScope: AuthOrchestrationReadScope });
     expect(handled).toBe(1);
   }).pipe(Effect.scoped),
 );

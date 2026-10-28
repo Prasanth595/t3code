@@ -3,7 +3,9 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageProviderKind,
   UsageResolution,
+  UsageSessionSpend,
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
@@ -46,18 +48,26 @@ function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
 const QUARTER_HOUR_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
-interface MutableBucket {
+interface PricedAccumulator {
   totals: { -readonly [K in keyof UsageTokenTotals]: number };
   costUsd: number;
-  cacheSavingsUsd: number;
   categoryCostUsd: UsageCategoryCost | null;
-  fastCostUsd: number;
-  ultrafastCostUsd: number;
-  speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
+}
+
+interface MutableBucket extends PricedAccumulator {
+  cacheSavingsUsd: number;
+  fastCostUsd: number;
+  ultrafastCostUsd: number;
+  speedPremiumUsd: number;
   sessions: Set<string>;
+}
+
+interface MutableSession extends PricedAccumulator {
+  provider: UsageProviderKind;
+  sessionId: string;
 }
 
 export interface AggregateOptions {
@@ -70,6 +80,8 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** Dashboard scans leave this off so they do not retain a session map. */
+  readonly collectSessions?: boolean;
 }
 
 export function resolveModelAliases(
@@ -97,6 +109,7 @@ export interface AggregateResult {
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
+  readonly #sessions: Map<string, MutableSession> | null;
   readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
@@ -114,6 +127,7 @@ export class UsageAggregator {
 
   constructor(options: AggregateOptions) {
     this.#options = options;
+    this.#sessions = options.collectSessions === true ? new Map() : null;
     this.#toDay = makeDayFormatter(options.timeZone);
     if (options.resolution === "hour") {
       if (options.sinceTimeMs === undefined || options.untilTimeMs === undefined) {
@@ -163,27 +177,9 @@ export class UsageAggregator {
     const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
-
-    const totals = bucket.totals;
-    totals.uncachedInputTokens += record.totals.uncachedInputTokens;
-    totals.cachedInputTokens += record.totals.cachedInputTokens;
-    totals.cacheCreationTokens += record.totals.cacheCreationTokens;
-    totals.outputTokens += record.totals.outputTokens;
-    totals.reasoningTokens += record.totals.reasoningTokens;
-    bucket.costUsd += priced.costUsd;
-    if (priced.categoryCostUsd !== null) {
-      const sum = bucket.categoryCostUsd;
-      const add = priced.categoryCostUsd;
-      bucket.categoryCostUsd =
-        sum === null
-          ? add
-          : {
-              input: sum.input + add.input,
-              cacheRead: sum.cacheRead + add.cacheRead,
-              cacheWrite: sum.cacheWrite + add.cacheWrite,
-              output: sum.output + add.output,
-            };
-    }
+    accumulatePriced(bucket, record.totals, priced.costUsd, priced.categoryCostUsd);
+    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
+    if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.speed === "fast") bucket.fastCostUsd += priced.costUsd;
     if (record.speed === "ultrafast") bucket.ultrafastCostUsd += priced.costUsd;
     bucket.speedPremiumUsd += priced.speedPremiumUsd;
@@ -192,10 +188,27 @@ export class UsageAggregator {
       record,
       this.#options.priceOverrides,
     );
-    bucket.records += 1;
-    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
-    if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    if (this.#sessions !== null && record.sessionId.length > 0) {
+      const key = `${record.provider}\u0000${record.sessionId}`;
+      let session = this.#sessions.get(key);
+      if (session === undefined) {
+        session = {
+          provider: record.provider,
+          sessionId: record.sessionId,
+          totals: { ...EMPTY_TOTALS },
+          costUsd: 0,
+          categoryCostUsd: null,
+          records: 0,
+          unpricedRecords: 0,
+          providerReportedRecords: 0,
+        };
+        this.#sessions.set(key, session);
+      }
+      accumulatePriced(session, record.totals, priced.costUsd, priced.categoryCostUsd);
+      if (priced.costSource === "unpriced") session.unpricedRecords += 1;
+      if (priced.costSource === "providerReported") session.providerReportedRecords += 1;
+    }
     return true;
   }
 
@@ -302,13 +315,71 @@ export class UsageAggregator {
       outOfWindow: this.#outOfWindow,
     };
   }
+
+  /** Empty unless `collectSessions` was set. Omits records that never named a session. */
+  finishSessions(): readonly UsageSessionSpend[] {
+    if (this.#sessions === null) return [];
+    const sessions: UsageSessionSpend[] = [];
+    for (const session of this.#sessions.values()) {
+      const category = session.categoryCostUsd;
+      sessions.push({
+        provider: session.provider,
+        sessionId: session.sessionId,
+        totals: { ...session.totals },
+        costUsd: session.costUsd,
+        ...(category === null
+          ? {}
+          : {
+              categoryCostUsd: {
+                input: roundUsd(category.input),
+                cacheRead: roundUsd(category.cacheRead),
+                cacheWrite: roundUsd(category.cacheWrite),
+                output: roundUsd(category.output),
+              },
+            }),
+        costSource: resolveCostSource(session),
+        records: session.records,
+        unpricedRecords: session.unpricedRecords,
+      });
+    }
+    sessions.sort(
+      (a, b) => a.provider.localeCompare(b.provider) || a.sessionId.localeCompare(b.sessionId),
+    );
+    return sessions;
+  }
 }
 
 function roundUsd(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-function resolveCostSource(bucket: MutableBucket): UsageBucket["costSource"] {
+function accumulatePriced(
+  target: PricedAccumulator,
+  totals: UsageTokenTotals,
+  costUsd: number,
+  categoryCostUsd: UsageCategoryCost | null,
+): void {
+  target.totals.uncachedInputTokens += totals.uncachedInputTokens;
+  target.totals.cachedInputTokens += totals.cachedInputTokens;
+  target.totals.cacheCreationTokens += totals.cacheCreationTokens;
+  target.totals.outputTokens += totals.outputTokens;
+  target.totals.reasoningTokens += totals.reasoningTokens;
+  target.costUsd += costUsd;
+  target.records += 1;
+  if (categoryCostUsd === null) return;
+  const current = target.categoryCostUsd;
+  target.categoryCostUsd =
+    current === null
+      ? categoryCostUsd
+      : {
+          input: current.input + categoryCostUsd.input,
+          cacheRead: current.cacheRead + categoryCostUsd.cacheRead,
+          cacheWrite: current.cacheWrite + categoryCostUsd.cacheWrite,
+          output: current.output + categoryCostUsd.output,
+        };
+}
+
+function resolveCostSource(bucket: PricedAccumulator): UsageBucket["costSource"] {
   if (bucket.unpricedRecords === bucket.records) return "unpriced";
   if (bucket.providerReportedRecords === bucket.records) return "providerReported";
   return "modelPriced";

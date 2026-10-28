@@ -8,6 +8,8 @@ import {
   type UsageProviderKind,
   type UsageSource,
   type UsagePricing,
+  type UsageSessionSpendInput,
+  type UsageSessionSpendResult,
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
@@ -32,6 +34,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { sessionSpendSourcesIncomplete } from "./usageSessionSpendInput.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -72,6 +75,7 @@ const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const CACHE_RETENTION_DAYS = 92;
+export const MAX_SESSION_SPEND_KEYS = 200;
 
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
@@ -144,6 +148,9 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSessionSpend: (
+      input: UsageSessionSpendInput,
+    ) => Effect.Effect<UsageSessionSpendResult, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -629,6 +636,7 @@ export const make = Effect.gen(function* () {
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
+    collectSessions = false,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -694,6 +702,7 @@ export const make = Effect.gen(function* () {
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
+      collectSessions,
     });
 
     const sources: UsageSource[] = [];
@@ -845,7 +854,7 @@ export const make = Effect.gen(function* () {
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
-    return {
+    const summary = {
       contractVersion: USAGE_CONTRACT_VERSION,
       readAt: DateTime.formatIso(readAt),
       timeZone: input.timeZone,
@@ -856,9 +865,15 @@ export const make = Effect.gen(function* () {
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
+    return { summary, sessions: aggregator.finishSessions() };
   });
 
-  const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
+  interface ScanBody {
+    readonly summary: UsageSummary;
+    readonly sessions: ReturnType<UsageAggregator["finishSessions"]>;
+  }
+
+  const inflightScans = new Map<string, Deferred.Deferred<ScanBody, UsageReadError>>();
 
   const scanKey = (input: UsageSummaryInput, settings: ServerSettingsValue): string =>
     JSON.stringify([
@@ -872,20 +887,23 @@ export const make = Effect.gen(function* () {
       input.awaitRefresh === true,
     ]);
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readBody = Effect.fn("UsageService.readBody")(function* (
+    input: UsageSummaryInput,
+    collectSessions: boolean,
+  ) {
     const settings = yield* readSettings;
-    const key = scanKey(input, settings);
+    const key = `${scanKey(input, settings)}\0${collectSessions ? "sessions" : "summary"}`;
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
         if (existing !== undefined) return existing;
 
         // Register and fork atomically so cancellation cannot leave a Deferred without a scan.
-        const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
+        const created = Deferred.makeUnsafe<ScanBody, UsageReadError>();
         inflightScans.set(key, created);
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* scanSummary(input, settings).pipe(
+        yield* scanSummary(input, settings, collectSessions).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),
@@ -900,7 +918,66 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    const body = yield* readBody(input, false);
+    return body.summary;
+  });
+
+  const readSessionSpend = Effect.fn("UsageService.readSessionSpend")(function* (
+    input: UsageSessionSpendInput,
+  ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+    if (input.sessions.length > MAX_SESSION_SPEND_KEYS) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `At most ${MAX_SESSION_SPEND_KEYS} sessions can be priced in one read`,
+      });
+    }
+    if (input.sessions.length === 0) {
+      const readAt = yield* DateTime.now;
+      return {
+        readAt: DateTime.formatIso(readAt),
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        sources: [],
+        pricing: pricing(),
+        sessions: [],
+      } satisfies UsageSessionSpendResult;
+    }
+
+    const body = yield* readBody(
+      {
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        timeZone: input.timeZone,
+        ...(input.awaitRefresh === undefined ? {} : { awaitRefresh: input.awaitRefresh }),
+      },
+      true,
+    );
+    const wanted = new Set(
+      input.sessions.map((session) => `${session.provider}\u0000${session.sessionId}`),
+    );
+    return {
+      readAt: body.summary.readAt,
+      sinceDay: body.summary.sinceDay,
+      untilDay: body.summary.untilDay,
+      sources: body.summary.sources,
+      pricing: body.summary.pricing,
+      sessions: body.sessions.filter((session) =>
+        wanted.has(`${session.provider}\u0000${session.sessionId}`),
+      ),
+      ...(sessionSpendSourcesIncomplete(body.summary.sources, input.sessions)
+        ? { incomplete: true }
+        : {}),
+    } satisfies UsageSessionSpendResult;
+  });
+
+  return { readSummary, readSessionSpend, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

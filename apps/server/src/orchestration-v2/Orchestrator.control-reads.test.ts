@@ -39,6 +39,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { sessionRefsForProviderThreads } from "../usage/usageSessionSpendInput.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -593,6 +594,63 @@ it.effect("implements a proposed plan that the command projection leaves out", (
     });
 
     assert.equal((yield* projections.getPlan(threadId, planId))?.status, "completed");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("resolves a thread's usage sessions from its thread id", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:spend-refs");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-spend-refs"),
+      threadId,
+      projectId: ProjectId.make("project:spend-refs"),
+      title: "Spend refs",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("spend-refs:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make("provider-thread:spend-refs"),
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: adapter.driver,
+          nativeId: "session:spend-refs",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+
+    // The spend RPC reads threads by id; a read that returned no provider threads here would
+    // price nothing while still reporting success.
+    const { providerThreads } = yield* projections.getThreadRecords(threadId, ["providerThreads"]);
+    assert.deepStrictEqual(sessionRefsForProviderThreads(providerThreads), [
+      { provider: "codex", sessionId: "session:spend-refs" },
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 

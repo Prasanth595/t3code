@@ -255,14 +255,18 @@ function ownedContribution(
   };
 }
 
-function bucketTokens(bucket: UsageBucket): number {
-  // reasoningTokens is a subset of outputTokens and must not be added again.
+/** Same total the Usage dashboard sums. Reasoning is already inside output. */
+export function usageTotalTokens(totals: UsageTokenTotals): number {
   return (
-    bucket.totals.uncachedInputTokens +
-    bucket.totals.cachedInputTokens +
-    bucket.totals.cacheCreationTokens +
-    bucket.totals.outputTokens
+    totals.uncachedInputTokens +
+    totals.cachedInputTokens +
+    totals.cacheCreationTokens +
+    totals.outputTokens
   );
+}
+
+function bucketTokens(bucket: UsageBucket): number {
+  return usageTotalTokens(bucket.totals);
 }
 
 export function isCompatibleUsageContractVersion(version: number, expected: number): boolean {

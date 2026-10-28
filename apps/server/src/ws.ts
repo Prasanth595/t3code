@@ -93,6 +93,8 @@ import {
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type UsageSessionRef,
+  type UsageSessionSpendInput,
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
@@ -164,6 +166,10 @@ import {
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
+import {
+  mergeSessionSpendRefs,
+  sessionRefsForProviderThreads,
+} from "./usage/usageSessionSpendInput.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
@@ -1858,6 +1864,51 @@ export const layerWsRpc = (
         return result;
       });
 
+      /**
+       * Prices a scope by T3 thread. The server resolves each thread's provider sessions, so a
+       * caller holding a thread list does not have to open every thread to price it.
+       */
+      const readSessionSpend = Effect.fn("ws.usage.readSessionSpend")(function* (
+        input: UsageSessionSpendInput,
+      ) {
+        const threadIds = input.threadIds ?? [];
+        const resolved: UsageSessionRef[] = [];
+        let unresolvedThreads = 0;
+        if (threadIds.length > 0) {
+          const providerThreads = yield* Effect.forEach(
+            threadIds,
+            (threadId) =>
+              threadManagement.getThreadRecords(threadId, ["providerThreads"]).pipe(
+                Effect.map((records) => records.providerThreads),
+                Effect.orElseSucceed(() => null),
+              ),
+            { concurrency: 8 },
+          );
+          for (const providerThreadList of providerThreads) {
+            if (providerThreadList === null) {
+              unresolvedThreads += 1;
+              continue;
+            }
+            resolved.push(...sessionRefsForProviderThreads(providerThreadList));
+          }
+        }
+        const merged = mergeSessionSpendRefs(input.sessions, resolved);
+        const result = yield* usage.readSessionSpend({
+          sinceDay: input.sinceDay,
+          untilDay: input.untilDay,
+          timeZone: input.timeZone,
+          ...(input.awaitRefresh === undefined ? {} : { awaitRefresh: input.awaitRefresh }),
+          sessions: merged.sessions,
+        });
+        return {
+          ...result,
+          ...(merged.truncatedSessions === 0
+            ? {}
+            : { truncatedSessions: merged.truncatedSessions }),
+          ...(unresolvedThreads === 0 ? {} : { unresolvedThreads }),
+        };
+      });
+
       const handlers = ServerWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
@@ -2523,6 +2574,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetResourceTelemetryHistory]: (input) =>
           resourceTelemetry.readHistory(input),
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
+        [WS_METHODS.serverGetSessionSpend]: (input) => readSessionSpend(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),

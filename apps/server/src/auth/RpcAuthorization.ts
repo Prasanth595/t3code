@@ -27,6 +27,7 @@ import {
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
   RpcScopeAuthorization,
+  UsageSessionSpendInput,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -105,6 +106,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetSessionSpend]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
@@ -239,6 +241,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+const decodeUsageSessionSpendInput = Schema.decodeUnknownSync(UsageSessionSpendInput);
 
 const requiredScopesForRpcCall = (
   method: string,
@@ -246,6 +249,13 @@ const requiredScopesForRpcCall = (
 ): ReadonlyArray<AuthEnvironmentScope> => {
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
+  }
+  // Pricing named threads reads those threads and answers with their provider session ids.
+  if (method === WS_METHODS.serverGetSessionSpend) {
+    const { threadIds } = decodeUsageSessionSpendInput(payload);
+    return threadIds === undefined || threadIds.length === 0
+      ? [AuthDiagnosticsReadScope]
+      : [AuthDiagnosticsReadScope, AuthOrchestrationReadScope];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);

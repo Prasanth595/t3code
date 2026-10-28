@@ -1293,6 +1293,30 @@ export function createServerEnvironmentAtoms<R, E>(
           ),
         ),
     }),
+    usageSessionSpend: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-session-spend",
+      tag: WS_METHODS.serverGetSessionSpend,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+      execute: (input, emit) =>
+        request(WS_METHODS.serverGetSessionSpend, input).pipe(
+          Effect.filterOrElse(
+            (result) => !result.sources.some((source) => source.refreshing === true),
+            (result) =>
+              emit(result).pipe(
+                Effect.andThen(
+                  request(WS_METHODS.serverGetSessionSpend, { ...input, awaitRefresh: true }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                    Effect.as(result),
+                  ),
+                ),
+              ),
+          ),
+        ),
+    }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
       tag: WS_METHODS.subscribeResourceTelemetry,
