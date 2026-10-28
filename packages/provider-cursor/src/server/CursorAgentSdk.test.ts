@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -22,7 +23,9 @@ const cursorSdkMock = vi.hoisted(() => {
     model: { id: "default" },
     durationMs: 1,
   }));
+  let rejectRunWait: ((cause: unknown) => void) | undefined;
   const runCancel = vi.fn(async () => {});
+  let onDelta: ((input: { readonly update: unknown }) => Promise<void>) | undefined;
   const agentClose = vi.fn(() => {
     closeExecutionOrder.push("sdk:agent.close");
     if (agentCloseFailure !== undefined) {
@@ -35,6 +38,7 @@ const cursorSdkMock = vi.hoisted(() => {
       options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
     ) => {
       runOperations.push("run.start");
+      onDelta = options.onDelta;
       if (staleRunActive) {
         throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
       }
@@ -84,6 +88,16 @@ const cursorSdkMock = vi.hoisted(() => {
     runCancel,
     runWait,
     send,
+    deliverDelta: async (update: unknown) => onDelta?.({ update }),
+    setRunWaitPending: () => {
+      runWait.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRunWait = reject;
+          }),
+      );
+    },
+    rejectRunWait: (cause: unknown) => rejectRunWait?.(cause),
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -132,6 +146,85 @@ const layerTest = CursorAgentSdk.layer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("keeps dispatching after a callback failure and reports its method", () =>
+    Effect.gen(function* () {
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-callback-failure-test"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-cursor-agent-sdk-callback-failure-test",
+        ),
+      });
+      const received: Array<string> = [];
+      const run = yield* session.send({
+        message: "continue",
+        onDelta: (update) => {
+          if (update.type === "text-delta" && update.text === "bad") {
+            return Effect.die(new Error("local callback failed"));
+          }
+          if (update.type === "text-delta") received.push(update.text);
+          return Effect.void;
+        },
+      });
+
+      yield* Effect.promise(() => cursorSdkMock.deliverDelta({ type: "text-delta", text: "bad" }));
+      yield* Effect.promise(() =>
+        cursorSdkMock.deliverDelta({ type: "text-delta", text: "after failure" }),
+      );
+      const error = yield* run.wait.pipe(Effect.flip);
+
+      assert.deepEqual(received, ["after failure"]);
+      assert.equal(error.method, "run.onDelta");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("waits for an in-flight callback before classifying a run.wait failure", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.setRunWaitPending();
+      cursorSdkMock.runCancel.mockClear();
+      let startCallback!: () => void;
+      const callbackStarted = new Promise<void>((resolve) => {
+        startCallback = resolve;
+      });
+      let failCallback!: () => void;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-wait-race-test"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-cursor-agent-sdk-wait-race-test",
+        ),
+      });
+      const run = yield* session.send({
+        message: "continue",
+        onDelta: (update) => {
+          if (update.type !== "text-delta" || update.text !== "pending") return Effect.void;
+          return Effect.promise(
+            () =>
+              new Promise<void>((_resolve, reject) => {
+                failCallback = () => reject(new Error("local callback failed"));
+                startCallback();
+              }),
+          );
+        },
+      });
+
+      const wait = yield* run.wait.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      const delivery = cursorSdkMock.deliverDelta({ type: "text-delta", text: "pending" });
+      yield* Effect.promise(() => callbackStarted);
+      yield* Effect.sync(() => cursorSdkMock.rejectRunWait(new Error("SDK wait failed")));
+      yield* Effect.sync(() => failCallback());
+      yield* Effect.promise(() => delivery);
+
+      const error = yield* Fiber.join(wait);
+      assert.equal(error.method, "run.onDelta");
+      assert.equal(cursorSdkMock.runCancel.mock.calls.length, 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>
     Effect.gen(function* () {
       cursorSdkMock.runOperations.length = 0;

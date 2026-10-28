@@ -586,7 +586,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
+  it.effect("projects Cursor directory trees after a buffered callback failure", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -606,7 +606,53 @@ describe("CursorAdapterV2", () => {
         fullSubtreeExtensionCounts: {},
         numFiles: 0,
       };
+      const omittedChildrenPath = path.join(workspace, "empty-json");
+      const omittedRootPath = path.join(workspace, "missing-json-root");
+      const wrappedLs = nestedToolCallFromEnvelope({
+        toolCallId: "ls-omitted-children",
+        lsToolCall: {
+          args: { path: omittedChildrenPath },
+          result: {
+            success: {
+              directoryTreeRoot: { absPath: omittedChildrenPath },
+            },
+          },
+        },
+      });
+      const wrappedLsWithoutRoot = nestedToolCallFromEnvelope({
+        toolCallId: "ls-omitted-root",
+        lsToolCall: {
+          args: { path: omittedRootPath },
+          result: { success: {} },
+        },
+      });
+      const wrappedLints = nestedToolCallFromEnvelope({
+        toolCallId: "lints-omitted-arrays",
+        readLintsToolCall: { args: {}, result: { success: {} } },
+      });
+      const wrappedMcp = nestedToolCallFromEnvelope({
+        toolCallId: "mcp-omitted-content",
+        mcpToolCall: {
+          args: { providerIdentifier: "empty", toolName: "tool" },
+          result: { success: {} },
+        },
+      });
+      const wrappedTodos = nestedToolCallFromEnvelope({
+        toolCallId: "todos-omitted",
+        updateTodosToolCall: { args: {}, result: { success: {} } },
+      });
+      assert.isDefined(wrappedLs);
+      assert.isDefined(wrappedLsWithoutRoot);
+      assert.isDefined(wrappedLints);
+      assert.isDefined(wrappedMcp);
+      assert.isDefined(wrappedTodos);
       const updates: ReadonlyArray<InteractionUpdate> = [
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "malformed-early-call",
+          toolCall: null,
+        } as unknown as InteractionUpdate,
         ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
           type,
           modelCallId: "native-model-call",
@@ -684,6 +730,21 @@ describe("CursorAdapterV2", () => {
             },
           },
         },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: wrappedLs.callId,
+          toolCall: wrappedLs.toolCall,
+        } as unknown as InteractionUpdate,
+        ...[wrappedLsWithoutRoot, wrappedLints, wrappedMcp, wrappedTodos].map(
+          (wrapped) =>
+            ({
+              type: "tool-call-completed" as const,
+              modelCallId: "native-model-call",
+              callId: wrapped.callId,
+              toolCall: wrapped.toolCall,
+            }) as unknown as InteractionUpdate,
+        ),
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
@@ -884,6 +945,9 @@ describe("CursorAdapterV2", () => {
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "provider_error");
       const mcpItems = events.flatMap((event) =>
         event.type === "turn_item.updated" &&
         event.turnItem.type === "dynamic_tool" &&
@@ -941,6 +1005,21 @@ describe("CursorAdapterV2", () => {
           },
           {
             pattern: path.join(workspace, "empty"),
+            status: "completed",
+            results: undefined,
+          },
+          {
+            pattern: omittedChildrenPath,
+            status: "completed",
+            results: undefined,
+          },
+          {
+            pattern: omittedRootPath,
+            status: "completed",
+            results: undefined,
+          },
+          {
+            pattern: "",
             status: "completed",
             results: undefined,
           },
