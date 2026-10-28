@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { T3CHAT_PREMIER_TUNNEL_LIMIT } from "@t3tools/contracts/relay";
+import { T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import {
@@ -57,12 +57,14 @@ const make = Effect.gen(function* () {
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
 
   // Asked only at the cap, so most links never call T3 Chat. Any failure keeps the lower cap.
-  const hasT3ChatPremier = (userId: string) =>
+  const t3ChatTunnelLimit = (userId: string) =>
     t3Chat.getLink({ userId }).pipe(
-      Effect.map((link) => link?.plan === "premier"),
+      Effect.map((link) =>
+        link && link.plan !== "free" ? T3CHAT_PLAN_TUNNEL_LIMITS[link.plan] : 0,
+      ),
       Effect.catch((error) =>
         Effect.logWarning("T3 Chat plan check failed", { userId, error: error.message }).pipe(
-          Effect.as(false),
+          Effect.as(0),
         ),
       ),
     );
@@ -151,10 +153,10 @@ const make = Effect.gen(function* () {
         );
       if (existing.length > 0) return;
 
-      // A manual override is the exact cap; Premier raises only the default.
+      // A manual override is the exact cap; a T3 Chat plan raises only the default.
       const maxTunnels =
-        t3Chat.available && overrides.length === 0 && (yield* hasT3ChatPremier(input.userId))
-          ? T3CHAT_PREMIER_TUNNEL_LIMIT
+        t3Chat.available && overrides.length === 0
+          ? Math.max(baseMaxTunnels, yield* t3ChatTunnelLimit(input.userId))
           : baseMaxTunnels;
       if (activeTunnels >= maxTunnels) {
         return yield* new ManagedTunnelLimitExceeded({

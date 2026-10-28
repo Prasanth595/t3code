@@ -963,11 +963,11 @@ export const RelayOkResponse = Schema.Struct({
 });
 export type RelayOkResponse = typeof RelayOkResponse.Type;
 
-// Experimental: a linked T3 Chat Premier account raises the managed tunnel cap.
-export const T3CHAT_PREMIER_TUNNEL_LIMIT = 100;
-
 export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
 export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
+
+// Experimental: a linked paid T3 Chat plan raises the default managed tunnel cap.
+export const T3CHAT_PLAN_TUNNEL_LIMITS = { pro: 10, premier: 100 } as const;
 
 export const RelayT3ChatLink = Schema.Struct({
   email: Schema.String,

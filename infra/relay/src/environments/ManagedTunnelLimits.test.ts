@@ -84,18 +84,22 @@ describe("ManagedTunnelLimits", () => {
     }),
   );
 
-  it.effect("raises the cap for a linked T3 Chat Premier account", () =>
+  it.effect("raises the cap to the linked T3 Chat plan's limit", () =>
     Effect.gen(function* () {
-      yield* ensureCapacity({ activeTunnels: 3, plan: "premier" });
-      yield* ensureCapacity({ activeTunnels: 99, plan: "premier" });
-      const error = yield* Effect.flip(ensureCapacity({ activeTunnels: 100, plan: "premier" }));
-      expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: 100 });
+      for (const [plan, limit] of [
+        ["pro", 10],
+        ["premier", 100],
+      ] as const) {
+        yield* ensureCapacity({ activeTunnels: limit - 1, plan });
+        const error = yield* Effect.flip(ensureCapacity({ activeTunnels: limit, plan }));
+        expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: limit });
+      }
     }),
   );
 
-  it.effect("keeps the default cap for other plans and failed lookups", () =>
+  it.effect("keeps the default cap for free plans and failed lookups", () =>
     Effect.gen(function* () {
-      for (const plan of ["pro", "lookup-fails"] as const) {
+      for (const plan of ["free", "lookup-fails"] as const) {
         const error = yield* Effect.flip(ensureCapacity({ activeTunnels: 3, plan }));
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: 3 });
       }

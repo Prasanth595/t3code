@@ -3,7 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T3CHAT_PREMIER_TUNNEL_LIMIT, type RelayT3ChatLink } from "@t3tools/contracts/relay";
+import { T3CHAT_PLAN_TUNNEL_LIMITS, type RelayT3ChatLink } from "@t3tools/contracts/relay";
 import { MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -23,9 +23,14 @@ import {
 } from "./ClerkUserProfilePage";
 
 function planLabel(link: RelayT3ChatLink): string {
-  return link.plan === "premier"
-    ? `Premier · up to ${T3CHAT_PREMIER_TUNNEL_LIMIT} tunnels`
-    : "Upgrade to Premier on T3 Chat for more tunnels";
+  switch (link.plan) {
+    case "premier":
+      return `Premier · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels`;
+    case "pro":
+      return `Pro · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels, or ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier`;
+    case "free":
+      return "Upgrade on T3 Chat for more tunnels";
+  }
 }
 
 function reportFailure(title: string, cause: unknown) {
@@ -45,7 +50,7 @@ function reportFailure(title: string, cause: unknown) {
   });
 }
 
-/** Experimental: links a T3 Chat account so Premier subscribers get more tunnels. */
+/** Experimental: links a T3 Chat account so paid subscribers get more tunnels. */
 export function T3ChatUserProfilePage() {
   const linkState = useManagedRelayT3ChatLink();
   const createLinkRequest = useAtomCommand(createManagedRelayT3ChatLinkRequestCommand, {
@@ -92,7 +97,7 @@ export function T3ChatUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="T3 Chat"
-      description={`Experimental. Link a T3 Chat Premier account to use up to ${T3CHAT_PREMIER_TUNNEL_LIMIT} T3 Connect tunnels.`}
+      description={`Experimental. Link a paid T3 Chat account for more T3 Connect tunnels: up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} with Pro, ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier.`}
       action={
         <ClerkUserProfileRefreshButton
           disabled={pending !== null}
