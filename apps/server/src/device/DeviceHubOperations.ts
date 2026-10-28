@@ -114,8 +114,11 @@ export const makeDeviceHubOperations = (options: {
       "list",
     );
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
+    const available = yield* options.availablePlatforms;
     const warnings = hubList.errors?.filter(
       (error) =>
+        // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
+        !(!available.android && error.message.startsWith("[android-utils] ")) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -124,7 +127,6 @@ export const makeDeviceHubOperations = (options: {
         ),
     );
     const details = warnings?.map((error) => error.message) ?? [];
-    const available = yield* options.availablePlatforms;
     if (available.ios) {
       const inventory = yield* run("xcrun", ["simctl", "list", "devices", "--json"]);
       const decoded = yield* decodeSimctlDeviceList(inventory.stdout).pipe(Effect.result);
