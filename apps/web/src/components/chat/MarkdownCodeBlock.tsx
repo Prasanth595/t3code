@@ -41,6 +41,12 @@ const THREAD_FIND_IGNORE_PROPS = {
   "data-thread-find-ignore": "",
 } as React.HTMLAttributes<HTMLDivElement>;
 
+const RUNNABLE_SHELL_LANGUAGES = /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/;
+// Newlines and tabs are structural in a multi-line block. Every other control or
+// invisible format character (bidi overrides, zero-width) can make the rendered
+// command differ from what the terminal receives.
+const UNSAFE_SHELL_BLOCK_CHARACTERS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\p{Cf}]/u;
+
 export function MarkdownCodeBlockFrame({
   as: Wrapper = "div",
   language,
@@ -170,13 +176,11 @@ export function MarkdownCodeBlock({
   const canRun =
     onRunShellCommand !== undefined &&
     !isStreaming &&
-    /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
+    RUNNABLE_SHELL_LANGUAGES.test(language) &&
     code.endsWith("\n") &&
     command.length > 0 &&
     !command.endsWith("\\") &&
-    // Control and invisible format characters (bidi overrides, zero-width) can
-    // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
+    !UNSAFE_SHELL_BLOCK_CHARACTERS.test(code.slice(0, -1));
 
   const handleCopy = () => copyToClipboard(code);
 
