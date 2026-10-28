@@ -7,7 +7,7 @@ const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
 const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 const THREAD_LINK_OUTSIDE_CODE =
-  /(?<fence>(`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(`+)[^\n]*?\4)|\[(?<label>[^\]\n]*)\]\((?<href>t3-thread:\/\/v[12]\/[^\s)]+)\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+)>|(?<![a-zA-Z0-9/])(?<bare>t3-thread:\/\/v[12]\/[^\s<>`\])]*[^\s<>`*_\]).,!?;:])/g;
+  /(?<fence>(`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(`+)[\s\S]*?\4)|\[(?<label>[^\]\n]*)\]\((?<href>t3-thread:\/\/v[12]\/[^\s)]+)\)|\[[^\]\n]*\]\([^\n)]*\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+)>|(?<![a-zA-Z0-9/])(?<bare>t3-thread:\/\/v[12]\/[^\s<>`"'\])]*[^\s<>`"'*_\]).,!?;:])/g;
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
@@ -149,6 +149,9 @@ export function relabelThreadLinks(
     const current = title({ environmentId, threadId });
     if (current === undefined) {
       if (groups.href !== undefined && written.environmentId === null) return source;
+      if (groups.bare !== undefined && written.environmentId === null) {
+        return formatThreadLink(written, written.threadId);
+      }
       return groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
     }
     return formatThreadLink(
