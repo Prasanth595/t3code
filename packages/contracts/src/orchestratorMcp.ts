@@ -328,7 +328,7 @@ export type OrchestratorMcpTaskWaitInput = typeof OrchestratorMcpTaskWaitInput.T
 
 export const OrchestratorMcpTaskWaitReady = Schema.Struct({
   taskId: NodeId,
-  childThreadId: ThreadId,
+  childThreadId: Schema.NullOr(ThreadId),
   status: OrchestratorMcpDelegatedTaskStatus,
   summary: Schema.NullOr(Schema.String),
   structuredResult: OrchestratorMcpDelegateTaskResult.fields.structuredResult,

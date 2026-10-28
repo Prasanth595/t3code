@@ -73,6 +73,10 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as WorkflowApprovalGate from "../orchestration-v2/WorkflowApprovalGate.ts";
 import * as WorkflowApprovalService from "../orchestration-v2/WorkflowApprovalService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -212,6 +216,11 @@ const makeLayerTest = (
     ),
     // Where the checkers' whole-answer files go: the server's own folder, not this checkout.
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-fanout-test-" })),
+    // Linked environments are not under test here.
+    Layer.provideMerge(Layer.mock(PeerForwarding.PeerForwarding)({})),
+    Layer.provideMerge(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+    Layer.provideMerge(Layer.mock(PeerLinks.PeerLinks)({})),
+    Layer.provideMerge(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
     Layer.provideMerge(NodeServices.layer),
   );
 };

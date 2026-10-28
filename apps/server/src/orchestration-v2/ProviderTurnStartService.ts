@@ -921,20 +921,21 @@ export const layer: Layer.Layer<
             !deliveredAttemptIds.has(source.activeAttemptId),
         );
         const missedRunIds = new Set(missedRuns.map((source) => source.id));
-        const budgetFor = (turnText: string) =>
-          Effect.gen(function* () {
-            return handoffBudget({
-              tokenCap,
-              modelContextWindow,
-              userText: restartNote === "" ? turnText : `${restartNote}\n\n${turnText}`,
-              attachments: message.attachments,
-              providerThread: budgetProviderThread,
-              nativeContextEstimate:
-                budgetProviderThread.contextUsage?.usedTokens === undefined
-                  ? yield* nativeContextEstimate
-                  : 0,
-            });
+        const budgetFor = Effect.fnUntraced(function* (turnText: string) {
+          return handoffBudget({
+            tokenCap,
+            modelContextWindow,
+            userText: restartNote === "" ? turnText : `${restartNote}
+
+${turnText}`,
+            attachments: message.attachments,
+            providerThread: budgetProviderThread,
+            nativeContextEstimate:
+              budgetProviderThread.contextUsage?.usedTokens === undefined
+                ? yield* nativeContextEstimate
+                : 0,
           });
+        });
         return {
           sameNativeThread,
           handoffUsage,

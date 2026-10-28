@@ -83,7 +83,6 @@ type TimelineProps = ComponentProps<typeof MessagesTimeline>;
 function timelineProps(): Omit<TimelineProps, "timelineEntries"> {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     listRef: createRef(),
     latestRun: null,
     turnDiffSummaries: [],
@@ -92,7 +91,6 @@ function timelineProps(): Omit<TimelineProps, "timelineEntries"> {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

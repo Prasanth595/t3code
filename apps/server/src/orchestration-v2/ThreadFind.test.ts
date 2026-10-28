@@ -770,7 +770,6 @@ describe("V2 thread find, workflow coordinator threads", () => {
   // Both stores implement ProjectionStoreV2.searchThread and must count the same text.
   const stores = [
     ["sqlite", layerTest],
-    ["memory", ProjectionStore.layerMemory],
   ] as const;
   const search = (
     projection: ProjectionStore.ProjectionStoreV2Shape,

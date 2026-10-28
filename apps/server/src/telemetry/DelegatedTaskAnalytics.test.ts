@@ -4,9 +4,11 @@ import {
   NodeId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -30,11 +32,19 @@ const row = {
   completedAt: now,
 } as unknown as OrchestrationV2Subagent;
 
-const harness = (recorded: Array<[string, unknown]>) =>
+const harness = (
+  recorded: Array<[string, unknown]>,
+  events: ReadonlyArray<OrchestrationV2DomainEvent>,
+  drained: Deferred.Deferred<void>,
+) =>
   DelegatedTaskAnalytics.layer.pipe(
     Layer.provide(
       Layer.succeed(Orchestrator.OrchestratorV2, {
-        streamDomainEvents: Stream.never,
+        // The marker after the events completes once every event before it was handled.
+        streamDomainEvents: Stream.concat(
+          Stream.fromIterable(events),
+          Stream.fromEffect(Deferred.succeed(drained, undefined)).pipe(Stream.drain),
+        ),
         getThreadShell: () => Effect.succeed(null),
         getThreadRecords: () => Effect.succeed({ subagents: [row] }),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
@@ -55,33 +65,43 @@ const harness = (recorded: Array<[string, unknown]>) =>
   );
 
 describe("DelegatedTaskAnalytics", () => {
-  it.effect("reports a workflow that finishes through a patch, once", () => {
-    const recorded: Array<[string, unknown]> = [];
-    return Effect.gen(function* () {
-      const analytics = yield* DelegatedTaskAnalytics.DelegatedTaskAnalytics;
-      const update = {
-        id: EventId.make("event:analytics"),
-        type: "workflow.updated" as const,
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: workflowId,
-          previousRevision: 3,
-          revision: 4,
-          status: "completed" as const,
-          updatedAt: now,
-        },
-      };
-      yield* analytics.onWorkflowUpdate({
-        ...update,
-        payload: { ...update.payload, status: undefined, previousRevision: 2, revision: 3 },
-      });
-      expect(recorded).toEqual([]);
-      yield* analytics.onWorkflowUpdate(update);
-      yield* analytics.onWorkflowUpdate(update);
-      expect(recorded).toHaveLength(1);
-      expect(recorded[0]![0]).toBe("mcp.delegated_task.finished");
-      expect(recorded[0]![1]).toMatchObject({ status: "completed", durationSeconds: 10 });
-    }).pipe(Effect.provide(harness(recorded)));
-  });
+  it.effect("reports a workflow that finishes through a patch, once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const recorded: Array<[string, unknown]> = [];
+        const drained = yield* Deferred.make<void>();
+        const update = {
+          id: EventId.make("event:analytics"),
+          type: "workflow.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: workflowId,
+            previousRevision: 3,
+            revision: 4,
+            status: "completed" as const,
+            updatedAt: now,
+          },
+        };
+        yield* Layer.build(
+          harness(
+            recorded,
+            [
+              {
+                ...update,
+                payload: { ...update.payload, status: undefined, previousRevision: 2, revision: 3 },
+              },
+              update,
+              update,
+            ],
+            drained,
+          ),
+        );
+        yield* Deferred.await(drained).pipe(Effect.timeout("5 seconds"));
+        expect(recorded).toHaveLength(1);
+        expect(recorded[0]![0]).toBe("mcp.delegated_task.finished");
+        expect(recorded[0]![1]).toMatchObject({ status: "completed", durationSeconds: 10 });
+      }),
+    ),
+  );
 });

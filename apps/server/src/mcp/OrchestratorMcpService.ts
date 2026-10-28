@@ -2489,8 +2489,9 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(threadManagementFailure));
         const read = Effect.fn("OrchestratorMcpService.readWorkflowAgent")(function* () {
           const task = yield* readTask(scope, taskId);
+          const childThreadId = yield* localChildOf(task);
           const child = yield* threadManagement
-            .getThreadRecords(task.childThreadId, ["runs", "attempts", "providerTurns"])
+            .getThreadRecords(childThreadId, ["runs", "attempts", "providerTurns"])
             .pipe(Effect.mapError(threadManagementFailure));
           const { runs, providerTurns } = workflowTaskRecords(taskId, child);
           const lastRun = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
@@ -2544,7 +2545,7 @@ const make = Effect.gen(function* () {
         const initial = yield* read();
         onUpdate(initial.outcome);
         if (initial.settled) return initial.outcome;
-        const task = yield* readTask(scope, taskId);
+        const childThreadId = yield* localChildOf(yield* readTask(scope, taskId));
         const settled = yield* Stream.mergeAll(
           [
             threadManagement
@@ -2561,7 +2562,7 @@ const make = Effect.gen(function* () {
               ),
             ...(["run.updated", "provider-turn.updated"] as const).map((eventType) =>
               threadManagement.streamStoredEventsFrom({
-                threadId: task.childThreadId,
+                threadId: childThreadId,
                 afterSequence,
                 eventType,
               }),
@@ -3302,6 +3303,14 @@ const make = Effect.gen(function* () {
       );
   });
 
+  /** A workflow agent always runs as a local child thread. */
+  const localChildOf = (task: Pick<OrchestratorMcpDelegateTaskResult, "taskId" | "childThreadId">) =>
+    task.childThreadId === null
+      ? Effect.fail(
+          failure("orchestration_error", `Task ${task.taskId} runs in a linked environment.`),
+        )
+      : Effect.succeed(task.childThreadId);
+
   const waitForTask = Effect.fn("OrchestratorMcpService.waitForTask")(
     function* (scope: McpThreadInvocationScope, taskId: NodeId, _timeoutMs: number) {
       const streamError = (error: unknown) =>
@@ -4032,8 +4041,12 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(taskIds, read, { discard: true });
       // Status changes reach this thread's subagent rows; questions and
       // approvals arrive as runtime requests on each child thread.
+      // A task in a linked environment has no child thread here; its row carries its updates.
       const taskByChild = new Map(
-        taskIds.map((taskId) => [latest.get(taskId)!.childThreadId as string, taskId]),
+        taskIds.flatMap((taskId) => {
+          const childThreadId = latest.get(taskId)!.childThreadId;
+          return childThreadId === null ? [] : [[childThreadId as string, taskId] as const];
+        }),
       );
       const updates = Stream.mergeAll(
         [

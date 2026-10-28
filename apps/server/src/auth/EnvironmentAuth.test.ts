@@ -633,6 +633,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const mcpClient = yield* serverAuth.issueMcpClientSession({
         label: "Agent",
         access: "full-access",
+        peerLink: false,
         client: requestMetadata,
       });
       const upgrade = (token: string) =>
@@ -641,7 +642,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
             url: "/ws",
             cookies: {},
             headers: { host: "192.168.1.50:3773", authorization: `Bearer ${token}` },
-          } as never)
+          } as never, "rpc")
           .pipe(Effect.flip);
       expect((yield* upgrade(mcpClient.token))._tag).toBe("ServerAuthInvalidCredentialError");
       // A thread's own MCP credential is a bare secret from the MCP session registry, not a session.
@@ -655,7 +656,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
           url: "/ws",
           cookies: {},
           headers: { host: "192.168.1.50:3773", authorization: `Bearer ${user.token}` },
-        } as never)).sessionId,
+        } as never, "rpc")).sessionId,
       ).toBe(user.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
   );

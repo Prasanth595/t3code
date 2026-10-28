@@ -1374,7 +1374,9 @@ it.effect(
           ],
         ]);
         const serverLayer = Layer.mergeAll(...(registrations as [Layer.Layer<never>])).pipe(
-          Layer.provideMerge(McpHttpServer.layerMcpTransport),
+          Layer.provideMerge(
+          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
               resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -1442,7 +1444,9 @@ it.effect("registers the worktree removal tool for coordinators and hides it fro
         ["memberToken", threadScope("memberToken", ["worktree"], true)],
       ]);
       const serverLayer = McpHttpServer.layerWorktreeToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerMcpTransport),
+        Layer.provideMerge(
+          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -1484,7 +1488,9 @@ it.effect("hides the image-returning preview tools from a member credential", ()
         ["noBrowserToken", threadScope("noBrowserToken", ["orchestration", "worktree"], false)],
       ]);
       const serverLayer = McpHttpServer.layerPreviewToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerMcpTransport),
+        Layer.provideMerge(
+          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
