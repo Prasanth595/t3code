@@ -38,6 +38,8 @@ export interface GitHubRestInput {
   readonly accept?: string;
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
   readonly ifNoneMatch?: string;
+  /** An HTTP date; 304 returns successfully without spending quota. */
+  readonly ifModifiedSince?: string;
   readonly maxResponseBytes?: number;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
@@ -185,14 +187,18 @@ export const make = Effect.gen(function* () {
     const base = HttpClientRequest.make(input.method ?? "GET")(url).pipe(
       HttpClientRequest.setHeader("accept", input.accept ?? "application/vnd.github+json"),
     );
-    const withEtag =
+    const conditional = base.pipe(
       input.ifNoneMatch === undefined
-        ? base
-        : base.pipe(HttpClientRequest.setHeader("if-none-match", input.ifNoneMatch));
+        ? (request) => request
+        : HttpClientRequest.setHeader("if-none-match", input.ifNoneMatch),
+      input.ifModifiedSince === undefined
+        ? (request) => request
+        : HttpClientRequest.setHeader("if-modified-since", input.ifModifiedSince),
+    );
     const request =
       input.body === undefined
-        ? withEtag
-        : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
+        ? conditional
+        : conditional.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((interactive) =>
         send({
@@ -202,7 +208,7 @@ export const make = Effect.gen(function* () {
           maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
-          acceptNotModified: input.ifNoneMatch !== undefined,
+          acceptNotModified: input.ifNoneMatch !== undefined || input.ifModifiedSince !== undefined,
         }),
       ),
     );

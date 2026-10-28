@@ -32,6 +32,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -7179,3 +7180,305 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+interface WatchCostScenario {
+  readonly name: string;
+  readonly pullRequests: ReadonlyArray<number>;
+  /** Minutes after the watch starts. */
+  readonly comments?: ReadonlyArray<number>;
+  readonly reviewCommentEdit?: number;
+  readonly push?: { readonly at: number; readonly checksFor: number };
+  readonly inboxEveryMinute?: boolean;
+  readonly notificationsReadable?: boolean;
+  /** GraphQL points and core requests over the hour; main's were measured on its reactor. */
+  readonly main: { readonly graphql: number; readonly core: number };
+  readonly branch: { readonly graphql: number; readonly core: number };
+}
+
+const watchCostScenarios: ReadonlyArray<WatchCostScenario> = [
+  {
+    name: "quiet PR",
+    pullRequests: [41],
+    main: { graphql: 79, core: 0 },
+    branch: { graphql: 47, core: 0 },
+  },
+  {
+    name: "comment burst",
+    pullRequests: [42],
+    comments: [11, 11.5, 12],
+    main: { graphql: 79, core: 0 },
+    branch: { graphql: 78, core: 1 },
+  },
+  {
+    name: "CI churn after a push",
+    pullRequests: [43],
+    push: { at: 5, checksFor: 20 },
+    main: { graphql: 90, core: 0 },
+    branch: { graphql: 58, core: 0 },
+  },
+  {
+    name: "five quiet PRs on one account",
+    pullRequests: [44, 45, 46, 47, 48],
+    main: { graphql: 271, core: 0 },
+    branch: { graphql: 111, core: 0 },
+  },
+  {
+    name: "noisy inbox",
+    pullRequests: [49],
+    inboxEveryMinute: true,
+    main: { graphql: 79, core: 0 },
+    branch: { graphql: 47, core: 2 },
+  },
+  {
+    name: "notifications unavailable",
+    pullRequests: [50],
+    notificationsReadable: false,
+    main: { graphql: 79, core: 0 },
+    branch: { graphql: 78, core: 1 },
+  },
+  {
+    name: "review comment edited",
+    pullRequests: [51],
+    reviewCommentEdit: 40,
+    main: { graphql: 79, core: 0 },
+    branch: { graphql: 62, core: 1 },
+  },
+];
+
+it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
+  const MINUTE = 60_000;
+  const runWatchHour = (scenario: WatchCostScenario, notificationsReadable: boolean, run: string) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make(`pr-watch-cost-${scenario.pullRequests[0]}-${run}`);
+      yield* seedProject({
+        projectId,
+        title: "Watch cost",
+        workspaceRoot: "/workspace/watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      const startedAt = yield* Clock.currentTimeMillis;
+      const at = (minutes: number) => startedAt + minutes * MINUTE;
+      const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+      const threadIds = scenario.pullRequests.map((number) =>
+        ThreadId.make(`${projectId}-thread-${number}`),
+      );
+      for (const [index, number] of scenario.pullRequests.entries()) {
+        const threadId = threadIds[index]!;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId,
+          title: "Watch cost",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`${threadId}-watch`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number,
+          watching: true,
+          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+        });
+      }
+
+      const cost = { graphql: 0, core: 0, fingerprints: 0 };
+      const remarksOf = (now: number) => [
+        ...(scenario.comments ?? [])
+          .filter((minute) => at(minute) <= now)
+          .map((minute): PullRequestComment => ({
+            id: `comment-${minute}`,
+            kind: "issue-comment",
+            author: { login: "maintainer", name: null, avatarUrl: null },
+            body: "Please rename this.",
+            createdAt: iso(at(minute)),
+            url: null,
+            path: null,
+            reviewState: null,
+          })),
+        ...(scenario.reviewCommentEdit === undefined
+          ? []
+          : [
+              {
+                id: "review-comment",
+                kind: "review-comment" as const,
+                author: { login: "maintainer", name: null, avatarUrl: null },
+                body: "Nit.",
+                createdAt: iso(at(-60)),
+                url: null,
+                path: "src/index.ts",
+                reviewState: null,
+                ...(at(scenario.reviewCommentEdit) <= now
+                  ? { editedAt: iso(at(scenario.reviewCommentEdit)) }
+                  : {}),
+              },
+            ]),
+      ];
+      const headOf = (now: number) => {
+        const push = scenario.push;
+        const pushed = push !== undefined && at(push.at) <= now;
+        return {
+          headSha: pushed ? "def5678abc" : "abc1234def",
+          pending: pushed && now < at(push.at + push.checksFor),
+        };
+      };
+      const notificationTimes = (now: number) => {
+        const times = new Map<number, number>();
+        const bump = (number: number, time: number) => {
+          if (time <= now) times.set(number, Math.max(times.get(number) ?? 0, time));
+        };
+        for (const number of scenario.pullRequests) {
+          for (const minute of scenario.comments ?? []) bump(number, at(minute) + 3_000);
+          if (scenario.reviewCommentEdit !== undefined) {
+            bump(number, at(scenario.reviewCommentEdit) + 3_000);
+          }
+        }
+        if (scenario.inboxEveryMinute) {
+          for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
+        }
+        return times;
+      };
+
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              invalidate: () => Effect.void,
+              watchFingerprint: () =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  cost.fingerprints += 1;
+                  const head = headOf(now);
+                  const remarks = remarksOf(now).filter(
+                    (remark) => remark.kind === "issue-comment",
+                  );
+                  return {
+                    status: `${head.headSha} ${head.pending ? "pending" : "passed"}`,
+                    remarks: `${remarks.length}`,
+                  };
+                }),
+              detail: (input) =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  cost.graphql += 1;
+                  const head = headOf(now);
+                  return {
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: input.number,
+                      at: iso(startedAt),
+                    }),
+                    headSha: head.headSha,
+                    checks: [
+                      {
+                        name: "ci",
+                        status: head.pending ? ("pending" as const) : ("success" as const),
+                        description: null,
+                        url: null,
+                      },
+                    ],
+                  };
+                }),
+              activity: () =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  cost.graphql += 15;
+                  const comments = remarksOf(now);
+                  return {
+                    comments,
+                    commentCount: comments.length,
+                    commentsTruncated: false,
+                    reviewThreadsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  };
+                }),
+              notifications: ({ since }) =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  if (!notificationsReadable) {
+                    cost.core += 1;
+                    return null;
+                  }
+                  const threads = [...notificationTimes(now)]
+                    .filter(([, updatedAt]) => updatedAt > since)
+                    .map(([number, updatedAt]) => ({ number, updatedAt }));
+                  if (threads.length > 0) cost.core += 1;
+                  return { threads, truncated: false };
+                }),
+            }),
+          ),
+        ),
+      );
+
+      const totals: Array<{ readonly graphql: number; readonly total: number }> = [];
+      const wakes: Array<string> = [];
+      let commentWakeMinute: number | null = null;
+      for (let minute = 0; minute <= 60; minute += 2) {
+        if (minute > 0) yield* TestClock.adjust("2 minutes");
+        cost.fingerprints = 0;
+        yield* reactor.sweep;
+        cost.graphql += Math.ceil(cost.fingerprints / 25);
+        totals.push({ graphql: cost.graphql, total: cost.graphql + cost.core });
+        for (const threadId of threadIds) {
+          const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+          for (const message of messages) {
+            const summary = message.notification?.summary;
+            if (summary === undefined || wakes.some((wake) => wake.startsWith(`${message.id} `))) {
+              continue;
+            }
+            wakes.push(`${message.id} ${summary}`);
+            if (summary.includes("new comments")) commentWakeMinute ??= minute;
+          }
+        }
+      }
+      for (const [index, number] of scenario.pullRequests.entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`${threadIds[index]}-unwatch`),
+          threadId: threadIds[index]!,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number,
+          watching: false,
+        });
+      }
+      return {
+        graphql: cost.graphql,
+        core: cost.core,
+        totals,
+        wakes: wakes.map((wake) => wake.slice(wake.indexOf(" ") + 1)),
+        commentWakeMinute,
+      };
+    });
+
+  it.effect.each(watchCostScenarios)(
+    "notifications never cost more than the reads they replace: $name",
+    (scenario) =>
+      Effect.gen(function* () {
+        const baseline = yield* runWatchHour(scenario, false, "baseline");
+        const branch = yield* runWatchHour(
+          scenario,
+          scenario.notificationsReadable ?? true,
+          "notifications",
+        );
+        const main = scenario.main.graphql + scenario.main.core;
+        assert.isAtMost(baseline.graphql + baseline.core, main);
+        assert.deepEqual({ graphql: branch.graphql, core: branch.core }, scenario.branch);
+        assert.isAtMost(branch.graphql, scenario.main.graphql);
+        assert.isAtMost(branch.graphql + branch.core, main);
+        branch.totals.forEach((sweep, index) => {
+          assert.isAtMost(sweep.total, baseline.totals[index]!.total);
+        });
+        assert.deepEqual(branch.wakes, baseline.wakes);
+        assert.equal(branch.commentWakeMinute, baseline.commentWakeMinute);
+      }),
+  );
+});
