@@ -648,6 +648,9 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
+        if (completedAt !== undefined) {
+          publishedTerminalWork.set(threadId, { phase: completion.phase, completedAt });
+        }
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>

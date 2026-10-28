@@ -499,7 +499,11 @@ describe("AgentAwarenessRelay", () => {
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
-      const completed = shell({ status: "completed" });
+      yield* TestClock.adjust("1 second");
+      const completed = shell({
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe(1_000),
+      });
       yield* Ref.set(currentShell, completed);
       yield* relay.publishThread(THREAD_ID);
       yield* Ref.set(currentShell, {
@@ -522,6 +526,11 @@ describe("AgentAwarenessRelay", () => {
         publications.map((publication) => publication.state?.phase ?? null),
         ["running", "completed", null],
       );
+
+      yield* Ref.set(currentShell, { ...completed, title: "Reopened completion" });
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.at(-1)?.state?.phase, "completed");
+      assert.equal(publications.at(-1)?.replay, true);
     }),
   );
 
