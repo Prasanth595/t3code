@@ -1116,7 +1116,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const [departingThreadKey, setDepartingThreadKey] = useState<string | null>(null);
-  if (departingThreadKey !== null && departingThreadKey !== routeRowThreadKey) {
+  if (departingThreadKey !== null && departingThreadKey !== routeThreadKey) {
     setDepartingThreadKey(null);
   }
   const departRouteThread = (threadKey: string) =>
