@@ -6705,6 +6705,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               appliedModel = requestedModel;
             }
+            if (
+              appliedModel === undefined &&
+              requestedModel !== "default" &&
+              requestedModel !== "auto" &&
+              (modelOption?.type === "select" || modelState != null)
+            ) {
+              return yield* new AcpModelSelectionError({
+                model: modelSelection.model,
+                cause: EffectAcpErrors.AcpRequestError.invalidParams(
+                  "The requested model is not available in this session.",
+                ),
+              });
+            }
           }
           if (appliedModel !== undefined) {
             const applied = appliedModel;

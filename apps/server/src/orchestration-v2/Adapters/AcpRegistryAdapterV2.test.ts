@@ -771,7 +771,7 @@ describe("AcpRegistryAdapterV2", () => {
     );
 
     // regression: #19519 models come from session model state, not a hardcoded list
-    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
+    it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -781,15 +781,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: [
-            "auto",
-            "removed-model",
-            "other",
-            "default",
-            "auto",
-            "hermes",
-            "removed-model",
-          ],
+          turnModels: ["auto", "default", "other", "default", "auto", "default", "auto"],
           pickFrames: [
             ...prompt(),
             ...prompt(),
