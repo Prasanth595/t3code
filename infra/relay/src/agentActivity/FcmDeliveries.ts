@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
-      if (job.state && preferences.value.notificationsEnabled) {
+      if (job.state && !job.replay && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -285,14 +285,14 @@ const make = Effect.gen(function* () {
         preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
           ? aggregate
           : null;
-      const active = (displayedAggregate?.activeCount ?? 0) > 0;
+      const active = (displayedAggregate?.pendingCount ?? displayedAggregate?.activeCount ?? 0) > 0;
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
-        ...androidActivityData(displayedAggregate),
+        ...androidActivityData(displayedAggregate, now.epochMilliseconds),
         ...alert,
       };
       if (alert) {

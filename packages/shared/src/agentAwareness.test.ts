@@ -48,6 +48,48 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
+  it("excludes archived and snoozed inbox rows, then restores them on wake", () => {
+    const base = {
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      now: Date.parse(NOW),
+      thread: v2Thread({ status: "completed" }),
+    };
+    const snoozedUntil = DateTime.makeUnsafe("2026-05-22T13:00:00.000Z");
+    expect(
+      projectThreadAwarenessV2({ ...base, thread: { ...base.thread, archivedAt: updatedAt } }),
+    ).toBeNull();
+    expect(
+      projectThreadAwarenessV2({ ...base, thread: { ...base.thread, snoozedUntil } }),
+    ).toBeNull();
+    expect(
+      projectThreadAwarenessV2({
+        ...base,
+        now: Date.parse("2026-05-22T13:01:00.000Z"),
+        thread: { ...base.thread, snoozedUntil },
+      }),
+    ).toMatchObject({ phase: "completed", retained: true });
+  });
+
+  it.each([
+    { visit: null, unread: false },
+    { visit: "2026-05-22T11:59:00.000Z", unread: true },
+    { visit: NOW, unread: false },
+    { visit: "2026-05-22T12:01:00.000Z", unread: false },
+  ])("projects the desktop completion read state: $visit", ({ visit, unread }) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: {
+          ...v2Thread({ status: "completed" }),
+          latestRunCompletedAt: updatedAt,
+          lastVisitedAt: visit === null ? null : DateTime.makeUnsafe(visit),
+        },
+      }),
+    ).toMatchObject({ phase: "completed", unread, completedAt: NOW, retained: true });
+  });
+
   it("does not announce completion after a manual stop", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,
@@ -103,21 +145,18 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
-  it.each(["starting", "running", "waiting"] as const)(
-    "keeps settled %s work visible",
-    (status) => {
-      expect(
-        projectThreadAwarenessV2({
-          environmentId: "env-1" as EnvironmentId,
-          project,
-          thread: v2Thread({ status, settledOverride: "settled" }),
-        }),
-      ).toMatchObject({ phase: status === "starting" ? "starting" : "running" });
-    },
-  );
+  it.each(["starting", "running", "waiting"] as const)("excludes settled %s work", (status) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ status, settledOverride: "settled" }),
+      }),
+    ).toBeNull();
+  });
 
   it.each(["user_input", "command"] as const)(
-    "keeps a settled terminal thread with a pending %s request",
+    "excludes a settled thread with a pending %s request",
     (kind) => {
       expect(
         projectThreadAwarenessV2({
@@ -133,13 +172,11 @@ describe("projectThreadAwarenessV2", () => {
             },
           }),
         }),
-      ).toMatchObject({
-        phase: kind === "user_input" ? "waiting_for_input" : "waiting_for_approval",
-      });
+      ).toBeNull();
     },
   );
 
-  it("keeps settled work held open by an awaited monitor", () => {
+  it("excludes a settled thread with an awaited monitor", () => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
@@ -150,7 +187,7 @@ describe("projectThreadAwarenessV2", () => {
           pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
         }),
       }),
-    ).toMatchObject({ phase: "running" });
+    ).toBeNull();
   });
 
   it.each([

@@ -241,7 +241,7 @@ describe("Android delivery routing", () => {
         expect(alerts).toHaveLength(1);
         expect(alerts[0]?.data).toMatchObject({
           alert_title: title,
-          alert_body: "Fix notifications, Second thread",
+          alert_body: "Second thread, Fix notifications",
           alert_path: "/",
           active,
         });

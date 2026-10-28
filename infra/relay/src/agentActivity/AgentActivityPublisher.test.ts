@@ -140,6 +140,46 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("repaints backfilled inbox rows without a notification", () => {
+    const replays: boolean[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state: { ...state, phase: "completed", retained: true },
+        replay: true,
+      });
+      expect(replays).toEqual([true]);
+    }).pipe(
+      Effect.provide(
+        layerPublisher.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      replays.push(input.replay === true);
+                      return null;
+                    }),
+                  sendPushNotificationForTarget: () => Effect.die("Backfill must not notify"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");
@@ -158,7 +198,7 @@ describe("AgentActivityPublisher", () => {
         deviceId: android.device_id,
       });
       expect(fcmCalls).toEqual([
-        { target: android, state },
+        { target: android, state, replay: false },
         { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual(["ios"]);
@@ -455,8 +495,8 @@ describe("makeAggregateState", () => {
     expect(aggregate?.activeCount).toBe(1);
     expect(aggregate?.subtitle).toBe("Agent work in progress");
     expect(aggregate?.activities).toMatchObject([
-      { threadId: "thread-active", phase: "running" },
       { threadId: "thread-done", phase: "completed", status: "Done" },
+      { threadId: "thread-active", phase: "running" },
     ]);
     expect(aggregate?.updatedAt).toBe("1970-01-01T00:59:00.000Z");
   });
@@ -487,7 +527,44 @@ describe("makeAggregateState", () => {
     ).toBeNull();
   });
 
-  it("gives active agents the display slots before finished ones", () => {
+  it("keeps older inbox completions and exact counts beyond the row cap", () => {
+    const oldRows = Array.from({ length: 8 }, (_, index): RelayAgentActivityState => ({
+      ...state,
+      threadId: `old-${index}` as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      retained: true,
+    }));
+    const aggregate = makeAggregateState({
+      activeStates: [
+        { ...state, updatedAt: "1970-01-02T00:00:00.000Z" },
+        {
+          ...state,
+          threadId: "input" as RelayAgentActivityState["threadId"],
+          phase: "waiting_for_input",
+          updatedAt: "1970-01-02T00:00:00.000Z",
+        },
+        ...oldRows,
+      ],
+      terminalState: null,
+      nowMs: 24 * hourMs,
+    });
+    expect(aggregate).toMatchObject({
+      activeCount: 2,
+      workingCount: 1,
+      attentionCount: 1,
+      totalCount: 10,
+    });
+    expect(aggregate?.activities).toHaveLength(5);
+    expect(aggregate?.activities.map((row) => row.phase)).toEqual([
+      "waiting_for_input",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+    ]);
+  });
+
+  it("gives unread completions display slots before working agents", () => {
     const mkActive = (id: string): RelayAgentActivityState => ({
       ...state,
       threadId: id as RelayAgentActivityState["threadId"],
@@ -514,11 +591,11 @@ describe("makeAggregateState", () => {
 
     expect(aggregate?.activeCount).toBe(5);
     expect(aggregate?.activities).toMatchObject([
+      { threadId: "thread-done" },
       { threadId: "a-1" },
       { threadId: "a-2" },
       { threadId: "a-3" },
       { threadId: "a-4" },
-      { threadId: "a-5" },
     ]);
   });
 });

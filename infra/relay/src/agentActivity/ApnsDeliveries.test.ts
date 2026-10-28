@@ -1110,6 +1110,29 @@ describe("live activity alert decisions", () => {
 });
 
 describe("fast completion delivery", () => {
+  it.effect.each([true, false])(
+    "keeps unread Done live and ends it when read: unread=%s",
+    (unread) => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      const done = {
+        ...aggregate,
+        activeCount: 0,
+        pendingCount: unread ? 1 : 0,
+        unreadCount: unread ? 1 : 0,
+        activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread }],
+      };
+      const device = { ...target, last_aggregate_json: JSON.stringify(aggregate) };
+      return Effect.gen(function* () {
+        const d = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* d.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+        expect(queuedJobs[0]?.payload.kind).toBe(
+          unread ? "live_activity_update" : "live_activity_end",
+        );
+        if (!unread) expect(queuedJobs[0]?.payload.alert ?? null).toBeNull();
+      }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
+    },
+  );
+
   it.effect("keeps a completion alert when work finishes before running delivery", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const old = {

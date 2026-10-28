@@ -31,6 +31,75 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
+  it("prioritizes actionable results, counts capped rows, and preserves read results", () => {
+    const make = (
+      id: string,
+      phase: RelayAgentActivityState["phase"],
+      unread: boolean,
+      updatedAt = state.updatedAt,
+    ) => ({ ...state, threadId: ThreadId.make(id), phase, unread, updatedAt, retained: true });
+    const states = [
+      make("working", "running", false),
+      make("read", "completed", false),
+      make("done-old", "completed", true, "1969-12-31T23:59:00.000Z"),
+      make("done-new", "completed", true),
+      make("failed", "failed", true),
+      make("input", "waiting_for_input", false),
+    ];
+    expect(aggregate(states)).toMatchObject({
+      activeCount: 2,
+      workingCount: 1,
+      attentionCount: 1,
+      unreadCount: 2,
+      pendingCount: 5,
+      totalCount: 6,
+      activities: [
+        { threadId: "input" },
+        { threadId: "failed" },
+        { threadId: "done-new" },
+        { threadId: "done-old" },
+        { threadId: "working" },
+      ],
+    });
+    expect(aggregate(states.filter((s) => s.threadId !== "done-old"))).toMatchObject({
+      totalCount: 5,
+      activities: [
+        { threadId: "input" },
+        { threadId: "failed" },
+        { threadId: "done-new" },
+        { threadId: "working" },
+        { threadId: "read", unread: false },
+      ],
+    });
+    expect(aggregate([make("read", "completed", false)])).toMatchObject({
+      totalCount: 1,
+      activeCount: 0,
+      unreadCount: 0,
+      pendingCount: 0,
+    });
+  });
+
+  it("does not notify for already read results or marking a result unread again", () => {
+    const done = { ...state, phase: "completed" as const, unread: false };
+    expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(false);
+    expect(
+      terminalTransitionRows({
+        previousAggregate: aggregate([state]),
+        nextAggregate: aggregate([done]),
+        preferences,
+        nowMs: 0,
+      }),
+    ).toEqual([]);
+    expect(
+      terminalTransitionRows({
+        previousAggregate: aggregate([done]),
+        nextAggregate: aggregate([{ ...done, unread: true }]),
+        preferences,
+        nowMs: 0,
+      }),
+    ).toEqual([]);
+  });
+
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {
