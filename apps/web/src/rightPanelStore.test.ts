@@ -713,6 +713,16 @@ describe("rightPanelStore", () => {
     expect(selectThreadPanelOpen(useRightPanelStore.getState(), refB, "inline")).toBe(true);
   });
 
+  it("keeps a thread closed by hand closed when a panel tab opens while the default is off", () => {
+    const store = useRightPanelStore.getState();
+    store.setThreadPanelOpen(refA, "inline", false);
+    store.setThreadPanelInlineOpenByDefault(false);
+    store.open(refA, "diff");
+    store.setThreadPanelInlineOpenByDefault(true);
+
+    expect(selectThreadPanelOpen(useRightPanelStore.getState(), refA, "inline")).toBe(false);
+  });
+
   it("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
     useRightPanelStore.getState().open(refA, "diff");

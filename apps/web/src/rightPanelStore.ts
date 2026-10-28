@@ -341,12 +341,12 @@ const updateThreadPanelVisibilityMap = (
 ): Record<string, ThreadPanelVisibility> => {
   const current = byThreadKey[threadKey] ?? defaultThreadPanelVisibility(inlineOpenByDefault);
   const next = updater(current);
+  if (next === current) return byThreadKey;
   if (next.inlineOpen === inlineOpenByDefault && !next.popoverOpen) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
     return rest;
   }
-  if (next === current) return byThreadKey;
   return { ...byThreadKey, [threadKey]: next };
 };
 
