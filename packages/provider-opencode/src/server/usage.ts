@@ -395,6 +395,8 @@ const decodeCacheFile = Schema.decodeUnknownEffect(CacheFile);
 const encodeCacheFile = Schema.encodeEffect(CacheFile);
 // Parsed rows by cache file, so refreshes and restarts re-read only rows that changed.
 const rowCaches = new Map<string, OpenCodeUsageCache>();
+// Cache files whose last write failed; the next scan writes them again.
+const unsavedCachePaths = new Set<string>();
 
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
@@ -440,9 +442,11 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
       { concurrency: "unbounded" },
     );
     if (
+      unsavedCachePaths.has(cachePath) ||
       rowCache.size !== before.size ||
       rowCache.entries().some(([key, rows]) => before.get(key) !== rows)
     ) {
+      unsavedCachePaths.add(cachePath);
       const tables = rowCache.entries().map(([key, rows]) => {
         const entries = rows
           .entries()
@@ -451,6 +455,7 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
       });
       yield* encodeCacheFile(Object.fromEntries(tables)).pipe(
         Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+        Effect.tap(() => Effect.sync(() => unsavedCachePaths.delete(cachePath))),
         Effect.ignore({ log: true }),
       );
     }

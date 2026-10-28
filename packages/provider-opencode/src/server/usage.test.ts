@@ -405,6 +405,65 @@ describe("openCodeUsageReader", () => {
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("retries a failed cache write on the next unchanged scan", () => {
+    let failures = 1;
+    const flakyFileSystem = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.map(FileSystem.FileSystem, (inner) => ({
+        ...inner,
+        // Writing under a missing directory fails with a real PlatformError.
+        writeFileString: (target: string, contents: string) =>
+          failures-- > 0
+            ? inner.writeFileString(`${target}/missing/file`, contents)
+            : inner.writeFileString(target, contents),
+      })),
+    ).pipe(Layer.provide(NodeServices.layer));
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "usage-reader-retry-test-",
+      });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+      );
+      yield* db.unsafe("INSERT INTO message VALUES ('a', 's', 1, 1, ?)", [
+        JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 7 } }),
+      ]);
+      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const reader = openCodeUsageReader;
+      const host = yield* ProviderHost.ProviderHost;
+      const cachePath = path.join(host.paths.stateDir, "usage-opencode-cache-v1.json");
+      const scan = reader.scan({
+        instances: [
+          {
+            instanceId: ProviderInstanceId.make("opencode"),
+            config: undefined,
+            environment: { OPENCODE_DATA_DIR: dir },
+            configured: true,
+          },
+        ],
+        settings: DEFAULT_SERVER_SETTINGS,
+        windowStartMs: 0,
+        retentionCutoffMs: 0,
+        awaitRefresh: true,
+      });
+      yield* scan;
+      assert.isFalse(yield* fileSystem.exists(cachePath));
+      // The rows are unchanged since the failed write, so only the retry can save them.
+      yield* scan;
+      assert.isTrue(yield* fileSystem.exists(cachePath));
+    }).pipe(
+      Effect.provide(
+        TestProviderHost.layer().pipe(
+          Layer.provideMerge(flakyFileSystem),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+  });
 });
 
 describe("readOpenCodeUsage cache", () => {
