@@ -643,6 +643,7 @@ export const make = Effect.gen(function* () {
   const excludedProjectAncestors = [
     path.join(homeDir, "Downloads"),
     path.join(homeDir, "Documents", "Codex"),
+    ...(serverConfig.scratchDir === undefined ? [] : [path.resolve(serverConfig.scratchDir)]),
   ];
 
   const isExcludedProjectPath = (candidatePath: string) =>
