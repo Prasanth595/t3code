@@ -27,6 +27,12 @@ describe("stepDelayedStatus", () => {
     expect(step(pending, "syncing", 399)).toBe(pending);
     const shown = step(pending, "syncing", 400);
     expect(shownDelayedStatus(shown, "thread-1")).toBe("syncing");
+    const slow = stepDelayedStatus(
+      null,
+      { key: "thread-1", value: "failed", deadlinePassed: false, showDelayMs: 5_000 },
+      () => 0,
+    );
+    expect(delayedStatusDeadline(slow)).toBe(5_000);
   });
 
   it("never shows a status that clears before the show delay", () => {

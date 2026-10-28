@@ -340,6 +340,10 @@ const threadVisitTracker = createThreadVisitTracker({
 // Past the composer's 180 ms height animation.
 const COMPOSER_HEIGHT_SETTLE_MS = 220;
 
+// A reconnect often fails once before it lands (a resumed app's first attempt,
+// a failure left over from the background), so it reads as Reconnecting first.
+const RECONNECT_ERROR_DELAY_MS = 5_000;
+
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
 export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
@@ -521,6 +525,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
   })();
   const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
+  const connectionRetrying =
+    props.connectionStateLabel === "connecting" || props.connectionStateLabel === "reconnecting";
+  const retryConnectionError = useDelayedStatus(
+    props.environmentId,
+    connectionRetrying ? props.connectionError : null,
+    RECONNECT_ERROR_DELAY_MS,
+  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -611,7 +622,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
-      connectionError: props.connectionError,
+      connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
       environmentLabel: props.environmentLabel,
       onReconnect: props.onReconnectEnvironment,
