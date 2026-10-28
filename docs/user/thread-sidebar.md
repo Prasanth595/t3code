@@ -169,7 +169,8 @@ is waiting on prevent automatic settlement. An open pull request does not preven
 settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
-finished background work or a pull request watch starts on its own does not.
+finished background work or a pull request watch starts on its own does not. A pull
+request that merges or closes while the agent is still replying to you does not settle the thread.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
