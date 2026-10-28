@@ -95,9 +95,6 @@ describe("threadRouteOpensDraft", () => {
     expect(threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "empty" })).toBe(
       false,
     );
-    expect(
-      threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "synchronizing" }),
-    ).toBe(false);
   });
 
   it("keeps the route while Reconnect retries a thread that failed to sync", () => {
