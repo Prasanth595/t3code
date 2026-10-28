@@ -45,6 +45,7 @@ export interface GitHubRestInput {
   readonly timeout?: Duration.Input;
   /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
   readonly allowReserve?: boolean;
+  readonly personal?: boolean;
 }
 
 export class GitHubRest extends Context.Service<
@@ -126,6 +127,7 @@ export const make = Effect.gen(function* () {
     readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
     readonly acceptNotModified: boolean;
+    readonly personal: boolean | undefined;
   }) {
     const host = normalizeHost(input.host);
     // Query strings can expose SHAs or branches in traces.
@@ -142,6 +144,7 @@ export const make = Effect.gen(function* () {
         resource: "core",
         allowReserve: input.allowReserve,
         timeout: input.timeout,
+        personal: input.personal,
       },
       (headers) =>
         Effect.gen(function* () {
@@ -209,6 +212,7 @@ export const make = Effect.gen(function* () {
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined || input.ifModifiedSince !== undefined,
+          personal: input.personal,
         }),
       ),
     );

@@ -38,10 +38,13 @@ export const makeListPullRequestNotifications = (rest: GitHubRest.GitHubRest["Se
         operation: OPERATION,
         path: `repos/${input.repository}/notifications?all=true&participating=true&since=${DateTime.formatIso(since).replace(".000Z", "Z")}&per_page=${PAGE_SIZE}`,
         ifModifiedSince: DateTime.toDateUtc(since).toUTCString(),
+        personal: true,
       })
       .pipe(
         Effect.catchTags({
           GitHubApiNotFoundError: () => Effect.succeed(null),
+          GitHubNotSignedInError: () => Effect.succeed(null),
+          GitHubCliMissingError: () => Effect.succeed(null),
           GitHubApiResponseError: (error) =>
             error.status === 403 ? Effect.succeed(null) : Effect.fail(error),
         }),

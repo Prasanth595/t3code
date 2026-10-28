@@ -27,7 +27,10 @@ const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  app = appSignedOut,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
@@ -62,7 +65,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     }),
   );
   const layer = GitHubRest.layer.pipe(
-    Layer.provide(Layer.mergeAll(credentials, http, appSignedOut)),
+    Layer.provide(Layer.mergeAll(credentials, http, app)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
@@ -320,7 +323,14 @@ describe("listPullRequestNotifications", () => {
       ]),
       json({ message: "Resource not accessible by personal access token" }, { status: 403 }),
     ];
-    const { layer, requests } = harness(() => answers.shift()!);
+    const { layer, requests } = harness(
+      () => answers.shift()!,
+      Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+        enabled: true,
+        token: () => Effect.succeedSome("app"),
+        invalidate: () => Effect.void,
+      }),
+    );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
       const list = makeListPullRequestNotifications(yield* GitHubRest.GitHubRest);
@@ -332,6 +342,11 @@ describe("listPullRequestNotifications", () => {
         truncated: false,
       });
       expect(yield* list(input)).toBeNull();
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer first",
+        "Bearer first",
+        "Bearer first",
+      ]);
       const [first] = requests;
       expect(first?.method).toBe("GET");
       const url = new URL(first!.url);
