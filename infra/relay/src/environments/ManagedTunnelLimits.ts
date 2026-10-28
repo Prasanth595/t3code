@@ -16,7 +16,7 @@ import {
 
 export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 // Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
-export const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
+const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
@@ -56,7 +56,7 @@ export class ManagedTunnelLimits extends Context.Service<
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return ManagedTunnelLimits.of({
