@@ -680,6 +680,6 @@ export function AgentActivity(
   };
 }
 
-export const AgentActivityWidget = createWidget<AgentActivityProps>("AgentActivity", AgentActivity);
+createWidget<AgentActivityProps>("AgentActivity", AgentActivity);
 
 export default createLiveActivity<AgentActivityProps>("AgentActivity", AgentActivity);

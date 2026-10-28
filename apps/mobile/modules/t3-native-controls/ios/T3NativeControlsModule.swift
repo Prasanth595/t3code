@@ -46,7 +46,7 @@ public final class T3NativeControlsModule: Module {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
     }
-    Function("observeAgentWidget") { (props: String) in T3AgentWidgetConfiguration.observe(props: props) }
+    Function("observeAgentWidget") { (props: String, timeline: String) in T3AgentWidgetConfiguration.observe(props: props, timeline: timeline) }
     Function("agentWidgetToken") { (identity: String) in T3AgentWidgetConfiguration.token(identity: identity) }
     Function("configureAgentWidgetRefresh") { (url: String, token: String) in T3AgentWidgetConfiguration.configure(url: url, token: token) }
     Function("clearAgentWidgetRefresh") { T3AgentWidgetConfiguration.clear() }

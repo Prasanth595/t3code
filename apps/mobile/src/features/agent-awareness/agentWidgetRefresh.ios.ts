@@ -1,8 +1,9 @@
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import { requireOptionalNativeModule } from "expo";
+import { agentActivityTimeline } from "../../widgets/agentActivityTimeline";
 
 const native = requireOptionalNativeModule<{
-  observeAgentWidget(props: string): void;
+  observeAgentWidget(props: string, timeline: string): boolean;
   agentWidgetToken(identity: string): string | null;
   configureAgentWidgetRefresh(url: string, token: string): void;
   clearAgentWidgetRefresh(): void;
@@ -23,6 +24,16 @@ export function clearAgentWidgetRefresh(): void {
   native?.clearAgentWidgetRefresh?.();
 }
 
-export function observeAgentWidget(props: AgentActivityProps): void {
-  native?.observeAgentWidget?.(JSON.stringify(props));
+export function observeAgentWidget(props: AgentActivityProps): boolean {
+  return (
+    native?.observeAgentWidget?.(
+      JSON.stringify(props),
+      JSON.stringify(
+        agentActivityTimeline(props, Date.now()).map(({ date, props }) => ({
+          timestamp: date.getTime(),
+          props,
+        })),
+      ),
+    ) ?? false
+  );
 }

@@ -46,9 +46,10 @@ module.exports = function withAgentWidgetRefresh(config) {
         "AgentWidgetTimelineProvider.swift",
         "AgentWidgetState.swift",
         "AgentWidgetCredential.swift",
+        "AgentWidgetStorage.swift",
       ]) {
         const source =
-          file === "AgentWidgetCredential.swift"
+          file === "AgentWidgetCredential.swift" || file === "AgentWidgetStorage.swift"
             ? path.join(__dirname, "..", "modules", "t3-native-controls", "ios", file)
             : path.join(__dirname, "widget", file);
         fs.copyFileSync(source, path.join(target, file));
@@ -83,6 +84,7 @@ module.exports = function withAgentWidgetRefresh(config) {
         widget,
         source
           .replace(provider, "AgentWidgetTimelineProvider()")
+          .replace("WidgetsEntryView(entry: entry)", "AgentWidgetEntryView(entry: entry)")
           .replace(
             "    .configurationDisplayName",
             "    .agentWidgetPushHandler()\n    .configurationDisplayName",
@@ -107,6 +109,7 @@ module.exports = function withAgentWidgetRefresh(config) {
       "AgentWidgetTimelineProvider.swift",
       "AgentWidgetState.swift",
       "AgentWidgetCredential.swift",
+      "AgentWidgetStorage.swift",
     ]) {
       proj.addSourceFile(file, { target: target[0] }, group[0]);
     }

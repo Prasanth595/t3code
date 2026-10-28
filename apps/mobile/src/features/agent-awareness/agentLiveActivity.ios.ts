@@ -1,15 +1,9 @@
 import { observeAgentWidget } from "./agentWidgetRefresh.ios";
-import AgentActivity, {
-  AgentActivityWidget,
-  type AgentActivityProps,
-} from "../../widgets/AgentActivity";
-import { agentActivityTimeline } from "../../widgets/agentActivityTimeline";
+import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
 
 export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
   try {
-    observeAgentWidget(props);
-    AgentActivityWidget.updateTimeline(agentActivityTimeline(props, Date.now()));
-    return true;
+    return observeAgentWidget(props);
   } catch {
     // Personal-team builds have no widget extension.
     return false;
