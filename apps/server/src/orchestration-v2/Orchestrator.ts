@@ -13576,9 +13576,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const admission = yield* projectionStore.getDelegatedRunAdmission();
         const free = Math.max(0, settings.maxRunningDelegatedTasks - admission.admitted);
         for (const waiting of admission.waiting.slice(0, free)) {
+          const commandId = CommandId.make(`command:system:delegated-admission:${waiting.runId}`);
           yield* dispatchWithReceipt({
             type: "prepared-run.release",
-            commandId: CommandId.make(`command:system:delegated-admission:${waiting.runId}`),
+            commandId,
             threadId: waiting.threadId,
             runId: waiting.runId,
           }).pipe(
@@ -13588,6 +13589,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   runId: waiting.runId,
                   cause,
                 });
+                const rejected =
+                  cause._tag === "OrchestratorCommandPreviouslyRejectedError" ||
+                  (yield* commandReceipts.getByCommandId(commandId).pipe(
+                    Effect.map(
+                      (receipt) =>
+                        Option.isSome(receipt) &&
+                        receipt.value.status === "rejected" &&
+                        receipt.value.threadId === waiting.threadId &&
+                        receipt.value.commandType === "prepared-run.release",
+                    ),
+                    Effect.orElseSucceed(() => false),
+                  ));
+                if (!rejected) return;
                 const reason =
                   cause._tag === "OrchestratorDispatchError" ? (cause.cause ?? cause) : cause;
                 yield* dispatchWithReceipt({

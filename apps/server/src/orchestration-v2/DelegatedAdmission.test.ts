@@ -19,6 +19,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
@@ -284,5 +285,61 @@ it.effect.each([false, true])(
         assert.equal((yield* firstRun(next)).run.status, "starting");
         assert.equal((yield* firstRun(next)).run.admission, "admitted");
       }).pipe(Effect.provide(makeLayerTest(policy)));
+    }),
+);
+
+it.effect(
+  "retries a transient admission receipt-read failure without terminalizing the waiting task",
+  () =>
+    Effect.gen(function* () {
+      const blocked = yield* Ref.make<CommandId | null>(null);
+      const failures = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        yield* startParent;
+        const running = yield* delegate("running task");
+        const waiting = yield* delegate("retryable task");
+        const { run } = yield* firstRun(waiting);
+        yield* Ref.set(blocked, CommandId.make(`command:system:delegated-admission:${run.id}`));
+        yield* stop(running);
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isAbove(yield* Ref.get(failures), 0);
+        const pending = yield* firstRun(waiting);
+        assert.equal(pending.run.status, "preparing");
+        assert.equal(pending.run.admission, "waiting");
+        assert.isNull(pending.run.completedAt);
+        yield* Ref.set(blocked, null);
+        yield* orchestrator.recoverDelegatedTasks;
+        const retried = yield* firstRun(waiting);
+        assert.equal(retried.run.id, run.id);
+        assert.equal(retried.run.status, "starting");
+        assert.equal(retried.run.admission, "admitted");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "delegated-admission-transient" },
+            ProviderAdapterRegistry.layerFromAdapters([adapter]),
+            {
+              databaseLayer: SqlitePersistence.layerMemory,
+              runEffectWorker: false,
+              maxRunningDelegatedTasks: 1,
+              commandReceiptStoreOverride: (store) => ({
+                ...store,
+                getByCommandId: (commandId) =>
+                  Effect.gen(function* () {
+                    if ((yield* Ref.get(blocked)) === commandId) {
+                      yield* Ref.update(failures, (count) => count + 1);
+                      return yield* new CommandReceiptStore.CommandReceiptStoreReadError({
+                        commandId,
+                        cause: "temporary storage failure",
+                      });
+                    }
+                    return yield* store.getByCommandId(commandId);
+                  }),
+              }),
+            },
+          ),
+        ),
+      );
     }),
 );

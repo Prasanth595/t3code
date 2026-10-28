@@ -285,6 +285,9 @@ export function layerWithRegistry<Error>(
     readonly serverSettings?: ReplayServerSettings;
     readonly maxRunningDelegatedTasks?: number;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly commandReceiptStoreOverride?: (
+      store: CommandReceiptStore.CommandReceiptStoreV2Shape,
+    ) => CommandReceiptStore.CommandReceiptStoreV2Shape;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -334,9 +337,17 @@ export function layerWithRegistry<Error>(
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
-  const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
-    Layer.provide(layerDatabase),
-  );
+  const layerCommandReceiptStoreProvided = (
+    options.commandReceiptStoreOverride === undefined
+      ? CommandReceiptStore.layer
+      : Layer.effect(
+          CommandReceiptStore.CommandReceiptStoreV2,
+          Effect.map(
+            CommandReceiptStore.CommandReceiptStoreV2,
+            options.commandReceiptStoreOverride,
+          ),
+        ).pipe(Layer.provide(CommandReceiptStore.layer))
+  ).pipe(Layer.provide(layerDatabase));
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
