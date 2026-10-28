@@ -57,6 +57,7 @@ export interface ThreadListDrawerContextValue extends ThreadListDrawerState {
   readonly progress: SharedValue<number>;
   readonly mounted: boolean;
   readonly prepareOpen: () => void;
+  readonly settleProgress: () => void;
 }
 
 export const ThreadListDrawerContext = createContext<ThreadListDrawerContextValue | null>(null);
@@ -83,6 +84,7 @@ function useDrawerState(
   active: ThreadDrawerSide | null,
   setActive: (side: ThreadDrawerSide, open: boolean) => void,
   progress: SharedValue<number>,
+  settleProgress: () => void,
 ) {
   const open = active === side;
   const [mounted, setMounted] = useState(false);
@@ -108,8 +110,19 @@ function useDrawerState(
       progress,
       mounted,
       prepareOpen,
+      settleProgress,
     }),
-    [open, setOpen, openDrawer, closeDrawer, toggleDrawer, progress, mounted, prepareOpen],
+    [
+      open,
+      setOpen,
+      openDrawer,
+      closeDrawer,
+      toggleDrawer,
+      progress,
+      mounted,
+      prepareOpen,
+      settleProgress,
+    ],
   );
 }
 
@@ -118,19 +131,28 @@ export function ThreadListDrawerProvider({ children }: { readonly children: Reac
   const activeRef = useRef<ThreadDrawerSide | null>(null);
   const leftProgress = useSharedValue(0);
   const rightProgress = useSharedValue(0);
+  const animateTo = useCallback(
+    (next: ThreadDrawerSide | null) => {
+      leftProgress.set(withTiming(next === "left" ? 1 : 0, DRAWER_TIMING));
+      rightProgress.set(withTiming(next === "right" ? 1 : 0, DRAWER_TIMING));
+    },
+    [leftProgress, rightProgress],
+  );
   const setActive = useCallback(
     (side: ThreadDrawerSide, open: boolean) => {
       const next = open ? side : activeRef.current === side ? null : activeRef.current;
       if (!open && activeRef.current === side) void KeyboardController.dismiss();
       activeRef.current = next;
       setActiveState(next);
-      leftProgress.set(withTiming(next === "left" ? 1 : 0, DRAWER_TIMING));
-      rightProgress.set(withTiming(next === "right" ? 1 : 0, DRAWER_TIMING));
+      animateTo(next);
     },
-    [leftProgress, rightProgress],
+    [animateTo],
   );
-  const left = useDrawerState("left", active, setActive, leftProgress);
-  const right = useDrawerState("right", active, setActive, rightProgress);
+  // Read the ref, not render state: a row tap closes the drawer before its pan finalizes,
+  // and that finalize still holds the render that saw it open.
+  const settleProgress = useCallback(() => animateTo(activeRef.current), [animateTo]);
+  const left = useDrawerState("left", active, setActive, leftProgress, settleProgress);
+  const right = useDrawerState("right", active, setActive, rightProgress, settleProgress);
   return (
     <ThreadListDrawerContext value={left}>
       <ThreadDetailsDrawerContext value={right}>{children}</ThreadDetailsDrawerContext>
@@ -166,9 +188,7 @@ export function ThreadListDrawerHost({
   }, [enabled, isOpen, setOpen]);
 
   const commitOpen = useEffectEvent((next: boolean) => setOpen?.(next));
-  const settleOpen = useEffectEvent(() => {
-    progress.set(withTiming(drawer?.open ? 1 : 0, DRAWER_TIMING));
-  });
+  const settleOpen = useEffectEvent(() => drawer?.settleProgress());
   const handleBack = useEffectEvent(() => {
     if (!drawer?.open) return false;
     closeDrawer?.();
