@@ -159,6 +159,7 @@ export const layerAdminApi = HttpApiBuilder.group(
   "admin",
   Effect.fnUntraced(function* (handlers) {
     const accounts = yield* SaasAccounts.SaasAccounts;
+    const chats = yield* SaasChat.SaasChat;
     const clerkUsers = yield* ClerkUsers;
     const admins = yield* SaasAdmins;
     const asAdmin = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -200,6 +201,9 @@ export const layerAdminApi = HttpApiBuilder.group(
             return yield* accounts.savePlan(payload);
           }),
         ),
+      )
+      .handle("getStats", () =>
+        asAdmin(chats.activity.pipe(Effect.map((chatDays) => ({ chatDays })))),
       )
       .handle("getSettings", () => asAdmin(accounts.getSettings))
       .handle("saveSettings", ({ payload }) => asAdmin(accounts.saveSettings(payload)));

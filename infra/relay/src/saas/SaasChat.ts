@@ -1,4 +1,5 @@
 import type {
+  SaasAdminChatDay,
   SaasChatConversation,
   SaasChatMessage,
   SaasChatSummary,
@@ -7,7 +8,7 @@ import {
   SAAS_MAX_LISTED_CHATS,
   SaasChatMessage as SaasChatMessageSchema,
 } from "@t3tools/contracts/saas";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -31,6 +32,33 @@ export const chatDay = (now: DateTime.Utc): string =>
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
 export const isDeviceId = (value: string) => DEVICE_ID_PATTERN.test(value);
 
+/** Days the admin page charts, today included. */
+export const ADMIN_CHAT_DAYS = 30;
+
+/** One entry per day from `count - 1` days before `today` through today, quiet days as zeros. */
+export const chatActivityDays = (
+  rows: ReadonlyArray<SaasAdminChatDay>,
+  today: string,
+  count: number,
+): ReadonlyArray<SaasAdminChatDay> => {
+  const byDay = new Map(rows.map((row) => [row.day, row]));
+  const end = DateTime.makeUnsafe(`${today}T00:00:00.000Z`);
+  return Array.from({ length: count }, (_, index) => {
+    const day = chatDay(DateTime.subtract(end, { days: count - 1 - index }));
+    return (
+      byDay.get(day) ?? {
+        day,
+        userMessages: 0,
+        anonymousMessages: 0,
+        activeUsers: 0,
+        activeDevices: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+      }
+    );
+  });
+};
+
 /** A cap of 0 means unlimited. */
 export const isOverLimit = (messages: number, limit: number) => limit > 0 && messages > limit;
 
@@ -51,6 +79,8 @@ export class SaasChat extends Context.Service<
       readonly outputTokens: number;
     }) => Effect.Effect<void, SaasPersistenceError>;
     readonly messagesToday: (subject: ChatSubject) => Effect.Effect<number, SaasPersistenceError>;
+    /** The last {@link ADMIN_CHAT_DAYS} days of chat activity, oldest first. */
+    readonly activity: Effect.Effect<ReadonlyArray<SaasAdminChatDay>, SaasPersistenceError>;
     readonly listChats: (
       userId: string,
     ) => Effect.Effect<ReadonlyArray<SaasChatSummary>, SaasPersistenceError>;
@@ -125,6 +155,29 @@ export const make = Effect.gen(function* () {
       .pipe(persist("load-chat-count"));
     return rows[0]?.messages ?? 0;
   });
+
+  const activity: SaasChat["Service"]["activity"] = Effect.gen(function* () {
+    const today = chatDay(yield* DateTime.now);
+    const since = chatActivityDays([], today, ADMIN_CHAT_DAYS)[0]?.day ?? today;
+    // Anonymous messages also count under the sender's address; those rows stay out of the totals.
+    const forPrefix = (prefix: string, value: ReturnType<typeof sql>) =>
+      sql`coalesce(sum(case when ${saasChatDaily.subject} like ${`${prefix}:%`} then ${value} else 0 end), 0)`;
+    const rows = yield* db
+      .select({
+        day: saasChatDaily.day,
+        userMessages: forPrefix("user", sql`${saasChatDaily.messages}`).mapWith(Number),
+        anonymousMessages: forPrefix("device", sql`${saasChatDaily.messages}`).mapWith(Number),
+        activeUsers: forPrefix("user", sql`1`).mapWith(Number),
+        activeDevices: forPrefix("device", sql`1`).mapWith(Number),
+        inputTokens: sql`coalesce(sum(${saasChatDaily.inputTokens}), 0)`.mapWith(Number),
+        outputTokens: sql`coalesce(sum(${saasChatDaily.outputTokens}), 0)`.mapWith(Number),
+      })
+      .from(saasChatDaily)
+      .where(gte(saasChatDaily.day, since))
+      .groupBy(saasChatDaily.day)
+      .pipe(persist("load-chat-activity"));
+    return chatActivityDays(rows, today, ADMIN_CHAT_DAYS);
+  }).pipe(Effect.withSpan("relay.saas.chat.activity"));
 
   const listChats: SaasChat["Service"]["listChats"] = Effect.fn("relay.saas.chat.list")(
     function* (userId) {
@@ -213,6 +266,7 @@ export const make = Effect.gen(function* () {
     countMessage,
     recordTokens,
     messagesToday,
+    activity,
     listChats,
     getChat,
     saveChat,
