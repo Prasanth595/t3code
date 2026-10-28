@@ -348,7 +348,7 @@ export function presentPendingBackgroundWork(
         ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
         : `Waiting on a ${noun}`
       : named
-        ? `${only.label} running in background`
+        ? `Running in background: ${only.label}`
         : `A ${noun} running in background`;
     return { title, items, waiting };
   }
