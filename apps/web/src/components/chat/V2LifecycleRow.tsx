@@ -280,7 +280,7 @@ function SubagentAvatar({
         <ProviderInstanceIcon
           driverKind={driver}
           displayName={displayName ?? driver}
-          acpRegistryIconUrl={iconUrl}
+          iconUrl={iconUrl}
           className="z-auto"
           iconClassName="size-3.5"
         />
@@ -673,7 +673,7 @@ function HandoffEndpoint(props: {
               displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
-              acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+              iconUrl={entry?.iconUrl}
               showBadge={showBadge}
               size="compact"
               iconClassName={cn(showBadge && "opacity-60")}
