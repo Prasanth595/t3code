@@ -222,6 +222,61 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "replaces Codex-created local thread writer locks with the shared lock directory",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const shadowLocks = path.join(shadowHome, "thread-writer-locks");
+
+          yield* writeTextFile(path.join(shadowLocks, ".coordination.lock"), "");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          expect(yield* fileSystem.readLink(shadowLocks)).toBe(
+            path.join(sharedHome, "thread-writer-locks"),
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("keeps the shadow auth lock private", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const shadowLock = path.join(shadowHome, "auth.lock");
+
+        yield* writeTextFile(path.join(sharedHome, "auth.lock"), "");
+        yield* writeTextFile(shadowLock, "");
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        yield* materializeCodexShadowHome(layout);
+
+        const lockLinkResult = yield* fileSystem.readLink(shadowLock).pipe(Effect.result);
+        expect(lockLinkResult._tag).toBe("Failure");
+        expect(yield* fileSystem.exists(shadowLock)).toBe(true);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "accepts Codex-created shadow-local runtime directories",
       () =>
         Effect.gen(function* () {
