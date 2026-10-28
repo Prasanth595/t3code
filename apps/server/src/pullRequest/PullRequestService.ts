@@ -89,6 +89,7 @@ import {
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
+  type ProviderChangeRequestNotifications,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
   PullRequestProviderError,
@@ -225,6 +226,10 @@ export class PullRequestService extends Context.Service<
     readonly watchFingerprint: (
       input: PullRequestRef,
     ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestError>;
+    /** Read through `input`'s project credential; null where the host or credential has none. */
+    readonly notifications: (
+      input: PullRequestRef & { readonly since: string },
+    ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestError>;
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
@@ -542,6 +547,14 @@ function withRateLimitBackoff(
     ...(api.getChangeRequestStack === undefined
       ? {}
       : { getChangeRequestStack: wrap("getChangeRequestStack", api.getChangeRequestStack) }),
+    ...(api.getChangeRequestNotifications === undefined
+      ? {}
+      : {
+          getChangeRequestNotifications: wrap(
+            "getChangeRequestNotifications",
+            api.getChangeRequestNotifications,
+          ),
+        }),
     ...(api.getChangeRequestWatchFingerprint === undefined
       ? {}
       : {
@@ -1634,6 +1647,9 @@ export const make = Effect.gen(function* () {
             observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
+            ...(changeRequest.viewerDidAuthor === undefined
+              ? {}
+              : { viewerDidAuthor: changeRequest.viewerDidAuthor }),
             ...(changeRequest.additions === undefined
               ? {}
               : { additions: changeRequest.additions }),
@@ -3647,6 +3663,17 @@ export const make = Effect.gen(function* () {
     watchFingerprint: credentialCached((input) =>
       Cache.get(watchFingerprintCache, refCacheKey(input)),
     ),
+    notifications: Effect.fn("PullRequestService.notifications")(function* (input) {
+      const project = yield* requireProject(input);
+      if (project.api.getChangeRequestNotifications === undefined) return null;
+      return yield* project.api
+        .getChangeRequestNotifications({
+          cwd: project.project.workspaceRoot,
+          host: project.host,
+          since: input.since,
+        })
+        .pipe(Effect.mapError(toPullRequestError("notifications")));
+    }),
     activity: credentialCached(activity),
     preview: credentialCached(preview),
     threadComments,

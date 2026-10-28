@@ -38,6 +38,8 @@ export interface GitHubRestInput {
   readonly accept?: string;
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
   readonly ifNoneMatch?: string;
+  /** Revalidates by date where the answer has no ETag; 304 is accepted the same way. */
+  readonly ifModifiedSince?: string;
   readonly maxResponseBytes?: number;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
@@ -183,16 +185,16 @@ export const make = Effect.gen(function* () {
   const rest: GitHubRest["Service"]["rest"] = (input) => {
     const url = `${gitHubApiUrls(input.host).rest}/${input.path.replace(/^\/+/, "")}`;
     const base = HttpClientRequest.make(input.method ?? "GET")(url).pipe(
-      HttpClientRequest.setHeader("accept", input.accept ?? "application/vnd.github+json"),
+      HttpClientRequest.setHeaders({
+        accept: input.accept ?? "application/vnd.github+json",
+        ...(input.ifNoneMatch === undefined ? {} : { "if-none-match": input.ifNoneMatch }),
+        ...(input.ifModifiedSince === undefined
+          ? {}
+          : { "if-modified-since": input.ifModifiedSince }),
+      }),
     );
-    const withEtag =
-      input.ifNoneMatch === undefined
-        ? base
-        : base.pipe(HttpClientRequest.setHeader("if-none-match", input.ifNoneMatch));
     const request =
-      input.body === undefined
-        ? withEtag
-        : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
+      input.body === undefined ? base : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((interactive) =>
         send({
@@ -202,7 +204,7 @@ export const make = Effect.gen(function* () {
           maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
-          acceptNotModified: input.ifNoneMatch !== undefined,
+          acceptNotModified: input.ifNoneMatch !== undefined || input.ifModifiedSince !== undefined,
         }),
       ),
     );

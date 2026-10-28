@@ -205,6 +205,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     ...(summary.author === undefined ? {} : { author: summary.author }),
+    ...(summary.viewerDidAuthor === undefined ? {} : { viewerDidAuthor: summary.viewerDidAuthor }),
     ...(summary.additions === undefined ? {} : { additions: summary.additions }),
     ...(summary.deletions === undefined ? {} : { deletions: summary.deletions }),
     ...(summary.changedFiles === undefined ? {} : { changedFiles: summary.changedFiles }),
@@ -237,6 +238,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&
     (left.author?.login ?? null) === (right.author?.login ?? null) &&
     avatarIdentity(left.author?.avatarUrl) === avatarIdentity(right.author?.avatarUrl) &&
+    left.viewerDidAuthor === right.viewerDidAuthor &&
     left.additions === right.additions &&
     left.deletions === right.deletions &&
     left.changedFiles === right.changedFiles &&

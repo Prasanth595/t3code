@@ -329,6 +329,7 @@ function threadComments(
       body: id,
       createdAt: "2026-07-01T00:00:00Z",
       lastEditedAt: null,
+      authorAssociation: "NONE",
       url: `https://github.com/acme/web/pull/7#discussion_${id}`,
       reactionGroups: [],
     })),
@@ -894,6 +895,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
         baseRefName: "main",
         headRefName: `feat/${number}`,
+        viewerDidAuthor: number === 7,
         state: "OPEN",
         isDraft: false,
         mergeable: "MERGEABLE",
@@ -943,6 +945,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           state: seven?.state,
           headBranch: seven?.headBranch,
           author: seven?.author?.login,
+          viewerDidAuthor: seven?.viewerDidAuthor,
           changedFiles: seven?.changedFiles,
           reviewDecision: seven?.reviewDecision,
           checksState: seven?.checksState,
@@ -953,6 +956,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           state: "open",
           headBranch: "feat/7",
           author: "octocat",
+          viewerDidAuthor: true,
           changedFiles: 2,
           reviewDecision: "approved",
           checksState: "passing",
@@ -960,6 +964,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
+      assert.strictEqual(eight?.viewerDidAuthor, false);
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
         "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
@@ -992,6 +997,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       author: null,
                       baseRefName: "main",
                       headRefName: "feat/eight",
+                      viewerDidAuthor: false,
                       state: "OPEN",
                       isDraft: false,
                       mergeable: "MERGEABLE",
@@ -1134,6 +1140,90 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(callAt(1)).toMatchObject({ ifNoneMatch: 'W/"v1"' });
       // Another account never revalidates the first account's answer.
       expect(callAt(2)).not.toHaveProperty("ifNoneMatch");
+    }),
+  );
+
+  it.effect("reads participating notifications by date, so an unchanged inbox is a free 304", () =>
+    Effect.gen(function* () {
+      const read = Effect.flatMap(GitHubPullRequestApi.GitHubPullRequestApi, (cli) =>
+        cli.getPullRequestNotifications({
+          cwd: "/w",
+          host: "github.com",
+          since: "2026-10-28T00:00:00.000Z",
+        }),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson([
+              {
+                updated_at: "2026-10-28T01:00:00Z",
+                subject: {
+                  type: "PullRequest",
+                  url: "https://api.github.com/repos/acme/web/pulls/7",
+                },
+                repository: { full_name: "acme/web" },
+              },
+              {
+                updated_at: "2026-10-28T02:00:00Z",
+                subject: { type: "Issue", url: "https://api.github.com/repos/acme/web/issues/8" },
+                repository: { full_name: "acme/web" },
+              },
+            ]),
+            false,
+            false,
+            { "last-modified": "Wed, 28 Oct 2026 01:00:00 GMT", "x-poll-interval": "60" },
+          ),
+        ),
+      );
+      const first = yield* read;
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output("", false, false, { "x-poll-interval": "120" }, 304)),
+      );
+      const second = yield* read;
+
+      assert.deepStrictEqual(first, {
+        changeRequests: [{ repository: "acme/web", number: 7, updatedAt: "2026-10-28T01:00:00Z" }],
+        pollIntervalSeconds: 60,
+      });
+      assert.deepStrictEqual(second, { changeRequests: null, pollIntervalSeconds: 120 });
+      expect(callAt(0)).toMatchObject({
+        kind: "rest",
+        path: "notifications?all=true&participating=true&per_page=100&since=2026-10-28T00%3A00%3A00.000Z",
+      });
+      expect(callAt(0)).not.toHaveProperty("ifModifiedSince");
+      expect(callAt(1)).toMatchObject({ ifModifiedSince: "Wed, 28 Oct 2026 01:00:00 GMT" });
+    }),
+  );
+
+  it.effect.each<readonly [string, GitHubRequestPolicy.GitHubApiError]>([
+    [
+      "a 403 from a fine-grained token",
+      new GitHubRequestPolicy.GitHubApiResponseError({
+        host: "github.com",
+        operation: "getPullRequestNotifications",
+        status: 403,
+      }),
+    ],
+    [
+      "a 404",
+      new GitHubRequestPolicy.GitHubApiNotFoundError({
+        host: "github.com",
+        operation: "getPullRequestNotifications",
+      }),
+    ],
+  ])("reads notifications refused with %s as unavailable", ([, refusal]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.fail(refusal));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const notifications = yield* cli.getPullRequestNotifications({
+        cwd: "/w",
+        host: "github.com",
+        since: "2026-10-28T00:00:00.000Z",
+      });
+
+      assert.isNull(notifications);
     }),
   );
 

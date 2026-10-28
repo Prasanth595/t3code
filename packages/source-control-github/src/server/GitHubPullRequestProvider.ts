@@ -422,6 +422,11 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequestSummary")),
       ),
 
+    getChangeRequestNotifications: (input) =>
+      cli
+        .getPullRequestNotifications(input)
+        .pipe(Effect.mapError(fail("getChangeRequestNotifications"))),
+
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 

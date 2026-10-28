@@ -272,6 +272,7 @@ query PullRequestActivity(
           createdAt
           lastEditedAt
           url
+          authorAssociation
           author {
             login
             avatarUrl
@@ -293,6 +294,7 @@ query PullRequestActivity(
           submittedAt
           lastEditedAt
           url
+          authorAssociation
           author {
             login
             avatarUrl
