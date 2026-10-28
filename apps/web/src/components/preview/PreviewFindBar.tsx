@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -7,13 +7,21 @@ import { previewBridge } from "./previewBridge";
 
 interface PreviewFindBarProps {
   readonly tabId: string;
-  readonly inputRef: RefObject<HTMLInputElement | null>;
+  readonly focusRequestId: number;
   readonly onClose: () => void;
 }
 
-export function PreviewFindBar({ tabId, inputRef, onClose }: PreviewFindBarProps) {
+export function PreviewFindBar({ tabId, focusRequestId, onClose }: PreviewFindBarProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ active: number; matches: number } | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+  }, [focusRequestId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to Chromium find results for this tab and stops the search on unmount
   useEffect(() => {
@@ -82,7 +90,6 @@ export function PreviewFindBar({ tabId, inputRef, onClose }: PreviewFindBarProps
       >
         <InputGroupInput
           ref={inputRef}
-          autoFocus
           type="search"
           size="sm"
           value={query}

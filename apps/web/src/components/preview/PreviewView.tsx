@@ -60,7 +60,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
-import { dispatchPreviewAction, subscribePreviewAction } from "./previewActionBus";
+import { subscribePreviewAction } from "./previewActionBus";
 import { closePreviewSession } from "./closePreviewSession";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
@@ -158,8 +158,7 @@ export function PreviewView({
   onSendAnnotation,
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
-  const [findTabId, setFindTabId] = useState<string | null>(null);
-  const findInputRef = useRef<HTMLInputElement | null>(null);
+  const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
@@ -340,18 +339,12 @@ export function PreviewView({
       toastManager.add({ type: "info", title: "Find on page isn't available for this page" });
       return;
     }
-    const findInput = findInputRef.current;
-    if (findInput) {
-      findInput.focus();
-      findInput.select();
-      return;
-    }
-    setFindTabId(runtimeTabId);
+    setFind((previous) => ({ tabId: runtimeTabId, requestId: (previous?.requestId ?? 0) + 1 }));
   };
 
   // Otherwise focus falls to the body and the next find shortcut misses the preview.
   const closeFind = () => {
-    setFindTabId(null);
+    setFind(null);
     if (runtimeTabId) focusPreviewPage(runtimeTabId);
   };
 
@@ -468,7 +461,7 @@ export function PreviewView({
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
               toggleNativePictureInPicture: () => handleNativePictureInPicture(),
-              ...(canFindInPage ? { find: () => dispatchPreviewAction("find") } : {}),
+              ...(canFindInPage ? { find: handleFind } : {}),
             }
           : {}),
       }
@@ -492,7 +485,7 @@ export function PreviewView({
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
-          ...(canFindInPage ? { find: () => dispatchPreviewAction("find") } : {}),
+          ...(canFindInPage ? { find: handleFind } : {}),
         }
       : null;
 
@@ -1062,11 +1055,11 @@ export function PreviewView({
             controller={controller}
           />
         ) : null}
-        {findTabId !== null && canFindInPage && findTabId === runtimeTabId ? (
+        {find && canFindInPage && find.tabId === runtimeTabId ? (
           <PreviewFindBar
-            key={findTabId}
-            tabId={findTabId}
-            inputRef={findInputRef}
+            key={find.tabId}
+            tabId={find.tabId}
+            focusRequestId={find.requestId}
             onClose={closeFind}
           />
         ) : null}
