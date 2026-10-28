@@ -27,6 +27,8 @@ describe("toolCallDiff", () => {
     for (const operation of ["add", "delete"]) {
       for (const [content, ending] of [
         ["first\nsecond", ""],
+        ["@@ -0,0 +1 @@\n+content", "\n"],
+        ["@@ -1 +0,0 @@\n-content", "\n"],
         ["first\nsecond", "\n"],
         ["--- notes\nsecond", "\n"],
         ["diff --git notes\nsecond", "\n"],
@@ -59,6 +61,20 @@ describe("toolCallDiff", () => {
   });
 
   it("keeps content-only writes out of the patch and preserves empty recorded content", () => {
+    for (const operation of ["add", "delete"]) {
+      expect(
+        toolCallDiff({
+          fileName: "empty.ts",
+          diffStr: "",
+          changes: [{ operation, path: "empty.ts" }],
+        }).content,
+      ).toEqual([
+        {
+          label: operation === "add" ? "Recorded content after" : "Recorded content before",
+          text: "",
+        },
+      ]);
+    }
     expect(toolCallDiff({ fileName: "a.ts", oldStr: "before", newStr: "" })).toEqual({
       patch: undefined,
       content: [

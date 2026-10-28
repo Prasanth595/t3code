@@ -60,8 +60,10 @@ export function toolCallDiff(
   item: Pick<FileChange, "diffStr" | "fileName" | "changes" | "oldStr" | "newStr">,
 ) {
   const diff = recordedText(item.diffStr);
-  const before = recordedText(item.oldStr);
-  const after = recordedText(item.newStr);
+  const operation = item.changes?.[0]?.operation;
+  const emptyContent = diff.text === "" ? "" : undefined;
+  const before = recordedText(item.oldStr ?? (operation === "delete" ? emptyContent : undefined));
+  const after = recordedText(item.newStr ?? (operation === "add" ? emptyContent : undefined));
   return {
     patch: toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
     content: diff.text?.trim()
