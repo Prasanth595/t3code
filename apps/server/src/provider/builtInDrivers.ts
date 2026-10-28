@@ -11,6 +11,7 @@ import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
 import { MuseDriver, type MuseDriverEnv } from "@t3tools/provider-muse/server";
 import { PiDriver, type PiDriverEnv } from "@t3tools/provider-pi/server";
+import { ZeroClawDriver, type ZeroClawDriverEnv } from "@t3tools/provider-zeroclaw/server";
 import type {
   AnyProviderDriver,
   ProviderUsageReaderEnv,
@@ -26,7 +27,8 @@ export type BuiltInDriversEnv =
   | GrokDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
-  | MuseDriverEnv;
+  | MuseDriverEnv
+  | ZeroClawDriverEnv;
 
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
@@ -39,6 +41,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   PiDriver,
   MuseDriver,
   AcpRegistryDriver,
+  ZeroClawDriver,
 ];
 
 export type BuiltInUsageReadersEnv =
