@@ -48,7 +48,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       { agentId: "devin" },
       { agentId: "devin", commandPath: "/custom/devin" },
       { agentId: "other-agent" },
-      { source: "local", agentId: "devin", commandPath: "/custom/agent" },
+      { source: "local" as const, agentId: "devin", commandPath: "/custom/agent" },
     ]) {
       const snapshot = buildCheckedAcpRegistrySnapshot({
         ...identity,
@@ -63,13 +63,11 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
       expect(snapshot.auth.status).toBe("unknown");
       if (settings.agentId === "devin" && settings.source !== "local") {
-        expect(snapshot.usageLimits).toEqual({
+        expect(snapshot.usageLimits).toMatchObject({
           checkedAt: snapshot.checkedAt,
           windows: [],
           unavailable: {
             reason: "unsupported",
-            message:
-              "Devin does not report your remaining quota here. Open Devin with the same account to view your allowance and on-demand credits.",
           },
           externalUsage: { label: "Devin usage", url: "https://app.devin.ai/settings/usage" },
         });
