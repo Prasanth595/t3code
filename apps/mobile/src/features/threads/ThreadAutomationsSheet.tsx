@@ -50,7 +50,7 @@ export function useThreadAutomations(target: AutomationsTarget | null) {
   );
   return {
     tasks: tasks.data?.tasks.filter((task) => task.threadId === target?.threadId) ?? [],
-    loaded: tasks.data !== undefined,
+    loaded: tasks.data !== null,
     error: tasks.error,
   };
 }
