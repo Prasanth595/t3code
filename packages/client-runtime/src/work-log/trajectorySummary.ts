@@ -10,16 +10,15 @@ export interface AgentTrajectorySegment {
 
 export type AgentTrajectorySummary = ReadonlyArray<AgentTrajectorySegment>;
 
-const COMPACT_LABEL_PREFIXES = ["Used ", "Called ", "Worked for ", "Continued for "] as const;
+const TOOL_NAMES: Partial<Record<OrchestrationV2TurnItem["type"], string>> = {
+  command_execution: "Shell",
+  file_change: "File edit",
+  file_search: "File search",
+  web_search: "Web search",
+};
 
-export function splitCompactLabel(
-  label: string,
-): { readonly prefix: string; readonly value: string } | null {
-  for (const prefix of COMPACT_LABEL_PREFIXES) {
-    if (label.startsWith(prefix) && label.length > prefix.length)
-      return { prefix, value: label.slice(prefix.length) };
-  }
-  return null;
+export function compactTrajectoryLabel(label: string): string {
+  return label.replace(/^(?:Used |Called |Worked for |Continued for )(?=.)/su, "");
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -59,52 +58,29 @@ export function summarizeAgentTrajectory(
   for (const item of items) {
     if (seen.has(item.id)) continue;
     seen.add(item.id);
-    let toolName: string;
-    switch (item.type) {
-      case "dynamic_tool": {
-        toolName = item.toolName ?? "Tool";
-        if (item.status !== "completed") break;
-        const name = toolName.toLowerCase().split(/\.|__/u).at(-1)?.replaceAll("_", "");
-        const input = record(item.input);
-        if (name === "skill") {
-          const skill = claudeSkillInvocation("Skill", item.input);
-          if (skill) skills.add(skill.name);
-        }
-        if (name === "read" || name === "readfile" || name === "readtextfile") {
-          for (const path of collectToolFilePaths({ input: item.input }))
-            addSkillPath(path, skills);
-        }
-        if (
-          name === "bash" ||
-          name === "shell" ||
-          name === "terminal" ||
-          name === "command" ||
-          name === "execcommand" ||
-          name === "runshellcommand"
-        ) {
-          if (typeof input?.command === "string") addCommandSkills(input.command, skills);
-        }
-        break;
-      }
-      case "command_execution":
-        toolName = "Shell";
-        if (item.status === "completed" && (item.exitCode === undefined || item.exitCode === 0)) {
-          addCommandSkills(item.input, skills);
-        }
-        break;
-      case "file_change":
-        toolName = "File edit";
-        break;
-      case "file_search":
-        toolName = "File search";
-        break;
-      case "web_search":
-        toolName = "Web search";
-        break;
-      default:
-        continue;
-    }
+    const toolName =
+      item.type === "dynamic_tool" ? (item.toolName ?? "Tool") : TOOL_NAMES[item.type];
+    if (toolName === undefined) continue;
     tools.set(toolName, (tools.get(toolName) ?? 0) + 1);
+    if (item.status !== "completed") continue;
+    if (item.type !== "dynamic_tool" && item.type !== "command_execution") continue;
+    if (item.type === "command_execution" && item.exitCode !== undefined && item.exitCode !== 0)
+      continue;
+    const name =
+      item.type === "command_execution"
+        ? "shell"
+        : toolName.toLowerCase().split(/\.|__/u).at(-1)!.replaceAll("_", "");
+    if (name === "skill") {
+      const skill = claudeSkillInvocation("Skill", item.input);
+      if (skill) skills.add(skill.name);
+    } else if (["read", "readfile", "readtextfile"].includes(name)) {
+      for (const path of collectToolFilePaths({ input: item.input })) addSkillPath(path, skills);
+    } else if (
+      ["bash", "shell", "terminal", "command", "execcommand", "runshellcommand"].includes(name)
+    ) {
+      const command = item.type === "command_execution" ? item.input : record(item.input)?.command;
+      if (typeof command === "string") addCommandSkills(command, skills);
+    }
   }
   const summary: AgentTrajectorySegment[] = [];
   if (skills.size > 0)

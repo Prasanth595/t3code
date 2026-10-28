@@ -2369,10 +2369,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
-    case "working":
+    case "working": {
+      const bw = b as typeof a;
       return (
-        a.createdAt === (b as typeof a).createdAt && a.compacting === (b as typeof a).compacting
+        a.createdAt === bw.createdAt &&
+        a.compacting === bw.compacting &&
+        trajectorySummariesEqual(a.trajectory ?? [], bw.trajectory ?? [])
       );
+    }
     case "thinking": {
       const bt = b as typeof a;
       return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;

@@ -42,10 +42,15 @@ describe("drawer project actions", () => {
 
   it("edits in place without losing unrelated action settings", () => {
     const saved = { ...setup, command: "vp i --frozen-lockfile" };
-    expect(replaceProjectAction([setup, build], saved)).toEqual([saved, build]);
+    const next = replaceProjectAction([setup, build], saved);
+    expect(next).toEqual([saved, build]);
+    expect(next[1]).toBe(build);
+    expect(next[1]).not.toHaveProperty("runOnSettle");
   });
 
   it("adds a new action without changing existing actions", () => {
-    expect(replaceProjectAction([setup], build)).toEqual([setup, build]);
+    const next = replaceProjectAction([setup], build);
+    expect(next).toEqual([setup, build]);
+    expect(next[0]).toBe(setup);
   });
 });

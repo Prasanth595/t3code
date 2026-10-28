@@ -999,21 +999,12 @@ function ThreadRouteContent(
               <ThreadHeader
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
-                workspace={{
-                  projectTitle: selectedThreadProject?.title ?? "Project",
-                  projectId: selectedThreadProject?.id ?? null,
-                  workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-                  environmentLabel:
-                    selectedEnvironmentConnection?.environmentLabel ?? "Environment",
-                  connectionState: routeConnectionState,
-                  cwd: selectedThreadCwd,
-                  worktreePath: selectedThread.worktreePath ?? selectedThreadDetailWorktreePath,
-                }}
+                project={selectedThreadProject}
+                cwd={selectedThreadCwd}
+                worktreePath={selectedThread.worktreePath ?? selectedThreadDetailWorktreePath}
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
-                hasThreadCwd={selectedThreadCwd !== null}
-                hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
                 fileInspectorSupported={fileInspector.supported}
                 inspectorMode={inspectorMode}
                 onToggleInspector={handleToggleInspector}

@@ -123,7 +123,7 @@ function PullRequestMarkdownContent(props: {
     () => linkReferenceAutolinks(props.markdown, autolinks),
     [props.markdown, autolinks],
   );
-  const openPullRequest = useOpenPullRequest();
+  const openPullRequest = useOpenPullRequest({ drillIn: true });
   const openLink = useCallback(
     (href: string) => {
       void openPullRequest(href);

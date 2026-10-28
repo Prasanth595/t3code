@@ -34,6 +34,8 @@ const reactTests = [
   "src/features/workspace/WorkspaceListToolbarRow.test.tsx",
 ];
 
+const crossPlatformTests = ["src/native/useOpenPullRequest.test.tsx"];
+
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
 const require = NodeModule.createRequire(import.meta.url);
 const babel: {
@@ -54,11 +56,21 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.test.{ts,tsx,mjs}"],
-          exclude: ["**/node_modules/**", ...reactTests],
+          exclude: ["**/node_modules/**", ...reactTests, ...crossPlatformTests],
           setupFiles: [
             "../../packages/shared/src/testing/longTempDir.ts",
             "../../packages/shared/src/testing/providerEnv.ts",
           ],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "cross-platform",
+          include: crossPlatformTests,
+          // The release compiler below folds Platform.OS to iOS before platform mocks can run.
+          environment: "jsdom",
+          setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
         },
       },
       {

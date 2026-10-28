@@ -1,5 +1,5 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { AuthFilesystemReadScope, EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,6 +13,10 @@ import { getTerminalStatusLabel } from "../terminal/terminalMenu";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useEnvironmentScope } from "../../state/session";
+import {
+  useRemoteEnvironmentRuntime,
+  useSavedRemoteConnection,
+} from "../../state/use-remote-environment-registry";
 import { ThreadProjectActions } from "./ThreadProjectActions";
 import type { ThreadGitControls } from "./ThreadGitControls";
 import {
@@ -21,19 +25,11 @@ import {
   useThreadDetailsDrawer,
 } from "./thread-list-drawer";
 
-export interface ThreadWorkspaceDetails {
-  readonly projectTitle: string;
-  readonly projectId: ProjectId | null;
-  readonly workspaceRoot: string | null;
-  readonly environmentLabel: string;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly cwd: string | null;
-  readonly worktreePath: string | null;
-}
-
 export function ThreadDetailsDrawer(props: {
   readonly title: string;
-  readonly workspace: ThreadWorkspaceDetails;
+  readonly project: EnvironmentProject | null;
+  readonly cwd: string | null;
+  readonly worktreePath: string | null;
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onCloseThread: () => void;
   readonly onReturnToThread?: (() => void) | undefined;
@@ -51,10 +47,12 @@ function ThreadDetailsContent(props: Parameters<typeof ThreadDetailsDrawer>[0]) 
   const insets = useSafeAreaInsets();
   const { closeDrawer } = useThreadDetailsDrawer();
   const controls = props.gitControls;
-  const { workspace } = props;
+  const { project, cwd } = props;
   const environmentId = EnvironmentId.make(String(controls.environmentId));
+  const environment = useSavedRemoteConnection(environmentId);
+  const connectionState =
+    useRemoteEnvironmentRuntime(environmentId)?.connectionState ?? "available";
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const cwd = workspace.cwd;
   const navigate = (action: () => void) => {
     closeDrawer();
     action();
@@ -102,21 +100,20 @@ function ThreadDetailsContent(props: Parameters<typeof ThreadDetailsDrawer>[0]) 
           ) : null}
           <View className="gap-2 px-4 py-4">
             <Text textRole="body" className="font-t3-medium">
-              {workspace.environmentLabel}
+              {environment?.environmentLabel ?? "Environment"}
             </Text>
             <Text textRole="footnote" className="text-foreground-muted">
-              {workspace.connectionState.charAt(0).toUpperCase() +
-                workspace.connectionState.slice(1)}{" "}
-              · {workspace.projectTitle}
+              {connectionState.charAt(0).toUpperCase() + connectionState.slice(1)} ·{" "}
+              {project?.title ?? "Project"}
             </Text>
             <Text textRole="footnote" className="text-foreground-muted">
-              {workspace.worktreePath ? "Worktree" : "Project directory"}
+              {props.worktreePath ? "Worktree" : "Project directory"}
             </Text>
             <Text selectable textRole="footnote">
-              {workspace.cwd ?? "Workspace unavailable"}
+              {cwd ?? "Workspace unavailable"}
             </Text>
           </View>
-          {workspace.cwd ? (
+          {cwd ? (
             <ListRow
               icon="doc.on.doc"
               label="Copy workspace path"
@@ -133,12 +130,11 @@ function ThreadDetailsContent(props: Parameters<typeof ThreadDetailsDrawer>[0]) 
           />
         </ListSection>
 
-        {workspace.projectId !== null ? (
+        {project ? (
           <ThreadProjectActions
-            key={`${environmentId}:${workspace.projectId}`}
+            key={`${environmentId}:${project.id}`}
             environmentId={environmentId}
-            projectId={workspace.projectId}
-            cwd={workspace.workspaceRoot}
+            project={project}
             scripts={controls.projectScripts}
             canRun={controls.canOperateTerminal && controls.hasThread !== false}
             onRun={(script) => navigate(() => void controls.onRunProjectScript(script))}

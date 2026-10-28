@@ -264,6 +264,30 @@ describe("deriveMessagesTimelineRows", () => {
     expect(working?.kind === "working" ? working.trajectory : null).toMatchObject([
       { kind: "tools", label: "Called 1 tool", title: "Tool calls" },
     ]);
+    if (working?.kind !== "working" || !working.trajectory)
+      throw new Error("Expected working row with trajectory");
+    const initial = computeStableMessagesTimelineRows([{ ...working, trajectory: [] }], {
+      result: [],
+      byId: new Map(),
+    });
+    const live = computeStableMessagesTimelineRows([working], initial);
+    expect(live.result[0]).toBe(working);
+
+    const changed = {
+      ...working,
+      trajectory: working.trajectory.map((segment) => ({
+        ...segment,
+        details: ["Read · 1 call"],
+      })),
+    };
+    const updated = computeStableMessagesTimelineRows([changed], live);
+    expect(updated.result[0]).toBe(changed);
+    expect(
+      computeStableMessagesTimelineRows(
+        [{ ...changed, trajectory: changed.trajectory.map((segment) => ({ ...segment })) }],
+        updated,
+      ),
+    ).toBe(updated);
   });
 
   it("recovers the failed Sky call stored as a generic js integration", () => {

@@ -421,6 +421,9 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [commitPrimaryAction, content, fullSwipeAction, onDelete]);
   const oppositeAction = props.oppositeAction;
   const hasOppositeAction = oppositeAction !== undefined;
+  const oppositeActionsWidth = hasOppositeAction ? ACTION_ITEM_WIDTH : undefined;
+  const leftActionsWidth = swipeRowSide === "left" ? actionsWidth : oppositeActionsWidth;
+  const rightActionsWidth = swipeRowSide === "right" ? actionsWidth : oppositeActionsWidth;
   const commitOppositeAction = useCallback(() => {
     if (!mountedRef.current || contentRef.current !== content) return;
     swipeableRef.current?.close();
@@ -563,26 +566,12 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           animationOptions={THREAD_SWIPE_SPRING}
           childrenContainerStyle={childrenContainerStyle}
           containerStyle={swipeableContainerStyle}
-          {...(swipeRowSide === "left"
-            ? { dragOffsetFromLeft: 8, overshootLeft: true, leftThreshold: actionsWidth * 0.42 }
-            : {
-                dragOffsetFromRight: -8,
-                overshootRight: true,
-                rightThreshold: actionsWidth * 0.42,
-              })}
-          {...(oppositeAction === undefined
-            ? {}
-            : swipeRowSide === "left"
-              ? {
-                  dragOffsetFromRight: -8,
-                  overshootRight: true,
-                  rightThreshold: ACTION_ITEM_WIDTH * 0.42,
-                }
-              : {
-                  dragOffsetFromLeft: 8,
-                  overshootLeft: true,
-                  leftThreshold: ACTION_ITEM_WIDTH * 0.42,
-                })}
+          dragOffsetFromLeft={leftActionsWidth === undefined ? undefined : 8}
+          dragOffsetFromRight={rightActionsWidth === undefined ? undefined : -8}
+          overshootLeft={leftActionsWidth === undefined ? undefined : true}
+          overshootRight={rightActionsWidth === undefined ? undefined : true}
+          leftThreshold={leftActionsWidth === undefined ? undefined : leftActionsWidth * 0.42}
+          rightThreshold={rightActionsWidth === undefined ? undefined : rightActionsWidth * 0.42}
           enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
@@ -593,9 +582,8 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           onSwipeableOpenStartDrag={handleWillOpen}
           onSwipeableWillOpen={handleWillOpen}
           overshootFriction={1}
-          {...(swipeRowSide === "left"
-            ? { renderLeftActions: renderActions, renderRightActions: renderOppositeActions }
-            : { renderRightActions: renderActions, renderLeftActions: renderOppositeActions })}
+          renderLeftActions={swipeRowSide === "left" ? renderActions : renderOppositeActions}
+          renderRightActions={swipeRowSide === "right" ? renderActions : renderOppositeActions}
           simultaneousWith={props.simultaneousWith}
         >
           {

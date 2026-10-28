@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffectEvent,
   useMemo,
@@ -12,9 +11,9 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
   useAnimatedProps,
-  useAnimatedRef,
   useScrollOffset,
   useSharedValue,
+  type AnimatedRef,
   type SharedValue,
 } from "react-native-reanimated";
 import Svg, { Circle } from "react-native-svg";
@@ -33,47 +32,32 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 10;
 const ThreadFeedHistoryContext = createContext<{
   readonly controls: ThreadFeedHistoryControls | undefined;
   readonly topInset: number;
+  readonly offset: SharedValue<number>;
   readonly pull: SharedValue<typeof INITIAL_THREAD_HISTORY_PULL>;
 } | null>(null);
 
 export function ThreadFeedHistoryProvider(props: {
   readonly controls: ThreadFeedHistoryControls | undefined;
   readonly topInset: number;
+  readonly scrollRef: AnimatedRef<Animated.ScrollView>;
   readonly children: ReactNode;
 }) {
   const pull = useSharedValue(INITIAL_THREAD_HISTORY_PULL);
+  const offset = useScrollOffset(props.scrollRef);
   return (
-    <ThreadFeedHistoryContext value={{ controls: props.controls, topInset: props.topInset, pull }}>
+    <ThreadFeedHistoryContext
+      value={{ controls: props.controls, topInset: props.topInset, pull, offset }}
+    >
       {props.children}
     </ThreadFeedHistoryContext>
   );
 }
 
-export function ThreadHistoryScrollView({
-  ref,
-  ...props
-}: ComponentPropsWithRef<typeof Animated.ScrollView>) {
+export function ThreadHistoryScrollView(props: ComponentPropsWithRef<typeof Animated.ScrollView>) {
   const history = useContext(ThreadFeedHistoryContext);
-  const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const offset = useScrollOffset(scrollRef);
-  const attachScrollView = useCallback(
-    (view: Animated.ScrollView | null) => {
-      scrollRef(view);
-      const cleanup = typeof ref === "function" ? ref(view) : undefined;
-      if (ref && typeof ref !== "function") ref.current = view;
-      return () => {
-        scrollRef(null);
-        if (typeof cleanup === "function") cleanup();
-        else if (typeof ref === "function") ref(null);
-        else if (ref) ref.current = null;
-      };
-    },
-    [ref, scrollRef],
-  );
   if (history === null)
     throw new Error("ThreadHistoryScrollView requires ThreadFeedHistoryProvider");
-  const pull = history.pull;
-  const topInset = history.topInset;
+  const { pull, topInset, offset } = history;
   const enabled = history.controls?.hasMoreHistory === true && !history.controls.loading;
   const loadEarlier = useEffectEvent(() => {
     if (history.controls?.hasMoreHistory && !history.controls.loading) {
@@ -131,7 +115,7 @@ export function ThreadHistoryScrollView({
 
   return (
     <GestureDetector gesture={gesture}>
-      <Animated.ScrollView {...props} ref={attachScrollView} />
+      <Animated.ScrollView {...props} />
     </GestureDetector>
   );
 }

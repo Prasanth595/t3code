@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
-import { splitCompactLabel } from "@t3tools/client-runtime/work-log/trajectory-summary";
+import { compactTrajectoryLabel } from "@t3tools/client-runtime/work-log/trajectory-summary";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -76,10 +76,7 @@ import {
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea } from "../ui/tooltip";
-import {
-  AgentTrajectorySegments,
-  AgentTrajectorySegmentsMeasurement,
-} from "./AgentTrajectorySegments";
+import { AgentTrajectorySegments } from "./AgentTrajectorySegments";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -1562,10 +1559,9 @@ function TurnFoldButtonContent({
   row: Extract<TimelineRow, { kind: "turn-fold" }>;
   compact: boolean;
 }) {
-  const labelParts = splitCompactLabel(row.label);
   return (
     <>
-      <span>{labelParts && compact ? labelParts.value : row.label}</span>
+      <span>{compact ? compactTrajectoryLabel(row.label) : row.label}</span>
       <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
     </>
   );
@@ -1610,7 +1606,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
             <span className="inline-flex items-center gap-1 px-1">
               <TurnFoldButtonContent row={row} compact={false} />
             </span>
-            <AgentTrajectorySegmentsMeasurement summary={row.trajectory} />
+            <AgentTrajectorySegments summary={row.trajectory} measurement />
           </span>
         </span>
         <Tooltip>

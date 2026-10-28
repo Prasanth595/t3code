@@ -36,19 +36,7 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
   };
 }
 
-export function releaseClaimedRoles(
-  script: ProjectScript,
-  saved: ProjectScriptInput,
-): ProjectScript {
-  const releaseSetup = saved.runOnWorktreeCreate && script.runOnWorktreeCreate;
-  const releaseSettle = saved.runOnSettle && script.runOnSettle === true;
-  if (!releaseSetup && !releaseSettle) return script;
-  return {
-    ...script,
-    ...(releaseSetup ? { runOnWorktreeCreate: false } : {}),
-    ...(releaseSettle ? { runOnSettle: false } : {}),
-  };
-}
+export { releaseClaimedRoles } from "@t3tools/shared/projectScripts";
 
 function normalizeScriptId(value: string): string {
   const cleaned = value

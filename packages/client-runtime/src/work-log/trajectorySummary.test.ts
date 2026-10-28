@@ -3,7 +3,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
-  splitCompactLabel,
+  compactTrajectoryLabel,
   summarizeAgentTrajectory,
   trajectorySummariesEqual,
 } from "./trajectorySummary.js";
@@ -35,8 +35,8 @@ function tool(id: string, toolName: string, input: unknown, status = base.status
   };
 }
 
-function command(id: string, input: string): OrchestrationV2TurnItem {
-  return { ...base, id: TurnItemId.make(id), type: "command_execution", input };
+function command(id: string, input: string) {
+  return { ...base, id: TurnItemId.make(id), type: "command_execution" as const, input };
 }
 
 function edit(id: string, fileName: string): OrchestrationV2TurnItem {
@@ -115,6 +115,19 @@ describe("summarizeAgentTrajectory", () => {
     ]);
   });
 
+  it("counts unsuccessful shell calls without claiming their skill reads", () => {
+    expect(
+      summarizeAgentTrajectory([
+        { ...command("failed", "cat /skills/failed/SKILL.md"), exitCode: 1 },
+        { ...command("pending", "cat /skills/pending/SKILL.md"), status: "running" },
+        command("done", "cat /skills/git/SKILL.md"),
+      ]),
+    ).toEqual([
+      { kind: "skills", label: "Used 1 skill", title: "Skills used", details: ["git"] },
+      { kind: "tools", label: "Called 3 tools", title: "Tool calls", details: ["Shell · 3 calls"] },
+    ]);
+  });
+
   it("counts file changes as tool calls without a files cluster", () => {
     expect(summarizeAgentTrajectory([edit("edit", "a.ts")])).toEqual([
       {
@@ -144,15 +157,18 @@ describe("summarizeAgentTrajectory", () => {
   });
 });
 
-describe("splitCompactLabel", () => {
-  it("removes only the leading words from compactable labels", () => {
-    expect(splitCompactLabel("Worked for 34s")).toEqual({ prefix: "Worked for ", value: "34s" });
-    expect(splitCompactLabel("Continued for 2m")).toEqual({
-      prefix: "Continued for ",
-      value: "2m",
-    });
-    expect(splitCompactLabel("Used 2 skills")).toEqual({ prefix: "Used ", value: "2 skills" });
-    expect(splitCompactLabel("Called 3 tools")).toEqual({ prefix: "Called ", value: "3 tools" });
-    expect(splitCompactLabel("Worked")).toBeNull();
+describe("compactTrajectoryLabel", () => {
+  it.each([
+    ["Worked for 34s", "34s"],
+    ["Continued for 2m", "2m"],
+    ["Used 2 skills", "2 skills"],
+    ["Called 3 tools", "3 tools"],
+    ["Worked", "Worked"],
+    ["Used ", "Used "],
+    ["", ""],
+    ["Still Worked for 34s", "Still Worked for 34s"],
+    ["Called \n", "\n"],
+  ])("compacts only a leading prefix with a remaining value: %j", (label, expected) => {
+    expect(compactTrajectoryLabel(label)).toBe(expected);
   });
 });

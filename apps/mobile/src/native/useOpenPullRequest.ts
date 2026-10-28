@@ -3,7 +3,6 @@ import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { useCallback } from "react";
 import { Platform } from "react-native";
 import { useSelectWorkspaceDetail } from "../features/workspace/useSelectWorkspaceDetail";
-import { drillsIntoWorkspaceDetail } from "../features/workspace/workspace-detail-selection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
@@ -13,11 +12,15 @@ import { environmentServerConfigsAtom } from "../state/server";
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
 // Avoid useRoute so layouts without route context can open any thread's pull requests.
-export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
+export function useNavigateToPullRequest(options?: {
+  readonly replace?: boolean;
+  readonly drillIn?: boolean;
+}) {
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const projects = useProjects();
   const replace = options?.replace;
+  const drillIn = options?.drillIn;
   return useCallback(
     async (url: string, context: PullRequestContext | null) => {
       // Read at press time so a capability push does not hand every link a new handler.
@@ -29,24 +32,21 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
         (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
       );
       if (!params) return tryOpenExternalUrl(url, "pull-request");
-      const detail = { name: "PullRequest" as const, params };
-      // Android shows one page at a time, so a pull request opened from another one pushes and
-      // Back returns to it, while a row selected from a list swaps the page in place. iOS always
-      // opens it over the current page.
-      if (Platform.OS === "android" && !drillsIntoWorkspaceDetail(navigation.getState(), detail)) {
-        selectDetail(detail);
+      if (Platform.OS === "android" && !drillIn) {
+        selectDetail({ name: "PullRequest", params });
         return true;
       }
       if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
       else navigation.dispatch(StackActions.push("PullRequest", params));
       return true;
     },
-    [navigation, projects, replace, selectDetail],
+    [drillIn, navigation, projects, replace, selectDetail],
   );
 }
 
 export function useOpenPullRequest(options?: {
   readonly replace?: boolean;
+  readonly drillIn?: boolean;
   readonly context?: PullRequestContext;
 }) {
   const route = useRoute();
@@ -70,7 +70,7 @@ export function useOpenPullRequest(options?: {
   );
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
-  const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
+  const navigateToPullRequest = useNavigateToPullRequest(options);
   return useCallback(
     (url: string) =>
       navigateToPullRequest(

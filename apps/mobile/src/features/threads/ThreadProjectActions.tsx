@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   AuthFilesystemReadScope,
   type EnvironmentId,
-  type ProjectId,
   type ProjectScript,
   ProjectScriptIcon,
   T3_PROJECT_FILE_NAME,
@@ -29,8 +29,7 @@ import { replaceProjectAction } from "./thread-project-actions";
 
 export function ThreadProjectActions(props: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly cwd: string | null;
+  readonly project: EnvironmentProject;
   readonly scripts: readonly ProjectScript[];
   readonly canRun: boolean;
   readonly onRun: (script: ProjectScript) => void;
@@ -42,10 +41,10 @@ export function ThreadProjectActions(props: {
   const canReadFiles = useEnvironmentScope(props.environmentId, AuthFilesystemReadScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "save project actions");
   const file = useEnvironmentQuery(
-    props.cwd && canReadFiles
+    props.project.workspaceRoot && canReadFiles
       ? projectEnvironment.readFile({
           environmentId: props.environmentId,
-          input: { cwd: props.cwd, relativePath: T3_PROJECT_FILE_NAME },
+          input: { cwd: props.project.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
         })
       : null,
   );
@@ -69,28 +68,26 @@ export function ThreadProjectActions(props: {
     if (!config || !canEdit || saving.current) return false;
     saving.current = true;
     setPending(true);
-    try {
-      const result = await updateSettings({
-        environmentId: props.environmentId,
-        input: {
-          patch:
-            config.environment.capabilities.projectSettingsOverrides === true
-              ? {
-                  projectSettingsOverrides: {
-                    [props.projectId]: {
-                      ...config.settings.projectSettingsOverrides[props.projectId],
-                      defaultProjectScripts: scripts,
-                    },
+    const result = await updateSettings({
+      environmentId: props.environmentId,
+      input: {
+        patch:
+          config.environment.capabilities.projectSettingsOverrides === true
+            ? {
+                projectSettingsOverrides: {
+                  [props.project.id]: {
+                    ...config.settings.projectSettingsOverrides[props.project.id],
+                    defaultProjectScripts: scripts,
                   },
-                }
-              : { projectScriptOverrides: { [props.projectId]: scripts } },
-        },
-      });
-      return result._tag === "Success";
-    } finally {
+                },
+              }
+            : { projectScriptOverrides: { [props.project.id]: scripts } },
+      },
+    }).finally(() => {
       saving.current = false;
       setPending(false);
-    }
+    });
+    return result._tag === "Success";
   };
   const save = async () => {
     if (!editor || !editor.name.trim() || !editor.command.trim()) return;
@@ -103,6 +100,46 @@ export function ThreadProjectActions(props: {
     };
     if (await persist(replaceProjectAction(props.scripts, saved))) setEditor(null);
   };
+
+  const disabled = pending || !canEdit;
+  const editingExisting =
+    editor !== null && props.scripts.some((script) => script.id === editor.id);
+  const input = (
+    key: "name" | "command" | "previewUrl",
+    placeholder: string,
+    label = placeholder,
+  ) => (
+    <TextInput
+      accessibilityLabel={label}
+      placeholder={placeholder}
+      value={editor?.[key] ?? ""}
+      multiline={key === "command"}
+      autoCapitalize={key === "name" ? undefined : "none"}
+      autoCorrect={key === "name" ? undefined : false}
+      editable={!disabled}
+      onChangeText={(value) => {
+        if (editor) setEditor({ ...editor, [key]: value });
+      }}
+    />
+  );
+  const toggle = (
+    key: "runOnWorktreeCreate" | "async" | "runOnSettle" | "autoOpenPreview",
+    label: string,
+  ) => (
+    <View className="flex-row items-center justify-between gap-3">
+      <Text textRole="footnote" className="min-w-0 flex-1">
+        {label}
+      </Text>
+      <ThemedSwitch
+        accessibilityLabel={label}
+        value={key === "async" ? editor?.async === false : editor?.[key] === true}
+        disabled={disabled}
+        onValueChange={(value) => {
+          if (editor) setEditor({ ...editor, [key]: key === "async" ? !value : value });
+        }}
+      />
+    </View>
+  );
 
   return (
     <View className="gap-3">
@@ -176,26 +213,9 @@ export function ThreadProjectActions(props: {
       </ListSection>
       {editor ? (
         <View className="gap-3 rounded-2xl bg-grouped-card p-4">
-          <Text textRole="headline">
-            {props.scripts.some((script) => script.id === editor.id) ? "Edit action" : "New action"}
-          </Text>
-          <TextInput
-            accessibilityLabel="Action name"
-            placeholder="Action name"
-            value={editor.name}
-            editable={!pending && canEdit}
-            onChangeText={(name) => setEditor({ ...editor, name })}
-          />
-          <TextInput
-            accessibilityLabel="Action command"
-            placeholder="Command"
-            value={editor.command}
-            multiline
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!pending && canEdit}
-            onChangeText={(command) => setEditor({ ...editor, command })}
-          />
+          <Text textRole="headline">{editingExisting ? "Edit action" : "New action"}</Text>
+          {input("name", "Action name")}
+          {input("command", "Command", "Action command")}
           <View className="flex-row flex-wrap gap-2">
             {ProjectScriptIcon.literals.map((icon) => (
               <Pressable
@@ -215,43 +235,15 @@ export function ThreadProjectActions(props: {
               </Pressable>
             ))}
           </View>
-          <ActionToggle
-            label="Run on worktree creation"
-            value={editor.runOnWorktreeCreate}
-            disabled={pending || !canEdit}
-            onChange={(value) => setEditor({ ...editor, runOnWorktreeCreate: value })}
-          />
-          {editor.runOnWorktreeCreate ? (
-            <ActionToggle
-              label="Wait for setup before starting the agent"
-              value={editor.async === false}
-              disabled={pending || !canEdit}
-              onChange={(value) => setEditor({ ...editor, async: !value })}
-            />
-          ) : null}
-          <ActionToggle
-            label="Run when the thread settles"
-            value={editor.runOnSettle === true}
-            disabled={pending || !canEdit}
-            onChange={(value) => setEditor({ ...editor, runOnSettle: value })}
-          />
-          <TextInput
-            accessibilityLabel="Action preview URL"
-            placeholder="Preview URL (optional)"
-            value={editor.previewUrl ?? ""}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!pending && canEdit}
-            onChangeText={(previewUrl) => setEditor({ ...editor, previewUrl })}
-          />
-          {editor.previewUrl?.trim() ? (
-            <ActionToggle
-              label="Open preview after running"
-              value={editor.autoOpenPreview === true}
-              disabled={pending || !canEdit}
-              onChange={(value) => setEditor({ ...editor, autoOpenPreview: value })}
-            />
-          ) : null}
+          {toggle("runOnWorktreeCreate", "Run on worktree creation")}
+          {editor.runOnWorktreeCreate
+            ? toggle("async", "Wait for setup before starting the agent")
+            : null}
+          {toggle("runOnSettle", "Run when the thread settles")}
+          {input("previewUrl", "Preview URL (optional)", "Action preview URL")}
+          {editor.previewUrl?.trim()
+            ? toggle("autoOpenPreview", "Open preview after running")
+            : null}
           <View className="flex-row gap-2">
             <View className="flex-1">
               <Button
@@ -267,7 +259,7 @@ export function ThreadProjectActions(props: {
               onPress={() => setEditor(null)}
             />
           </View>
-          {props.scripts.some((script) => script.id === editor.id) ? (
+          {editingExisting ? (
             <Button
               label="Delete action"
               tone="danger"
@@ -291,27 +283,6 @@ export function ThreadProjectActions(props: {
           ) : null}
         </View>
       ) : null}
-    </View>
-  );
-}
-
-function ActionToggle(props: {
-  readonly label: string;
-  readonly value: boolean;
-  readonly disabled: boolean;
-  readonly onChange: (value: boolean) => void;
-}) {
-  return (
-    <View className="flex-row items-center justify-between gap-3">
-      <Text textRole="footnote" className="min-w-0 flex-1">
-        {props.label}
-      </Text>
-      <ThemedSwitch
-        accessibilityLabel={props.label}
-        value={props.value}
-        disabled={props.disabled}
-        onValueChange={props.onChange}
-      />
     </View>
   );
 }

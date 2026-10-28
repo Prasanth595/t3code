@@ -46,7 +46,7 @@
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "generate:highlights": "node scripts/generate-highlights.mts",
-    "test": "vp test run --project unit --project react",
+    "test": "vp test run --project unit --project react --project cross-platform",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

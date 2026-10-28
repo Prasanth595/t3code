@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { ThreadDetailsDrawer, type ThreadWorkspaceDetails } from "./ThreadDetailsDrawer";
+import { ThreadDetailsDrawer } from "./ThreadDetailsDrawer";
 import { useThreadDetailsDrawer } from "./thread-list-drawer";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -17,9 +17,9 @@ import {
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
-    readonly workspace: ThreadWorkspaceDetails;
-    readonly hasThreadCwd: boolean;
-    readonly hasWorkspaceRoot: boolean;
+    readonly project: Parameters<typeof ThreadDetailsDrawer>[0]["project"];
+    readonly cwd: string | null;
+    readonly worktreePath: string | null;
     readonly fileInspectorSupported: boolean;
     readonly inspectorMode: ThreadInspectorMode | null;
     readonly onToggleInspector: () => void;
@@ -31,6 +31,8 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
+  const hasThreadCwd = props.cwd !== null;
+  const hasWorkspaceRoot = Boolean(props.project?.workspaceRoot);
   const details = useThreadDetailsDrawer();
   const native = useThreadHeaderOptions({
     ...props,
@@ -45,7 +47,7 @@ export function ThreadHeader(
         onPress: props.onReturnToThread,
       });
     }
-    if (props.hasThreadCwd) {
+    if (hasThreadCwd) {
       const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
       actions.push({
         accessibilityLabel: filesVisible ? "Close files" : "Open files",
@@ -54,7 +56,7 @@ export function ThreadHeader(
         onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
       });
     }
-    if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
+    if (hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
       actions.push({
         accessibilityLabel: "Open terminal",
         icon: "terminal",
@@ -83,8 +85,8 @@ export function ThreadHeader(
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
     props.onReturnToThread,
-    props.hasThreadCwd,
-    props.hasWorkspaceRoot,
+    hasThreadCwd,
+    hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
   ]);
 
@@ -110,7 +112,7 @@ export function ThreadHeader(
                 selected={details.open}
                 onPress={details.openDrawer}
               />
-            ) : props.fileInspectorSupported && props.hasThreadCwd ? (
+            ) : props.fileInspectorSupported && hasThreadCwd ? (
               <ScreenHeaderButton
                 accessibilityLabel={
                   props.inspectorMode !== null && panes.auxiliaryPaneVisible
@@ -132,7 +134,9 @@ export function ThreadHeader(
       {layout.usesSplitView ? native.fallback : null}
       <ThreadDetailsDrawer
         title={props.title}
-        workspace={props.workspace}
+        project={props.project}
+        cwd={props.cwd}
+        worktreePath={props.worktreePath}
         gitControls={props.gitControls}
         onCloseThread={goBack}
         onReturnToThread={props.onReturnToThread}

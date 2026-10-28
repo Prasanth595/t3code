@@ -44,21 +44,6 @@ const IDENTITY = {
   PullRequest: ["environmentId", "projectId", "repository", "number", "host"],
 } as const;
 
-/**
- * Whether opening `detail` from here drills in. A row selected from a list swaps the page in
- * place, but opening one from a page already above a page of the same kind pushes, so Back
- * returns to the page it was opened from.
- */
-export function drillsIntoWorkspaceDetail(
-  state: { readonly index?: number; readonly routes: readonly RouteLike[] } | undefined,
-  detail: WorkspaceDetail,
-): boolean {
-  if (!state) return false;
-  const index = state.index ?? state.routes.length - 1;
-  const { workspace } = workspaceRoutesOf(state.routes.slice(0, index + 1));
-  return workspace.some((route) => route.name === detail.name);
-}
-
 type RouteLike = { readonly name: string; readonly key?: string; readonly params?: object };
 
 function showsDetail(route: RouteLike, detail: WorkspaceDetail) {

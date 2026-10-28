@@ -42,7 +42,7 @@ import {
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { splitCompactLabel } from "@t3tools/client-runtime/work-log/trajectory-summary";
+import { compactTrajectoryLabel } from "@t3tools/client-runtime/work-log/trajectory-summary";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -142,7 +142,12 @@ import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInUp,
+  useAnimatedRef,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -165,10 +170,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
-import {
-  ThreadTrajectorySegments,
-  ThreadTrajectorySegmentsMeasurement,
-} from "./ThreadTrajectorySegments";
+import { ThreadTrajectorySegments } from "./ThreadTrajectorySegments";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
@@ -1333,27 +1335,41 @@ function ThreadRunFoldRow(props: {
     !(availableWidth > 0 && naturalWidth > 0 && naturalWidth <= availableWidth);
   const minHeight = Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight);
 
-  const buttonContent = (compactLabel: boolean, measurement: boolean) => {
-    const label = compactLabel
-      ? (splitCompactLabel(props.entry.label)?.value ?? props.entry.label)
-      : props.entry.label;
+  const content = (compactLabel: boolean, measurement = false) => {
+    const FoldButton = measurement ? View : Pressable;
+    const label = compactLabel ? compactTrajectoryLabel(props.entry.label) : props.entry.label;
     return (
       <>
-        <Text
-          key={props.workRowSizing.textSizeKey}
-          numberOfLines={1}
-          className={cn(
-            "font-t3-medium text-sm tabular-nums text-foreground-muted",
-            !measurement && "shrink",
-          )}
+        <FoldButton
+          accessibilityRole="button"
+          accessibilityState={{ expanded: props.entry.expanded }}
+          accessibilityLabel={props.entry.label}
+          onPress={measurement ? undefined : () => props.onToggleTurnFold(props.entry.runId)}
+          hitSlop={4}
+          className="min-h-11 min-w-0 flex-row items-center gap-2"
+          style={{ minHeight }}
         >
-          {label}
-        </Text>
-        <ThreadDisclosureChevron
-          expanded={props.entry.expanded}
-          collapsedDirection="right"
-          size={15}
-          tintColor={props.iconSubtleColor}
+          <Text
+            key={props.workRowSizing.textSizeKey}
+            numberOfLines={1}
+            className={cn(
+              "font-t3-medium text-sm tabular-nums text-foreground-muted",
+              !measurement && "shrink",
+            )}
+          >
+            {label}
+          </Text>
+          <ThreadDisclosureChevron
+            expanded={props.entry.expanded}
+            collapsedDirection="right"
+            size={15}
+            tintColor={props.iconSubtleColor}
+          />
+        </FoldButton>
+        <ThreadTrajectorySegments
+          summary={props.entry.trajectory}
+          compact={compactLabel}
+          measurement={measurement}
         />
       </>
     );
@@ -1389,24 +1405,10 @@ function ThreadRunFoldRow(props: {
               })
             }
           >
-            <View className="min-h-11 min-w-0 flex-row items-center gap-2" style={{ minHeight }}>
-              {buttonContent(false, true)}
-            </View>
-            <ThreadTrajectorySegmentsMeasurement summary={props.entry.trajectory} />
+            {content(false, true)}
           </View>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded: props.entry.expanded }}
-          accessibilityLabel={props.entry.label}
-          onPress={() => props.onToggleTurnFold(props.entry.runId)}
-          hitSlop={4}
-          className="min-h-11 min-w-0 flex-row items-center gap-2"
-          style={{ minHeight }}
-        >
-          {buttonContent(compact, false)}
-        </Pressable>
-        <ThreadTrajectorySegments summary={props.entry.trajectory} compact={compact} />
+        {content(compact)}
       </View>
       {props.entry.checkpointSummary ? (
         <TurnDiffStat
@@ -2333,6 +2335,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     fontScale,
   });
   const settledPaneWidth = useWorkspaceSettledContentWidth();
+  const historyScrollRef = useAnimatedRef<Animated.ScrollView>();
   const [measuredViewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -3341,10 +3344,12 @@ export const ThreadFeed = memo(function ThreadFeed({
           <ThreadFeedHistoryProvider
             controls={props.historyControls}
             topInset={usesNativeAutomaticInsets ? anchorTopInset : 0}
+            scrollRef={historyScrollRef}
           >
             {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView uses a spread because KeyboardAwareLegendList omits the forwarded ScrollViewComponent prop from its public type. */}
             <KeyboardAwareLegendList
               ref={attachList}
+              refScrollView={historyScrollRef}
               // LegendList cannot see adjustedContentInset; remount so initial positioning waits for UIKit attachment.
               key={listMountKey}
               style={{ flex: 1 }}

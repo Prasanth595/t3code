@@ -18,10 +18,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "../../state/vcs";
 import { useVcsActionState } from "../../state/use-vcs-action-state";
 import { ThreadHeader } from "./ThreadHeader";
-import {
-  useRemoteEnvironmentRuntime,
-  useSavedRemoteConnection,
-} from "../../state/use-remote-environment-registry";
+import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 
 export function DraftThreadHeader(props: {
   readonly thread: EnvironmentThreadShell;
@@ -31,7 +28,6 @@ export function DraftThreadHeader(props: {
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
   const environmentId = props.thread.environmentId;
-  const environment = useSavedRemoteConnection(environmentId);
   const runtime = useRemoteEnvironmentRuntime(environmentId);
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -59,19 +55,11 @@ export function DraftThreadHeader(props: {
       draft
       title="New thread"
       subtitle=""
-      workspace={{
-        projectTitle: props.project.title,
-        projectId: props.project.id,
-        workspaceRoot: props.project.workspaceRoot,
-        environmentLabel: environment?.environmentLabel ?? "Environment",
-        connectionState: runtime?.connectionState ?? "available",
-        cwd: props.cwd,
-        worktreePath: props.thread.worktreePath,
-      }}
+      project={props.project}
+      cwd={props.cwd}
+      worktreePath={props.thread.worktreePath}
       headerColor={themeVariables["--color-header"]}
       usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}
-      hasThreadCwd={props.cwd !== null}
-      hasWorkspaceRoot={Boolean(props.project.workspaceRoot)}
       fileInspectorSupported={false}
       inspectorMode={null}
       onToggleInspector={openFiles}
