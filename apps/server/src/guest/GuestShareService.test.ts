@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -865,17 +866,18 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
       fields:
         | { readonly type: "assistant_message"; readonly text: string }
         | { readonly type: "user_message"; readonly text: string },
+      target: { readonly threadId: ThreadId; readonly runId: RunId } = { threadId, runId },
     ) => ({
       id: EventId.make(`event:${id}`),
       type: "turn-item.updated" as const,
-      threadId,
+      threadId: target.threadId,
       driver: ProviderDriverKind.make("codex"),
       providerInstanceId: instanceId,
       occurredAt: now,
       payload: {
         id: TurnItemId.make(id),
-        threadId,
-        runId,
+        threadId: target.threadId,
+        runId: target.runId,
         nodeId: null,
         providerThreadId: null,
         providerTurnId: null,
@@ -944,5 +946,30 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
     for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
       assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
     }
+
+    // A screenshot the agent shows after the page loaded serves too.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fork-message"),
+      threadId: forkId,
+      messageId: MessageId.make("message:fork"),
+      text: "One more",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const forkRun = (yield* orchestrator.getThreadRecords(forkId, ["runs"])).runs.at(-1)!;
+    yield* eventSink.write({
+      events: [
+        item(
+          "item:later-image",
+          1,
+          { type: "assistant_message", text: `Now: ![Later](${unnamed})` },
+          { threadId: forkId, runId: forkRun.id },
+        ),
+      ],
+    });
+    assert.equal((yield* guestShares.media(session, unnamed)).mimeType, "image/png");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

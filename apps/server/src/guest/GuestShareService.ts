@@ -681,8 +681,11 @@ const make = Effect.gen(function* () {
         rowLimit: SNAPSHOT_ROW_LIMIT,
         userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
       });
+      // Only replies with image syntax can show an image; the rest are not kept.
       const replies = projection.visibleTurnItems.flatMap(({ item }) =>
-        item.type === "assistant_message" ? [item] : [],
+        item.type === "assistant_message" && (item.text.includes("![") || /<img/i.test(item.text))
+          ? [item]
+          : [],
       );
       repliesByThread.delete(threadId);
       repliesByThread.set(threadId, { sequence, replies });
