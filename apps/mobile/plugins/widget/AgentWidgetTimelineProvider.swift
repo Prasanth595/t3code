@@ -63,7 +63,7 @@ enum AgentWidgetNetwork {
             let rawURL = defaults.string(forKey: "t3_agent_widget_url"),
             let token = AgentWidgetCredential.read() else { return nil }
       return (rawURL, token, AgentWidgetStorage.generation(in: defaults), defaults.string(forKey: "t3_agent_widget_push_token"))
-    } ?? nil
+    }.flatMap { $0 }
     guard let (rawURL, token, generation, pushToken) = configuration,
           var components = URLComponents(string: rawURL) else { completion(false); return }
     if let pushToken {

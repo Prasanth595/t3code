@@ -18,7 +18,7 @@ enum T3AgentWidgetConfiguration {
       guard AgentWidgetCredential.store(token) else { return nil }
       defaults.set(identity, forKey: "t3_agent_widget_identity")
       return token
-    } ?? nil
+    }.flatMap { $0 }
     AgentWidgetStorage.retryRevocations()
     return token
   }
