@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { View, type ColorValue } from "react-native";
+import { Pressable, View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -69,6 +69,7 @@ function PendingSecretRequestForm(props: {
     reportDefect: false,
   });
   const [secret, setSecret] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
@@ -103,22 +104,40 @@ function PendingSecretRequestForm(props: {
           <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
         ) : null}
       </View>
-      <TextInput
-        accessibilityLabel={item.label}
-        placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-        value={secret}
-        onChangeText={setSecret}
-        editable={!submitting}
-        secureTextEntry
-        autoCorrect={false}
-        autoCapitalize="none"
-        autoComplete="off"
-        textContentType="none"
-        importantForAutofill="no"
-        spellCheck={false}
-        returnKeyType="done"
-        onSubmitEditing={() => void send({ type: "save", secret })}
-      />
+      <View className="justify-center">
+        <TextInput
+          accessibilityLabel={item.label}
+          className="pr-12"
+          placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+          value={secret}
+          onChangeText={setSecret}
+          editable={!submitting}
+          secureTextEntry={!revealed}
+          autoCorrect={false}
+          autoCapitalize="none"
+          autoComplete="off"
+          textContentType="none"
+          importantForAutofill="no"
+          spellCheck={false}
+          returnKeyType="done"
+          onSubmitEditing={() => void send({ type: "save", secret })}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={revealed ? "Hide secret" : "Show secret"}
+          accessibilityState={{ disabled: submitting, selected: revealed }}
+          disabled={submitting}
+          onPress={() => setRevealed((current) => !current)}
+          className="absolute top-1.5 right-1.5 bottom-1.5 w-10 items-center justify-center rounded-full active:opacity-70"
+        >
+          <SymbolView
+            name={revealed ? "eye.slash" : "eye"}
+            size={18}
+            tintColorClassName="accent-foreground-muted"
+            type="monochrome"
+          />
+        </Pressable>
+      </View>
       {error !== null ? (
         <Text
           accessibilityRole="alert"
