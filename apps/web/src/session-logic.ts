@@ -564,6 +564,16 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
+// Tool and status updates re-derive every entry; rows keep identity while unchanged.
+const timelineEntryByRow = new WeakMap<OrchestrationV2ProjectedTurnItem, TimelineEntry>();
+
+// Attempts are checked on reuse; plans and attachment previews come from other inputs.
+function entryDependsOnlyOnRow(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type !== "proposed_plan" && !("attachments" in item && (item.attachments?.length ?? 0) > 0)
+  );
+}
+
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,
 ): TimelineEntry[] {
@@ -599,22 +609,15 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         : [],
     ),
   );
-  for (const row of input.visibleTurnItems) {
+  const entryForRow = (
+    row: OrchestrationV2ProjectedTurnItem,
+    attempt: TimelineAttempt | undefined,
+  ): TimelineEntry => {
     const { item } = row;
-    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
-    if (item.type === "checkpoint") continue;
-    if (
-      item.type === "user_message" &&
-      item.inputIntent === "queued_turn" &&
-      item.status === "pending"
-    )
-      continue;
-    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
-    const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
     if (item.type === "notification") {
-      entries.push({
+      return {
         id: item.id,
         kind: "work",
         createdAt,
@@ -629,8 +632,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           projectedItem: row,
         },
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
     if (item.type === "user_message" || item.type === "assistant_message") {
       const message: ChatMessage = {
@@ -663,16 +665,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         updatedAt: DateTime.formatIso(item.updatedAt),
         ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
       };
-      committedMessageIds.add(message.id);
-      entries.push({
+      return {
         id: message.id,
         kind: "message",
         createdAt,
         message,
         projectedItem: row,
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
 
     if (item.type === "proposed_plan") {
@@ -685,14 +685,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
       };
-      entries.push({
+      return {
         id: item.id,
         kind: "proposed-plan",
         createdAt,
         proposedPlan,
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
 
     const htmlRender =
@@ -700,15 +699,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         ? htmlRenderFromToolItem(item)
         : undefined;
     if (htmlRender !== undefined) {
-      entries.push({
+      return {
         id: item.id,
         kind: "html-render",
         createdAt,
         runId: item.runId,
         htmlRender,
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
 
     const mcpApp =
@@ -716,7 +714,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         ? mcpAppFromToolItem(item)
         : undefined;
     if (mcpApp !== undefined) {
-      entries.push({
+      return {
         id: item.id,
         kind: "mcp-app",
         createdAt,
@@ -726,28 +724,47 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         revision: turnItemDetailRevision(item),
         mcpApp,
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
 
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
-      entries.push({
+      return {
         id: item.id,
         kind: "event",
         createdAt,
         projectedItem: row,
         ...attemptMetadata,
-      });
-      continue;
+      };
     }
 
-    entries.push({
+    return {
       id: item.id,
       kind: "work",
       createdAt,
       entry: projectedWorkEntry(row),
       ...attemptMetadata,
-    });
+    };
+  };
+
+  for (const row of input.visibleTurnItems) {
+    const { item } = row;
+    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
+    if (item.type === "checkpoint") continue;
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
+    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    const attempt = resolveAttempt(item);
+    let entry = timelineEntryByRow.get(row);
+    if (entry === undefined || entry.attempt !== attempt) {
+      entry = entryForRow(row, attempt);
+      if (entryDependsOnlyOnRow(item)) timelineEntryByRow.set(row, entry);
+    }
+    if (entry.kind === "message") committedMessageIds.add(entry.id);
+    entries.push(entry);
   }
 
   const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
