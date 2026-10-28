@@ -579,6 +579,7 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  gitDriverOverrides?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   gitCommands?: string[];
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
@@ -634,22 +635,24 @@ function makeManager(input?: {
         }),
       ).pipe(Layer.provide(NodeServices.layer))
     : Layer.empty;
-  const gitVcsDriver = input?.gitConfigReads
-    ? Layer.effect(
-        GitVcsDriver.GitVcsDriver,
-        GitVcsDriver.make.pipe(
-          Effect.map((service) =>
-            GitVcsDriver.GitVcsDriver.of({
-              ...service,
-              readConfigValue: (cwd, key) =>
-                Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
-                  Effect.andThen(service.readConfigValue(cwd, key)),
-                ),
-            }),
+  const gitVcsDriver =
+    input?.gitConfigReads || input?.gitDriverOverrides
+      ? Layer.effect(
+          GitVcsDriver.GitVcsDriver,
+          GitVcsDriver.make.pipe(
+            Effect.map((service) =>
+              GitVcsDriver.GitVcsDriver.of({
+                ...service,
+                readConfigValue: (cwd, key) =>
+                  Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
+                    Effect.andThen(service.readConfigValue(cwd, key)),
+                  ),
+                ...input.gitDriverOverrides,
+              }),
+            ),
           ),
-        ),
-      )
-    : GitVcsDriver.layer;
+        )
+      : GitVcsDriver.layer;
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
@@ -1497,6 +1500,145 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         (yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/slash-remote" }))
           ?.number,
       ).toBe(42);
+    }),
+  );
+
+  it.effect("status refresh preserves unrelated branch PR lookups", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/t3code.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["checkout", "-b", "feature/visible"]);
+      yield* runGit(repoDir, ["branch", "feature/background"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+      const lookup = (branch: string) => manager.branchPullRequest({ cwd: repoDir, branch });
+      const probes = (branch: string) =>
+        gitCommands.filter((command) =>
+          command.startsWith(
+            `for-each-ref --format=%(refname)%00%(objectname) refs/heads/${branch} `,
+          ),
+        ).length;
+      yield* lookup("feature/visible");
+      yield* lookup("feature/background");
+      expect(probes("feature/visible")).toBe(1);
+      expect(probes("feature/background")).toBe(1);
+
+      yield* manager.invalidateStatus(repoDir, { currentBranchOnly: true });
+      yield* lookup("feature/background");
+      expect(probes("feature/background")).toBe(1);
+      yield* lookup("feature/visible");
+      expect(probes("feature/visible")).toBe(2);
+
+      yield* manager.invalidateStatus(repoDir);
+      yield* lookup("feature/background");
+      expect(probes("feature/background")).toBe(2);
+    }),
+  );
+
+  it.effect("branch PR discovery retains metadata across a large branch sweep", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      let reads = 0;
+      const { manager } = yield* makeManager({
+        gitDriverOverrides: {
+          execute: ({ operation, args }) =>
+            Effect.sync(() => {
+              reads++;
+              const stdout =
+                args[0] === "remote"
+                  ? "origin\n"
+                  : operation === "GitManager.branchPullRequest.branchRef"
+                    ? `${args.at(-1)}\u0000\u0000\u0000\n`
+                    : args.includes("--count=1")
+                      ? "refs/remotes/origin/main\n"
+                      : "";
+              return {
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
+            }),
+          readConfigValue: (_cwd, key) =>
+            Effect.sync(() => {
+              reads++;
+              return key === "remote.origin.url" ? "https://github.com/pingdotgg/t3code.git" : null;
+            }),
+          resolveDefaultBranchName: () =>
+            Effect.sync(() => {
+              reads++;
+              return "main";
+            }),
+        },
+      });
+      const sweep = Effect.gen(function* () {
+        for (let index = 0; index < 1_100; index++) {
+          expect(
+            yield* manager.branchPullRequest({
+              cwd: repoDir,
+              branch: `feature/unpublished-${index}`,
+            }),
+          ).toBeNull();
+        }
+      });
+      yield* sweep;
+      expect(reads).toBeGreaterThan(0);
+      reads = 0;
+      yield* sweep;
+      expect(reads).toBe(0);
+    }),
+  );
+
+  it.effect("branch PR discovery shares remote ref scans across missing local branches", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, [
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+      ]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+      for (let index = 0; index < 32; index++) {
+        expect(
+          yield* manager.branchPullRequest({ cwd: repoDir, branch: `feature/deleted-${index}` }),
+        ).toBeNull();
+      }
+      const remoteRefScans = () =>
+        gitCommands.filter(
+          (command) => command === "for-each-ref --format=%(refname) refs/remotes",
+        );
+      expect(remoteRefScans()).toHaveLength(1);
+
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/deleted-0" },
+        { freshGitState: true },
+      );
+      expect(remoteRefScans()).toHaveLength(2);
+
+      yield* manager.invalidateStatus(repoDir);
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/deleted-0" });
+      expect(remoteRefScans()).toHaveLength(3);
     }),
   );
 
