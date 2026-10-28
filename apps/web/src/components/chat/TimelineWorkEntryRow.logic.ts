@@ -196,7 +196,8 @@ export function thoughtPreviewSource(text: string): string {
   if (text.length <= THOUGHT_PREVIEW_MAX_CHARS) return text;
   const head = text.slice(0, THOUGHT_PREVIEW_MAX_CHARS);
   const boundary = head.search(/\s\S*$/);
-  return boundary > 0 ? head.slice(0, boundary) : head;
+  // Without whitespace, drop a lone high surrogate so the cut never splits an emoji.
+  return boundary > 0 ? head.slice(0, boundary) : head.replace(/[\uD800-\uDBFF]$/, "");
 }
 
 /** Compact reasoning keeps formulas while flattening other Markdown into label text. */

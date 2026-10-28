@@ -115,12 +115,15 @@ const toolCallExpandedBodyClassName =
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+const NO_REASONING_ENTRIES: ReadonlyArray<TimelineWorkEntry> = [];
+
 export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   // Long traces re-parse on every delta; deferring lets newer deltas interrupt a stale render.
   // Defer the whole list so the commit that grows the text also reruns live-follow scrolling.
-  const deferredEntries = useDeferredValue(entries);
+  // The empty initial value moves the first full parse out of the expanding click's commit.
+  const deferredEntries = useDeferredValue(entries, NO_REASONING_ENTRIES);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
   return (
