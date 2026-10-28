@@ -471,6 +471,18 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
   const usage = useManagedTunnelUsage();
   const accountPage = useT3ConnectAccountPage();
   const openAccountPage = accountPage.open;
+  // Usage when the relay refused. The relay also counts tunnels still being set up, so only
+  // a freed tunnel or a higher cap clears the alert, not a meter that merely shows room.
+  const [usedAtRefusal, setUsedAtRefusal] = useState<number | null>(null);
+  if (tunnelLimit === null) {
+    if (usedAtRefusal !== null) setUsedAtRefusal(null);
+  } else if (usedAtRefusal === null && usage.used !== null) {
+    setUsedAtRefusal(usage.used);
+  }
+  const showLimitAlert =
+    tunnelLimit !== null &&
+    !(usedAtRefusal !== null && usage.used !== null && usage.used < usedAtRefusal) &&
+    !(usage.limit !== null && usage.limit > tunnelLimit);
   const meter =
     usage.used !== null && usage.limit !== null ? (
       <TunnelUsageMeter
@@ -478,7 +490,7 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
         limit={usage.limit}
         action={
           // At the cap the alert below carries the same action.
-          usage.upgrade && openAccountPage && tunnelLimit === null ? (
+          usage.upgrade && openAccountPage && !showLimitAlert ? (
             <InlineButton onClick={() => openAccountPage("t3-chat")}>Get more tunnels</InlineButton>
           ) : null
         }
@@ -486,10 +498,10 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
     ) : null;
   return (
     <>
-      {meter || tunnelLimit !== null ? (
+      {meter || showLimitAlert ? (
         <div className="flex flex-col gap-3 pb-3">
           {meter}
-          {tunnelLimit !== null ? (
+          {showLimitAlert ? (
             <TunnelLimitAlert
               upgrade={usage.upgrade}
               onLinkT3Chat={openAccountPage ? () => openAccountPage("t3-chat") : null}
