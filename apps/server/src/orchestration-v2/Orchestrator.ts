@@ -3165,7 +3165,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        unansweredRemoteTaskRequests(projection.thread).length > 0
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
