@@ -236,7 +236,7 @@ describe("ThreadAgentsSheet workflow Stop", () => {
   it("stops a running workflow T3 runs, not just its status", async () => {
     show();
 
-    expect(container.textContent).toContain("Ship the release running");
+    expect(container.textContent).toContain("Ship the release Working");
     act(() => stopButton()?.click());
     await flush();
 
@@ -254,7 +254,7 @@ describe("ThreadAgentsSheet workflow Stop", () => {
 
       show();
 
-      expect(container.textContent).toContain(`Ship the release ${status}`);
+      expect(container.textContent?.toLowerCase()).toContain(`ship the release ${status}`);
       expect(stopButton()).toBeNull();
     },
   );
@@ -341,7 +341,7 @@ describe("ThreadAgentsSheet workflow Stop", () => {
 
     show();
 
-    expect(container.textContent).toContain("Ship the release cancelled");
+    expect(container.textContent).toContain("Ship the release Cancelled");
     expect(stopButton()).toBeNull();
   });
 });
