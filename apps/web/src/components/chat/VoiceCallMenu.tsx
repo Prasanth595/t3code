@@ -1,7 +1,7 @@
 import type { ModelSelection, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
-import { AudioLinesIcon, BotIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
+import { AudioLinesIcon, BotIcon, BrainIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -25,6 +25,7 @@ import { useComposerMenuProps } from "./composerEventScope";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { modelPickerModelKey, parseModelPickerModelKey } from "./modelPickerKeys";
 import { getDisplayModelName } from "./providerIconUtils";
+import { effortDescriptor } from "./VoiceCallButton.logic";
 
 /** A radio row marked, when chosen, with the same bar the model picker uses. */
 function RadioRow({ className, children, ...props }: ComponentProps<typeof MenuRadioItem>) {
@@ -71,6 +72,7 @@ export function VoiceCallMenu({
 }) {
   const navigate = useNavigate();
   const menuProps = useComposerMenuProps();
+  const effort = effortDescriptor(modelProviders, modelSelection);
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
       <MenuTrigger
@@ -169,6 +171,34 @@ export function VoiceCallMenu({
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
+        {modelSelection && effort?.type === "select" && (
+          <MenuSub>
+            <MenuSubTrigger disabled={locked}>
+              <BrainIcon aria-hidden />
+              Effort
+            </MenuSubTrigger>
+            <MenuSubPopup {...menuProps}>
+              <MenuRadioGroup
+                value={effort.currentValue ?? ""}
+                onValueChange={(value) =>
+                  onChooseModel(
+                    createModelSelection(
+                      modelSelection.instanceId,
+                      modelSelection.model,
+                      value ? [{ id: effort.id, value }] : undefined,
+                    ),
+                  )
+                }
+              >
+                {effort.options.map((option) => (
+                  <RadioRow key={option.id} value={option.id}>
+                    {option.label}
+                  </RadioRow>
+                ))}
+              </MenuRadioGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        )}
         <MenuItem onClick={() => void navigate({ to: "/settings/providers" })}>
           <SettingsIcon aria-hidden />
           Voice settings

@@ -51,7 +51,7 @@ export function VoiceCallButton({
   const voice = chosenVoice && voices.includes(chosenVoice) ? chosenVoice : undefined;
   return provider ? (
     <VoiceCallControls
-      key={`${environmentId}:${provider.instanceId}:${cwd}:${threadId}:${voice}:${modelSelection?.instanceId}:${modelSelection?.model}`}
+      key={`${environmentId}:${provider.instanceId}:${cwd}:${threadId}:${voice}:${modelSelection?.instanceId}:${modelSelection?.model}:${modelSelection?.options?.[0]?.value}`}
       environmentId={environmentId}
       instanceId={provider.instanceId}
       cwd={cwd}
@@ -60,7 +60,7 @@ export function VoiceCallButton({
       voices={voices}
       candidates={candidates}
       modelSelection={modelSelection}
-      modelProviders={chatModelProviders(providers)}
+      modelProviders={chatModelProviders(providers, candidates)}
       onChoose={setChosen}
       onChooseVoice={setChosenVoice}
       onChooseModel={setModelSelection}

@@ -1,8 +1,9 @@
-import { ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   chatModelProviders,
+  effortDescriptor,
   pickVoiceProvider,
   voiceCapableProviders,
 } from "./VoiceCallButton.logic";
@@ -51,24 +52,49 @@ describe("chat model choices", () => {
     capabilities: null,
     isLegacy,
   });
+  const codex = ProviderDriverKind.make("codex");
   const ready = (id: string, patch: Partial<ServerProvider> = {}) =>
     provider(id, {
+      driver: codex,
       status: "ready",
       installed: true,
       models: [model("current"), model("old", true)],
       ...patch,
     });
 
-  it("lists only current models of enabled, installed, ready accounts", () => {
-    const listed = chatModelProviders([
-      ready("codex"),
-      ready("off", { enabled: false }),
-      ready("down", { status: "error" }),
-      ready("missing", { installed: false }),
-      ready("empty", { models: [model("old", true)] }),
-    ]);
+  it("lists only current models of enabled, installed, ready accounts of the voice drivers", () => {
+    const listed = chatModelProviders(
+      [
+        ready("codex"),
+        ready("claude", { driver: ProviderDriverKind.make("claudeAgent") }),
+        ready("off", { enabled: false }),
+        ready("down", { status: "error" }),
+        ready("missing", { installed: false }),
+        ready("empty", { models: [model("old", true)] }),
+      ],
+      [provider("voice", { driver: codex })],
+    );
     expect(listed.map((entry) => [entry.instanceId, entry.models.map((m) => m.slug)])).toEqual([
       ["codex", ["current"]],
     ]);
+  });
+
+  it("offers the picked model's effort choices and the chosen one as current", () => {
+    const effort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      options: [{ id: "low", label: "Low" }],
+    };
+    const withEffort = ready("codex", {
+      models: [{ ...model("current"), capabilities: { optionDescriptors: [effort] } }],
+    });
+    const selection = { instanceId: withEffort.instanceId, model: "current" };
+    expect(effortDescriptor([withEffort], selection)?.id).toBe("effort");
+    expect(
+      effortDescriptor([withEffort], { ...selection, options: [{ id: "effort", value: "low" }] }),
+    ).toMatchObject({ currentValue: "low" });
+    expect(effortDescriptor([ready("codex")], selection)).toBeUndefined();
+    expect(effortDescriptor([withEffort], undefined)).toBeUndefined();
   });
 });
