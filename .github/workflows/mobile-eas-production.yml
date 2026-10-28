@@ -160,7 +160,18 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas env:pull production --non-interactive
+        run: |
+          eas env:pull production --non-interactive
+          # Fingerprint and OTA commands disable dotenv loading; preserve the downloaded file path.
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
 
       - name: Apply manual version override
         if: steps.version_app_token.outcome == 'success'
