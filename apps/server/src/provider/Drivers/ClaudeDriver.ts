@@ -104,6 +104,19 @@ export type ClaudeDriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig;
 
+/** Claude runs with the instance environment; the default directory follows its HOME. */
+function claudeInstructionsDirectory(
+  path: Path.Path,
+  homePath: string,
+  env: NodeJS.ProcessEnv,
+  resolvedConfigDirectory: string,
+  platform: string,
+): string {
+  if (homePath.trim() !== "" || env.CLAUDE_CONFIG_DIR?.trim()) return resolvedConfigDirectory;
+  const home = (platform === "win32" ? env.USERPROFILE : env.HOME)?.trim();
+  return home ? path.join(home, ".claude") : resolvedConfigDirectory;
+}
+
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -407,6 +420,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       orchestrationAdapter,
       textGeneration,
       consumeResetCredit,
+      instructions: {
+        fileName: "CLAUDE.md",
+        globalDirectory: claudeInstructionsDirectory(
+          path,
+          effectiveConfig.homePath,
+          processEnv,
+          configDir,
+          yield* HostProcess.Platform,
+        ),
+      },
     } satisfies ProviderInstance;
   }),
 };

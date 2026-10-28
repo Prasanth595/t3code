@@ -1378,6 +1378,15 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    // Reads are commands, not cached queries: the file belongs to the user and agents, so a cached copy would go stale.
+    readProviderInstructions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:read-provider-instructions",
+      tag: WS_METHODS.serverReadProviderInstructions,
+    }),
+    writeProviderInstructions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:write-provider-instructions",
+      tag: WS_METHODS.serverWriteProviderInstructions,
+    }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",

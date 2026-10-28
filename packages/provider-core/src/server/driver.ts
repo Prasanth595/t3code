@@ -8,6 +8,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ProviderInstructionsFileName,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
@@ -52,6 +53,12 @@ export interface ProviderInstance {
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
+  /** Without it, the provider reads AGENTS.md in a project root and has no user-level file. */
+  readonly instructions?: {
+    readonly fileName: ProviderInstructionsFileName;
+    /** Directory holding the user-level file; the same name as in a project root. */
+    readonly globalDirectory?: string;
+  };
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {
       readonly cwd: string;

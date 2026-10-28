@@ -46,6 +46,22 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Provider instructions
+
+In **Settings → Providers**, **Instructions → Edit** opens the instructions file the selected provider
+reads on the selected environment's machine. Select a project to edit that project's file, or leave
+**All projects** to edit the provider's user-level file, which applies everywhere. Saving writes the
+file in place, through symlinks.
+
+Claude reads `CLAUDE.md`. Every other provider reads `AGENTS.md`. A new `CLAUDE.md` starts as
+`@AGENTS.md` when the project already has an `AGENTS.md`, so those instructions keep applying.
+Codex, Claude, and OpenCode (unless it uses an external server) have a user-level file. Other providers only have per-project files.
+A project with several checkouts on one environment needs a single checkout selected. Codex
+picks up a user-level `AGENTS.md` created here after its provider restarts.
+
+If the file changes on disk while the editor is open, saving asks you to reload instead of
+overwriting it. Files over 256 KiB, or that aren't text, can't be edited here.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

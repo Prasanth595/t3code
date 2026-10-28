@@ -295,6 +295,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     snapshot,
     orchestrationAdapter,
     textGeneration,
+    instructions: { fileName: "AGENTS.md", globalDirectory: runtime.homeLayout.sharedHomePath },
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
       enabled

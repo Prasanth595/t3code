@@ -393,6 +393,14 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  ProviderInstructionsConflictError,
+  ProviderInstructionsError,
+  ProviderInstructionsReadInput,
+  ProviderInstructionsReadResult,
+  ProviderInstructionsWriteInput,
+  ProviderInstructionsWriteResult,
+} from "./providerInstructions.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
@@ -494,6 +502,8 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverReadProviderInstructions: "server.readProviderInstructions",
+  serverWriteProviderInstructions: "server.writeProviderInstructions",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
@@ -656,6 +666,22 @@ const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerReadProviderInstructionsRpc = Rpc.make(WS_METHODS.serverReadProviderInstructions, {
+  payload: ProviderInstructionsReadInput,
+  success: ProviderInstructionsReadResult,
+  error: Schema.Union([ProviderInstructionsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerWriteProviderInstructionsRpc = Rpc.make(WS_METHODS.serverWriteProviderInstructions, {
+  payload: ProviderInstructionsWriteInput,
+  success: ProviderInstructionsWriteResult,
+  error: Schema.Union([
+    ProviderInstructionsError,
+    ProviderInstructionsConflictError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
@@ -1975,6 +2001,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerReadProviderInstructionsRpc,
+  WsServerWriteProviderInstructionsRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
