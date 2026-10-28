@@ -1624,6 +1624,7 @@ describe("pull request watch fingerprints", () => {
       state: "OPEN",
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
+      viewerSubscription: "SUBSCRIBED",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
@@ -1659,5 +1660,6 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    expect(before.viewerSubscription).toBe("SUBSCRIBED");
   });
 });

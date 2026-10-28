@@ -171,7 +171,7 @@ const gatesReread = (
   fingerprint: ProviderChangeRequestWatchFingerprint | null,
   now: number,
 ): last is LastRead =>
-  fingerprint !== null &&
+  fingerprint?.viewerSubscription === "SUBSCRIBED" &&
   last !== undefined &&
   group.targets.every((target) => last.watches.has(watchKey(target))) &&
   last.remarks === fingerprint.remarks &&

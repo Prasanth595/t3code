@@ -64,6 +64,7 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  readonly viewerSubscription?: string;
 }
 
 /** The viewer's notification threads on change requests in one repository, newest first. */

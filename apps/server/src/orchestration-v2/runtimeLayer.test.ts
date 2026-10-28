@@ -7186,6 +7186,7 @@ const watchCostScenarios = [
   { name: "review comment edited", reviewCommentEdit: 40, saves: 16 },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 30 },
   { name: "notifications unavailable", notificationsReadable: false, saves: 0 },
+  { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
 
 it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
@@ -7261,7 +7262,11 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
               watchFingerprint: () =>
                 Effect.sync(() => {
                   cost.fingerprints += 1;
-                  return { status: "abc1234def passed", remarks: "0" };
+                  return {
+                    status: "abc1234def passed",
+                    remarks: "0",
+                    viewerSubscription: scenario.viewerSubscription ?? "SUBSCRIBED",
+                  };
                 }),
               detail: () =>
                 Effect.sync(() => {
