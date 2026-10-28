@@ -26,8 +26,19 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   let released: Map<HTMLElement, number> | null = null;
   const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
   let scrollTop = scroller?.scrollTop ?? 0;
+  let gap = 0;
+  const setGap = (next: number) => {
+    gap = next;
+    parent.style.marginBottom = gap > 0 ? `${gap}px` : "";
+  };
+  const trimGap = () => {
+    if (gap === 0 || scroller === null) return;
+    const below = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (below > 0) setGap(Math.max(0, gap - below));
+  };
   const trackScroll = () => {
     scrollTop = scroller?.scrollTop ?? 0;
+    trimGap();
   };
   scroller?.addEventListener("scroll", trackScroll, { passive: true });
 
@@ -157,10 +168,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           if (!positions.has(node) && position.height > 0) fadeCount++;
         }
       }
-      const clampShift =
-        scroller !== null && scrollTop > scroller.scrollHeight - scroller.clientHeight
-          ? scroller.scrollTop - scrollTop
-          : 0;
+      if (scroller !== null) {
+        const deficit = scrollTop - (scroller.scrollHeight - scroller.clientHeight);
+        if (deficit > 0) {
+          setGap(gap + deficit);
+          scroller.scrollTop = scrollTop;
+        } else trimGap();
+      }
       const shouldAnimate =
         animate &&
         positions !== null &&
@@ -186,18 +200,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       else {
         for (const [node, position] of next) {
           const previousTop = positions!.get(node)?.top;
-          if (previousTop === undefined) continue;
-          const shift = previousTop - position.top + clampShift;
-          if (shift !== 0) movedDelta.set(node, shift + remainingOffset(node));
+          if (previousTop === undefined || previousTop === position.top) continue;
+          movedDelta.set(node, previousTop + remainingOffset(node) - position.top);
         }
         for (const [node, position] of positions!) {
           if (next.has(node)) continue;
           const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), (n) => next.has(n));
-          fadeOut(
-            node,
-            { ...position, top: position.top + clampShift },
-            delta === undefined ? rowTravel(position.height) : clampShift - delta,
-          );
+          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta);
         }
       }
       for (const [node, entry] of entering) {
@@ -245,7 +254,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         if (!reducedMotion?.matches) {
           for (const [node, position] of next) {
             const top = released.get(node);
-            if (top !== undefined) move(node, top - position.top + clampShift);
+            if (top !== undefined) move(node, top - position.top);
           }
         }
         released = null;
@@ -266,6 +275,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     dispose() {
       suspend();
       scroller?.removeEventListener("scroll", trackScroll);
+      setGap(0);
       stopObservingResize();
       disposed = true;
     },
