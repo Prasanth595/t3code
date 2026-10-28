@@ -94,7 +94,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                className="shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite(props.instanceId, props.slug);
