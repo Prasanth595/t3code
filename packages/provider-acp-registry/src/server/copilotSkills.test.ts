@@ -98,6 +98,30 @@ describe("Copilot skills", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("scans project roots even when a personal root exhausts its entry budget", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "copilot-skills-home-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "copilot-skills-workspace-",
+      });
+      const crowded = path.join(home, ".copilot", "installed-plugins", "crowded");
+      yield* fileSystem.makeDirectory(crowded, { recursive: true });
+      yield* Effect.forEach(
+        Array.from({ length: 4_001 }, (_, index) => path.join(crowded, `file-${index}`)),
+        (file) => fileSystem.writeFileString(file, ""),
+        { concurrency: 64, discard: true },
+      );
+      const projectSkill = path.join(workspace, ".github", "skills", "project-only");
+      yield* fileSystem.makeDirectory(projectSkill, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(projectSkill, "SKILL.md"), "---\n---\n");
+
+      const skills = yield* discoverCopilotSkills(workspace, { HOME: home });
+      expect(skills.map((skill) => skill.name)).toContain("project-only");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("rewrites discovered skill mentions into Copilot slash commands", () => {
     const names = new Set(["review"]);
     expect(rewriteCopilotSkillMentions("$review this", names)).toBe("/review this");

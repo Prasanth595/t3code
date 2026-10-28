@@ -13,7 +13,7 @@ const SKILL_TOKEN = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/u;
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const MAX_FRONTMATTER_BYTES = 16_384;
 const MAX_SCAN_DEPTH = 6;
-const MAX_SCAN_ENTRIES = 4_000;
+const MAX_SCAN_ENTRIES_PER_ROOT = 4_000;
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
   "node_modules",
@@ -90,7 +90,7 @@ export const discoverCopilotSkills = Effect.fn("discoverCopilotSkills")(function
 
   const skills = new Map<string, ServerProviderSkill>();
   const seenRoots = new Set<string>();
-  let remainingEntries = MAX_SCAN_ENTRIES;
+  let remainingEntries = 0;
 
   // Untraced: this recurses once per scanned directory; discoverCopilotSkills is the span.
   const visit: (
@@ -145,6 +145,7 @@ export const discoverCopilotSkills = Effect.fn("discoverCopilotSkills")(function
   });
 
   for (const root of roots) {
+    remainingEntries = MAX_SCAN_ENTRIES_PER_ROOT;
     yield* visit(root.directory, root.scope, 0);
   }
   return [...skills.values()];
