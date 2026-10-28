@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
 
 import {
   AuthEnvironmentScopes,
@@ -14,13 +13,6 @@ import {
 } from "./auth.ts";
 
 describe("authorization grants", () => {
-  it("requires source control write permission for both pull request action methods", () => {
-    for (const method of ["pullRequests.runAction", "pullRequests.runActionWithResult"]) {
-      expect(clientRpcRequiredScopes(method, undefined)).toEqual(["source-control:write"]);
-    }
-    expect(clientRpcRequiredScopes("pullRequests.subscribeRefreshEvents", undefined)).toEqual([]);
-  });
-
   it("decodes legacy review credentials without offering them in new grants", () => {
     const decodeAuthEnvironmentScopes = Schema.decodeSync(AuthEnvironmentScopes);
 

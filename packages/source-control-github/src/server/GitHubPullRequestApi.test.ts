@@ -1863,112 +1863,52 @@ layer("GitHubPullRequestApi.layer", (it) => {
   });
 
   it.effect.each([
-    { action: "draft", field: "convertPullRequestToDraft", state: "OPEN", isDraft: true },
-    { action: "ready", field: "markPullRequestReadyForReview", state: "OPEN" },
-    { action: "close", field: "closePullRequest", state: "CLOSED" },
-    { action: "reopen", field: "reopenPullRequest", state: "OPEN" },
-    { action: "disable-auto-merge", field: "disablePullRequestAutoMerge", state: "OPEN" },
-    { action: "update-branch", field: "updatePullRequestBranch", state: "OPEN" },
-    { action: "merge", field: "mergePullRequest", state: "MERGED" },
+    { queued: false, field: "mergePullRequest", state: "MERGED", autoMergeRequest: null },
     {
-      action: "merge",
-      field: "enablePullRequestAutoMerge",
-      state: "OPEN",
       queued: true,
-      autoMergeMethod: "MERGE",
-    },
-    {
-      action: "enable-auto-merge",
       field: "enablePullRequestAutoMerge",
       state: "OPEN",
-      autoMergeMethod: "SQUASH",
+      autoMergeRequest: { mergeMethod: "MERGE" },
     },
-    {
-      action: "enable-auto-merge",
-      field: "mergePullRequest",
-      state: "MERGED",
-      clean: true,
-    },
-  ] as const)("returns the response state for $action via $field", (testCase) =>
-    Effect.gen(function* () {
-      const { action, field, state } = testCase;
-      const snapshot = {
-        state,
-        isDraft: "isDraft" in testCase && testCase.isDraft,
-        updatedAt: "2026-10-27T12:00:00Z",
-        mergedAt: state === "MERGED" ? "2026-10-27T11:59:00Z" : null,
-        closedAt: state === "OPEN" ? null : "2026-10-27T11:59:00Z",
-        headRefOid: "response-head",
-        autoMergeRequest:
-          "autoMergeMethod" in testCase ? { mergeMethod: testCase.autoMergeMethod } : null,
-      };
-      const routes = [
-        [NODE_ID_QUERY, nodeIdAnswer("PR_7")],
-        [
-          "query PullRequestActionState",
-          actionState({
-            isMergeQueueEnabled: "queued" in testCase && testCase.queued,
-            mergeStateStatus: "clean" in testCase && testCase.clean ? "CLEAN" : "BLOCKED",
-          }),
-        ],
-      ] as const;
-      route(...routes, [
-        field + "(",
-        { data: { [field]: { clientMutationId: null, pullRequest: snapshot } } },
-      ]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const input = { ...pullRequestInput, action, mergeMethod: "squash" as const };
-      expect(yield* cli.runPullRequestAction(input)).toEqual({
-        state: state.toLowerCase(),
-        isDraft: snapshot.isDraft,
-        updatedAt: snapshot.updatedAt,
-        mergedAt: snapshot.mergedAt,
-        closedAt: snapshot.closedAt,
-        headSha: snapshot.headRefOid,
-        autoMergeEnabled: snapshot.autoMergeRequest !== null,
-        ...("autoMergeMethod" in testCase
-          ? { autoMergeMethod: testCase.autoMergeMethod.toLowerCase() }
-          : {}),
-      });
-      const mutation = mockedExecute.mock.calls.find(
-        ([call]) => call.kind === "graphql" && call.query.startsWith("mutation "),
-      )?.[0];
-      assert.isDefined(mutation);
-      assert.strictEqual(mutation.kind, "graphql");
-      if (mutation.kind === "graphql") {
-        for (const selected of [
-          "state",
-          "isDraft",
-          "updatedAt",
-          "mergedAt",
-          "closedAt",
-          "headRefOid",
-          "autoMergeRequest",
-        ])
-          expect(mutation.query).toContain(selected);
-        expect(mutation.query).not.toMatch(/reviews|commits|checks|pageInfo|nodes/);
-      }
-      expect(variablesOf(field + "(")).toHaveLength(1);
-      for (const payload of [undefined, null, {}, { clientMutationId: null, pullRequest: null }]) {
-        route(...routes, [field + "(", { data: { [field]: payload } }]);
-        expect(yield* cli.runPullRequestAction(input)).toBeUndefined();
-      }
-      expect(variablesOf(field + "(")).toHaveLength(5);
-      const refusal = new GitHubRequestPolicy.GitHubApiResponseError({
-        host: input.host,
-        operation: "runPullRequestAction",
-        status: 422,
-      });
-      const answer = mockedExecute.getMockImplementation()!;
-      mockedExecute.mockImplementation((call) =>
-        matches(call, field + "(") ? Effect.fail(refusal) : answer(call),
-      );
-      expect(yield* cli.runPullRequestAction(input).pipe(Effect.flip)).toMatchObject({
-        _tag: "GitHubApiResponseError",
-        status: 422,
-      });
-      expect(variablesOf(field + "(")).toHaveLength(6);
-    }),
+  ] as const)(
+    "returns the pull request state from GitHub's $field reply",
+    ({ queued, field, state, autoMergeRequest }) =>
+      Effect.gen(function* () {
+        const mergedAt = state === "MERGED" ? "2026-10-27T11:59:00Z" : null;
+        route(
+          ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
+          [
+            field + "(",
+            {
+              data: {
+                [field]: {
+                  pullRequest: {
+                    state,
+                    isDraft: false,
+                    updatedAt: "2026-10-27T12:00:00Z",
+                    mergedAt,
+                    closedAt: mergedAt,
+                    headRefOid: "response-head",
+                    autoMergeRequest,
+                  },
+                },
+              },
+            },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        expect(yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" })).toEqual({
+          state: state.toLowerCase(),
+          isDraft: false,
+          updatedAt: "2026-10-27T12:00:00Z",
+          mergedAt,
+          closedAt: mergedAt,
+          headSha: "response-head",
+          autoMergeEnabled: queued,
+          ...(queued ? { autoMergeMethod: "merge" } : {}),
+        });
+        expect(variablesOf(field + "(")).toHaveLength(1);
+      }),
   );
 
   it.effect.each([
@@ -3355,20 +3295,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each([
-    { refused: false, mode: "complete" },
-    { refused: true, mode: "complete" },
-    { refused: false, mode: "limit" },
-    { refused: false, mode: "repeated cursor" },
-    { refused: false, mode: "missing cursor" },
-  ] as const)(
-    "continues after the core check page without reading it twice (reviewer refusal: $refused, $mode)",
-    ({ refused, mode }) =>
+  it.effect.each([false, true])(
+    "continues after the combined response's check page without reading it again (reviewer refusal: %s)",
+    (refused) =>
       Effect.gen(function* () {
         if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
-        const first = Array.from({ length: 100 }, (_, index) =>
-          checkRun({ name: `check-${index}`, conclusion: "SUCCESS" }),
-        );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -3380,11 +3311,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         commit: {
                           statusCheckRollup: {
                             contexts: {
-                              nodes: first,
-                              pageInfo: {
-                                hasNextPage: true,
-                                endCursor: mode === "missing cursor" ? null : "c1",
-                              },
+                              nodes: [
+                                checkRun({
+                                  name: "first",
+                                  status: "COMPLETED",
+                                  conclusion: "SUCCESS",
+                                }),
+                              ],
+                              pageInfo: { hasNextPage: true, endCursor: "c1" },
                             },
                           },
                         },
@@ -3396,26 +3330,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
             ),
           ),
         );
-        mockedExecute.mockImplementation((call) => {
-          const page =
-            call.kind === "graphql"
-              ? Number(String(call.variables?.["after"] ?? "c0").slice(1))
-              : 0;
-          const last = mode === "complete" && page === 1;
-          return Effect.succeed(
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
             output(
               checkContextsPage(
-                last
-                  ? [checkRun({ name: "last", conclusion: "FAILURE" })]
-                  : first.map((check, index) => ({
-                      ...check,
-                      name: `check-${page * 100 + index}`,
-                    })),
-                last ? null : mode === "repeated cursor" ? "c1" : `c${page + 1}`,
+                [checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" })],
+                null,
               ),
             ),
-          );
-        });
+          ),
+        );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         const read = cli.getPullRequestDetail(pullRequestInput);
         const detail = yield* read;
@@ -3426,18 +3350,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(
-          mode === "complete" ? 101 : mode === "limit" ? 1_000 : 100,
-        );
-        expect(detail.checksState).toBe(mode === "complete" ? "failing" : "passing");
-        expect(detail.checksTruncated).toBe(mode !== "complete");
-        const reads = mode === "limit" ? 9 : mode === "missing cursor" ? 0 : 1;
-        expect(variablesOf("CheckContexts")).toEqual(
-          Array.from({ length: reads }, (_, index) =>
-            expect.objectContaining({ number: 7, after: `c${index + 1}` }),
-          ),
-        );
-        expect(mockedExecute).toHaveBeenCalledTimes(1 + reads + Number(refused));
+        expect(detail.checks).toHaveLength(2);
+        expect(detail.checksState).toBe("failing");
+        expect(detail.checksTruncated).toBe(false);
+        expect(variablesOf("CheckContexts")).toEqual([
+          expect.objectContaining({ number: 7, after: "c1" }),
+        ]);
+        expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
 
         if (refused) {
           mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));

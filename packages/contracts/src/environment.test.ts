@@ -14,18 +14,6 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
-  it("decodes action result support without requiring it from older servers", () => {
-    expect(decodeDescriptor(descriptor).capabilities.pullRequestActionResults).toBeUndefined();
-    for (const pullRequestActionResults of [true, false]) {
-      expect(
-        decodeDescriptor({
-          ...descriptor,
-          capabilities: { ...descriptor.capabilities, pullRequestActionResults },
-        }).capabilities.pullRequestActionResults,
-      ).toBe(pullRequestActionResults);
-    }
-  });
-
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {

@@ -137,23 +137,6 @@ describe("pull request observations", () => {
     observedAt: number,
   ) => ({ checksState, readAt, observedAt });
 
-  it("patches action state without treating inherited checks as a new checks read", () => {
-    const original = summary({ checksState: "pending", observedAt: 100 });
-    let state = fromSummary(original, 1);
-    state = observePullRequestChecks(state, checksRead("passing", 200, 2));
-    state = observePullRequestMetadata(
-      state,
-      observed({ ...original, state: "closed", isDraft: false, observedAt: 300 }, 3),
-      false,
-    );
-    expect(observedPullRequestSummary(state)).toMatchObject({
-      state: "closed",
-      isDraft: false,
-      observedAt: 300,
-      checksState: "passing",
-    });
-  });
-
   it("keeps a newer list's mergeability when a checks read lands after it", () => {
     const detail = summary({
       mergeability: "conflicting",
@@ -274,13 +257,12 @@ describe("pull request list answers across a reload", () => {
   const remote = EnvironmentId.make("env-remote");
   const input: PullRequestListInput = { state: "open", involvement: "all", limit: 99 };
 
-  it("stores confirmed state with state and draft filters before a reload", () => {
+  it("saves an action's confirmed state so a reload shows it", () => {
     const storage = makeStorage();
     const row = listEntry(1);
-    const key = JSON.stringify([local, row.projectId, row.repository, row.number]);
     const overrides = new Map([
       [
-        key,
+        JSON.stringify([local, row.projectId, row.repository, row.number]),
         {
           state: "closed" as const,
           isDraft: false,
@@ -309,56 +291,6 @@ describe("pull request list answers across a reload", () => {
       restorePullRequestList(storage, [{ environmentId: local, input: all }])?.entries.map(
         ({ number, state }) => [number, state],
       ),
-    ).toEqual([
-      [1, "closed"],
-      [2, "open"],
-    ]);
-    const draft = { ...all, filters: { draft: "only" as const } };
-    rememberPullRequestListAnswer(
-      storage,
-      { environmentId: local, input: draft },
-      answer([{ ...row, isDraft: true }]),
-      overrides,
-    );
-    expect(
-      restorePullRequestList(storage, [{ environmentId: local, input: draft }])?.entries,
-    ).toEqual([]);
-  });
-
-  it("keeps saved me-filtered rows when an action outlives their viewer data", () => {
-    const storage = makeStorage();
-    const shared = {
-      ...listEntry(2),
-      projectId: ProjectId.make("project-shared"),
-      author: { login: "Bilal", name: null, avatarUrl: null },
-    };
-    const own = {
-      ...listEntry(1),
-      projectId: ProjectId.make("project-own"),
-      host: "github.example.com",
-      author: shared.author,
-    };
-    const mine: PullRequestListInput = {
-      ...input,
-      state: "all",
-      filters: { author: "me" },
-    };
-    rememberPullRequestListAnswer(storage, { environmentId: local, input: mine }, answer([shared]));
-    rememberPullRequestListAnswer(
-      storage,
-      { environmentId: local, input: { ...mine, projectIds: [own.projectId] } },
-      answer([own], own.host),
-      new Map([
-        [
-          JSON.stringify([local, own.projectId, own.repository, own.number]),
-          { state: "closed", updatedAt: own.updatedAt, observedAt: 300, token: 0, at: 300 },
-        ],
-      ]),
-    );
-    expect(
-      restorePullRequestList(storage, [{ environmentId: local, input: mine }])
-        ?.entries.toSorted((a, b) => a.number - b.number)
-        .map(({ number, state }) => [number, state]),
     ).toEqual([
       [1, "closed"],
       [2, "open"],

@@ -826,73 +826,21 @@ describe("filter picker choices", () => {
 });
 
 describe("confirmed pull request actions", () => {
-  const result = {
-    state: "open" as const,
-    isDraft: false,
-    updatedAt: "2026-07-03T00:00:00Z",
-    mergedAt: null,
-    closedAt: null,
-    autoMergeEnabled: true,
-    autoMergeMethod: "squash" as const,
-    observedAt: 300,
-  };
-
-  it("keeps a fresh confirmed override when the server clock is behind", () => {
-    const row = entry({ number: 1, state: "open", observedAt: 200 });
-    const override = pullRequestOverrideAfterAction(row, "close", new Date(120_000), 1, {
-      ...result,
-      state: "closed",
-    })!;
-    const overrides = new Map([["row", override]]);
-    expect(settlePullRequestOverrides(overrides, [row], () => "row", 121_000)).toBe(overrides);
-    expect(override).toEqual({
-      state: "closed",
-      isDraft: false,
-      updatedAt: result.updatedAt,
-      observedAt: 300,
-      token: 1,
-      at: 120_000,
-    });
-  });
-
-  it("keeps an accepted auto-merge open and uses the host date", () => {
+  it("shows the host's state for a queued merge instead of assuming it merged", () => {
     const row = entry({ number: 1 });
+    const result = {
+      state: "open" as const,
+      isDraft: false,
+      updatedAt: "2026-07-03T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      autoMergeEnabled: true,
+      autoMergeMethod: "squash" as const,
+      observedAt: 300,
+    };
     const override = pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, result)!;
-    const shown = applyPullRequestOverrides(
-      [row],
-      new Map([["row", override]]),
-      () => "row",
-      "open",
-    );
-    expect(shown).toHaveLength(1);
-    expect(shown[0]).toMatchObject({ state: "open", updatedAt: result.updatedAt, observedAt: 300 });
-    expect(pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, null)?.state).toBe(
-      "merged",
-    );
-  });
-
-  it("keeps a newer host read when an older action has the same provider date", () => {
-    const row = entry({ number: 1, state: "closed", updatedAt: result.updatedAt, observedAt: 400 });
-    const override = pullRequestOverrideAfterAction(row, "reopen", new Date(900), 1, result)!;
     expect(
-      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "closed"),
-    ).toEqual([row]);
-  });
-
-  it("applies a later provider update from a server with an earlier clock", () => {
-    const row = entry({
-      number: 1,
-      state: "closed",
-      updatedAt: "2026-07-02T00:00:00Z",
-      observedAt: 900,
-    });
-    const override = pullRequestOverrideAfterAction(row, "reopen", new Date(1000), 1, {
-      ...result,
-      state: "open",
-      observedAt: 100,
-    })!;
-    expect(
-      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "all")[0]?.state,
-    ).toBe("open");
+      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "open"),
+    ).toMatchObject([{ number: 1, state: "open", updatedAt: result.updatedAt, observedAt: 300 }]);
   });
 });

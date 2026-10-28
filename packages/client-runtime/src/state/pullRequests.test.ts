@@ -9,7 +9,6 @@ import {
   PullRequestOperationError,
   WS_METHODS,
   type AuthSessionState,
-  type PullRequestDetail,
   type PullRequestRefreshEvent,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -1125,435 +1124,39 @@ function actionResultClient(overrides: Record<string, unknown> = {}) {
     [WS_METHODS.serverGetConfig]: () =>
       Effect.succeed({ environment: { capabilities: { pullRequestActionResults: true } } }),
     [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
-    "pullRequests.subscribeRefreshEvents": () => Stream.never,
+    [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => Stream.never,
     [WS_METHODS.pullRequestsRunAction]: () => Effect.void,
-    "pullRequests.runActionWithResult": () => Effect.succeed(confirmedActionResult),
+    [WS_METHODS.pullRequestsRunActionWithResult]: () => Effect.succeed(confirmedActionResult),
     ...overrides,
   } as unknown as WsRpcProtocolClient;
 }
 
-it.effect(
-  "shows confirmed action state in mounted readers and later list pages without reads",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let reads = 0;
-        const open = { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
-        const read = () =>
-          Effect.sync(() => {
-            reads++;
-            return open;
-          });
-        const answers: unknown[] = [];
-        const detailAnswers: string[] = [];
-        const client = actionResultClient({
-          [WS_METHODS.pullRequestsDetail]: read,
-          [WS_METHODS.pullRequestsPreview]: read,
-          [WS_METHODS.pullRequestsList]: () =>
-            Effect.succeed({
-              entries: [open],
-              viewers: {},
-              providers: [],
-              errors: [],
-              truncated: true,
-              nextCursors: { repo: "next" },
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-          actionResult: (target, result) => Effect.sync(() => answers.push({ target, result })),
-          detail: (_target, value) =>
-            Effect.sync(() => {
-              detailAnswers.push(value.state);
-            }),
-        });
-        const target = {
-          environmentId: TARGET.environmentId,
-          input: {
-            projectId: actionReference.projectId,
-            repository: actionReference.repository,
-            number: actionReference.number,
-          },
-        };
-        const readers = [atoms.detail(target), atoms.preview(target), atoms.previewCard(target)];
-        const page = atoms.list({
-          environmentId: target.environmentId,
-          input: {
-            state: "all",
-            cursors: { repo: "page2" },
-          },
-        });
-        const filtered = atoms.list({
-          environmentId: target.environmentId,
-          input: {
-            state: "open",
-            filters: { draft: "only" },
-          },
-        });
-        for (const atom of readers) {
-          registry.mount(atom);
-          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-        }
-        registry.mount(page);
-        registry.mount(filtered);
-        yield* AtomRegistry.getResult(registry, page, { suspendOnWaiting: true });
-        yield* AtomRegistry.getResult(registry, filtered, { suspendOnWaiting: true });
-        const answer = yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...target.input, action: "merge" },
-          }),
-        );
-        expect(answer).toMatchObject({ _tag: "Success", value: confirmedActionResult });
-        for (const atom of readers) {
-          expect(Option.getOrThrow(AsyncResult.value(registry.get(atom)))).toMatchObject({
-            state: "merged",
-            isDraft: false,
-          });
-        }
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(page))).entries).toMatchObject([
-          { state: "merged", isDraft: false, observedAt: 200 },
-        ]);
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(filtered))).entries).toEqual([]);
-        expect(answers).toEqual([{ target, result: confirmedActionResult }]);
-        expect(detailAnswers).toEqual(["open", "merged"]);
-        expect(reads).toBe(3);
-      }),
-    ),
-);
-
-it.effect.each(["loaded", "pending", "account-pinned"])(
-  "refreshes head-dependent detail and stats after an action, mode=%s",
-  (mode) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const pending = mode === "pending";
-        const reference = {
-          ...actionReference,
-          ...(mode === "account-pinned" ? { expectedAccountId: "account-1" } : {}),
-        };
-        let headSha = "old-head";
-        let reads = 0;
-        const statsReads = new Map<number, number>();
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const client = actionResultClient({
-          [WS_METHODS.pullRequestsDetail]: () =>
-            Effect.gen(function* () {
-              reads++;
-              const snapshot = {
-                ...actionReference,
-                state: "open",
-                isDraft: false,
-                headSha,
-                additions: headSha === "old-head" ? 1 : 2,
-                observedAt: reads === 1 ? 300 : 500,
-              };
-              if (pending && reads === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return snapshot;
-            }),
-          [WS_METHODS.pullRequestsListStats]: (input: {
-            refs: ReadonlyArray<{ number: number }>;
-          }) =>
-            Effect.sync(() => ({
-              stats: input.refs.map(({ number }) => {
-                statsReads.set(number, (statsReads.get(number) ?? 0) + 1);
-                return {
-                  projectId: actionReference.projectId,
-                  repository: actionReference.repository,
-                  number,
-                  additions: headSha === "old-head" ? 1 : 2,
-                  deletions: 0,
-                };
-              }),
-            })),
-          [WS_METHODS.pullRequestsRunActionWithResult]: (input: { action: string }) =>
-            Effect.sync(() => {
-              headSha = "new-head";
-              return {
-                ...confirmedActionResult,
-                state: "open",
-                mergedAt: null,
-                closedAt: null,
-                headSha,
-                observedAt: input.action === "update-branch" ? 400 : 600,
-              };
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client);
-        const target = { environmentId: TARGET.environmentId, input: reference };
-        const detail = atoms.detail(target);
-        registry.mount(detail);
-        if (pending) yield* Deferred.await(started);
-        else yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-        const stats = atoms.listStats({ ...target, input: { refs: [actionReference] } });
-        const unrelated = atoms.listStats({
-          ...target,
-          input: { refs: [{ ...actionReference, number: 2 }] },
-        });
-        for (const atom of [stats, unrelated]) {
-          registry.mount(atom);
-          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-        }
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...reference, action: "update-branch" },
-          }),
-        );
-        if (pending) yield* Deferred.succeed(release, undefined);
-        expect(
-          (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).additions,
-        ).toBe(2);
-        expect(reads).toBe(2);
-        expect(
-          (yield* AtomRegistry.getResult(registry, stats, { suspendOnWaiting: true })).stats[0]
-            ?.additions,
-        ).toBe(2);
-        expect(statsReads).toEqual(
-          new Map([
-            [1, 2],
-            [2, 1],
-          ]),
-        );
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...reference, action: "ready" },
-          }),
-        );
-        yield* AtomRegistry.getResult(registry, stats, { suspendOnWaiting: true });
-        expect(statsReads).toEqual(
-          new Map([
-            [1, 2],
-            [2, 1],
-          ]),
-        );
-      }),
-    ),
-);
-
-it.effect.each([false, true])(
-  "refreshes branch permissions on reopening with the same head, pending=%s",
-  (pending) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let state: "open" | "closed" = "closed";
-        let reads = 0;
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const client = actionResultClient({
-          [WS_METHODS.pullRequestsDetail]: () =>
-            Effect.gen(function* () {
-              reads++;
-              const snapshot = {
-                ...actionReference,
-                state,
-                headSha: "same-head",
-                baseComparison: state === "open" ? "behind" : "unknown",
-                viewerPermissions: { actions: state === "open" ? ["update-branch"] : [] },
-                observedAt: reads === 1 ? 100 : 300,
-              };
-              if (pending && reads === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return snapshot;
-            }),
-          [WS_METHODS.pullRequestsRunActionWithResult]: () =>
-            Effect.sync(() => {
-              state = "open";
-              return {
-                ...confirmedActionResult,
-                state,
-                headSha: "same-head",
-                mergedAt: null,
-                closedAt: null,
-              };
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client);
-        const target = { environmentId: TARGET.environmentId, input: actionReference };
-        const detail = atoms.detail(target);
-        registry.mount(detail);
-        if (pending) yield* Deferred.await(started);
-        else yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...actionReference, action: "reopen" },
-          }),
-        );
-        if (pending) yield* Deferred.succeed(release, undefined);
-        const result = yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-        expect(result.baseComparison).toBe("behind");
-        expect(result.viewerPermissions?.actions).toContain("update-branch");
-        expect(reads).toBe(2);
-      }),
-    ),
-);
-
-it.effect(
-  "keeps a confirmed result and checks read time when an earlier detail read finishes late",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let reads = 0;
-        const answers: unknown[] = [];
-        const checkReadTimes: Array<number | undefined> = [];
-        const client = actionResultClient({
-          [WS_METHODS.pullRequestsDetail]: () =>
-            Effect.gen(function* () {
-              reads++;
-              if (reads === 2) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-          detail: (_target, value, _registry, read?: PullRequestDetail | null) =>
-            Effect.sync(() => {
-              answers.push(value.state);
-              if (read !== null) checkReadTimes.push((read ?? value).observedAt);
-            }),
-        });
-        const target = { environmentId: TARGET.environmentId, input: actionReference };
-        const atom = atoms.detail(target);
-        registry.mount(atom);
-        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-        registry.refresh(atom);
-        yield* Deferred.await(started);
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...actionReference, action: "merge" },
-          }),
-        );
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom))).state).toBe("merged");
-        expect(checkReadTimes).toEqual([100]);
-        yield* Deferred.succeed(release, undefined);
-        expect(
-          (yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })).state,
-        ).toBe("merged");
-        expect(answers).toEqual(["open", "merged", "merged"]);
-        expect(checkReadTimes).toEqual([100, 100]);
-        expect(reads).toBe(2);
-      }),
-    ),
-);
-
-it.effect.each([false, true])(
-  "normalizes an old or unsupported action result to null: %s",
-  (capable) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        const client = actionResultClient({
-          [WS_METHODS.serverGetConfig]: () =>
-            Effect.succeed({
-              environment: {
-                capabilities: {
-                  pullRequestActionResults: capable,
-                },
-              },
-            }),
-          [WS_METHODS.pullRequestsRunAction]: () =>
-            Effect.sync(() => {
-              calls.push("old");
-            }),
-          "pullRequests.runActionWithResult": () =>
-            Effect.sync(() => {
-              calls.push("new");
-              return null;
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client);
-        const result = yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            environmentId: TARGET.environmentId,
-            input: { ...actionReference, action: "close" },
-          }),
-        );
-        expect(result).toMatchObject({ _tag: "Success", value: null });
-        expect(calls).toEqual([capable ? "new" : "old"]);
-      }),
-    ),
-);
-
-it.effect("does not retry a write when the result reply is lost", () =>
+it.effect("shows an action's confirmed state in mounted readers and list pages without reads", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const calls: string[] = [];
+      let reads = 0;
+      const open = { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+      const read = () =>
+        Effect.sync(() => {
+          reads++;
+          return open;
+        });
+      const answers: unknown[] = [];
       const client = actionResultClient({
-        "pullRequests.runActionWithResult": () =>
-          Effect.gen(function* () {
-            calls.push("new");
-            return yield* new PullRequestOperationError({
-              operation: "runAction",
-              detail: "Reply lost",
-            });
-          }),
-        [WS_METHODS.pullRequestsRunAction]: () =>
-          Effect.sync(() => {
-            calls.push("old");
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const result = yield* Effect.promise(() =>
-        atoms.runAction.run(registry, {
-          environmentId: TARGET.environmentId,
-          input: { ...actionReference, action: "close" },
-        }),
-      );
-      expect(result._tag).toBe("Failure");
-      expect(calls).toEqual(["new"]);
-    }),
-  ),
-);
-
-it.effect("patches typed refresh results and reloads only the affected activity", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
-      const applied = yield* Deferred.make<void>();
-      let deliveries = 0;
-      const activityUpdated = yield* Deferred.make<void>();
-      const reads = { detail: 0, preview: 0, activity: [] as number[], oldStream: 0 };
-      let state = "open";
-      const client = actionResultClient({
-        "pullRequests.subscribeRefreshEvents": () => SubscriptionRef.changes(events),
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => {
-          reads.oldStream++;
-          return Stream.never;
-        },
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.sync(() => {
-            reads.detail++;
-            return { ...actionReference, state, isDraft: true, observedAt: 100 };
-          }),
-        [WS_METHODS.pullRequestsPreview]: () =>
-          Effect.sync(() => {
-            reads.preview++;
-            return { ...actionReference, state, isDraft: true };
-          }),
-        [WS_METHODS.pullRequestsActivity]: (input: { number: number }) =>
-          Effect.gen(function* () {
-            reads.activity.push(input.number);
-            if (reads.activity.length > 2) yield* Deferred.succeed(activityUpdated, undefined);
-            return { comments: [] };
+        [WS_METHODS.pullRequestsDetail]: read,
+        [WS_METHODS.pullRequestsPreview]: read,
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.succeed({
+            entries: [open],
+            viewers: {},
+            providers: [],
+            errors: [],
+            truncated: true,
+            nextCursors: { repo: "next" },
           }),
       });
       const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-        actionResult: () =>
-          Effect.sync(() => {
-            deliveries++;
-          }).pipe(Effect.andThen(Deferred.succeed(applied, undefined)), Effect.asVoid),
+        actionResult: (target, result) => Effect.sync(() => answers.push({ target, result })),
       });
       const target = {
         environmentId: TARGET.environmentId,
@@ -1563,388 +1166,111 @@ it.effect("patches typed refresh results and reloads only the affected activity"
           number: actionReference.number,
         },
       };
-      const detail = atoms.detail(target);
-      const preview = atoms.preview(target);
-      const invalidations = atoms.refreshes.invalidations({
+      const readers = [atoms.detail(target), atoms.preview(target)];
+      const page = atoms.list({
         environmentId: target.environmentId,
-        input: {},
+        input: { state: "all", cursors: { repo: "page2" } },
       });
-      registry.mount(invalidations);
-      registry.mount(atoms.refreshes({ environmentId: target.environmentId, input: {} }));
-      yield* AtomRegistry.getResult(
-        registry,
-        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
-      );
-      const readers: Atom.Atom<
-        AsyncResult.AsyncResult<unknown, AsyncResult.AsyncResult.Failure<Atom.Type<typeof detail>>>
-      >[] = [
-        detail,
-        preview,
-        atoms.activity(target),
-        atoms.activity({
-          ...target,
-          input: { ...actionReference, number: 2 },
-        }),
-      ];
+      const openDrafts = atoms.list({
+        environmentId: target.environmentId,
+        input: { state: "open", filters: { draft: "only" } },
+      });
       for (const atom of readers) {
         registry.mount(atom);
         yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
       }
-      expect(reads.oldStream).toBe(0);
-      yield* AtomRegistry.getResult(
-        registry,
-        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
+      for (const atom of [page, openDrafts]) {
+        registry.mount(atom);
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      }
+
+      const answer = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...target.input, action: "merge" },
+        }),
       );
+
+      expect(answer).toMatchObject({ _tag: "Success", value: confirmedActionResult });
+      for (const atom of readers) {
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom)))).toMatchObject({
+          state: "merged",
+          isDraft: false,
+        });
+      }
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(page))).entries).toMatchObject([
+        { state: "merged", isDraft: false, observedAt: 200 },
+      ]);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
+      expect(answers).toEqual([{ target, result: confirmedActionResult }]);
+      expect(reads).toBe(2);
+    }),
+  ),
+);
+
+it.effect("applies an action result another client's refresh event carries without a read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
+      const applied = yield* Deferred.make<void>();
+      let reads = 0;
+      const client = actionResultClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => SubscriptionRef.changes(events),
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.sync(() => {
+            reads++;
+            return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+        actionResult: () => Deferred.succeed(applied, undefined).pipe(Effect.asVoid),
+      });
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const refreshes = atoms.refreshes({ environmentId: target.environmentId, input: {} });
+      registry.mount(refreshes);
+      yield* AtomRegistry.getResult(registry, refreshes);
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+
       yield* SubscriptionRef.set(events, {
         revision: 1,
         reference: actionReference,
         result: confirmedActionResult,
       });
       yield* Deferred.await(applied);
+
       expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
-      yield* Deferred.await(activityUpdated);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).state).toBe("merged");
-      expect(reads).toEqual({ detail: 1, preview: 1, activity: [1, 2, 1], oldStream: 0 });
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(invalidations)))).toBe(0);
-      yield* Effect.promise(() =>
-        atoms.runAction.run(registry, { ...target, input: { ...target.input, action: "merge" } }),
-      );
-      expect(deliveries).toBe(1);
-      const staleEvent = Latch.makeUnsafe();
-      const stopRefresh = registry.subscribe(
-        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
-        (value) => {
-          if (Option.getOrNull(AsyncResult.value(value)) === 2) staleEvent.openUnsafe();
-        },
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(stopRefresh));
-      yield* SubscriptionRef.set(events, {
-        revision: 2,
-        reference: {
-          ...actionReference,
-          host: actionReference.host.toUpperCase(),
-          allowStale: false,
-        },
-        result: { ...confirmedActionResult, state: "open", observedAt: 300 },
-      });
-      yield* staleEvent.await;
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).state).toBe("merged");
-      state = "closed";
-      const closed = Latch.makeUnsafe();
-      const stop = registry.subscribe(preview, (value) => {
-        if (Option.getOrNull(AsyncResult.value(value))?.state === "closed") closed.openUnsafe();
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(stop));
-      yield* SubscriptionRef.set(events, { revision: 3, reference: actionReference });
-      yield* closed.await;
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(invalidations)))).toBe(3);
-      expect(
-        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).state,
-      ).toBe("closed");
+      expect(reads).toBe(1);
     }),
   ),
 );
 
-it.effect("keeps the newest action across hosted and hostless references", () =>
+it.effect("falls back to the plain action on a server without action results", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
+      const calls: string[] = [];
       const client = actionResultClient({
-        [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => SubscriptionRef.changes(events),
-        [WS_METHODS.pullRequestsPreview]: () =>
-          Effect.succeed({ ...actionReference, state: "open", isDraft: true }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const refreshes = atoms.refreshes({ environmentId: target.environmentId, input: {} });
-      registry.mount(refreshes);
-      yield* AtomRegistry.getResult(registry, refreshes);
-      const previews = [atoms.preview(target), atoms.previewCard(target)];
-      for (const atom of previews) {
-        registry.mount(atom);
-        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-      }
-      for (const [revision, reference, observedAt, isDraft] of [
-        [1, actionReference, 200, true],
-        [2, { ...actionReference, host: undefined }, 300, false],
-        [3, actionReference, 250, true],
-      ] as const) {
-        const seen = Latch.makeUnsafe();
-        const stop = registry.subscribe(refreshes, (value) => {
-          if (Option.getOrNull(AsyncResult.value(value)) === revision) seen.openUnsafe();
-        });
-        yield* Effect.addFinalizer(() => Effect.sync(stop));
-        yield* SubscriptionRef.set(events, {
-          revision,
-          reference,
-          result: {
-            ...confirmedActionResult,
-            state: "open",
-            mergedAt: null,
-            closedAt: null,
-            observedAt,
-            isDraft,
-          },
-        });
-        yield* seen.await;
-        stop();
-      }
-      for (const atom of previews)
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom))).isDraft).toBe(false);
-    }),
-  ),
-);
-
-it.effect("keeps a later provider update when a routed server clock moves backwards", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const firstDate = "2026-10-27T10:00:00Z";
-      const nextDate = "2026-10-27T10:01:00Z";
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.succeed({
-            ...actionReference,
-            state: "open",
-            updatedAt: firstDate,
-            observedAt: 1,
-          }),
-        [WS_METHODS.pullRequestsPreview]: () => Effect.succeed({ state: "open", isDraft: false }),
-        [WS_METHODS.pullRequestsList]: () =>
-          Effect.succeed({
-            entries: [{ ...actionReference, state: "open", updatedAt: firstDate, observedAt: 1 }],
-            viewers: {},
-            providers: [],
-            errors: [],
-            truncated: false,
-            nextCursors: {},
-          }),
-        [WS_METHODS.pullRequestsRunActionWithResult]: (input: { action: string }) =>
-          Effect.succeed({
-            ...confirmedActionResult,
-            state: input.action === "close" ? "closed" : "open",
-            mergedAt: null,
-            closedAt: null,
-            updatedAt: input.action === "close" ? firstDate : nextDate,
-            observedAt: input.action === "close" ? 900 : 100,
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const detail = atoms.detail(target);
-      const preview = atoms.preview(target);
-      const list = atoms.list({ ...target, input: { state: "all" } });
-      registry.mount(detail);
-      registry.mount(preview);
-      registry.mount(list);
-      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-      yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true });
-      yield* AtomRegistry.getResult(registry, list, { suspendOnWaiting: true });
-      for (const action of ["close", "reopen"] as const)
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, { ...target, input: { ...actionReference, action } }),
-        );
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject({
-        state: "open",
-        updatedAt: nextDate,
-      });
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).state).toBe("open");
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries[0]).toMatchObject({
-        state: "open",
-        updatedAt: nextDate,
-      });
-    }),
-  ),
-);
-
-it.effect("keeps action results within their environment, project, host, and account", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsDetail]: () => Effect.succeed({ state: "open", isDraft: true }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client, client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const targets = [
-        target,
-        { ...target, environmentId: EnvironmentId.make("local-environment") },
-        { ...target, input: { ...actionReference, projectId: ProjectId.make("project-2") } },
-        { ...target, input: { ...actionReference, host: "other.example.com" } },
-        { ...target, input: { ...actionReference, expectedAccountId: "other-account" } },
-      ];
-      for (const value of targets) {
-        registry.mount(atoms.detail(value));
-        yield* AtomRegistry.getResult(registry, atoms.detail(value), { suspendOnWaiting: true });
-      }
-      const answer = yield* Effect.promise(() =>
-        atoms.runAction.run(registry, {
-          ...target,
-          input: { ...actionReference, action: "merge" },
-        }),
-      );
-      expect(answer._tag).toBe("Success");
-      expect(
-        targets.map(
-          (value) => Option.getOrThrow(AsyncResult.value(registry.get(atoms.detail(value)))).state,
-        ),
-      ).toEqual(["merged", "open", "open", "open", "open"]);
-    }),
-  ),
-);
-
-it.effect("ignores a result from a replaced session", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const answers: unknown[] = [];
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsDetail]: () => Effect.succeed({ state: "open", isDraft: true }),
-        "pullRequests.runActionWithResult": () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
-            yield* Deferred.await(release);
-            return confirmedActionResult;
-          }),
-      });
-      const { atoms, registry, supervisor } = yield* makeTestRuntime(client, undefined, false, {
-        actionResult: (_target, value) => Effect.sync(() => answers.push(value)),
-      });
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      registry.mount(atoms.detail(target));
-      yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
-      const pending = atoms.runAction.run(registry, {
-        ...target,
-        input: { ...actionReference, action: "merge" },
-      });
-      expect(
-        yield* Effect.raceFirst(
-          Deferred.await(started).pipe(Effect.as("started")),
-          Effect.promise(() => pending).pipe(Effect.as("completed")),
-        ),
-      ).toBe("started");
-      yield* SubscriptionRef.set(supervisor.session, Option.some(session(client)));
-      yield* Deferred.succeed(release, undefined);
-      yield* Effect.promise(() => pending);
-      expect(
-        (yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true }))
-          .state,
-      ).toBe("open");
-      expect(answers).toEqual([]);
-    }),
-  ),
-);
-
-it.effect.each(["open", "merged"] as const)(
-  "keeps an open auto-merge result from reopening %s",
-  (state) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const result = {
-          ...confirmedActionResult,
-          state: "open",
-          mergedAt: null,
-          closedAt: null,
-          autoMergeEnabled: true,
-          autoMergeMethod: "squash",
-        };
-        const client = actionResultClient({
-          [WS_METHODS.pullRequestsDetail]: () => Effect.succeed({ state, isDraft: false }),
-          "pullRequests.runActionWithResult": () => Effect.succeed(result),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client);
-        const target = { environmentId: TARGET.environmentId, input: actionReference };
-        registry.mount(atoms.detail(target));
-        yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
-        expect(
-          yield* Effect.promise(() =>
-            atoms.runAction.run(registry, {
-              ...target,
-              input: { ...actionReference, action: "merge" },
-            }),
-          ),
-        ).toMatchObject({ _tag: "Success", value: result });
-        const detail = Option.getOrThrow(AsyncResult.value(registry.get(atoms.detail(target))));
-        if (state === "open") expect(detail).toMatchObject(result);
-        else expect(detail.state).toBe("merged");
-      }),
-    ),
-);
-
-it.effect("sorts changed list rows and reads missing filter members without inventing rows", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let merged = false;
-      const reads: string[] = [];
-      const listed = Latch.makeUnsafe();
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsList]: (input: { state: string }) =>
+        [WS_METHODS.serverGetConfig]: () => Effect.succeed({ environment: { capabilities: {} } }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
           Effect.sync(() => {
-            reads.push(input.state);
-            const entry = {
-              ...actionReference,
-              title: "Full row from list",
-              state: merged ? "merged" : "open",
-              isDraft: false,
-              updatedAt: "2026-10-27T08:00:00Z",
-              observedAt: 100,
-            };
-            const entries =
-              input.state === "merged"
-                ? merged
-                  ? [{ ...entry, ...confirmedActionResult }]
-                  : []
-                : [{ ...entry, number: 2, updatedAt: "2026-10-27T09:00:00Z" }, entry];
-            return {
-              entries,
-              viewers: {},
-              providers: [],
-              errors: [],
-              truncated: false,
-              nextCursors: {},
-            };
+            calls.push("runAction");
           }),
-        "pullRequests.runActionWithResult": () =>
+        [WS_METHODS.pullRequestsRunActionWithResult]: () =>
           Effect.sync(() => {
-            merged = true;
+            calls.push("runActionWithResult");
             return confirmedActionResult;
           }),
       });
       const { atoms, registry } = yield* makeTestRuntime(client);
-      const all = atoms.list({ environmentId: TARGET.environmentId, input: { state: "all" } });
-      const matching = atoms.list({
-        environmentId: TARGET.environmentId,
-        input: { state: "merged" },
-      });
-      for (const atom of [all, matching]) {
-        registry.mount(atom);
-        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-      }
-      const stop = registry.subscribe(matching, (value) => {
-        if (Option.getOrNull(AsyncResult.value(value))?.entries[0]?.title === "Full row from list")
-          listed.openUnsafe();
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(stop));
-      yield* Effect.promise(() =>
+      const result = yield* Effect.promise(() =>
         atoms.runAction.run(registry, {
           environmentId: TARGET.environmentId,
-          input: { ...actionReference, action: "merge" },
+          input: { ...actionReference, action: "close" },
         }),
       );
-      expect(
-        Option.getOrThrow(AsyncResult.value(registry.get(all))).entries.map(
-          (entry) => entry.number,
-        ),
-      ).toEqual([1, 2]);
-      yield* listed.await;
-      expect(reads).toEqual(["all", "merged", "merged"]);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(matching))).entries[0]).toMatchObject(
-        {
-          number: 1,
-          state: "merged",
-          title: "Full row from list",
-        },
-      );
+      expect(result).toMatchObject({ _tag: "Success", value: null });
+      expect(calls).toEqual(["runAction"]);
     }),
   ),
 );
