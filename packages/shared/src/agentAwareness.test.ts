@@ -48,28 +48,48 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
-  it("excludes archived and snoozed inbox rows, then restores them on wake", () => {
-    const base = {
-      environmentId: "env-1" as EnvironmentId,
-      project,
-      now: Date.parse(NOW),
-      thread: v2Thread({ status: "completed" }),
-    };
-    const snoozedUntil = DateTime.makeUnsafe("2026-05-22T13:00:00.000Z");
-    expect(
-      projectThreadAwarenessV2({ ...base, thread: { ...base.thread, archivedAt: updatedAt } }),
-    ).toBeNull();
-    expect(
-      projectThreadAwarenessV2({ ...base, thread: { ...base.thread, snoozedUntil } }),
-    ).toBeNull();
-    expect(
-      projectThreadAwarenessV2({
-        ...base,
+  it.each(["completed", "cancelled", "interrupted", "idle", "queued", "rolled_back"] as const)(
+    "restores a snoozed %s inbox row until its wake is acknowledged",
+    (status) => {
+      const snoozedUntil = DateTime.makeUnsafe("2026-05-22T13:00:00.000Z");
+      const base = {
+        environmentId: "env-1" as EnvironmentId,
+        project,
         now: Date.parse("2026-05-22T13:01:00.000Z"),
-        thread: { ...base.thread, snoozedUntil },
-      }),
-    ).toMatchObject({ phase: "completed", retained: true });
-  });
+        thread: { ...v2Thread({ status }), snoozedUntil, lastVisitedAt: updatedAt },
+      };
+      expect(projectThreadAwarenessV2(base)).toMatchObject({
+        phase: "woke",
+        headline: "Snooze ended",
+        retained: true,
+        updatedAt: "2026-05-22T13:00:00.000Z",
+      });
+      expect(projectThreadAwarenessV2({ ...base, now: Date.parse(NOW) })).toBeNull();
+      expect(
+        projectThreadAwarenessV2({ ...base, thread: { ...base.thread, archivedAt: updatedAt } }),
+      ).toBeNull();
+      expect(
+        projectThreadAwarenessV2({
+          ...base,
+          thread: { ...base.thread, settledOverride: "settled" },
+        }),
+      ).toBeNull();
+      for (const visit of [snoozedUntil, DateTime.makeUnsafe("2026-05-22T13:01:00.000Z")]) {
+        expect(
+          projectThreadAwarenessV2({ ...base, thread: { ...base.thread, lastVisitedAt: visit } })
+            ?.phase ?? null,
+        ).toBe(status === "completed" ? "completed" : null);
+      }
+      expect(
+        projectThreadAwarenessV2({ ...base, thread: { ...base.thread, snoozedUntil: null } })
+          ?.phase ?? null,
+      ).toBe(status === "completed" ? "completed" : null);
+      expect(
+        projectThreadAwarenessV2({ ...base, thread: { ...base.thread, lastVisitedAt: null } })
+          ?.phase,
+      ).toBe("woke");
+    },
+  );
 
   it.each([
     { visit: null, unread: false },

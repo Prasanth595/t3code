@@ -51,8 +51,8 @@ export function androidActivityData(
   const pendingResult = lifecycleStates?.some(
     (state) =>
       state.retained === true &&
-      state.unread !== false &&
-      (state.phase === "completed" || state.phase === "failed"),
+      (state.phase === "woke" ||
+        (state.unread !== false && (state.phase === "completed" || state.phase === "failed"))),
   );
   const expiresAt =
     aggregate?.pendingCount === 0 || pendingResult

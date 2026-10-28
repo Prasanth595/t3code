@@ -34,6 +34,7 @@ internal enum class ActivityPhase(
     "Answer",
     R.color.agent_activity_input
   ),
+  WOKE("Woke", "Snooze ended", "Woke", "Open", R.color.agent_activity_attention),
   STALE(
     "Waiting",
     "Waiting for an update",
@@ -56,7 +57,7 @@ internal enum class ActivityPhase(
     R.color.agent_activity_failed
   );
 
-  val needsUser get() = this == APPROVAL || this == INPUT
+  val needsUser get() = this == APPROVAL || this == INPUT || this == WOKE
   val finished get() = this == COMPLETED || this == FAILED
 
   companion object {
@@ -80,6 +81,7 @@ internal fun activityPhase(data: Map<String, String>, rows: List<ActivityRow>): 
     "running" -> ActivityPhase.RUNNING
     "waiting_for_approval" -> ActivityPhase.APPROVAL
     "waiting_for_input" -> ActivityPhase.INPUT
+    "woke" -> ActivityPhase.WOKE
     "stale" -> ActivityPhase.STALE
     "completed" -> ActivityPhase.COMPLETED
     "failed" -> ActivityPhase.FAILED

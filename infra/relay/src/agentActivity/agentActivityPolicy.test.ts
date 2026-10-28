@@ -45,23 +45,26 @@ describe("shared agent activity policy", () => {
       make("done-new", "completed", true),
       make("failed", "failed", true),
       make("input", "waiting_for_input", false),
+      make("woke", "woke", false),
     ];
     expect(aggregate(states)).toMatchObject({
-      activeCount: 2,
+      activeCount: 3,
       workingCount: 1,
-      attentionCount: 1,
+      attentionCount: 2,
       unreadCount: 2,
-      pendingCount: 5,
-      totalCount: 6,
+      pendingCount: 6,
+      totalCount: 7,
       activities: [
         { threadId: "input" },
+        { threadId: "woke", status: "Woke" },
         { threadId: "failed" },
         { threadId: "done-new" },
         { threadId: "done-old" },
-        { threadId: "working" },
       ],
     });
-    expect(aggregate(states.filter((s) => s.threadId !== "done-old"))).toMatchObject({
+    expect(
+      aggregate(states.filter((s) => s.threadId !== "done-old" && s.threadId !== "woke")),
+    ).toMatchObject({
       totalCount: 5,
       activities: [
         { threadId: "input" },
@@ -98,6 +101,15 @@ describe("shared agent activity policy", () => {
   );
 
   it("does not notify for already read results or marking a result unread again", () => {
+    expect(shouldAlertForActivity({ ...state, phase: "woke", preferences, nowMs: 0 })).toBe(false);
+    const woke = { ...state, phase: "woke" as const, retained: true };
+    expect(
+      makeAggregateState({
+        activeStates: [woke],
+        terminalState: null,
+        nowMs: 2 * 24 * 60 * 60_000,
+      }),
+    ).toMatchObject({ workingCount: 0, attentionCount: 1, pendingCount: 1 });
     const done = { ...state, phase: "completed" as const, unread: false };
     expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(false);
     expect(

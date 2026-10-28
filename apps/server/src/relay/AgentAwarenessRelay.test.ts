@@ -584,8 +584,8 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 0);
       yield* TestClock.adjust("59 seconds");
       yield* relay.drain;
-      assert.equal(publications.at(-1)?.state?.phase, "completed");
-      assert.equal(publications.at(-1)?.replay, true);
+      assert.equal(publications.at(-1)?.state?.phase, "woke");
+      assert.equal(publications.at(-1)?.replay, false);
     }).pipe(Effect.scoped),
   );
 
@@ -607,7 +607,7 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, before);
       yield* TestClock.adjust("60 seconds");
       yield* relay.drain;
-      assert.equal(publications.at(-1)?.state?.phase, "completed");
+      assert.equal(publications.at(-1)?.state?.phase, "woke");
     }),
   );
 
@@ -628,8 +628,8 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.at(-1)?.state, null);
       yield* TestClock.adjust("55 seconds");
       yield* relay.drain;
-      assert.equal(publications.at(-1)?.state?.phase, "completed");
-      assert.equal(publications.at(-1)?.replay, true);
+      assert.equal(publications.at(-1)?.state?.phase, "woke");
+      assert.equal(publications.at(-1)?.replay, false);
     }),
   );
 

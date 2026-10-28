@@ -342,15 +342,24 @@ describe("Android delivery routing", () => {
     },
   );
 
-  it.effect("retains an unread result without an automatic Android expiry", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "completed", unread: true, retained: true };
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[0]?.data).toMatchObject({ active: "true", activity_expires_at: "0" });
-    }).pipe(Effect.provide(h.layer));
-  });
+  it.effect.each(["completed", "woke"] as const)(
+    "retains a pending %s row without an automatic Android expiry",
+    (phase) => {
+      const h = harness();
+      h.current.state = { ...state, phase, unread: phase === "completed", retained: true };
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[0]?.data).toMatchObject({
+          active: "true",
+          activity_expires_at: "0",
+          activity_working_count: "0",
+          activity_attention_count: phase === "woke" ? "1" : "0",
+        });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(phase === "woke" ? 0 : 1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("uses running threads outside the five display rows to set Android expiry", () => {
     const h = harness();

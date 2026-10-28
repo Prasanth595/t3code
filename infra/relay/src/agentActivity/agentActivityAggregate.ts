@@ -28,6 +28,8 @@ export function statusForPhase(phase: RelayAgentActivityState["phase"]): string 
       return "Working";
     case "stale":
       return "Waiting";
+    case "woke":
+      return "Woke";
   }
 }
 
@@ -105,12 +107,15 @@ export function makeAggregateState(input: {
     workingCount: states.filter((state) => state.phase === "running" || state.phase === "starting")
       .length,
     attentionCount: states.filter(
-      (state) => state.phase === "waiting_for_input" || state.phase === "waiting_for_approval",
+      (state) =>
+        state.phase === "waiting_for_input" ||
+        state.phase === "waiting_for_approval" ||
+        state.phase === "woke",
     ).length,
     unreadCount,
     // Legacy publishers cannot report reads; keep their existing completion lifecycle.
     ...(states.every((state) => state.unread !== undefined) ||
-    states.some((state) => state.unread === true)
+    states.some((state) => state.unread === true || state.phase === "woke")
       ? { pendingCount }
       : {}),
     totalCount: states.length,
@@ -123,7 +128,8 @@ export function activityPhasePriority(
   phase: RelayAgentActivityState["phase"],
   unread?: boolean,
 ): number {
-  if (phase === "waiting_for_approval" || phase === "waiting_for_input") return 0;
+  if (phase === "waiting_for_approval" || phase === "waiting_for_input" || phase === "woke")
+    return 0;
   if (phase === "failed") return 1;
   if (phase === "completed" && unread !== false) return 2;
   if (phase === "starting" || phase === "running") return 3;

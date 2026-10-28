@@ -27,6 +27,7 @@ export const RelayAgentAwarenessPhase = Schema.Literals([
   "completed",
   "failed",
   "stale",
+  "woke",
 ]);
 export type RelayAgentAwarenessPhase = typeof RelayAgentAwarenessPhase.Type;
 

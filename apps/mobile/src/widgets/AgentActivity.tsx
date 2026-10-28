@@ -31,7 +31,8 @@ export type AgentActivityPhase =
   | "waiting_for_input"
   | "completed"
   | "failed"
-  | "stale";
+  | "stale"
+  | "woke";
 
 export interface AgentActivityRowProps {
   readonly environmentId: string;
@@ -92,7 +93,10 @@ function AgentActivity(
       ? props.attentionCount
       : countsComplete
         ? receivedActivities.filter(
-            (row) => row.phase === "waiting_for_input" || row.phase === "waiting_for_approval",
+            (row) =>
+              row.phase === "waiting_for_input" ||
+              row.phase === "waiting_for_approval" ||
+              row.phase === "woke",
           ).length
         : null;
   const totalCount =
@@ -126,6 +130,7 @@ function AgentActivity(
     switch (phase) {
       case "waiting_for_approval":
       case "waiting_for_input":
+      case "woke":
         return isLightScheme ? "#d97706" : "#fcd34d"; // amber-600 / amber-300
       case "failed":
         return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
@@ -141,7 +146,12 @@ function AgentActivity(
   };
 
   const phasePriority = (row: AgentActivityRowProps): number => {
-    if (row.phase === "waiting_for_approval" || row.phase === "waiting_for_input") return 0;
+    if (
+      row.phase === "waiting_for_approval" ||
+      row.phase === "waiting_for_input" ||
+      row.phase === "woke"
+    )
+      return 0;
     if (row.phase === "failed") return 1;
     if (row.phase === "completed" && row.unread !== false) return 2;
     if (row.phase === "running" || row.phase === "starting") return 3;
@@ -153,7 +163,7 @@ function AgentActivity(
   const isSystemStale = "isStale" in environment && environment.isStale === true;
   const activities: ReadonlyArray<AgentActivityRowProps> = isSystemStale
     ? receivedActivities.map((row) =>
-        row.phase === "completed" || row.phase === "failed"
+        row.phase === "completed" || row.phase === "failed" || row.phase === "woke"
           ? row
           : { ...row, phase: "stale", status: "Out of date" },
       )
@@ -172,7 +182,10 @@ function AgentActivity(
   const row4 = ordered[4];
 
   const attentionRows = activities.filter(
-    (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
+    (row) =>
+      row.phase === "waiting_for_approval" ||
+      row.phase === "waiting_for_input" ||
+      row.phase === "woke",
   );
   const attentionRow = attentionRows[0];
   const failedRow = activities.find((row) => row.phase === "failed");
@@ -251,6 +264,8 @@ function AgentActivity(
         return "exclamationmark.circle.fill";
       case "waiting_for_input":
         return "questionmark.circle.fill";
+      case "woke":
+        return "alarm.fill";
       case "failed":
         return "xmark.octagon.fill";
       case "completed":
@@ -287,6 +302,7 @@ function AgentActivity(
 
   const isRead = (row: AgentActivityRowProps) => row.phase === "completed" && row.unread === false;
   const isEmphasized = (row: AgentActivityRowProps) =>
+    row.phase === "woke" ||
     row.phase === "waiting_for_input" ||
     row.phase === "waiting_for_approval" ||
     (row.phase === "completed" && row.unread !== false);
@@ -496,7 +512,9 @@ function AgentActivity(
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
             ? "Approval"
-            : "Input"
+            : attentionRow.phase === "woke"
+              ? "Woke"
+              : "Input"
           : failedRow
             ? "Failed"
             : doneSuffix || activeLabel}
