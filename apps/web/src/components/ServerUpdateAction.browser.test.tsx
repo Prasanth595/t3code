@@ -224,7 +224,7 @@ describe("ServerUpdatesAction", () => {
       description: "Download failed",
     });
     expect(testState.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Office updated" }),
+      expect.objectContaining({ type: "success", title: "Office a fost actualizat" }),
     );
     expect(button(screen, "Actualizează tot")!.disabled).toBe(false);
   });
