@@ -21,7 +21,9 @@ import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Checkbox } from "../ui/checkbox";
 import { Switch } from "../ui/switch";
+import { RIGHT_PANEL_SECTIONS } from "../chat/threadDetailsSections";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
   SettingResetButton,
@@ -267,6 +269,44 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <SettingsRow
+          {...searchableSetting("thread-details-sections")}
+          description="Choose which sections the thread details panel shows."
+          resetAction={
+            settings.hiddenRightPanelSections.length > 0 ? (
+              <SettingResetButton
+                label="thread details"
+                onClick={() =>
+                  updateSettings({
+                    hiddenRightPanelSections: DEFAULT_UNIFIED_SETTINGS.hiddenRightPanelSections,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="mt-3 mb-2 max-w-2xl overflow-hidden divide-y divide-border/60 rounded-lg border border-input bg-muted/25 sm:columns-2 sm:gap-0 sm:divide-y-0">
+            {RIGHT_PANEL_SECTIONS.map(({ id, label }) => (
+              <label
+                key={id}
+                className="flex cursor-pointer break-inside-avoid items-center gap-3 px-3 py-2 transition-colors hover:bg-muted/40"
+              >
+                <Checkbox
+                  checked={!settings.hiddenRightPanelSections.includes(id)}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      hiddenRightPanelSections:
+                        checked === true
+                          ? settings.hiddenRightPanelSections.filter((hidden) => hidden !== id)
+                          : [...settings.hiddenRightPanelSections, id],
+                    })
+                  }
+                />
+                <span className="text-xs font-medium text-foreground">{label}</span>
+              </label>
+            ))}
+          </div>
+        </SettingsRow>
         <SettingsRow
           {...searchableSetting("math-rendering")}
           description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."

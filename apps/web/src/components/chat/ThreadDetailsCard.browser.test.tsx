@@ -1,3 +1,4 @@
+import "~/index.css";
 import { StrictMode } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
@@ -42,10 +43,12 @@ function Card({
   threadRef,
   inline,
   fixture,
+  empty = false,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
+  empty?: boolean;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -64,7 +67,7 @@ function Card({
         }}
       >
         <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>
-          {() => <p>Details for {threadRef.threadId}</p>}
+          {() => (empty ? null : <p>Details for {threadRef.threadId}</p>)}
         </ThreadDetailsCard>
       </ChatCanvasContext>
     </StrictMode>
@@ -135,4 +138,17 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).not.toBeInTheDocument();
   await setOpen(true);
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
+});
+
+it("hides the card when every section is hidden, and shows it again when one returns", async () => {
+  using fixture = setup();
+  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
+  await using screen = await render(<Card threadRef={threadB} inline empty fixture={fixture} />);
+  const card = () => screen.container.querySelector<HTMLElement>("[data-thread-details-card]");
+  // The glass border alone would leave a visible sliver, so the card must take no space.
+  expect(card()?.getBoundingClientRect().height).toBe(0);
+
+  await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} />);
+  await expect.element(page.getByText("Details for thread-b")).toBeVisible();
+  expect(card()?.getBoundingClientRect().height).toBeGreaterThan(0);
 });

@@ -105,6 +105,8 @@ export function ThreadDetailsCard({
     <div
       className={cn(
         "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
+        // Hidden sections can leave nothing to show, and an empty glass card reads as a glitch.
+        "has-[[data-thread-details-content]:empty]:hidden",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
@@ -112,7 +114,9 @@ export function ThreadDetailsCard({
       data-thread-details-card
     >
       <ScrollArea scrollFade className="min-h-0">
-        <div ref={setContentElement}>{children(density)}</div>
+        <div ref={setContentElement} data-thread-details-content>
+          {children(density)}
+        </div>
       </ScrollArea>
     </div>
   );

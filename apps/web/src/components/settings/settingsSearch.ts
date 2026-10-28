@@ -316,6 +316,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "thread-details-sections",
+    title: "Thread details",
+    to: "/settings/appearance",
+    searchTerms: [
+      "right panel sidebar sections hide show lineage branch commit changes servers scripts editor environment automations",
+    ],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",

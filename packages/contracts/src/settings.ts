@@ -336,6 +336,32 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+export const RIGHT_PANEL_SECTION_IDS = [
+  "environment",
+  "open-in-editor",
+  "project-scripts",
+  "branch",
+  "git-actions",
+  "changes",
+  "servers",
+  "automations",
+  "lineage",
+] as const;
+export const RightPanelSectionId = Schema.Literals(RIGHT_PANEL_SECTION_IDS);
+export type RightPanelSectionId = typeof RightPanelSectionId.Type;
+const isRightPanelSectionId = Schema.is(RightPanelSectionId);
+// Hidden rather than visible ids, so sections added later show by default. Ids from a newer
+// build are dropped here, because withDecodingDefault validates the encoded side first.
+export const HiddenRightPanelSections = Schema.Array(Schema.String).pipe(
+  Schema.decodeTo(
+    Schema.Array(RightPanelSectionId),
+    SchemaTransformation.transform({
+      decode: (ids): ReadonlyArray<RightPanelSectionId> => ids.filter(isRightPanelSectionId),
+      encode: (ids) => ids,
+    }),
+  ),
+);
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -362,6 +388,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  hiddenRightPanelSections: HiddenRightPanelSections.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1662,6 +1691,7 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
+  hiddenRightPanelSections: Schema.optionalKey(HiddenRightPanelSections),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

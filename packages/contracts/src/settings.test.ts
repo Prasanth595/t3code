@@ -198,6 +198,26 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings right panel sections", () => {
+  it("shows every section when existing settings omit the hidden list", () => {
+    expect(decodeClientSettings({}).hiddenRightPanelSections).toEqual([]);
+  });
+
+  it("drops section ids it does not know instead of rejecting the settings", () => {
+    const settings = decodeClientSettings({
+      chatWidth: "wide",
+      hiddenRightPanelSections: ["branch", "from-a-newer-build", "changes"],
+    });
+
+    expect(settings.hiddenRightPanelSections).toEqual(["branch", "changes"]);
+    expect(settings.chatWidth).toBe("wide");
+    expect(
+      decodeClientSettingsPatch({ hiddenRightPanelSections: ["lineage", "from-a-newer-build"] })
+        .hiddenRightPanelSections,
+    ).toEqual(["lineage"]);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
