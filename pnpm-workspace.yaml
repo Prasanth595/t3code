@@ -379,6 +379,9 @@ patchedDependencies:
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
+  # Android: a drag that started on a code block or image kept the text view's pending
+  # long press, so scrolling the feed turned the touch into a text selection highlight.
+  react-native-enriched-markdown@1.2.0-t3.16: patches/react-native-enriched-markdown@1.2.0-t3.16.patch
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch

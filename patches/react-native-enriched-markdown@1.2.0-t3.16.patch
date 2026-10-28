@@ -1,0 +1,13 @@
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkLongPressMovementMethod.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkLongPressMovementMethod.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkLongPressMovementMethod.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkLongPressMovementMethod.kt
+@@ -83,6 +83,9 @@
+           abs(event.y - startY) > config.scaledTouchSlop
+         ) {
+           cancelLongPress()
++          // The press also armed the view's own long press; a drag past the slop is
++          // a scroll, so it must not promote into a text selection.
++          widget.cancelLongPress()
+           isLinkTouchActive = false
+           pressedLink = null
+           pressedImage = null
