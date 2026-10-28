@@ -41,12 +41,15 @@ const make = Effect.gen(function* () {
   const host = yield* ProviderHost.ProviderHost;
   const cache = makeAntigravityUsageCache();
   const cachePath = path.join(host.paths.stateDir, ANTIGRAVITY_USAGE_CACHE_FILE_NAME);
+  // What the cache file holds; a failed write leaves it behind so the next scan retries.
+  let persisted = new Map(cache);
   // Restore decoded databases once, so a restart re-reads only changed ones.
   const loadCache = yield* Effect.cached(
     fileSystem.readFileString(cachePath).pipe(
       Effect.flatMap(decodeAntigravityUsageCache),
       Effect.map(({ databases }) => {
         for (const [key, entry] of Object.entries(databases)) cache.set(key, entry);
+        persisted = new Map(cache);
       }),
       Effect.ignore,
     ),
@@ -112,17 +115,22 @@ const make = Effect.gen(function* () {
       conversationDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
     yield* loadCache;
-    const before = new Map(cache);
     const result = yield* readAntigravityUsage([...conversationDirs], windowStartMs, cache).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
     if (
-      cache.size !== before.size ||
-      cache.entries().some(([key, entry]) => before.get(key) !== entry)
+      cache.size !== persisted.size ||
+      cache.entries().some(([key, entry]) => persisted.get(key) !== entry)
     ) {
-      yield* encodeAntigravityUsageCache(cache).pipe(
+      const snapshot = new Map(cache);
+      yield* encodeAntigravityUsageCache(snapshot).pipe(
         Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            persisted = snapshot;
+          }),
+        ),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.ignore,
