@@ -354,6 +354,26 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it.each(["config", "", undefined])(
+    "preserves local command output in feed messages (%s)",
+    (localCommand) => {
+      const item = {
+        ...assistantMessage(),
+        text: "Available settings:\nmodel\ntheme",
+        ...(localCommand === undefined ? {} : { localCommand }),
+      };
+      const [entry] = buildThreadFeed([projected(item, 0)]);
+      expect(entry?.type).toBe("message");
+      if (entry?.type !== "message") throw new Error("Expected a message row");
+      expect(entry.message.text).toBe(item.text);
+      if (localCommand === undefined) {
+        expect(entry.message).not.toHaveProperty("localCommand");
+      } else {
+        expect(entry.message.localCommand).toBe(localCommand);
+      }
+    },
+  );
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

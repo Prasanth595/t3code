@@ -629,6 +629,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         id: item.messageId,
         role: item.type === "user_message" ? "user" : "assistant",
         text: item.text,
+        ...(item.type === "assistant_message" && item.localCommand !== undefined
+          ? { localCommand: item.localCommand }
+          : {}),
         ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
         ...((item.attachments?.length ?? 0) > 0
           ? {

@@ -3596,6 +3596,39 @@ describe("linked timeline resources", () => {
     ]);
   });
 
+  it.each(["config", ""])(
+    "keeps command output metadata on its card with trailing resources (%s)",
+    (localCommand) => {
+      const rows = deriveMessagesTimelineRows({
+        ...common,
+        timelineEntries: [
+          {
+            kind: "message",
+            id: "command-output",
+            createdAt: "2026-09-08T10:00:00Z",
+            message: {
+              id: MessageId.make("command-output"),
+              role: "assistant",
+              localCommand,
+              text: "Command finished",
+              runId,
+              streaming: false,
+              createdAt: "2026-09-08T10:00:00Z",
+              updatedAt: "2026-09-08T10:00:00Z",
+            },
+          },
+          event("created", "thread_created"),
+        ],
+      });
+      expect(rows.some((row) => row.kind === "assistant-meta")).toBe(false);
+      expect(rows.find((row) => row.id === "command-output")).toMatchObject({
+        kind: "message",
+        showAssistantMeta: true,
+      });
+      expect(rows.some((row) => row.kind === "event" && row.resourceSummary)).toBe(true);
+    },
+  );
+
   it("shows a created chat after a steer only when that steer's segment is open", () => {
     const message = (id: string, role: "user" | "assistant", second: number) => ({
       kind: "message" as const,

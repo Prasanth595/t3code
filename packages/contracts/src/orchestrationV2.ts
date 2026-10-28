@@ -1202,6 +1202,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
    * the workflow's opening instead and keep the script behind a disclosure.
    */
   workflowScript: Schema.optional(Schema.Boolean),
+  /** Provider-native slash command output, not a model reply; command name without `/`, or empty if unnamed. */
+  localCommand: Schema.optional(Schema.String),
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -1468,6 +1470,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
+    localCommand: OrchestrationV2ConversationMessage.fields.localCommand,
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -2303,6 +2306,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
+    localCommand: OrchestrationV2ConversationMessage.fields.localCommand,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,

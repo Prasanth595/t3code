@@ -953,6 +953,76 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   });
 });
 
+function ThreadCommandOutput(props: {
+  readonly command: string;
+  readonly text: string;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly contentWidth: number;
+  readonly iconColor: ColorValue;
+}) {
+  const [contentHeight, setContentHeight] = useState(0);
+  const collapsedHeight = props.markdownStyles.nativeTextStyle.lineHeight * 16;
+  const canFold = contentHeight > collapsedHeight;
+
+  return (
+    <View className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-subtle/30">
+      <View className="flex-row items-center gap-1.5 border-b border-border/60 px-3 py-1.5">
+        <SymbolView name="terminal" size={14} tintColor={props.iconColor} />
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-xs",
+            props.command ? "font-mono text-foreground" : "text-foreground-muted",
+          )}
+          numberOfLines={1}
+        >
+          {props.command ? `/${props.command}` : "Command output"}
+        </Text>
+        <CopyTextButton
+          accessibilityLabel="Copy command output"
+          text={props.text}
+          tintColor={props.iconColor}
+          buttonSize={28}
+          iconSize={13}
+        />
+      </View>
+      <View className="px-3 py-2">
+        <View
+          className="overflow-hidden"
+          style={props.expanded ? undefined : { maxHeight: collapsedHeight }}
+        >
+          <View onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}>
+            <MarkdownImageAvailableWidthContext value={Math.max(0, props.contentWidth - 26)}>
+              <SelectableMarkdownText
+                markdown={props.text}
+                textStyle={props.markdownStyles.nativeTextStyle}
+                preserveSoftBreaks
+                {...props.linkHandlers}
+                renderImage={props.renderImage}
+              />
+            </MarkdownImageAvailableWidthContext>
+          </View>
+        </View>
+        {canFold ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: props.expanded }}
+            onPress={props.onToggle}
+            className="self-start py-1 active:opacity-70"
+          >
+            <Text className="font-t3-medium text-xs text-foreground-muted">
+              {props.expanded ? "Show less" : "Show more"}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
   const nativeMarkdownTypography = useMemo(
@@ -1831,6 +1901,37 @@ function renderFeedEntry(
             </View>
           ) : null}
         </Animated.View>
+      );
+    }
+
+    if (message.localCommand !== undefined) {
+      const rowId = `command-output:${message.id}`;
+      return (
+        <View className={showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1"}>
+          <ThreadCommandOutput
+            key={message.id}
+            command={message.localCommand}
+            text={message.text}
+            expanded={props.expandedWorkRows[rowId] ?? false}
+            onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
+            markdownStyles={styles}
+            linkHandlers={props.markdownLinkHandlers}
+            renderImage={props.renderMarkdownImage}
+            contentWidth={props.markdownContentWidth}
+            iconColor={iconSubtleColor}
+          />
+          <MessageAttachmentList
+            attachments={attachments}
+            environmentId={props.environmentId}
+            onPressPreview={props.onPressPreview}
+            onPlaybackStart={props.onPlaybackStart}
+          />
+          {showAssistantMeta ? (
+            <Text className="mt-1 font-t3-medium text-xs tabular-nums text-foreground-secondary">
+              {timestampLabel}
+            </Text>
+          ) : null}
+        </View>
       );
     }
 

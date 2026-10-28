@@ -1244,6 +1244,7 @@ function attachTrailingToolGroupsToAssistant(
     if (
       row.kind !== "message" ||
       row.message.role !== "assistant" ||
+      row.message.localCommand !== undefined ||
       !row.showAssistantMeta ||
       runId === null
     ) {
