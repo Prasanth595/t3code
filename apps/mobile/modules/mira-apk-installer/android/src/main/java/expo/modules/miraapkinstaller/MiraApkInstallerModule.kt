@@ -19,7 +19,7 @@ class MiraApkInstallerModule : Module() {
     }
 
     Function("openInstallPermissionSettings") {
-      val context = appContext.reactContext ?: return@Function
+      val context = appContext.reactContext ?: return@Function null
       context.startActivity(
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
