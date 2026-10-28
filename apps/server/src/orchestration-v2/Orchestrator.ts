@@ -3002,6 +3002,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is busy. Stop it or clear its queue before moving it.`,
         });
       }
+      // Failed worktree setup holds the queue and would retry in the old project's repo.
+      const latestRun = latestExecutedRun(records.runs);
+      if (
+        (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+        latestRun.workspacePreparation?.type === "worktree" &&
+        thread.worktreePath === null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has failed worktree setup. Retry it or continue locally before moving.`,
+        });
+      }
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
