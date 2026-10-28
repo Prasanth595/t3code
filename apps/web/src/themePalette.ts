@@ -371,10 +371,6 @@ export function getSystemColorsTheme(): ThemeDefinition | null {
   });
 }
 
-export function getSystemAccentColor(): string | null | undefined {
-  return readSystemAccentColor();
-}
-
 export function isReservedThemeId(themeId: string): boolean {
   return RESERVED_THEME_IDS.has(themeId);
 }
