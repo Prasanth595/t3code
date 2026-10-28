@@ -94,7 +94,11 @@ export function ThreadWorkflowGroup(props: {
           />
         </View>
         {/* Stops a workflow T3 runs itself, which the button above does not; nothing for native ones. */}
-        <AppWorkflowStop environmentId={props.environmentId} subagent={props.subagent} className="px-4 pb-3" />
+        <AppWorkflowStop
+          environmentId={props.environmentId}
+          subagent={props.subagent}
+          className="px-4 pb-3"
+        />
         {rail.length > 0 ? (
           <ScrollView
             horizontal
