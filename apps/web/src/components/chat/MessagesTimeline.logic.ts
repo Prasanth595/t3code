@@ -527,7 +527,7 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string | null;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
-      compacting?: string;
+      compacting?: true;
     }
   | {
       kind: "thinking";
@@ -1576,13 +1576,6 @@ export function deriveMessagesTimelineRows(input: {
           resumeCompactionAgeByEntryId.has(activeCompactionEntry.id)
         ? activeCompactionEntry.entry.runId
         : null;
-  const compactingLabel = (() => {
-    if (activeCompactionRunId === null) return undefined;
-    const age = activeCompactionEntry
-      ? resumeCompactionAgeByEntryId.get(activeCompactionEntry.id)
-      : undefined;
-    return age ? `Compacting after ${age} idle…` : IDLE_COMPACTING_LABELS.onReturn;
-  })();
   const appendWorkingRow = () => {
     if (compactionOnlyRunFinished) return;
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
@@ -1590,7 +1583,7 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt ?? null,
-      ...(compactingLabel ? { compacting: compactingLabel } : {}),
+      ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
     });
   };
   let hasActivityRow = false;

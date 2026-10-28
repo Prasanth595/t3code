@@ -472,11 +472,7 @@ describe("deriveMessagesTimelineRows", () => {
         },
         "Context automatically compacted before cache expiry",
       ],
-      [
-        "onReturn",
-        { kind: "working", compacting: "Compacting after being idle…" },
-        "Context compacted after being idle",
-      ],
+      ["onReturn", { kind: "working", compacting: true }, "Context compacted before sending"],
       [undefined, { kind: "context-compaction", active: true }, undefined],
     ] as const) {
       const prompt = compactPrompt(reason);
@@ -667,9 +663,7 @@ describe("deriveMessagesTimelineRows", () => {
       const rows = rowsFor(status);
       return rows.slice(rows.findIndex((row) => row.id.includes("live-user")) + 1);
     };
-    expect(liveRows("running")).toMatchObject([
-      { kind: "working", compacting: "Compacting after 1h 5m idle…" },
-    ]);
+    expect(liveRows("running")).toMatchObject([{ kind: "working", compacting: true }]);
     expect(liveRows("completed")).toMatchObject([
       { kind: "context-compaction", title: "Context compacted after 1h 5m idle" },
     ]);
