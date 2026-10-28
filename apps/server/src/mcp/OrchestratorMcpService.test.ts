@@ -2403,6 +2403,109 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+
+  describe("unbound scheduled task worktree base", () => {
+    const projectId = ProjectId.make("project:scheduled-base");
+    const workspaceRoot = "/repos/scheduled-base";
+    const client: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:scheduled-base"),
+      requestNamespace: "client:scheduled-base",
+      thread: undefined,
+      client: { sessionId: "scheduled-base", label: "Claude Code", access: "full-access" },
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    const rootTask = {
+      id: ScheduledTaskId.make("scheduled-task:root"),
+      title: "Nightly",
+      prompt: "Check the build",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+      projectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    } satisfies ScheduledTask;
+
+    it.effect.each([
+      { originHead: "master", baseRef: "master" },
+      { originHead: null, baseRef: "main" },
+    ])("starts from origin/HEAD ($originHead), falling back to main", ({ originHead, baseRef }) =>
+      Effect.gen(function* () {
+        const upserts = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({
+                    resolveDefaultBranchName: (cwd, remoteName) =>
+                      Effect.succeed(
+                        cwd === workspaceRoot && remoteName === "origin" ? originHead : null,
+                      ),
+                  }),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([]),
+                  }),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                    list: () => Effect.succeed([]),
+                  }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: () =>
+                      Effect.succeedSome({
+                        id: projectId,
+                        title: "Scheduled base",
+                        workspaceRoot,
+                        defaultModelSelection: rootTask.modelSelection,
+                      } as never),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () => Effect.succeed({ tasks: [rootTask] }),
+                    upsert: (input) =>
+                      Ref.update(upserts, (all) => [...all, input.workspaceStrategy]).pipe(
+                        Effect.as({ task: rootTask }),
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          prompt: "Review new pull requests",
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        });
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: rootTask.id,
+          bindToCurrentThread: false,
+        });
+        const expected = {
+          type: "worktree",
+          baseRef,
+          startFromOrigin: true,
+        } satisfies ScheduledTask["workspaceStrategy"];
+        assert.deepEqual(yield* Ref.get(upserts), [expected, expected]);
+      }),
+    );
+  });
   it.effect(
     "reports the child run's selection after a restart and the thread selection before launch",
     () =>

@@ -252,14 +252,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -981,6 +973,15 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const unboundScheduledTaskWorkspaceStrategy = Effect.fn(
+    "OrchestratorMcpService.unboundScheduledTaskWorkspaceStrategy",
+  )(function* (workspaceRoot: string): Effect.fn.Return<ScheduledTask["workspaceStrategy"]> {
+    const defaultBranch = yield* gitDriver
+      .resolveDefaultBranchName(workspaceRoot, "origin")
+      .pipe(Effect.orElseSucceed(() => null));
+    return { type: "worktree", baseRef: defaultBranch ?? "main", startFromOrigin: true };
+  });
 
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
@@ -1859,7 +1860,9 @@ const make = Effect.gen(function* () {
         schedule: input.schedule,
         projectId,
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-        workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+        workspaceStrategy: bindToCurrentThread
+          ? { type: "root" }
+          : yield* unboundScheduledTaskWorkspaceStrategy(project.workspaceRoot),
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -1931,7 +1934,11 @@ const make = Effect.gen(function* () {
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : input.bindToCurrentThread
+              ? { type: "root" as const }
+              : yield* unboundScheduledTaskWorkspaceStrategy(
+                  (yield* requireProject(existing.projectId)).workspaceRoot,
+                );
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
