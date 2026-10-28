@@ -5,10 +5,12 @@ import type {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -34,7 +36,8 @@ import {
 
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 4_096;
-const FORWARD_ESTABLISH_PROBE_MS = 250;
+const FORWARD_CONNECT_TIMEOUT_MS = 15_000;
+const FORWARD_PROBE_INTERVAL_MS = 50;
 
 export interface SshPortForwardEntry {
   readonly key: string;
@@ -69,11 +72,19 @@ export interface SshPortForwardManagerShape {
   readonly unforwardPort: (
     target: DesktopSshEnvironmentTarget,
     remotePort: number,
-  ) => Effect.Effect<boolean>;
+  ) => Effect.Effect<
+    boolean,
+    SshCommandError | SshInvalidTargetError,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >;
 
   readonly listForwardedPorts: (
     target?: DesktopSshEnvironmentTarget,
-  ) => Effect.Effect<ReadonlyArray<DesktopSshPortForward>>;
+  ) => Effect.Effect<
+    ReadonlyArray<DesktopSshPortForward>,
+    SshCommandError | SshInvalidTargetError,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >;
 
   readonly syncAutoPortForwards: (
     target: DesktopSshEnvironmentTarget,
@@ -87,7 +98,11 @@ export interface SshPortForwardManagerShape {
 
   readonly closeAllForTarget: (
     target: DesktopSshEnvironmentTarget,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<
+    void,
+    SshCommandError | SshInvalidTargetError,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >;
 }
 
 export class SshPortForwardManager extends Context.Service<
@@ -128,6 +143,17 @@ export const makeSshPortForwardManager = Effect.fn(
   const forwardsRef = yield* Ref.make<Map<string, SshPortForwardEntry>>(new Map());
   const forwardLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+
+  const resolveTarget = Effect.fn("ssh/portForward.resolveTarget")(function* (
+    target: DesktopSshEnvironmentTarget,
+  ) {
+    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
+    return {
+      ...baseResolved,
+      ...(target.username !== null ? { username: target.username } : {}),
+      ...(target.port !== null ? { port: target.port } : {}),
+    } satisfies DesktopSshEnvironmentTarget;
+  });
 
   const closeEntry = Effect.fn("ssh/portForward.closeEntry")(function* (
     entry: SshPortForwardEntry,
@@ -368,7 +394,7 @@ export const makeSshPortForwardManager = Effect.fn(
       );
 
     let stderrTail = "";
-    yield* child.stderr.pipe(
+    const stderrDrain = yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
         Effect.sync(() => {
@@ -379,24 +405,63 @@ export const makeSshPortForwardManager = Effect.fn(
       Effect.forkIn(entryScope),
     );
 
-    // Give SSH a brief window to fail immediately if the forward could not bind or authenticate
-    const exitOrProbe = yield* Effect.raceFirst(
-      child.exitCode.pipe(Effect.map(Number)),
-      Effect.sleep(Duration.millis(FORWARD_ESTABLISH_PROBE_MS)).pipe(Effect.as(null)),
+    const exitFailure = Effect.all(
+      [Fiber.join(stderrDrain), child.exitCode.pipe(Effect.map(Number))],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SshCommandError({
+            command: forwardCommand,
+            exitCode: null,
+            stderr: "",
+            message:
+              cause instanceof Error
+                ? cause.message
+                : `Failed to monitor SSH port forward for ${resolvedTarget.alias}.`,
+            cause,
+          }),
+      ),
+      Effect.flatMap(([, exitCode]) => {
+        const stderr = stderrTail.trim();
+        const error = new SshCommandError({
+          command: forwardCommand,
+          exitCode,
+          stderr,
+          message:
+            stderr.length > 0
+              ? stderr
+              : `SSH port forward failed immediately for ${resolvedTarget.alias} (exit ${exitCode}).`,
+        });
+        return Effect.fail(error);
+      }),
     );
 
-    if (exitOrProbe !== null) {
-      yield* Scope.close(entryScope, Exit.void).pipe(Effect.ignore);
+    const waitForListenerReady = Effect.gen(function* () {
+      const net = yield* NetService.NetService;
+      const deadline = Date.now() + FORWARD_CONNECT_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        const hasListener = yield* net.hasListenerOnHost(localPort, "127.0.0.1");
+        if (hasListener) {
+          return;
+        }
+        yield* Effect.sleep(Duration.millis(FORWARD_PROBE_INTERVAL_MS));
+      }
       return yield* new SshCommandError({
         command: forwardCommand,
-        exitCode: exitOrProbe,
+        exitCode: null,
         stderr: stderrTail,
-        message:
-          stderrTail.trim().length > 0
-            ? stderrTail.trim()
-            : `SSH port forward failed immediately (exit ${exitOrProbe}).`,
+        message: `Timed out waiting for SSH port forward listener on 127.0.0.1:${localPort}.`,
       });
-    }
+    });
+
+    yield* Effect.raceFirst(waitForListenerReady, exitFailure).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+      ),
+    );
 
     const entry: SshPortForwardEntry = {
       key,
@@ -424,12 +489,7 @@ export const makeSshPortForwardManager = Effect.fn(
   const forwardPort: SshPortForwardManagerShape["forwardPort"] = Effect.fn(
     "ssh/portForward.forwardPort",
   )(function* (target, remotePort, preferredLocalPort) {
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveTarget(target);
     const key = forwardKey(resolvedTarget, remotePort);
 
     return yield* forwardLocks.withLock(
@@ -498,12 +558,7 @@ export const makeSshPortForwardManager = Effect.fn(
   const unforwardPort: SshPortForwardManagerShape["unforwardPort"] = Effect.fn(
     "ssh/portForward.unforwardPort",
   )(function* (target, remotePort) {
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveTarget(target);
     const key = forwardKey(resolvedTarget, remotePort);
 
     return yield* forwardLocks.withLock(
@@ -535,7 +590,8 @@ export const makeSshPortForwardManager = Effect.fn(
     if (!target) {
       return all.map((e) => toContractPortForward(e));
     }
-    const targetKey = targetConnectionKey(target);
+    const resolvedTarget = yield* resolveTarget(target);
+    const targetKey = targetConnectionKey(resolvedTarget);
     return all
       .filter((e) => targetConnectionKey(e.target) === targetKey)
       .map((e) => toContractPortForward(e));
@@ -549,12 +605,7 @@ export const makeSshPortForwardManager = Effect.fn(
       (p) => Number.isInteger(p) && p > 0 && p < 65536 && !excluded.has(p),
     );
 
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveTarget(target);
     const targetKey = targetConnectionKey(resolvedTarget);
 
     const currentMap = yield* Ref.get(forwardsRef);
@@ -579,6 +630,12 @@ export const makeSshPortForwardManager = Effect.fn(
             port,
             cause: result.cause,
           });
+          if (
+            Cause.hasFails(result.cause) &&
+            Cause.failures(result.cause).some((e) => (e as { _tag?: string })._tag === "SshPasswordPromptError")
+          ) {
+            break;
+          }
         }
       }
     }
@@ -606,12 +663,7 @@ export const makeSshPortForwardManager = Effect.fn(
   const closeAllForTarget: SshPortForwardManagerShape["closeAllForTarget"] = Effect.fn(
     "ssh/portForward.closeAllForTarget",
   )(function* (target) {
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveTarget(target);
     const targetKey = targetConnectionKey(resolvedTarget);
     authSecrets.delete(targetKey);
 

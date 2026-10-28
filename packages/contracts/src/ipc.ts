@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -464,8 +464,8 @@ export type DesktopSshPortForwardStatus = typeof DesktopSshPortForwardStatusSche
 
 export const DesktopSshPortForwardSchema = Schema.Struct({
   target: DesktopSshEnvironmentTargetSchema,
-  remotePort: Schema.Number,
-  localPort: Schema.Number,
+  remotePort: PortSchema,
+  localPort: PortSchema,
   localUrl: Schema.String,
   status: DesktopSshPortForwardStatusSchema,
   error: Schema.optionalKey(Schema.String),
@@ -474,28 +474,28 @@ export type DesktopSshPortForward = typeof DesktopSshPortForwardSchema.Type;
 
 export const DesktopSshPortForwardInputSchema = Schema.Struct({
   target: DesktopSshEnvironmentTargetSchema,
-  remotePort: Schema.Number,
-  preferredLocalPort: Schema.optionalKey(Schema.Number),
+  remotePort: PortSchema,
+  preferredLocalPort: Schema.optionalKey(PortSchema),
 });
 export type DesktopSshPortForwardInput = typeof DesktopSshPortForwardInputSchema.Type;
 
 export const DesktopSshPortUnforwardInputSchema = Schema.Struct({
   target: DesktopSshEnvironmentTargetSchema,
-  remotePort: Schema.Number,
+  remotePort: PortSchema,
 });
 export type DesktopSshPortUnforwardInput = typeof DesktopSshPortUnforwardInputSchema.Type;
 
 export const DesktopSshAutoPortForwardSyncInputSchema = Schema.Struct({
   target: DesktopSshEnvironmentTargetSchema,
-  discoveredRemotePorts: Schema.Array(Schema.Number),
-  excludePorts: Schema.optionalKey(Schema.Array(Schema.Number)),
+  discoveredRemotePorts: Schema.Array(PortSchema),
+  excludePorts: Schema.optionalKey(Schema.Array(PortSchema)),
 });
 export type DesktopSshAutoPortForwardSyncInput = typeof DesktopSshAutoPortForwardSyncInputSchema.Type;
 
 export const DesktopSshAutoPortForwardSyncResultSchema = Schema.Struct({
   activeForwards: Schema.Array(DesktopSshPortForwardSchema),
-  forwarded: Schema.Array(Schema.Number),
-  unforwarded: Schema.Array(Schema.Number),
+  forwarded: Schema.Array(PortSchema),
+  unforwarded: Schema.Array(PortSchema),
 });
 export type DesktopSshAutoPortForwardSyncResult = typeof DesktopSshAutoPortForwardSyncResultSchema.Type;
 

@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -78,14 +77,6 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
 }
 
-const testNetService = NetService.NetService.of({
-  canListenOnHost: () => Effect.succeed(true),
-  isPortAvailableOnLoopback: () => Effect.succeed(true),
-  hasListenerOnHost: () => Effect.succeed(false),
-  reserveLoopbackPort: () => Effect.succeed(50000),
-  findAvailablePort: (preferred) => Effect.succeed(preferred > 0 ? preferred : 50000),
-});
-
 describe("ssh port forward manager", () => {
   const target = {
     alias: "devbox",
@@ -94,10 +85,20 @@ describe("ssh port forward manager", () => {
     port: 22,
   };
 
+  const createNetService = (activeListeners: Set<number>) =>
+    NetService.NetService.of({
+      canListenOnHost: (port) => Effect.succeed(!activeListeners.has(port)),
+      isPortAvailableOnLoopback: (port) => Effect.succeed(!activeListeners.has(port)),
+      hasListenerOnHost: (port) => Effect.succeed(activeListeners.has(port)),
+      reserveLoopbackPort: () => Effect.succeed(50000),
+      findAvailablePort: (preferred) => Effect.succeed(preferred > 0 ? preferred : 50000),
+    });
+
   it.effect("forwards a remote port to matching local port with loopback binding", () =>
     Effect.gen(function* () {
       let killed = false;
       const spawnedCommands: string[][] = [];
+      const activeListeners = new Set<number>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
@@ -108,8 +109,10 @@ describe("ssh port forward manager", () => {
               "hostname devbox.internal\nuser developer\nport 22\n",
             );
           }
+          activeListeners.add(3000);
           return makeRunningProcess(() => {
             killed = true;
+            activeListeners.delete(3000);
           }).handle;
         }),
       );
@@ -117,7 +120,7 @@ describe("ssh port forward manager", () => {
       const testLayer = Layer.mergeAll(
         NodeServices.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
         SshAuth.SshPasswordPrompt.disabledLayer,
         SshPortForward.layer,
       );
@@ -156,6 +159,7 @@ describe("ssh port forward manager", () => {
   it.effect("monitors process exit and removes dead forwards during lifetime", () =>
     Effect.gen(function* () {
       let processControls: ReturnType<typeof makeRunningProcess> | null = null;
+      const activeListeners = new Set<number>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
@@ -165,7 +169,10 @@ describe("ssh port forward manager", () => {
               "hostname devbox.internal\nuser developer\nport 22\n",
             );
           }
-          processControls = makeRunningProcess();
+          activeListeners.add(4000);
+          processControls = makeRunningProcess(() => {
+            activeListeners.delete(4000);
+          });
           return processControls.handle;
         }),
       );
@@ -173,7 +180,7 @@ describe("ssh port forward manager", () => {
       const testLayer = Layer.mergeAll(
         NodeServices.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
         SshAuth.SshPasswordPrompt.disabledLayer,
         SshPortForward.layer,
       );
@@ -198,6 +205,7 @@ describe("ssh port forward manager", () => {
   it.effect("serializes concurrent forwardPort calls for the same target and port", () =>
     Effect.gen(function* () {
       let tunnelSpawnCount = 0;
+      const activeListeners = new Set<number>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
@@ -208,14 +216,17 @@ describe("ssh port forward manager", () => {
             );
           }
           tunnelSpawnCount += 1;
-          return makeRunningProcess().handle;
+          activeListeners.add(5000);
+          return makeRunningProcess(() => {
+            activeListeners.delete(5000);
+          }).handle;
         }),
       );
 
       const testLayer = Layer.mergeAll(
         NodeServices.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
         SshAuth.SshPasswordPrompt.disabledLayer,
         SshPortForward.layer,
       );
@@ -239,6 +250,7 @@ describe("ssh port forward manager", () => {
     Effect.gen(function* () {
       let attemptCount = 0;
       let promptRequested = false;
+      const activeListeners = new Set<number>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
@@ -257,7 +269,10 @@ describe("ssh port forward manager", () => {
             );
           }
           // Second attempt succeeds after password prompt
-          return makeRunningProcess().handle;
+          activeListeners.add(8080);
+          return makeRunningProcess(() => {
+            activeListeners.delete(8080);
+          }).handle;
         }),
       );
 
@@ -276,7 +291,7 @@ describe("ssh port forward manager", () => {
       const testLayer = Layer.mergeAll(
         NodeServices.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
         mockPromptLayer,
         SshPortForward.layer,
       );
@@ -295,6 +310,8 @@ describe("ssh port forward manager", () => {
   it.effect("syncAutoPortForwards adds new ports and removes closed ones", () =>
     Effect.gen(function* () {
       let killCount = 0;
+      const activeListeners = new Set<number>();
+
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
           const args = [...commandArgs(command)];
@@ -303,8 +320,12 @@ describe("ssh port forward manager", () => {
               "hostname devbox.internal\nuser developer\nport 22\n",
             );
           }
+          const portMatch = args.find((a) => a.startsWith("127.0.0.1:") && a.includes(":127.0.0.1:"));
+          const localPort = portMatch ? Number(portMatch.split(":")[1]) : 3000;
+          activeListeners.add(localPort);
           return makeRunningProcess(() => {
             killCount += 1;
+            activeListeners.delete(localPort);
           }).handle;
         }),
       );
@@ -312,7 +333,7 @@ describe("ssh port forward manager", () => {
       const testLayer = Layer.mergeAll(
         NodeServices.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(NetService.NetService, testNetService),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
         SshAuth.SshPasswordPrompt.disabledLayer,
         SshPortForward.layer,
       );
