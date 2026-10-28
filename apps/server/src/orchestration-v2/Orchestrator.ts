@@ -2947,45 +2947,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : undefined;
     if (targetProjectId !== undefined) {
       const project = yield* projects.get(targetProjectId).pipe(mapDispatchError(command));
-      if (Option.isNone(project) || project.value.deletedAt !== null) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Project ${targetProjectId} does not exist.`,
-        });
-      }
-      const records = yield* projectionStore
-        .getThreadRecords(
-          command.threadId,
-          ["runs", "runtimeRequests", "subagents", "providerThreads", "turnItems"],
-          {
-            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
-            turnItemStatuses: ["pending", "running", "waiting"],
-          },
-        )
+      const { subagents } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["subagents"])
         .pipe(mapDispatchError(command));
-      const latestRun = latestExecutedRun(records.runs);
-      // Children share the project; failed worktree setup would retry in the old repo.
       if (
+        Option.isNone(project) ||
+        project.value.deletedAt !== null ||
+        thread.settledAt === null ||
         thread.lineage.relationshipToParent === "subagent" ||
-        records.subagents.some((task) => task.childThreadId !== null) ||
-        records.runs.some((run) => isBlockingRun(run) || run.status === "queued") ||
-        records.runtimeRequests.some((request) => request.status === "pending") ||
-        derivePendingBackgroundWork({
-          latestRun: records.runs.findLast((run) => run.status !== "queued"),
-          providerThreads: records.providerThreads,
-          turnItems: records.turnItems,
-          activeProviderThreadId: thread.activeProviderThreadId,
-          runs: records.runs,
-        }).length > 0 ||
-        ((latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
-          latestRun.workspacePreparation?.type === "worktree" &&
-          thread.worktreePath === null)
+        subagents.some((task) => task.childThreadId !== null)
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} must be idle, top-level, and without child threads or failed worktree setup to move.`,
+          cause: `Only a settled top-level thread without child threads can move to an existing project.`,
         });
       }
     }
@@ -3145,18 +3120,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
-    const changesWorkspace =
-      targetProjectId !== undefined ||
-      (command.type === "thread.metadata.update" &&
-        command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
       command.type === "thread.archive" ||
       command.type === "thread.settle" ||
-      changesWorkspace;
+      (command.type === "thread.metadata.update" &&
+        command.worktreePath !== undefined &&
+        command.worktreePath !== thread.worktreePath);
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3417,7 +3389,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
-          const updated: OrchestrationV2AppThread = {
+          return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
@@ -3475,15 +3447,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
-          // Watches read through the project's checkout, which no longer holds these links.
-          return targetProjectId !== undefined
-            ? {
-                ...updated,
-                pullRequests: updated.pullRequests?.map((link) =>
-                  withPullRequestWatch(link, undefined),
-                ),
-              }
-            : updated;
         }
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
@@ -3915,7 +3878,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : changesWorkspace
+        : command.type === "thread.metadata.update" &&
+            command.worktreePath !== undefined &&
+            command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])

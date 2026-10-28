@@ -1872,19 +1872,21 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
-  it.effect("moves an idle thread to another project", () =>
+  it.effect("moves a settled thread to another project", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-layer-move-thread");
       const fromProjectId = ProjectId.make("runtime-layer-move-from");
       const toProjectId = ProjectId.make("runtime-layer-move-to");
-      yield* seedProject({
-        projectId: toProjectId,
-        title: "Move target",
-        workspaceRoot: "/workspace/move-to",
-        defaultModelSelection: null,
-        createdAt: "2026-09-07T00:00:00.000Z",
-      });
+      for (const projectId of [fromProjectId, toProjectId]) {
+        yield* seedProject({
+          projectId,
+          title: projectId,
+          workspaceRoot: `/workspace/${projectId}`,
+          defaultModelSelection: null,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+      }
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",
@@ -1900,14 +1902,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         worktreePath: "/workspace/move-from-worktree",
       });
       yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("runtime-layer-move-watch"),
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-move-settle"),
         threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 1,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/1", source: "manual" },
       });
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -1917,7 +1914,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const moved = (yield* orchestrator.getThreadProjection(threadId)).thread;
       assert.deepInclude(moved, { projectId: toProjectId, branch: null, worktreePath: null });
-      assert.isUndefined(moved.pullRequests?.[0]?.watch);
       const shell = yield* orchestrator.getShellSnapshot();
       assert.equal(
         shell.threads.find((candidate) => candidate.id === threadId)?.projectId,
@@ -1930,20 +1926,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-move-message"),
         threadId,
         messageId: MessageId.make("runtime-layer-move-message"),
-        text: "Keep this run active.",
+        text: "Unsettle this thread.",
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const busy = yield* orchestrator
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.settledAt);
+      const unsettled = yield* orchestrator
         .dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("runtime-layer-move-busy"),
+          commandId: CommandId.make("runtime-layer-move-unsettled"),
           threadId,
           projectId: fromProjectId,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(busy, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(unsettled, Orchestrator.OrchestratorDispatchError);
     }),
   );
 
