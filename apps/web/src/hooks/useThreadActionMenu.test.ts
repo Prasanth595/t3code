@@ -58,6 +58,7 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    pullRequests: [],
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));

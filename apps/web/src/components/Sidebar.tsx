@@ -26,7 +26,10 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
+  canSnoozeUntilPullRequestReply,
   effectiveSnoozed,
+  PULL_REQUEST_REPLY_SNOOZE_LABEL,
+  pullRequestReplySnooze,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -209,7 +212,7 @@ import {
   pickSnoozePreset,
   resolveSnoozePresets,
   snoozeWakeLabel,
-  type SnoozePreset,
+  type SnoozeChoice,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
@@ -2035,7 +2038,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const performSnooze = async (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: SnoozeChoice,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     const threadKey = scopedThreadKey(threadRef);
@@ -2044,7 +2047,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     snoozingThreadKeysRef.current.add(threadKey);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    const result = await snoozeThread(threadRef, preset.snoozedUntil, preset.wakeOn);
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
       return isAtomCommandInterrupted(result)
@@ -2067,7 +2070,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const attemptSnooze = (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: SnoozeChoice,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     void (async () => {
@@ -2134,6 +2137,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         timestampFormat,
         selectedThreads[0]!.environmentId,
       );
+      const canSnoozeSelectionUntilReply = selectedThreads.every(canSnoozeUntilPullRequestReply);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -2157,10 +2161,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         label: `${preset.label} (${preset.whenLabel})`,
                         disabled: !canOperateThreads(selectedThreads),
                       })),
+                      ...(canSnoozeSelectionUntilReply
+                        ? [
+                            {
+                              id: "snooze:pull-request-reply",
+                              label: PULL_REQUEST_REPLY_SNOOZE_LABEL,
+                              separatorBefore: snoozePresets.length > 0,
+                              disabled: !canOperateThreads(selectedThreads),
+                            },
+                          ]
+                        : []),
                       {
                         id: "snooze:custom",
                         label: "Custom…",
-                        separatorBefore: snoozePresets.length > 0,
+                        separatorBefore: snoozePresets.length > 0 || canSnoozeSelectionUntilReply,
                         disabled: !canOperateThreads(selectedThreads),
                       },
                     ],
@@ -2206,14 +2220,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
-          clicked.value === "snooze:custom"
-            ? await requestCustomSnooze()
-            : pickSnoozePreset(
-                snoozePresets,
-                clicked.value.slice("snooze:".length),
-                timestampFormat,
-                selectedThreads[0]!.environmentId,
-              );
+          clicked.value === "snooze:pull-request-reply"
+            ? // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+              pullRequestReplySnooze(new Date())
+            : clicked.value === "snooze:custom"
+              ? await requestCustomSnooze()
+              : pickSnoozePreset(
+                  snoozePresets,
+                  clicked.value.slice("snooze:".length),
+                  timestampFormat,
+                  selectedThreads[0]!.environmentId,
+                );
         if (preset) {
           const coSnoozingKeys = new Set(threadKeys);
           clearSelection();
@@ -2466,6 +2483,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              canSnoozeUntilReply: canSnoozeUntilPullRequestReply(thread),
             }),
             position,
           ),
@@ -2474,14 +2492,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
-            clicked.value === "snooze:custom"
-              ? await requestCustomSnooze()
-              : pickSnoozePreset(
-                  snoozePresets,
-                  clicked.value.slice("snooze:".length),
-                  timestampFormat,
-                  thread.environmentId,
-                );
+            clicked.value === "snooze:pull-request-reply"
+              ? pullRequestReplySnooze(new Date())
+              : clicked.value === "snooze:custom"
+                ? await requestCustomSnooze()
+                : pickSnoozePreset(
+                    snoozePresets,
+                    clicked.value.slice("snooze:".length),
+                    timestampFormat,
+                    thread.environmentId,
+                  );
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }

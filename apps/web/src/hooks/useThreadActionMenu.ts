@@ -7,7 +7,13 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  canSnoozeUntilPullRequestReply,
+  effectiveSnoozed,
+  pullRequestReplySnooze,
+  type SnoozeChoice,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
@@ -143,6 +149,7 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
+        canSnoozeUntilReply: canSnoozeUntilPullRequestReply(thread),
         canShareWithGuest,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
@@ -159,17 +166,19 @@ export function useThreadActionMenu(input: {
         return;
       }
       if (action.startsWith("snooze:")) {
-        const preset =
-          action === "snooze:custom"
-            ? await requestCustomSnooze()
-            : pickSnoozePreset(
-                snoozePresets,
-                action.slice("snooze:".length),
-                timestampFormat,
-                threadRef.environmentId,
-              );
+        const preset: SnoozeChoice | null | undefined =
+          action === "snooze:pull-request-reply"
+            ? pullRequestReplySnooze(new Date())
+            : action === "snooze:custom"
+              ? await requestCustomSnooze()
+              : pickSnoozePreset(
+                  snoozePresets,
+                  action.slice("snooze:".length),
+                  timestampFormat,
+                  threadRef.environmentId,
+                );
         if (!preset) return;
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const result = await snoozeThread(threadRef, preset.snoozedUntil, preset.wakeOn);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
         }

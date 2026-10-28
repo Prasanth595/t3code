@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 
 import { InlineButton } from "../ui/button";
 
@@ -7,7 +7,7 @@ export function ThreadStatusLine(props: {
   readonly label: string;
   readonly actionLabel: string;
   readonly actionDisabled?: boolean;
-  readonly onAction: () => void;
+  readonly onAction: (event: MouseEvent<HTMLButtonElement>) => void;
   // Set for clock-dependent labels to trigger updates.
   readonly clockMinute?: string;
 }) {
