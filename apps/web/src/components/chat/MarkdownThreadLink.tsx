@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import {
   formatThreadLink,
   guessThreadLinkRef,
@@ -9,7 +10,7 @@ import {
 } from "@t3tools/shared/threadLinks";
 
 import { useThreadRefs, useThreadShell } from "../../state/entities";
-import { useThreadFamily } from "../../state/threads";
+import { useThreadFamilyIfMissing } from "../../state/threads";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
 
@@ -21,14 +22,30 @@ export function MarkdownThreadLink(props: {
 }) {
   const environmentId = props.link.environmentId ?? props.environmentId;
   const decodedId = percentDecodedThreadLinkId(props.link.threadId);
-  const written = useThreadShell(scopeThreadRef(environmentId, props.link.threadId));
-  const decoded = useThreadShell(
-    written === null && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null,
+  const writtenRef = scopeThreadRef(environmentId, props.link.threadId);
+  const written = useThreadShell(writtenRef);
+  const writtenFamily = useThreadFamilyIfMissing(writtenRef, written === null);
+  const writtenMissing =
+    written === null &&
+    AsyncResult.isSuccess(writtenFamily) &&
+    !writtenFamily.waiting &&
+    !writtenFamily.value.threads.some((thread) => thread.id === props.link.threadId);
+  const decodedRef =
+    writtenMissing && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null;
+  const decoded = useThreadShell(decodedRef);
+  const decodedFamily = useThreadFamilyIfMissing(
+    decodedRef,
+    decodedRef !== null && decoded === null,
   );
+  const decodedMissing =
+    decodedId === null ||
+    (decoded === null &&
+      AsyncResult.isSuccess(decodedFamily) &&
+      !decodedFamily.waiting &&
+      !decodedFamily.value.threads.some((thread) => thread.id === decodedId));
   const local = written ?? decoded;
-  // Shells leave older settled threads out; the family read brings the linked one in.
-  useThreadFamily(environmentId, local === null ? (decodedId ?? props.link.threadId) : null);
-  const guess = local === null && props.link.environmentId === null;
+  const guess =
+    local === null && writtenMissing && decodedMissing && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
   const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
   const thread = local ?? remote;
