@@ -29,6 +29,7 @@ const reactTests = [
   "src/features/home/home-list-options.test.tsx",
   "src/features/home/thread-swipe-actions.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
+  "src/features/workspace/WorkspaceListToolbarRow.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;

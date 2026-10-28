@@ -26,6 +26,8 @@ export function ThreadListToolbar(props: {
   readonly filterCustomized: boolean;
   readonly onFilterAction: NonNullable<ComponentProps<typeof Menu>["onPressAction"]>;
   readonly onOpenEnvironments: () => void;
+  /** Given by the drawer, whose brand returns to the home list. */
+  readonly onOpenHome?: () => void;
   readonly sidebar?: boolean;
   readonly onLayout?: (event: LayoutChangeEvent) => void;
   readonly onRequestVisibility?: () => void;
@@ -113,6 +115,7 @@ export function ThreadListToolbar(props: {
         searchAccessibilityLabel="Search threads"
         titleAccessibilityLabel="T3 Code, Threads"
         onOpenEnvironments={props.onOpenEnvironments}
+        onOpenHome={props.onOpenHome}
         filter={filterButton}
       />
     </View>

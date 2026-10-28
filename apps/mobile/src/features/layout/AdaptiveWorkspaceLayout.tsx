@@ -1044,7 +1044,11 @@ function AdaptiveWorkspaceLayoutContent(
                   selectedThreadKey={selectedThreadKey}
                   onOpenSettings={handleOpenSettings}
                   onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                  onOpenHome={handleOpenHome}
+                  // Close first, so the home list is what the drawer uncovers.
+                  onOpenHome={() => {
+                    drawer.closeDrawer();
+                    handleOpenHome();
+                  }}
                   onStartNewTask={() => {
                     drawer.closeDrawer();
                     handleStartNewTask();
