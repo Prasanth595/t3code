@@ -640,7 +640,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
-    if (isLinearAppLinkHref(href)) return href;
+    if (/^linear:/i.test(href)) return isLinearAppLinkHref(href) ? href : undefined;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };

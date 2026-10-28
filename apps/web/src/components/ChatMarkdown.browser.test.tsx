@@ -123,6 +123,9 @@ it("preserves only validated Linear app destinations", async () => {
     await expect
       .element(screen.getByRole("link", { name: "ENG-123" }))
       .toHaveAttribute("href", "linear://linear.app/acme/issue/ENG-123");
+    for (const label of ["wrong host", "credentials", "port"]) {
+      await expect.element(screen.getByText(label, { exact: true })).not.toHaveAttribute("href");
+    }
     expect(
       [...screen.container.querySelectorAll("a")]
         .map((link) => link.getAttribute("href"))
