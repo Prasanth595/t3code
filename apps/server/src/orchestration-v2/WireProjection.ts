@@ -200,8 +200,20 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         result:
           item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
       };
-    case "handoff":
     case "file_change":
+      return {
+        ...projectTurnItemForWire(item),
+        ...(item.diffStr === undefined
+          ? {}
+          : { diffStr: truncateDetail(item.diffStr, MAX_ON_DEMAND_BYTES) }),
+        ...(!item.diffStr?.trim() && item.oldStr !== undefined
+          ? { oldStr: truncateDetail(item.oldStr, MAX_ON_DEMAND_BYTES) }
+          : {}),
+        ...(!item.diffStr?.trim() && item.newStr !== undefined
+          ? { newStr: truncateDetail(item.newStr, MAX_ON_DEMAND_BYTES) }
+          : {}),
+      };
+    case "handoff":
       return projectTurnItemForWire(item);
     default:
       return item;
@@ -257,11 +269,10 @@ function remember<K, V>(memory: Map<K, V>, key: K, value: V): void {
 }
 
 /**
- * One per subscription, applied after coalescing so it only remembers records the client
- * received, in the snapshot or in events. A record event comes before the turn item that repeats
- * its body (adapters and the orchestrator emit them in that order), so the item can ship blank
- * and marked; so can a repeated subagent record. Emitting in the other order, or forgetting a
- * record, only costs bytes: the repeat ships whole.
+ * One per subscription, after coalescing, so it remembers only records the client received. A
+ * record event comes before the turn item that repeats its body, so the item (or a repeated
+ * subagent record) ships blank and marked. The other order, or a forgotten record, only costs
+ * bytes: the repeat ships whole.
  */
 export function makeLiveBodyDeduper(): (
   item: OrchestrationV2ThreadStreamItem,

@@ -223,6 +223,11 @@ export interface ProviderDiffFileContents {
   readonly newContents: string;
 }
 
+export interface ProviderDiffFilePaths {
+  readonly files: ReadonlyArray<{ readonly oldPath: string; readonly newPath: string }>;
+  readonly nextCursor: string | null;
+}
+
 export interface ProviderFilesViewed {
   readonly files: ReadonlyArray<PullRequestFileViewed>;
   /** More files exist; missing entries are unknown, not "unviewed". */
@@ -263,7 +268,8 @@ export interface ProviderRepositoryRef {
 
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
-    input: { readonly cwd: string; readonly host: string },
+    /** `repository` lets a host pick the credential that can reach it. */
+    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;
@@ -393,6 +399,15 @@ export interface PullRequestProviderApi {
       readonly commit?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
+
+  /** Exact changed path pairs, including renames, without fetching patch contents. */
+  readonly getDiffFilePaths?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly cursor?: string | undefined;
+      readonly commit?: string | undefined;
+    },
+  ) => Effect.Effect<ProviderDiffFilePaths, PullRequestProviderError>;
 
   readonly getDiffFileContents?: (
     input: ProviderRepositoryRef & {
