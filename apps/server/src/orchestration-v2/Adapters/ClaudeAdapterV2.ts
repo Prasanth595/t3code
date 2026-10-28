@@ -2966,6 +2966,14 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// Claude reports a failed Bash command only as text that starts "Error: Exit code N".
+const CLAUDE_BASH_EXIT_CODE = /^Error: Exit code (\d+)\b/;
+
+function claudeBashExitCode(outputText: string): { exitCode?: number } {
+  const match = CLAUDE_BASH_EXIT_CODE.exec(outputText);
+  return match ? { exitCode: Number(match[1]) } : {};
+}
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -5489,6 +5497,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   type: "command_execution",
                   input: commandInputFromClaudeTool(input.toolName, input.toolInput),
                   ...(outputText.length === 0 ? {} : { output: outputText }),
+                  ...claudeBashExitCode(outputText),
                 }
               : itemType === "file_change"
                 ? {

@@ -57,6 +57,15 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  LiveToolCard,
+  SettledToolCard,
+  ToolCardBody,
+  ToolGroupLine,
+  groupHasTools,
+  useEntriesInWorkingRun,
+} from "./ToolCallCard";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -72,6 +81,8 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   displayLabel?: string | undefined;
 }) {
   const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  const inWorkingRun = useEntriesInWorkingRun(groupedEntries);
   const onToggleStandaloneEntry = (collapsed: boolean) =>
     onToggleWorkEntry(disclosureAnchorKey, collapsed);
   const nonEmptyEntries = groupedEntries.filter((entry) =>
@@ -83,17 +94,23 @@ export const WorkGroupSection = memo(function WorkGroupSection({
     return <ReasoningTraceContent entries={nonEmptyEntries} />;
   }
   if (isExpandedToolGroup) {
-    return (
+    const inCard = toolCallCards && groupHasTools(nonEmptyEntries);
+    const entries = (
       <ExpandedWorkGroupEntries
         key={`${routeThreadKey}:${anchorKey}`}
         anchorKey={anchorKey}
         disclosureAnchorKey={disclosureAnchorKey}
         entries={nonEmptyEntries}
         workspaceRoot={workspaceRoot}
+        density={inCard ? "card" : "grouped"}
       />
     );
+    return inCard ? <ToolCardBody>{entries}</ToolCardBody> : entries;
   }
 
+  if (toolCallCards && inWorkingRun && groupHasTools(nonEmptyEntries)) {
+    return <SettledToolCard entries={nonEmptyEntries} />;
+  }
   return (
     <section aria-label="Activity">
       {nonEmptyEntries.map((workEntry) => (
@@ -118,19 +135,22 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
-const compactWorkEntryHeight = 24;
+const compactWorkEntryHeight = { grouped: 24, card: 28 } as const;
 
 function ExpandedWorkGroupEntries({
   anchorKey,
   disclosureAnchorKey,
   entries,
   workspaceRoot,
+  density,
 }: {
   anchorKey: string;
   disclosureAnchorKey: string;
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
+  density: "grouped" | "card";
 }) {
+  const rowHeight = compactWorkEntryHeight[density];
   const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
@@ -218,10 +238,7 @@ function ExpandedWorkGroupEntries({
     let height = 0;
     for (const entryId of viewState.expandedEntries) {
       if (state?.indexByKey(entryId) === undefined) continue;
-      height += Math.max(
-        0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
-      );
+      height += Math.max(0, (state.sizes.get(entryId) ?? rowHeight) - rowHeight);
     }
     setExpandedContentHeight(height);
   };
@@ -231,14 +248,14 @@ function ExpandedWorkGroupEntries({
 
   return (
     <WorkGroupViewCtx value={groupView}>
-      <WorkLogList>
+      <WorkLogList density={density}>
         <LegendList
           ref={listRef}
           data={entries}
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={compactWorkEntryHeight}
+          estimatedItemSize={rowHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -262,7 +279,9 @@ function ExpandedWorkGroupEntries({
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
-            "scrollbar-gutter-stable scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            "scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            // In a card, a reserved gutter pulls the status column out of line with the header.
+            (density === "grouped" || fades.top || fades.bottom) && "scrollbar-gutter-stable",
             getVirtualizedScrollFadeClassName(fades),
           )}
         />
@@ -478,6 +497,43 @@ export function LiveWorkEntryTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "work-live" }>;
 }) {
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  // Thoughts show as rows inside the card, so its height never changes as they come and go.
+  if (!toolCallCards || !groupHasTools(row.groupedEntries)) return <LiveWorkEntryLine row={row} />;
+  return <LiveToolCard row={row} />;
+}
+
+function LiveThoughtLine({ text }: { text: string }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <WorkLogRow
+      icon={
+        <span className="flex size-4 items-center justify-center text-icon-muted">
+          <ToolActivityIconView
+            icon={undefined}
+            fallbackName="brain"
+            className="block size-4 shrink-0 stroke-2"
+            muted
+          />
+        </span>
+      }
+      label={
+        <span className="line-clamp-4">
+          <ChatMarkdown
+            inline
+            text={text}
+            cwd={ctx.markdownCwd}
+            parseRawHtml={false}
+            extraRemarkPlugins={[[remarkThoughtPreview, "Thought"]]}
+          />
+        </span>
+      }
+      wrapLabel
+    />
+  );
+}
+
+function LiveWorkEntryLine({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const questionHeading = row.entry.questionAnswer
@@ -505,32 +561,7 @@ export function LiveWorkEntryTimelineRow({
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      {thoughtLine ? (
-        <WorkLogRow
-          icon={
-            <span className="flex size-4 items-center justify-center text-icon-muted">
-              <ToolActivityIconView
-                icon={undefined}
-                fallbackName="brain"
-                className="block size-4 shrink-0 stroke-2"
-                muted
-              />
-            </span>
-          }
-          label={
-            <span className="line-clamp-4">
-              <ChatMarkdown
-                inline
-                text={thoughtLine}
-                cwd={ctx.markdownCwd}
-                parseRawHtml={false}
-                extraRemarkPlugins={[[remarkThoughtPreview, "Thought"]]}
-              />
-            </span>
-          }
-          wrapLabel
-        />
-      ) : null}
+      {thoughtLine ? <LiveThoughtLine text={thoughtLine} /> : null}
       <LiveActivityRow
         label={
           thoughtIsStatus ? (
@@ -579,6 +610,8 @@ export function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  if (toolCallCards && groupHasTools(row.groupedEntries)) return <ToolGroupLine row={row} />;
   return (
     <WorkGroupHeader
       label={row.summary}

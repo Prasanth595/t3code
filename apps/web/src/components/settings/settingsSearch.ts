@@ -419,6 +419,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
   },
   {
+    id: "tool-call-cards",
+    title: "Tool call cards",
+    to: "/settings/labs",
+    searchTerms: ["beta tool calls card status duration work log activity"],
+  },
+  {
     id: "linked-environments-beta",
     title: "Linked environments",
     to: "/settings/labs",

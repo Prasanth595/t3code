@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -18,6 +19,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <ToolCallCardsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -99,6 +101,24 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function ToolCallCardsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tool-call-cards")}
+      description="Show tool calls in a live card while the agent works, with status and time for each call. Finished calls fold into one line."
+      control={
+        <Switch
+          checked={settings.toolCallCards}
+          onCheckedChange={(checked) => updateSettings({ toolCallCards: Boolean(checked) })}
+          aria-label="Tool call cards"
         />
       }
     />

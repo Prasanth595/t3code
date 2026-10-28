@@ -24,6 +24,7 @@ import {
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
+  formatDuration,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
@@ -45,6 +46,14 @@ import {
 import { cn } from "~/lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { ToolCallMeta, useToolCallState } from "./ToolCallMeta";
+import {
+  toolCallDurationMs,
+  toolCallResultNote,
+  withoutLeadingCd,
+  withoutWorkspaceRoot,
+} from "./ToolCallCard.logic";
+import { useClientSettings } from "../../hooks/useSettings";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
 import {
   TimelineRowCtx,
@@ -183,6 +192,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  const callState = useToolCallState(workEntry);
+  const cardState = toolCallCards ? callState : "none";
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
@@ -280,7 +292,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+      : questionHeading ||
+        (toolCallCards && workEntry.command
+          ? withoutWorkspaceRoot(
+              withoutLeadingCd(displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot)),
+              workspaceRoot,
+            )
+          : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot)));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -348,7 +366,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : showDestructiveRowStyle
         ? "text-destructive"
         : showFailedIndicator
-          ? failedToolIconClassName
+          ? cardState === "failed"
+            ? "text-icon-muted"
+            : failedToolIconClassName
           : workEntry.tone === "tool"
             ? "text-icon-muted"
             : iconConfig.className,
@@ -357,16 +377,33 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : workLogEntryIsToolLike(workEntry)
-        ? "text-secondary-label"
-        : "text-foreground/80";
+      : cardState !== "none"
+        ? "text-foreground/90"
+        : toolCallCards && isReasoning
+          ? "text-muted-foreground"
+          : workLogEntryIsToolLike(workEntry)
+            ? "text-secondary-label"
+            : "text-foreground/80";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
     .join(": ");
+  const callDurationMs = cardState === "done" ? toolCallDurationMs(workEntry) : null;
+  const failedNote = cardState === "failed" ? toolCallResultNote(workEntry) : null;
+  const failedDurationMs = cardState === "failed" ? toolCallDurationMs(workEntry) : null;
   const accessibleDisplayText = showFailedIndicator
-    ? `${accessiblePreview}, tool call failed`
-    : accessiblePreview;
+    ? [
+        `${accessiblePreview}, tool call failed`,
+        failedNote,
+        failedDurationMs !== null ? formatDuration(failedDurationMs) : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : cardState === "running" || cardState === "stopped"
+      ? `${accessiblePreview}, ${cardState}`
+      : cardState === "done"
+        ? `${accessiblePreview}, completed${callDurationMs !== null ? ` in ${formatDuration(callDurationMs)}` : ""}`
+        : accessiblePreview;
   const rowToggleProps = canExpandProjectedItem
     ? {
         role: "button" as const,
@@ -387,12 +424,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     <WorkLogRow
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
+      data-running={cardState === "running" ? "" : undefined}
       {...rowToggleProps}
       icon={
         <span
           className={iconWrapperClass}
-          role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          role={showFailedIndicator && cardState === "none" ? "img" : undefined}
+          aria-label={showFailedIndicator && cardState === "none" ? "Tool call failed" : undefined}
         >
           <ToolActivityIconView
             icon={entryToolIcon}
@@ -404,7 +442,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
-          <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+          <p
+            className={cn(
+              "flex min-w-0 w-full items-baseline gap-1.5 leading-relaxed",
+              // Thoughts in a tool card are notes, not actions.
+              toolCallCards && isReasoning ? "text-xs" : "text-sm",
+            )}
+          >
             <span
               className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
             >
@@ -476,12 +520,21 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               Open subagent
             </InlineButton>
           ) : null}
-          {showFailedIndicator &&
-          !showDestructiveRowStyle &&
-          !toolIconAcceptsTint(entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-          ) : null}
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
+          {toolCallCards ? (
+            <ToolCallMeta entry={workEntry} state={callState} />
+          ) : (
+            <>
+              {showFailedIndicator &&
+              !showDestructiveRowStyle &&
+              !toolIconAcceptsTint(entryToolIcon) ? (
+                <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+              ) : null}
+              <TimelineRowTimestamp
+                createdAt={workEntry.createdAt}
+                timestampFormat={timestampFormat}
+              />
+            </>
+          )}
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
@@ -491,7 +544,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           >
             <ChevronRightIcon
               className={cn(
-                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                toolCallCards
+                  ? "size-3.5 shrink-0 text-icon-muted transition-transform duration-200"
+                  : "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
                 expanded && "rotate-90",
               )}
             />

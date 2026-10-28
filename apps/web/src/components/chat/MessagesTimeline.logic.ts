@@ -563,6 +563,7 @@ type MessagesTimelineRowContent =
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       hasFailure: boolean;
+      groupedEntries: WorkLogEntry[];
     }
   | {
       kind: "turn-fold";
@@ -1892,6 +1893,7 @@ export function deriveMessagesTimelineRows(input: {
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            groupedEntries: visibleGroupedEntries,
           });
           if (expanded) {
             nextRows.push(
@@ -2444,7 +2446,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
-        a.hasFailure === bw.hasFailure
+        a.hasFailure === bw.hasFailure &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
       );
     }
 

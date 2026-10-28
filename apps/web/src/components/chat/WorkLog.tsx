@@ -8,7 +8,8 @@ import {
 } from "react";
 import { cn } from "../../lib/utils";
 
-const GroupedRows = createContext(false);
+/** Rows in a list sit flush; rows in a tool card get room to scan. */
+const GroupedRows = createContext<"standalone" | "grouped" | "card">("standalone");
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
 export function WorkLogBlock({
@@ -35,9 +36,15 @@ export function WorkLogBlock({
   );
 }
 
-export function WorkLogList({ children }: { children: ReactNode }) {
+export function WorkLogList({
+  density = "grouped",
+  children,
+}: {
+  density?: "grouped" | "card";
+  children: ReactNode;
+}) {
   return (
-    <GroupedRows value>
+    <GroupedRows value={density}>
       <div className="flex min-w-0 flex-col">{children}</div>
     </GroupedRows>
   );
@@ -84,10 +91,11 @@ const interactionClassName =
   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
 function useRowClassName(interactive: boolean) {
-  const grouped = use(GroupedRows);
+  const density = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
-    grouped ? "py-0" : "py-0.5",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors data-running:bg-foreground/[0.05]",
+    density === "grouped" ? "py-0" : "py-0.5",
+    density === "card" && "px-2 hover:bg-foreground/[0.03]",
     interactive && interactionClassName,
   );
 }
