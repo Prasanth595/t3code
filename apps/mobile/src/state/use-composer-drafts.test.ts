@@ -170,7 +170,9 @@ import {
   collectComposerContextReferences,
   composerRecallContext,
   formatComposerContextReference,
+  recallComposerText,
 } from "@t3tools/shared/composerContextReferences";
+import { serializeComposerMessageForServer } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
@@ -476,17 +478,39 @@ describe("mobile composer drafts", () => {
     },
   );
 
-  it("keeps recall provenance through a recovered draft's unchanged save", () => {
-    const context = { version: 1, records: [], composerRecall: "  original\n" } as const;
-    const restored = decodePersistedComposerState({
-      schemaVersion: 1,
-      drafts: { thread: { text: "original", attachments: [], context } },
-    }).drafts.thread!;
-    expect(
-      composerRecallContext("original", restored.text, restored.context, "original")
-        ?.composerRecall,
-    ).toBe("  original\n");
-  });
+  it.each([0, 1])(
+    "keeps recall provenance only through a recovered draft's unchanged save (%s records)",
+    (recordCount) => {
+      const referenceDraft = contextDraft(0, recordCount);
+      const references = referenceDraft.text ? ` ${referenceDraft.text}` : "";
+      const text = `original${references}`;
+      const context = { ...referenceDraft.context!, composerRecall: "  original\n" };
+      const restored = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { thread: { text, attachments: [], context } },
+      }).drafts.thread!;
+      appAtomRegistry.set(composerDraftsAtom, { thread: restored });
+      setComposerDraftText("thread", text);
+      const unchanged = getComposerDraftSnapshot("thread");
+      expect(
+        composerRecallContext(text, unchanged.text, unchanged.context, text)?.composerRecall,
+      ).toBe("  original\n");
+      const unchangedMessage = serializeComposerMessageForServer(unchanged.text, unchanged.context);
+      expect(recallComposerText(unchangedMessage.text, unchangedMessage.context)).toBe(
+        "  original\n",
+      );
+
+      const editedAuthored = "  changed after recovery\n";
+      setComposerDraftText("thread", `${editedAuthored}${references}`);
+      const edited = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { thread: getComposerDraftSnapshot("thread") },
+      }).drafts.thread!;
+      const sent = serializeComposerMessageForServer(edited.text, edited.context);
+      expect(recallComposerText(sent.text, sent.context)).toBe(editedAuthored);
+      expect(edited.context?.records).toEqual(context.records);
+    },
+  );
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const environmentId = EnvironmentId.make("environment-1");
