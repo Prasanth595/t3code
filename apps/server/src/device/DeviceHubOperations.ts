@@ -66,7 +66,11 @@ export const makeDeviceHubOperations = (options: {
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
   /** Discover both platforms once per refresh, including devices the hub has never seen boot. */
-  readonly availablePlatforms: Effect.Effect<{ readonly ios: boolean; readonly android: boolean }>;
+  readonly availablePlatforms: Effect.Effect<{
+    readonly ios: boolean;
+    readonly android: boolean;
+    readonly probeFailed?: boolean;
+  }>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -127,6 +131,11 @@ export const makeDeviceHubOperations = (options: {
         ),
     );
     const details = warnings?.map((error) => error.message) ?? [];
+    if (available.probeFailed) {
+      details.push(
+        "Could not determine host platform availability. Device discovery may be incomplete.",
+      );
+    }
     if (available.ios) {
       const inventory = yield* run("xcrun", ["simctl", "list", "devices", "--json"]);
       const decoded = yield* decodeSimctlDeviceList(inventory.stdout).pipe(Effect.result);

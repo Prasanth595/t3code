@@ -324,7 +324,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               android: value.platforms.some((p) => p.platform === "android" && p.available),
             };
           }),
-          Effect.orElseSucceed(() => ({ ios: false, android: false })),
+          Effect.orElseSucceed(() => ({ ios: false, android: false, probeFailed: true })),
         ),
       }),
       ...(remote.daemonPort !== undefined &&

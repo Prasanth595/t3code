@@ -27,6 +27,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let failForward = true;
     let rejectConfig = true;
     let iosAvailable = true;
+    let failProbe = false;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -82,6 +83,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
               : {}),
           });
+          if (mode === "probe" && failProbe) {
+            output = "probe failed";
+            exitCode = 1;
+          }
           if (mode === "") {
             output = `${"verbose-prefix ".repeat(400)}PANIC: emulator SDK is broken\n`;
             exitCode = 1;
@@ -157,6 +162,14 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         // One fresh probe for both platforms, not the startup snapshot or two SSH sessions.
         expect(modes.slice(before)).toEqual(["probe"]);
       }
+      failProbe = true;
+      const incomplete = yield* ready.devices.list;
+      expect(incomplete.devices).toEqual([]);
+      expect(incomplete.detail).toBe(
+        "Could not determine host platform availability. Device discovery may be incomplete.",
+      );
+      failProbe = false;
+      expect((yield* ready.devices.list).detail).toBeUndefined();
       const failed = yield* ready.run("emulator", ["-list-avds"]);
       expect(failed.code).toBe(1);
       expect(failed.stdout).toMatch(/^\[truncated\]/);
