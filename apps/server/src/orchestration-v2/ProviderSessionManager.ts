@@ -188,6 +188,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly workflows: boolean;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
@@ -389,6 +390,7 @@ export const layerWithOptions = (
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
+        readonly workflows: boolean;
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
       }
@@ -416,16 +418,22 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        sessionWorkflows?: boolean,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
-          ? mcpSessions
-              .clear(threadId)
-              .pipe(Effect.as<PreparedMcpCredential>({ mcpCredentialId: undefined, issued: false }))
+          ? mcpSessions.clear(threadId).pipe(
+              Effect.as<PreparedMcpCredential>({
+                mcpCredentialId: undefined,
+                issued: false,
+                workflows: false,
+              }),
+            )
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const agentAccess = yield* agentAccessSettings(threadId);
+                const workflows = sessionWorkflows ?? agentAccess.workflows;
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests"]);
@@ -445,7 +453,7 @@ export const layerWithOptions = (
                 const deviceToolsAvailable = agentAccess.device && !workflowMember;
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                if (agentAccess.workflows && !workflowMember) capabilities.add("workflows");
+                if (workflows && !workflowMember) capabilities.add("workflows");
                 const subagent = lineage?.relationshipToParent === "subagent";
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
@@ -468,12 +476,17 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("workflows") === capabilities.has("workflows") &&
                     resolved.capabilities.has("orchestration") ===
                       capabilities.has("orchestration") &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
-                    return { mcpCredentialId: existing.providerSessionId, issued: false };
+                    return {
+                      mcpCredentialId: existing.providerSessionId,
+                      issued: false,
+                      workflows,
+                    };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
@@ -487,7 +500,11 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
-                return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+                return {
+                  mcpCredentialId: credential.config.providerSessionId,
+                  issued: true,
+                  workflows,
+                };
               }),
             );
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
@@ -1242,7 +1259,7 @@ export const layerWithOptions = (
               ...entry,
               attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
             });
-            return [entry.runtime, updated] as const;
+            return [entry, updated] as const;
           }),
         );
 
@@ -1325,11 +1342,15 @@ export const layerWithOptions = (
           const attach = Effect.gen(function* () {
             const attached = yield* attachThread(input).pipe(
               // Record without interruption so cleanup undoes only this call's attachment.
-              Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
+              Effect.tap((entry) => Effect.sync(() => (attachedTo = entry?.runtime))),
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                attached.workflows,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -2160,6 +2181,7 @@ export const layerWithOptions = (
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
+                workflows: prepared.workflows,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:

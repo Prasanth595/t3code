@@ -38,6 +38,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { t3OrchestrationInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -3753,4 +3755,95 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     });
     assert.isTrue(child?.capabilities?.has("device"));
   }),
+);
+
+it.effect.each([
+  { issued: false, rotation: "browser" },
+  { issued: true, rotation: "browser" },
+  { issued: false, rotation: "device" },
+  { issued: true, rotation: "device" },
+  { issued: false, rotation: "token" },
+  { issued: true, rotation: "token" },
+] as const)(
+  "workflow capability stays with the live session through $rotation rotation, then refreshes after idle release (issued=$issued)",
+  ({ issued, rotation }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settingsLayer = ServerSettings.layerTest({
+        workflows: issued,
+        enableAgentBrowserAccess: false,
+        enableAgentDeviceAccess: false,
+      });
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("thread:workflow-session-lifetime");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const input = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const runtime = yield* manager.open(input);
+        const check = (expected: boolean) =>
+          Effect.gen(function* () {
+            const config = (yield* mcpSessions.read(threadId))!;
+            const scope = (yield* registry.resolve(
+              config.authorizationHeader.replace(/^Bearer\s+/, ""),
+            ))!;
+            assert.equal(scope.capabilities.has("workflows"), expected);
+            const visible = yield* Effect.sync(
+              McpInvocationContext.visibleToMembersWith("workflows"),
+            ).pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, scope));
+            assert.equal(visible, expected);
+            assert.equal(
+              t3OrchestrationInstructions(config.capabilities?.has("workflows")).includes(
+                "workflow_start",
+              ),
+              expected,
+            );
+            return config;
+          });
+        const original = yield* check(issued);
+        yield* settings.updateSettings({
+          workflows: !issued,
+          enableAgentBrowserAccess: rotation === "browser",
+          enableAgentDeviceAccess: rotation === "device",
+        });
+        yield* manager.detach({
+          threadId,
+          providerSessionId,
+          detail: "Reattach after capability or token rotation.",
+        });
+        if (rotation === "token") {
+          yield* registry.revokeThread(threadId);
+          yield* mcpSessions.clear(threadId);
+        }
+        assert.strictEqual(yield* manager.open(input), runtime);
+        const rotated = yield* check(issued);
+        assert.notEqual(rotated.providerSessionId, original.providerSessionId);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        yield* TestClock.adjust("1 second");
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.isUndefined(yield* mcpSessions.read(threadId));
+        const resumed = yield* manager.open(input);
+        assert.notStrictEqual(resumed, runtime);
+        yield* check(!issued);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 1_000, serverSettingsLayer: settingsLayer }).pipe(
+            Layer.provideMerge(settingsLayer),
+          ),
+        ),
+      );
+    }),
 );
