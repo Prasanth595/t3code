@@ -99,10 +99,7 @@ export function PullRequestReviewForm({
       return;
     }
     // Preserve comments and summary edits made during submission.
-    removeComments(
-      reviewKey,
-      submittedComments.map((comment) => comment.id),
-    );
+    removeComments(reviewKey, submittedComments);
     clearSummary(reviewKey, submittedBody);
     toastManager.add({ type: "success", title: verdict.sent(term) });
     onSubmitted();

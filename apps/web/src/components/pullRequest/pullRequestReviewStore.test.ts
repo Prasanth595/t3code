@@ -19,13 +19,15 @@ describe("pull request review drafts", () => {
   it("removes only the line comments included in a submitted snapshot", () => {
     const store = usePullRequestReviewStore.getState();
     store.addComment("review-a", comment("submitted"));
-    const submittedIds =
-      usePullRequestReviewStore.getState().drafts["review-a"]?.map((entry) => entry.id) ?? [];
+    store.addComment("review-a", comment("edited-in-flight"));
+    const submitted = usePullRequestReviewStore.getState().drafts["review-a"] ?? [];
 
     usePullRequestReviewStore.getState().addComment("review-a", comment("added-in-flight"));
-    usePullRequestReviewStore.getState().removeComments("review-a", submittedIds);
+    usePullRequestReviewStore.getState().editComment("review-a", "edited-in-flight", "Revised");
+    usePullRequestReviewStore.getState().removeComments("review-a", submitted);
 
     expect(usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([
+      comment("edited-in-flight", "Revised"),
       comment("added-in-flight"),
     ]);
   });

@@ -7,7 +7,7 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { HammerIcon, MessageSquareIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -74,11 +74,21 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
 
 export function PendingReviewCommentCard({
   comment,
+  onEdit,
   onRemove,
 }: {
   comment: PendingReviewComment;
+  onEdit: (body: string) => void;
   onRemove: () => void;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = () => {
+    const body = draft?.trim() ?? "";
+    if (body.length === 0) return;
+    onEdit(body);
+    setDraft(null);
+  };
+
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -88,17 +98,58 @@ export function PendingReviewCommentCard({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
         <span>Pending. Sent when you submit the review</span>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="Discard this comment"
-          onClick={onRemove}
-        >
-          <Trash2Icon className="size-3.5" />
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          {draft === null ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Edit this comment"
+              onClick={() => setDraft(comment.body)}
+            >
+              <PencilIcon className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Discard this comment"
+            onClick={onRemove}
+          >
+            <Trash2Icon className="size-3.5" />
+          </Button>
+        </div>
       </div>
-      <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      {draft === null ? (
+        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      ) : (
+        <div className="mt-2">
+          <Textarea
+            autoFocus
+            size="sm"
+            value={draft}
+            aria-label="Edit this comment"
+            onChange={(event) => setDraft(event.target.value)}
+            onFocus={(event) => {
+              const end = event.currentTarget.value.length;
+              event.currentTarget.setSelectionRange(end, end);
+            }}
+            onKeyDown={submitKeys({
+              value: draft,
+              pending: false,
+              onSubmit: save,
+              onCancel: () => setDraft(null),
+            })}
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <Button size="xs" variant="ghost" onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+            <Button size="xs" disabled={draft.trim().length === 0} onClick={save}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

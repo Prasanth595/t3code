@@ -24,8 +24,9 @@ interface PullRequestReviewStoreState {
   readonly drafts: Readonly<Record<string, ReadonlyArray<PendingReviewComment>>>;
   readonly summaries: Readonly<Record<string, string>>;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
+  readonly editComment: (key: string, commentId: string, body: string) => void;
   readonly removeComment: (key: string, commentId: string) => void;
-  readonly removeComments: (key: string, commentIds: ReadonlyArray<string>) => void;
+  readonly removeComments: (key: string, comments: ReadonlyArray<PendingReviewComment>) => void;
   readonly clear: (key: string) => void;
   readonly setSummary: (key: string, body: string) => void;
   readonly clearSummary: (key: string, submittedBody: string) => void;
@@ -40,6 +41,17 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
     set((state) => ({
       drafts: { ...state.drafts, [key]: [...(state.drafts[key] ?? EMPTY), comment] },
     })),
+  editComment: (key, commentId, body) =>
+    set((state) => {
+      const comments = state.drafts[key] ?? EMPTY;
+      if (!comments.some((entry) => entry.id === commentId && entry.body !== body)) return state;
+      return {
+        drafts: {
+          ...state.drafts,
+          [key]: comments.map((entry) => (entry.id === commentId ? { ...entry, body } : entry)),
+        },
+      };
+    }),
   removeComment: (key, commentId) =>
     set((state) => {
       const remaining = (state.drafts[key] ?? EMPTY).filter((entry) => entry.id !== commentId);
@@ -47,10 +59,11 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
       const { [key]: _removed, ...rest } = state.drafts;
       return { drafts: rest };
     }),
-  removeComments: (key, commentIds) =>
+  removeComments: (key, comments) =>
     set((state) => {
-      const submitted = new Set(commentIds);
-      const remaining = (state.drafts[key] ?? EMPTY).filter((entry) => !submitted.has(entry.id));
+      // By identity: a comment edited during submission is a new object and stays pending.
+      const submitted = new Set(comments);
+      const remaining = (state.drafts[key] ?? EMPTY).filter((entry) => !submitted.has(entry));
       if (remaining.length > 0) return { drafts: { ...state.drafts, [key]: remaining } };
       const { [key]: _removed, ...rest } = state.drafts;
       return { drafts: rest };

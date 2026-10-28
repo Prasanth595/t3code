@@ -63,6 +63,7 @@ export interface ExcerptCommenting {
     readonly startPosition?: PullRequestReviewPosition | undefined;
     readonly body: string;
   }) => void;
+  readonly onEdit: (commentId: string, body: string) => void;
   readonly onRemove: (commentId: string) => void;
   readonly onAskAgent: ((comment: ReviewCommentContext, request: string) => void) | null;
 }
@@ -315,6 +316,7 @@ function ExcerptDiff({
               <PendingReviewCommentCard
                 key={comment.id}
                 comment={comment}
+                onEdit={(body) => commenting?.onEdit(comment.id, body)}
                 onRemove={() => commenting?.onRemove(comment.id)}
               />
             ))}
