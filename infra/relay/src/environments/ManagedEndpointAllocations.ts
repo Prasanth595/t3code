@@ -255,7 +255,7 @@ const make = Effect.gen(function* () {
           createdAt: now,
           updatedAt: now,
         })
-        // Re-reserving refreshes updatedAt, which keeps a pending row inside the tunnel limit's pending window.
+        // Refreshing updatedAt makes a re-reserved row count toward the tunnel limit again.
         .onConflictDoUpdate({
           target: [
             relayManagedEndpointAllocations.userId,

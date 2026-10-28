@@ -21,7 +21,7 @@ const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
   {
-    operation: Schema.Literals(["lock-user", "load-limit", "count-tunnels"]),
+    operation: Schema.Literals(["transaction", "lock-user", "load-limit", "count-tunnels"]),
     userId: Schema.String,
     cause: Schema.Defect(),
   },
@@ -48,7 +48,7 @@ export class ManagedTunnelLimitExceeded extends Schema.TaggedError<ManagedTunnel
 export class ManagedTunnelLimits extends Context.Service<
   ManagedTunnelLimits,
   {
-    /** Run `reserve` only while the user is under their limit, serialized per user so concurrent reservations cannot overshoot it. */
+    /** Runs `reserve` only while the user is under their limit, serialized per user in one transaction. */
     readonly withCapacity: <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
@@ -64,24 +64,38 @@ const make = Effect.gen(function* () {
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
     ): Effect.fn.Return<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R> {
-      const persistenceError =
-        (operation: ManagedTunnelLimitPersistenceError["operation"]) => (cause: unknown) =>
-          new ManagedTunnelLimitPersistenceError({ operation, userId: input.userId, cause });
-
       const checkAndReserve = Effect.gen(function* () {
-        // Held until commit, so the count below includes every reservation that won the lock earlier.
+        // Held until commit, so the count below sees every reservation that took the lock first.
         yield* db
           .execute(
             sql`select pg_advisory_xact_lock(hashtextextended(${`managed-tunnel-limit:${input.userId}`}, 0))`,
           )
-          .pipe(Effect.mapError(persistenceError("lock-user")));
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ManagedTunnelLimitPersistenceError({
+                  operation: "lock-user",
+                  userId: input.userId,
+                  cause,
+                }),
+            ),
+          );
 
         const overrides = yield* db
           .select({ maxTunnels: relayManagedTunnelLimits.maxTunnels })
           .from(relayManagedTunnelLimits)
           .where(eq(relayManagedTunnelLimits.userId, input.userId))
           .limit(1)
-          .pipe(Effect.mapError(persistenceError("load-limit")));
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ManagedTunnelLimitPersistenceError({
+                  operation: "load-limit",
+                  userId: input.userId,
+                  cause,
+                }),
+            ),
+          );
         const maxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
         const pendingCutoff = DateTime.formatIso(
@@ -89,9 +103,8 @@ const make = Effect.gen(function* () {
             minutes: MANAGED_TUNNEL_PENDING_WINDOW_MINUTES,
           }),
         );
-        // Count reservations, not links: links are written only after provisioning creates Cloudflare resources.
-        // A row counts while recently reserved (provisioning may be in flight) or while it holds a live tunnel
-        // for a link that is neither revoked nor publish-only. Exclude this environment so relinking stays idempotent.
+        // Counts allocations, not links: a link is written only after its tunnel exists.
+        // Excludes this environment so relinking at the limit stays idempotent.
         const counted = yield* db
           .select({ activeTunnels: count() })
           .from(relayManagedEndpointAllocations)
@@ -126,7 +139,16 @@ const make = Effect.gen(function* () {
               ),
             ),
           )
-          .pipe(Effect.mapError(persistenceError("count-tunnels")));
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ManagedTunnelLimitPersistenceError({
+                  operation: "count-tunnels",
+                  userId: input.userId,
+                  cause,
+                }),
+            ),
+          );
         const activeTunnels = counted[0]?.activeTunnels ?? 0;
 
         if (activeTunnels >= maxTunnels) {
@@ -140,13 +162,18 @@ const make = Effect.gen(function* () {
         return yield* reserve;
       });
 
-      return yield* db.$client
-        .withTransaction(checkAndReserve)
-        .pipe(
-          Effect.mapError((cause) =>
-            SqlError.isSqlError(cause) ? persistenceError("lock-user")(cause) : cause,
-          ),
-        );
+      // Statements inside map their own SqlErrors, so any left here come from opening or committing the transaction.
+      return yield* db.$client.withTransaction(checkAndReserve).pipe(
+        Effect.mapError((cause) =>
+          SqlError.isSqlError(cause)
+            ? new ManagedTunnelLimitPersistenceError({
+                operation: "transaction",
+                userId: input.userId,
+                cause,
+              })
+            : cause,
+        ),
+      );
     }),
   });
 });
