@@ -398,6 +398,21 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
+/** What besides its wake time ends a snooze. */
+export const ThreadSnoozeWakeOn = Schema.Literal("pull-request-reply");
+export type ThreadSnoozeWakeOn = typeof ThreadSnoozeWakeOn.Type;
+
+/** Why a `pull-request-reply` snooze woke, for the woken thread to show. */
+export const ThreadSnoozeWakeReason = Schema.Struct({
+  kind: Schema.Literals(["reply", "merged", "closed"]),
+  pullRequestNumber: PositiveInt,
+  pullRequestUrl: TrimmedNonEmptyString,
+  actor: Schema.NullOr(TrimmedNonEmptyString),
+  reviewState: Schema.NullOr(Schema.Literals(["approved", "changes-requested", "commented"])),
+  url: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ThreadSnoozeWakeReason = typeof ThreadSnoozeWakeReason.Type;
+
 export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
   runId: RunId,
   resetAt: IsoDateTime,
@@ -475,6 +490,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeWakeOn: Schema.optional(Schema.NullOr(ThreadSnoozeWakeOn)),
+  snoozeWakeReason: Schema.optional(Schema.NullOr(ThreadSnoozeWakeReason)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
@@ -2071,6 +2088,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeWakeOn: Schema.optional(Schema.NullOr(ThreadSnoozeWakeOn)),
+  snoozeWakeReason: Schema.optional(Schema.NullOr(ThreadSnoozeWakeReason)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2918,6 +2937,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    wakeOn: Schema.optional(ThreadSnoozeWakeOn),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
