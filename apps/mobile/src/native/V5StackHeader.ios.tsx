@@ -289,7 +289,14 @@ export function V5StackHeader(props: {
     [...leading, ...trailing].reduce(
       (width, item) =>
         width +
-        (item.type !== "spacer" ? BAR_BUTTON_WIDTH : item.sizing === "fixed" ? item.width : 0),
+        (item.type === "spacer"
+          ? item.sizing === "fixed"
+            ? item.width
+            : 0
+          : // The keyboard dismiss rides the vertical bar, not beside the title.
+            item.id === "dismiss-keyboard"
+            ? 0
+            : BAR_BUTTON_WIDTH),
       0,
     );
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
