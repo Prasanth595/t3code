@@ -79,6 +79,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
   const readProjectGroupCount = () =>
     buildSidebarProjectSnapshots({
       projects: readProjects(),
+      groupScratchProjects: true,
       settings: selectProjectGroupingSettings(getClientSettings()),
       primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
       resolveEnvironmentLabel: () => null,
