@@ -7,7 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne, or } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the widget token hash feeds synchronous insert values.
@@ -20,7 +20,12 @@ export class DeviceRegistrationPersistenceError extends Schema.TaggedError<Devic
   {
     userId: Schema.String,
     deviceId: Schema.String,
-    stage: Schema.Literals(["claim-push-token", "claim-push-to-start-token", "upsert-device"]),
+    stage: Schema.Literals([
+      "claim-push-token",
+      "claim-push-to-start-token",
+      "claim-widget-token",
+      "upsert-device",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -82,6 +87,9 @@ const make = Effect.gen(function* () {
       });
       const updatedAt = DateTime.formatIso(yield* DateTime.now);
       const registration = input.registration;
+      const widgetAccessTokenHash = registration.widgetAccessToken
+        ? NodeCrypto.createHash("sha256").update(registration.widgetAccessToken).digest("hex")
+        : null;
 
       // Alchemy's lazy drizzle proxies become Effects only at yield*; Effect.all sends raw proxies into a spinning fiber.
       if (registration.pushToken) {
@@ -119,6 +127,32 @@ const make = Effect.gen(function* () {
           );
       }
 
+      if (widgetAccessTokenHash !== null) {
+        yield* db
+          .update(relayMobileDevices)
+          .set({ widgetAccessTokenHash: null, widgetPushToken: null, updatedAt })
+          .where(
+            and(
+              eq(relayMobileDevices.widgetAccessTokenHash, widgetAccessTokenHash),
+              or(
+                ne(relayMobileDevices.userId, input.userId),
+                ne(relayMobileDevices.deviceId, registration.deviceId),
+              ),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new DeviceRegistrationPersistenceError({
+                  userId: input.userId,
+                  deviceId: registration.deviceId,
+                  stage: "claim-widget-token",
+                  cause,
+                }),
+            ),
+          );
+      }
+
       yield* db
         .insert(relayMobileDevices)
         .values({
@@ -133,9 +167,7 @@ const make = Effect.gen(function* () {
           apsEnvironment: registration.apsEnvironment ?? null,
           pushToken: registration.pushToken ?? null,
           pushToStartToken: registration.pushToStartToken ?? null,
-          widgetAccessTokenHash: registration.widgetAccessToken
-            ? NodeCrypto.createHash("sha256").update(registration.widgetAccessToken).digest("hex")
-            : null,
+          widgetAccessTokenHash,
           preferencesJson: registration.preferences,
           createdAt: updatedAt,
           updatedAt,
@@ -159,9 +191,8 @@ const make = Effect.gen(function* () {
                 excluded.push_to_start_token,
                 ${relayMobileDevices.pushToStartToken}
               )`,
-            widgetAccessTokenHash: registration.widgetAccessToken
-              ? NodeCrypto.createHash("sha256").update(registration.widgetAccessToken).digest("hex")
-              : sql`${relayMobileDevices.widgetAccessTokenHash}`,
+            widgetAccessTokenHash:
+              widgetAccessTokenHash ?? sql`${relayMobileDevices.widgetAccessTokenHash}`,
             preferencesJson: registration.preferences,
             updatedAt,
           },

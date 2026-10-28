@@ -66,11 +66,16 @@ const make = Effect.gen(function* () {
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
     readonly replay?: boolean;
+    readonly refreshWidget: boolean;
   }) {
-    const widgetDeliveries = yield* widgets.notify({ userId: input.deliveryUser.userId }).pipe(
-      Effect.tapError((cause) => Effect.logWarning("Widget refresh enqueue failed", { cause })),
-      Effect.orElseSucceed(() => []),
-    );
+    const widgetDeliveries = input.refreshWidget
+      ? yield* widgets.notify({ userId: input.deliveryUser.userId }).pipe(
+          Effect.tapError((cause) => Effect.logWarning("Widget refresh enqueue failed", { cause })),
+          Effect.orElseSucceed(() => []),
+        )
+      : [];
+    if (!input.deliveryUser.notificationsEnabled && !input.deliveryUser.liveActivitiesEnabled)
+      return widgetDeliveries;
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
@@ -222,9 +227,10 @@ const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
+      let changed = true;
       if (input.state) {
         // Inbox rows are removed by settlement or archival, not by elapsed time.
-        yield* rows.upsert({
+        changed = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
         });
@@ -239,6 +245,7 @@ const make = Effect.gen(function* () {
       const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
+        includeDisabled: true,
       });
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
@@ -249,6 +256,7 @@ const make = Effect.gen(function* () {
             state: input.state,
             replay: input.replay ?? false,
             nowMs: now.epochMilliseconds,
+            refreshWidget: !input.replay || changed,
           }),
         { concurrency: 4 },
       );

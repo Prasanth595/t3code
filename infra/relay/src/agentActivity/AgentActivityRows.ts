@@ -68,7 +68,7 @@ export class AgentActivityRows extends Context.Service<
     readonly upsert: (input: {
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
-    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    }) => Effect.Effect<boolean, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
@@ -122,7 +122,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* db
+      const changed = yield* db
         .insert(relayAgentActivityRows)
         .values({
           environmentId: input.state.environmentId,
@@ -142,7 +142,9 @@ const make = Effect.gen(function* () {
             stateJson,
             updatedAt: input.state.updatedAt,
           },
+          setWhere: sql`${relayAgentActivityRows.stateJson} is distinct from excluded.state_json`,
         })
+        .returning({ threadId: relayAgentActivityRows.threadId })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -153,6 +155,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+      return changed.length > 0;
     }),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {

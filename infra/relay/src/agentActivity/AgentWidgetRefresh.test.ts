@@ -107,7 +107,7 @@ function fixture(
       Layer.mergeAll(
         Layer.succeed(RelayDb.RelayDb, db),
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
-          upsert: () => Effect.void,
+          upsert: () => Effect.succeed(true),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           getForUserThread: () => Effect.succeed(null),

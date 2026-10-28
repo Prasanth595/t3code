@@ -105,7 +105,7 @@ export function retainUnconfirmedWidgetActivities(
     const environmentRows = relayRows.filter((row) => row.environmentId === environmentId);
     const confirmed =
       rows.length === 0
-        ? complete && environmentRows.every((row) => !isActive(row))
+        ? complete
         : rows.every(
             (row) =>
               environmentRows.some(

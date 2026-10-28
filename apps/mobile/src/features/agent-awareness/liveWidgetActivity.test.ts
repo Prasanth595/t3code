@@ -401,11 +401,16 @@ describe("live widget activity", () => {
     expect(
       retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([row()])),
     ).toEqual(observed);
-    expect(
-      retainUnconfirmedWidgetActivities(observed, new Map(), observed, {
-        aggregate: { ...snapshot([row()]).aggregate!, totalCount: 1 },
-      }).size,
-    ).toBe(0);
+    const resumed = {
+      ...snapshot([row(ENVIRONMENT)]),
+      aggregate: { ...snapshot([row(ENVIRONMENT)]).aggregate!, totalCount: 1 },
+    };
+    const released = retainUnconfirmedWidgetActivities(observed, new Map(), observed, resumed);
+    expect(released.size).toBe(0);
+    expect(reconcileWidgetActivity(released, resumed)).toMatchObject({
+      activeCount: 1,
+      activities: [row(ENVIRONMENT)],
+    });
     expect(
       retainUnconfirmedWidgetActivities(observed, new Map(), observed, {
         aggregate: null,
