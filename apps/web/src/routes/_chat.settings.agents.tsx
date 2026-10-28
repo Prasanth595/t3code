@@ -29,4 +29,6 @@ function SettingsAgentsRoute() {
   );
 }
 
-export const Route = createFileRoute("/settings/agents")({ component: SettingsAgentsRoute });
+export const Route = createFileRoute("/_chat/settings/agents")({
+  component: SettingsAgentsRoute,
+});
