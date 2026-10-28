@@ -193,6 +193,9 @@ for example, put **Other Bluetooth** above your AirPods so a new headset is pref
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
 microphone. Swipe a device left to forget it.
 
+Voice input transcribes in your iPhone's language. To dictate in another language,
+such as Brazilian Portuguese, pick it under **Settings → Microphone → Dictation language**.
+
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
 
