@@ -425,12 +425,19 @@ describe("readAntigravityUsage", () => {
         }),
       );
       const saved = yield* fileSystem.readFileString(cacheFile);
-      assert.strictEqual(
-        Object.keys((yield* decodeAntigravityUsageCache(saved)).databases).length,
-        1,
-      );
-      // A new service on the same state dir reproduces the result from the saved cache.
-      assert.deepStrictEqual(yield* withService((scan) => scan()), first);
+      const databases = (yield* decodeAntigravityUsageCache(saved)).databases;
+      assert.strictEqual(Object.keys(databases).length, 1);
+      // A new service on the same state dir must take its records from the saved file, not a rescan:
+      // an edited cached record shows up in the result while the database fingerprint is unchanged.
+      const edited = JSON.parse(saved);
+      for (const entry of Object.values<any>(edited.databases)) {
+        for (const candidate of entry.candidates)
+          candidate.record.sessionId = "restored-from-cache";
+      }
+      yield* fileSystem.writeFileString(cacheFile, JSON.stringify(edited));
+      const restored = yield* withService((scan) => scan());
+      assert.notInclude(JSON.stringify(first), "restored-from-cache");
+      assert.include(JSON.stringify(restored), "restored-from-cache");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
