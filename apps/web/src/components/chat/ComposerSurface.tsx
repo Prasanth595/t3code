@@ -13,18 +13,23 @@ function Shell({
       data-with-context={contextStrip || undefined}
       className={cn(
         "@container/composer-surface group/composer-surface relative isolate mx-auto w-full max-w-(--chat-content-max-width)",
-        "[--chat-composer-drawer-inset:1.375rem] [--chat-composer-glass-surface:var(--card)] [--chat-composer-outline:rgb(0_0_0/8%)]",
+        "[--chat-composer-action-radius:1rem] [--chat-composer-action-inset:0.75rem] sm:[--chat-composer-action-inset:1rem]",
+        "has-data-[chat-composer-action-size=large]:[--chat-composer-action-radius:1.125rem] sm:has-data-[chat-composer-action-size=large]:[--chat-composer-action-radius:1rem] sm:has-data-[chat-composer-action-size=small]:[--chat-composer-action-radius:0.875rem]",
+        // The outer corner and inset action share a center, including the one-pixel surface border.
+        "[--chat-composer-radius:calc(var(--chat-composer-action-radius)+var(--chat-composer-action-inset)+1px)] [--chat-composer-inner-radius:calc(var(--chat-composer-radius)-1px)]",
+        "has-data-[chat-composer-resting=true]:[--chat-composer-action-inset:calc(1.5rem-var(--chat-composer-action-radius))] has-data-[chat-composer-mobile-collapsed=true]:[--chat-composer-action-inset:calc(1.5rem-var(--chat-composer-action-radius))]",
+        "[--chat-composer-drawer-inset:1.75rem] [--chat-composer-glass-surface:var(--card)] [--chat-composer-outline:rgb(0_0_0/8%)]",
         "dark:[--chat-composer-glass-surface:var(--surface-raised)] dark:[--chat-composer-highlight:rgb(255_255_255/3%)] dark:[--chat-composer-outline:color-mix(in_srgb,var(--color-white)_5%,transparent)]",
         "[html[data-theme-id]_&]:[--chat-composer-glass-surface:var(--app-theme-surface-raised)] [html[data-theme-id]_&]:[--chat-composer-outline:var(--app-theme-toolbar-border)]",
         "dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-highlight:color-mix(in_srgb,var(--app-theme-input)_12%,transparent)] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-outline:color-mix(in_srgb,var(--app-theme-input)_30%,var(--background))]",
         "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-highlight:color-mix(in_srgb,#432d48_12%,transparent)] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-outline:#241e28]",
-        "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-2xl before:bg-(--chat-composer-glass-surface)/(--glass-opacity) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
+        "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-(--chat-composer-radius) before:bg-(--chat-composer-glass-surface)/(--glass-opacity) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-glass-surface)",
         "has-data-[composer-banner-surface=attached]:before:hidden data-model-strip-transition:before:hidden",
         contextStrip && [
           "[--chat-composer-context-extension:2.25rem] sm:[--chat-composer-context-extension:2rem]",
           "supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:rounded-none",
-          "before:[clip-path:shape(from_0_16px,curve_to_16px_0_with_0_7.16px/7.16px_0,line_to_calc(100%-16px)_0,curve_to_100%_16px_with_calc(100%-7.16px)_0/100%_7.16px,line_to_100%_calc(100%-var(--chat-composer-context-extension)-16px),curve_to_calc(100%-16px)_calc(100%-var(--chat-composer-context-extension))_with_100%_calc(100%-var(--chat-composer-context-extension)-7.16px)/calc(100%-7.16px)_calc(100%-var(--chat-composer-context-extension)),line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-var(--chat-composer-context-extension)),line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-16px),curve_to_calc(100%-var(--chat-composer-drawer-inset)-16px)_100%_with_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-7.16px)/calc(100%-var(--chat-composer-drawer-inset)-7.16px)_100%,line_to_calc(var(--chat-composer-drawer-inset)+16px)_100%,curve_to_var(--chat-composer-drawer-inset)_calc(100%-16px)_with_calc(var(--chat-composer-drawer-inset)+7.16px)_100%/var(--chat-composer-drawer-inset)_calc(100%-7.16px),line_to_var(--chat-composer-drawer-inset)_calc(100%-var(--chat-composer-context-extension)),line_to_16px_calc(100%-var(--chat-composer-context-extension)),curve_to_0_calc(100%-var(--chat-composer-context-extension)-16px)_with_7.16px_calc(100%-var(--chat-composer-context-extension))/0_calc(100%-var(--chat-composer-context-extension)-7.16px),line_to_0_16px,close)]",
+          "before:[clip-path:shape(from_0_var(--chat-composer-radius),arc_to_var(--chat-composer-radius)_0_of_var(--chat-composer-radius)_cw,line_to_calc(100%-var(--chat-composer-radius))_0,arc_to_100%_var(--chat-composer-radius)_of_var(--chat-composer-radius)_cw,line_to_100%_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-radius)),arc_to_calc(100%-var(--chat-composer-radius))_calc(100%-var(--chat-composer-context-extension))_of_var(--chat-composer-radius)_cw,line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-var(--chat-composer-context-extension)),line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-16px),arc_to_calc(100%-var(--chat-composer-drawer-inset)-16px)_100%_of_16px_cw,line_to_calc(var(--chat-composer-drawer-inset)+16px)_100%,arc_to_var(--chat-composer-drawer-inset)_calc(100%-16px)_of_16px_cw,line_to_var(--chat-composer-drawer-inset)_calc(100%-var(--chat-composer-context-extension)),line_to_var(--chat-composer-radius)_calc(100%-var(--chat-composer-context-extension)),arc_to_0_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-radius))_of_var(--chat-composer-radius)_cw,line_to_0_var(--chat-composer-radius),close)]",
           "not-supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:bottom-(--chat-composer-context-extension)",
         ],
         className,
@@ -45,7 +50,7 @@ function Host({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-host"
       className={cn(
-        "relative z-10 w-full rounded-2xl shadow-composer after:z-1 dark:shadow-none",
+        "relative z-10 w-full rounded-(--chat-composer-radius) shadow-composer after:z-1 dark:shadow-none",
         outlineClasses,
         contextSeamClasses,
         "group-has-data-[composer-banner-surface=attached]/composer-surface:shadow-none group-has-data-[composer-banner-surface=attached]/composer-surface:after:hidden",
@@ -61,7 +66,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
     <div
       data-chat-composer-main-surface="true"
       className={cn(
-        "group relative z-10 rounded-2xl p-px",
+        "group relative z-10 rounded-(--chat-composer-radius) p-px",
         "group-data-model-strip-transition/composer-surface:bg-(--chat-composer-glass-surface)/(--glass-opacity) group-data-model-strip-transition/composer-surface:backdrop-blur-(--glass-blur) group-data-model-strip-transition/composer-surface:backdrop-saturate-(--glass-saturation)",
         outlineClasses,
         contextSeamClasses,
