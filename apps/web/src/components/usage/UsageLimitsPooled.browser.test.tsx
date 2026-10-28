@@ -35,8 +35,24 @@ it("keeps the account label and reset summary on a one-account row of a multi-ac
                         id: "primary",
                         kind: "session",
                         label: "Session",
-                        usedPercent: 29,
+                        usedPercent: 0,
                         resetsAt: "2026-10-28T03:55:00.000Z",
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: "later-session",
+                  driver,
+                  usageLimits: {
+                    checkedAt,
+                    windows: [
+                      {
+                        id: "primary",
+                        kind: "session",
+                        label: "Session",
+                        usedPercent: 29,
+                        resetsAt: "2026-10-28T05:00:00.000Z",
                       },
                     ],
                   },
@@ -74,4 +90,5 @@ it("keeps the account label and reset summary on a one-account row of a multi-ac
   );
   await expect.element(screen.getByText("monthly-only", { exact: true }).first()).toBeVisible();
   await expect.element(screen.getByText("Next account reset in 29d 17h")).toBeVisible();
+  await expect.element(screen.getByText("Next account reset in 2h 55m")).toBeVisible();
 });

@@ -186,7 +186,7 @@ function PoolWindowCard({
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextReset = pool.resets[0];
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
@@ -219,10 +219,10 @@ function PoolWindowCard({
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextRefill ? (
+      {nextReset ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
           Next account reset{" "}
-          {formatResetsIn(nextRefill.member.window, now)
+          {formatResetsIn(nextReset.member.window, now)
             ?.replace("resets in ", "in ")
             .replace("resets now", "now")}
         </Text>

@@ -547,7 +547,7 @@ function PoolWindowCard({
   readonly label?: string | undefined;
   readonly description?: string | undefined;
 }) {
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextReset = pool.resets[0];
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -566,10 +566,10 @@ function PoolWindowCard({
             Across {pool.members.length} accounts
           </span>
         ) : null}
-        {nextRefill && providerAccountCount > 1 ? (
+        {nextReset && providerAccountCount > 1 ? (
           <span className="text-xs font-medium text-foreground tabular-nums">
             Next account reset{" "}
-            {formatResetsIn(nextRefill.member.window, now)?.replace("resets ", "")}
+            {formatResetsIn(nextReset.member.window, now)?.replace("resets ", "")}
           </span>
         ) : null}
       </div>
