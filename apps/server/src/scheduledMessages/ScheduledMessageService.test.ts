@@ -34,27 +34,35 @@ it.effect("sends a due message on its thread and ignores a cancelled one", () =>
       Layer.provide(
         Layer.mergeAll(
           NodeCrypto.layer,
-          Scheduler.layer,
+          Layer.mock(Scheduler.Scheduler)({
+            register: () => Effect.void,
+          }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (input: { readonly text: string }) =>
               Effect.sync(() => {
                 sent.push(input.text);
-                return { dispatch: {} };
+                return {
+                  dispatch: {},
+                } as unknown as ThreadManagementService.ThreadManagementSendResult;
               }),
           }),
         ),
       ),
     );
     yield* Effect.gen(function* () {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T14:00:00.000Z")));
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T14:00:00.000Z")),
+      );
       const service = yield* ScheduledMessageService.ScheduledMessageService;
       const created = yield* service.create(yield* decodeCreate(messageInput));
       expect(created.message.status).toBe("pending");
       yield* service.dispatchDue();
       expect(sent).toEqual([]);
 
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T15:00:01.000Z")));
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T15:00:01.000Z")),
+      );
       const cancelled = yield* service.cancel({ id: created.message.id });
       expect(cancelled.cancelled).toBe(true);
       yield* service.dispatchDue();
@@ -63,7 +71,9 @@ it.effect("sends a due message on its thread and ignores a cancelled one", () =>
       const again = yield* service.create(
         yield* decodeCreate({ ...messageInput, sendAt: "2026-10-28T16:00:00.000Z" }),
       );
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T16:00:01.000Z")));
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-28T16:00:01.000Z")),
+      );
       yield* service.dispatchDue();
       expect(sent).toEqual(["Check the deploy in the morning."]);
       expect(again.message.threadId).toBe(ThreadId.make("thread-schedule"));

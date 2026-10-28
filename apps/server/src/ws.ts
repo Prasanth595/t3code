@@ -2123,7 +2123,8 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.scheduledMessagesSubscribe]: (_input) => scheduledMessages.subscribe(),
-        [WS_METHODS.scheduledMessagesCreate]: (input) => scheduledMessages.create(input),
+        [WS_METHODS.scheduledMessagesCreate]: (input) =>
+          scheduledMessages.create({ ...input, createdBy: "user" }),
         [WS_METHODS.scheduledMessagesCancel]: (input) => scheduledMessages.cancel(input),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),

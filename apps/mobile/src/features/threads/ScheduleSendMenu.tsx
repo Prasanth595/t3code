@@ -10,6 +10,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useRef } from "react";
 import { Alert } from "react-native";
 
 import { ComposerActionButton } from "../../components/ComposerToolbar";
@@ -61,6 +62,7 @@ export function ScheduleSendMenu(props: {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly canSchedule: boolean;
   readonly disabled: boolean;
   readonly size?: "regular" | "large";
 }) {
@@ -76,14 +78,16 @@ export function ScheduleSendMenu(props: {
       input: {},
     }),
   );
+  const scheduling = useRef(false);
   const messages = live._tag === "Success" ? live.value.messages : [];
-  const pending = messages.filter((message) => {
-    if (message.status !== "pending") return false;
+  const listed = messages.filter((message) => {
+    if (message.status !== "pending" && message.status !== "failed") return false;
     if (props.threadId !== null) return message.threadId === props.threadId;
     return message.threadId === null && message.projectId === props.projectId;
   });
 
   const schedule = async (preset: "hour" | "three-hours" | "tomorrow") => {
+    if (scheduling.current || !props.canSchedule) return;
     const draft = getComposerDraftSnapshot(props.draftKey);
     const prompt = draft.text.trim();
     if (prompt.length === 0) return;
@@ -94,49 +98,76 @@ export function ScheduleSendMenu(props: {
       );
       return;
     }
-    const modelSelection = draft.modelSelection ?? props.modelSelection;
-    const result = await createMessage({
-      environmentId: props.environmentId,
-      input: {
-        prompt,
-        sendAt: sendAtForPreset(preset),
-        projectId: props.projectId,
-        threadId: props.threadId,
-        workspaceStrategy:
-          props.threadId === null
-            ? workspaceForSelection(draft.workspaceSelection)
-            : { type: "root" },
-        modelSelection,
-        runtimeMode: draft.runtimeMode ?? props.runtimeMode,
-        interactionMode: draft.interactionMode ?? props.interactionMode,
-        createdBy: "user",
-        creationSource: "mobile",
-      },
-    });
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      Alert.alert(
-        "Could not schedule the message",
-        error instanceof Error ? error.message : "Try again in a moment.",
-      );
-      return;
+    scheduling.current = true;
+    try {
+      const modelSelection = draft.modelSelection ?? props.modelSelection;
+      const result = await createMessage({
+        environmentId: props.environmentId,
+        input: {
+          prompt,
+          sendAt: sendAtForPreset(preset),
+          projectId: props.projectId,
+          threadId: props.threadId,
+          workspaceStrategy:
+            props.threadId === null
+              ? workspaceForSelection(draft.workspaceSelection)
+              : { type: "root" },
+          modelSelection,
+          runtimeMode: draft.runtimeMode ?? props.runtimeMode,
+          interactionMode: draft.interactionMode ?? props.interactionMode,
+          createdBy: "user",
+          creationSource: "mobile",
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not schedule the message",
+          error instanceof Error ? error.message : "Try again in a moment.",
+        );
+        return;
+      }
+      const current = getComposerDraftSnapshot(props.draftKey);
+      if (current.text.trim() === prompt && current.attachments.length === 0) {
+        clearComposerDraftContent(props.draftKey);
+      }
+    } finally {
+      scheduling.current = false;
     }
-    clearComposerDraftContent(props.draftKey);
   };
+
+  if (!props.canSchedule && listed.length === 0) return null;
 
   return (
     <Menu
       accessibilityLabel="Send later"
       actions={[
-        { id: "hour", title: "In 1 hour" },
-        { id: "three-hours", title: "In 3 hours" },
-        { id: "tomorrow", title: "Tomorrow at 9:00" },
-        ...pending.slice(0, 3).map((message) => ({
-          id: `cancel:${message.id}`,
-          title: "Cancel scheduled message",
-          subtitle: new Date(message.sendAt).toLocaleString(),
-          attributes: { destructive: true },
-        })),
+        { id: "hour", title: "In 1 hour", attributes: { disabled: !props.canSchedule } },
+        {
+          id: "three-hours",
+          title: "In 3 hours",
+          attributes: { disabled: !props.canSchedule },
+        },
+        {
+          id: "tomorrow",
+          title: "Tomorrow at 9:00",
+          attributes: { disabled: !props.canSchedule },
+        },
+        ...listed.slice(0, 3).map((message) =>
+          message.status === "failed"
+            ? {
+                id: `failed:${message.id}`,
+                title: "Could not send",
+                subtitle: message.error ?? "The message could not be sent.",
+                attributes: { disabled: true },
+              }
+            : {
+                id: `cancel:${message.id}`,
+                title: "Cancel scheduled message",
+                subtitle: new Date(message.sendAt).toLocaleString(),
+                attributes: { destructive: true },
+              },
+        ),
       ]}
       onPressAction={({ nativeEvent }) => {
         const action = nativeEvent.event;

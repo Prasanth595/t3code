@@ -20,6 +20,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -48,6 +49,7 @@ export function ScheduleSendControl(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [when, setWhen] = useState(() => localDateTimeInput(new Date(Date.now() + 60 * 60 * 1000)));
+  const [earliest, setEarliest] = useState(() => localDateTimeInput(new Date(Date.now() + 60_000)));
   const [saving, setSaving] = useState(false);
   const draftSession = useComposerDraftStore((state) =>
     props.draftId === null ? undefined : state.draftThreadsByThreadKey[props.draftId],
@@ -118,62 +120,71 @@ export function ScheduleSendControl(props: {
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Send later" />}
-        disabled={props.prompt.trim().length === 0}
-      >
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setEarliest(localDateTimeInput(new Date(Date.now() + 60_000)));
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Send later" />}>
         <AlarmClockIcon />
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" width="sm" className="flex flex-col gap-3 p-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-sm font-medium">Send later</p>
-          <p className="text-xs text-muted-foreground">
-            {props.hasAttachments
-              ? "Files and images stay on this device. Remove them to schedule the text."
-              : "The message text sends at this time. Files and images are not included."}
-          </p>
-        </div>
-        <input
-          type="datetime-local"
-          className="h-8 rounded-md border bg-background px-2 text-sm"
-          value={when}
-          min={localDateTimeInput(new Date(Date.now() + 60_000))}
-          onChange={(event) => setWhen(event.target.value)}
-        />
-        <Button size="sm" disabled={props.hasAttachments || saving} onClick={() => void schedule()}>
-          Schedule
-        </Button>
-        {pending.length > 0 ? (
-          <ul className="flex flex-col gap-2 border-t pt-2">
-            {pending.map((message) => (
-              <li key={message.id} className="flex items-start justify-between gap-2">
-                <span className="min-w-0">
-                  <span className="block truncate text-xs">{message.prompt}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {message.status === "failed"
-                      ? (message.error ?? "Could not send")
-                      : new Date(message.sendAt).toLocaleString()}
+      <PopoverPopup side="top" align="end" width="sm">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium">Send later</p>
+            <p className="text-xs text-muted-foreground">
+              {props.hasAttachments
+                ? "Files and images stay on this device. Remove them to schedule the text."
+                : "The message text sends at this time. Files and images are not included."}
+            </p>
+          </div>
+          <Input
+            type="datetime-local"
+            size="compact"
+            value={when}
+            min={earliest}
+            onChange={(event) => setWhen(event.target.value)}
+          />
+          <Button
+            size="sm"
+            disabled={props.prompt.trim().length === 0 || props.hasAttachments || saving}
+            onClick={() => void schedule()}
+          >
+            Schedule
+          </Button>
+          {pending.length > 0 ? (
+            <ul className="flex flex-col gap-2 border-t pt-2">
+              {pending.map((message) => (
+                <li key={message.id} className="flex items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs">{message.prompt}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {message.status === "failed"
+                        ? (message.error ?? "Could not send")
+                        : new Date(message.sendAt).toLocaleString()}
+                    </span>
                   </span>
-                </span>
-                {message.status === "pending" ? (
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() =>
-                      void cancelMessage({
-                        environmentId: props.environmentId,
-                        input: { id: message.id },
-                      })
-                    }
-                  >
-                    Cancel
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+                  {message.status === "pending" ? (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        void cancelMessage({
+                          environmentId: props.environmentId,
+                          input: { id: message.id },
+                        })
+                      }
+                    >
+                      Cancel
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </PopoverPopup>
     </Popover>
   );

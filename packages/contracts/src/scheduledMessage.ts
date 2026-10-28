@@ -1,11 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import {
-  IsoDateTime,
-  ProjectId,
-  ThreadId,
-  TrimmedNonEmptyString,
-} from "./baseSchemas.ts";
+import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -18,7 +13,13 @@ import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 export const ScheduledMessageId = TrimmedNonEmptyString.pipe(Schema.brand("ScheduledMessageId"));
 export type ScheduledMessageId = typeof ScheduledMessageId.Type;
 
-export const ScheduledMessageStatus = Schema.Literals(["pending", "sending", "sent", "failed", "cancelled"]);
+export const ScheduledMessageStatus = Schema.Literals([
+  "pending",
+  "sending",
+  "sent",
+  "failed",
+  "cancelled",
+]);
 export type ScheduledMessageStatus = typeof ScheduledMessageStatus.Type;
 
 export const ScheduledMessage = Schema.Struct({
@@ -82,5 +83,6 @@ export class ScheduledMessageError extends Schema.TaggedError<ScheduledMessageEr
   "ScheduledMessageError",
   {
     message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}

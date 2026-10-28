@@ -964,7 +964,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : (
                   <>
-                    {draftMessage.trim().length > 0 && props.canOperateThread ? (
+                    {props.canOperateThread &&
+                    props.serverConfig?.environment.capabilities.scheduledMessages === true ? (
                       <ScheduleSendMenu
                         environmentId={props.environmentId}
                         projectId={props.selectedThread.projectId}
@@ -973,6 +974,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         modelSelection={props.selectedThread.modelSelection}
                         runtimeMode={props.selectedThread.runtimeMode}
                         interactionMode={props.selectedThread.interactionMode}
+                        canSchedule={draftMessage.trim().length > 0}
                         disabled={isSubmissionLocked}
                         size={usesLargeControls ? "large" : "regular"}
                       />
@@ -1182,7 +1184,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     />
                   ) : voicePresentation.showsSend ? (
                     <>
-                      {draftMessage.trim().length > 0 && props.canOperateThread ? (
+                      {props.canOperateThread &&
+                      props.serverConfig?.environment.capabilities.scheduledMessages === true ? (
                         <ScheduleSendMenu
                           environmentId={props.environmentId}
                           projectId={props.selectedThread.projectId}
@@ -1191,6 +1194,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                           modelSelection={props.selectedThread.modelSelection}
                           runtimeMode={props.selectedThread.runtimeMode}
                           interactionMode={props.selectedThread.interactionMode}
+                          canSchedule={draftMessage.trim().length > 0}
                           disabled={isSubmissionLocked}
                           size={usesLargeControls ? "large" : "regular"}
                         />

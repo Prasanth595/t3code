@@ -28,9 +28,14 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 
 const MIN_LEAD_MS = 30_000;
 const MAX_LEAD_MS = 366 * 24 * 60 * 60 * 1000;
+const UNREADABLE_MESSAGE = "The scheduled message could not be read.";
 const decodeMessage = Schema.decodeUnknownEffect(ScheduledMessage);
-const encodeWorkspace = Schema.encodeSync(ScheduledMessage.fields.workspaceStrategy);
-const encodeModel = Schema.encodeSync(ScheduledMessage.fields.modelSelection);
+const WorkspaceStrategyJson = Schema.fromJsonString(ScheduledMessage.fields.workspaceStrategy);
+const ModelSelectionJson = Schema.fromJsonString(ScheduledMessage.fields.modelSelection);
+const decodeWorkspaceStrategy = Schema.decodeUnknownOption(WorkspaceStrategyJson);
+const decodeModelSelection = Schema.decodeUnknownOption(ModelSelectionJson);
+const encodeWorkspaceStrategy = Schema.encodeSync(WorkspaceStrategyJson);
+const encodeModelSelection = Schema.encodeSync(ModelSelectionJson);
 
 interface MessageRow {
   readonly message_id: string;
@@ -51,26 +56,22 @@ interface MessageRow {
   readonly sent_thread_id: string | null;
 }
 
-const messageError = (message: string) => new ScheduledMessageError({ message });
+const messageError = (message: string, cause?: unknown) =>
+  new ScheduledMessageError(cause === undefined ? { message } : { message, cause });
 const isMessageError = Schema.is(ScheduledMessageError);
 
 function rowToUnknown(row: MessageRow): unknown | null {
-  let workspaceStrategy: unknown;
-  let modelSelection: unknown;
-  try {
-    workspaceStrategy = JSON.parse(row.workspace_strategy_json);
-    modelSelection = JSON.parse(row.model_selection_json);
-  } catch {
-    return null;
-  }
+  const workspaceStrategy = decodeWorkspaceStrategy(row.workspace_strategy_json);
+  const modelSelection = decodeModelSelection(row.model_selection_json);
+  if (Option.isNone(workspaceStrategy) || Option.isNone(modelSelection)) return null;
   return {
     id: row.message_id,
     prompt: row.prompt,
     sendAt: row.send_at,
     projectId: row.project_id,
     threadId: row.thread_id,
-    workspaceStrategy,
-    modelSelection,
+    workspaceStrategy: workspaceStrategy.value,
+    modelSelection: modelSelection.value,
     runtimeMode: row.runtime_mode,
     interactionMode: row.interaction_mode,
     createdBy: row.created_by,
@@ -82,6 +83,12 @@ function rowToUnknown(row: MessageRow): unknown | null {
     sentThreadId: row.sent_thread_id,
   };
 }
+
+const markUnreadable = (sql: SqlClient.SqlClient, id: string, now: string) => sql`
+  UPDATE scheduled_messages
+  SET status = 'failed', updated_at = ${now}, error = ${UNREADABLE_MESSAGE}
+  WHERE message_id = ${id}
+`;
 
 export class ScheduledMessageService extends Context.Service<
   ScheduledMessageService,
@@ -129,21 +136,19 @@ export const layer = Layer.effect(
       return { messages };
     });
 
-    const create: ScheduledMessageService["Service"]["create"] = (input) =>
-      Effect.gen(function* () {
+    const create = Effect.fn("ScheduledMessageService.create")(
+      function* (input: ScheduledMessageCreateInput) {
         const now = yield* DateTime.now;
         const sendAt = DateTime.make(input.sendAt);
         if (Option.isNone(sendAt)) {
-          return yield* Effect.fail(messageError("Choose a real time to send this message."));
+          return yield* messageError("Choose a real time to send this message.");
         }
         const lead = DateTime.toEpochMillis(sendAt.value) - DateTime.toEpochMillis(now);
         if (lead < MIN_LEAD_MS) {
-          return yield* Effect.fail(
-            messageError("Schedule the message at least 30 seconds from now."),
-          );
+          return yield* messageError("Schedule the message at least 30 seconds from now.");
         }
         if (lead > MAX_LEAD_MS) {
-          return yield* Effect.fail(messageError("Schedule the message within the next year."));
+          return yield* messageError("Schedule the message within the next year.");
         }
         const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
         const id = ScheduledMessageId.make(`scheduled-message:${uuid}`);
@@ -177,8 +182,8 @@ export const layer = Layer.effect(
             ${message.sendAt},
             ${message.projectId},
             ${message.threadId},
-            ${JSON.stringify(encodeWorkspace(message.workspaceStrategy))},
-            ${JSON.stringify(encodeModel(message.modelSelection))},
+            ${encodeWorkspaceStrategy(message.workspaceStrategy)},
+            ${encodeModelSelection(message.modelSelection)},
             ${message.runtimeMode},
             ${message.interactionMode},
             ${message.createdBy},
@@ -192,14 +197,14 @@ export const layer = Layer.effect(
         `;
         yield* notify;
         return { message };
-      }).pipe(
-        Effect.mapError((cause) =>
-          isMessageError(cause) ? cause : messageError("Could not schedule the message."),
-        ),
-      );
+      },
+      Effect.mapError((cause) =>
+        isMessageError(cause) ? cause : messageError("Could not schedule the message.", cause),
+      ),
+    );
 
-    const cancel: ScheduledMessageService["Service"]["cancel"] = (input) =>
-      Effect.gen(function* () {
+    const cancel = Effect.fn("ScheduledMessageService.cancel")(
+      function* (input: ScheduledMessageCancelInput) {
         const now = DateTime.formatIso(yield* DateTime.now);
         const updated = yield* sql<{ message_id: string }>`
           UPDATE scheduled_messages
@@ -209,10 +214,16 @@ export const layer = Layer.effect(
         `;
         yield* notify;
         return { cancelled: updated.length > 0 };
-      }).pipe(Effect.mapError(() => messageError("Could not cancel the scheduled message.")));
+      },
+      Effect.mapError((cause) =>
+        isMessageError(cause)
+          ? cause
+          : messageError("Could not cancel the scheduled message.", cause),
+      ),
+    );
 
-    const dispatchDue: ScheduledMessageService["Service"]["dispatchDue"] = () =>
-      Effect.gen(function* () {
+    const dispatchDue = Effect.fn("ScheduledMessageService.dispatchDue")(
+      function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
           UPDATE scheduled_messages SET status = 'pending', updated_at = ${now}
@@ -236,47 +247,48 @@ export const layer = Layer.effect(
           if (row === undefined) continue;
           const unknown = rowToUnknown(row);
           if (unknown === null) {
-            yield* sql`
-              UPDATE scheduled_messages
-              SET status = 'failed', updated_at = ${now}, error = ${"The scheduled message could not be read."}
-              WHERE message_id = ${id}
-            `;
+            yield* markUnreadable(sql, id, now);
             continue;
           }
-          const decoded = yield* decodeMessage(unknown).pipe(
-            Effect.mapError(() => messageError("The scheduled message could not be read.")),
-          );
+          const parsed = yield* Effect.result(decodeMessage(unknown));
+          if (parsed._tag === "Failure") {
+            yield* markUnreadable(sql, id, now);
+            continue;
+          }
+          const decoded = parsed.success;
           const commandId = CommandId.make(`scheduled-message:${decoded.id}`);
           const messageId = MessageId.make(`scheduled-message:${decoded.id}:message`);
           const sent = yield* Effect.exit(
-            decoded.threadId === null
-              ? threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: decoded.projectId,
-                    title: decoded.prompt.slice(0, 80),
-                    modelSelection: decoded.modelSelection,
-                    runtimeMode: decoded.runtimeMode,
-                    interactionMode: decoded.interactionMode,
-                    workspaceStrategy: decoded.workspaceStrategy,
-                    initialMessage: { messageId, text: decoded.prompt, attachments: [] },
-                    createdBy: decoded.createdBy,
-                    creationSource: decoded.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId))
-              : threadManagement
-                  .sendToThread({
-                    projectId: decoded.projectId,
-                    commandId,
-                    threadId: ThreadId.make(decoded.threadId),
-                    messageId,
-                    text: decoded.prompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: decoded.createdBy,
-                    creationSource: decoded.creationSource,
-                  })
-                  .pipe(Effect.as(ThreadId.make(decoded.threadId))),
+            Effect.gen(function* () {
+              if (decoded.threadId === null) {
+                const launched = yield* threadLaunch.launch({
+                  commandId,
+                  projectId: decoded.projectId,
+                  title: decoded.prompt.slice(0, 80),
+                  modelSelection: decoded.modelSelection,
+                  runtimeMode: decoded.runtimeMode,
+                  interactionMode: decoded.interactionMode,
+                  workspaceStrategy: decoded.workspaceStrategy,
+                  initialMessage: { messageId, text: decoded.prompt, attachments: [] },
+                  createdBy: decoded.createdBy,
+                  creationSource: decoded.creationSource,
+                });
+                return launched.threadId;
+              }
+              const threadId = ThreadId.make(decoded.threadId);
+              yield* threadManagement.sendToThread({
+                projectId: decoded.projectId,
+                commandId,
+                threadId,
+                messageId,
+                text: decoded.prompt,
+                attachments: [],
+                mode: "queue",
+                createdBy: decoded.createdBy,
+                creationSource: decoded.creationSource,
+              });
+              return threadId;
+            }),
           );
           const finishedAt = DateTime.formatIso(yield* DateTime.now);
           if (sent._tag === "Success") {
@@ -294,11 +306,17 @@ export const layer = Layer.effect(
           }
         }
         if (due.length > 0) yield* notify;
-      }).pipe(Effect.mapError((cause) => (isMessageError(cause) ? cause : messageError(String(cause)))));
+      },
+      Effect.mapError((cause) =>
+        isMessageError(cause)
+          ? cause
+          : messageError("Could not dispatch scheduled messages.", cause),
+      ),
+    );
 
     yield* scheduler.register(
       "scheduled-messages",
-      dispatchDue().pipe(Effect.catch(() => Effect.void)),
+      dispatchDue().pipe(Effect.ignoreCause({ log: true })),
     );
 
     const subscribe: ScheduledMessageService["Service"]["subscribe"] = () =>
@@ -310,7 +328,7 @@ export const layer = Layer.effect(
             Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => readVisible())),
           );
         }),
-      ).pipe(Stream.mapError(() => messageError("Could not list scheduled messages.")));
+      ).pipe(Stream.mapError((cause) => messageError("Could not list scheduled messages.", cause)));
 
     return ScheduledMessageService.of({ subscribe, create, cancel, dispatchDue });
   }),

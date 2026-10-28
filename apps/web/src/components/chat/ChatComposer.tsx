@@ -177,7 +177,7 @@ import {
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
-import { readThreadShell } from "~/state/entities";
+import { readThreadShell, useServerConfigs } from "~/state/entities";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
@@ -623,6 +623,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const scheduledMessagesSupported =
+    useServerConfigs().get(environmentId)?.environment.capabilities.scheduledMessages === true;
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -3817,6 +3819,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       !isComposerResting &&
                       activeProjectId !== null &&
                       canOperateThread &&
+                      scheduledMessagesSupported &&
                       !isEditingQueuedMessage ? (
                         <ScheduleSendControl
                           environmentId={environmentId}
