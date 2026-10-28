@@ -131,7 +131,7 @@ and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a
 host that reconnects mid-sweep wins.
 
-## A paid T3 Chat plan raises the tunnel cap (experimental)
+## A paid T3 Chat plan raises the tunnel cap
 
 T3 Chat uses WorkOS, not Clerk, so the two accounts are linked by consent
 rather than by a shared identity. The relay and T3 Chat share one secret

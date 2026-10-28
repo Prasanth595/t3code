@@ -53,7 +53,7 @@ export class T3ChatRequestFailed extends Schema.TaggedError<T3ChatRequestFailed>
 }
 
 /**
- * Experimental bridge to T3 Chat. T3 Chat owns the account link; the relay
+ * Bridge to T3 Chat. T3 Chat owns the account link; the relay
  * signs link requests and asks T3 Chat for the linked account's plan.
  */
 export class T3ChatAccounts extends Context.Service<

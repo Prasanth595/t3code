@@ -150,7 +150,7 @@ Required `production` environment secrets:
 
 Optional `production` environment secrets:
 
-- `T3CHAT_LINK_SECRET` for the experimental T3 Chat account link. It must match
+- `T3CHAT_LINK_SECRET` for the T3 Chat account link. It must match
   `T3CODE_LINK_SECRET` on T3 Chat.
 
 After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from

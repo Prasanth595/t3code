@@ -966,7 +966,7 @@ export type RelayOkResponse = typeof RelayOkResponse.Type;
 export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
 export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
 
-// Experimental: a linked paid T3 Chat plan raises the default managed tunnel cap.
+// A linked paid T3 Chat plan raises the default managed tunnel cap.
 export const T3CHAT_PLAN_TUNNEL_LIMITS = { pro: 10, premier: 100 } as const;
 
 export const RelayT3ChatLink = Schema.Struct({
@@ -1135,17 +1135,17 @@ const RelayClientGroup = HttpApiGroup.make("client")
       headers: RelayBearerRequestHeaders,
       success: RelayT3ChatLinkResponse,
       error: RelayAuthAndInternalErrors,
-    }).annotate(OpenApi.Summary, "Get the linked T3 Chat account (experimental)"),
+    }).annotate(OpenApi.Summary, "Get the linked T3 Chat account"),
     HttpApiEndpoint.post("createT3ChatLinkRequest", "/v1/client/t3chat-link-requests", {
       headers: RelayBearerRequestHeaders,
       success: RelayT3ChatLinkRequestResponse,
       error: RelayAuthAndInternalErrors,
-    }).annotate(OpenApi.Summary, "Start linking a T3 Chat account (experimental)"),
+    }).annotate(OpenApi.Summary, "Start linking a T3 Chat account"),
     HttpApiEndpoint.delete("unlinkT3Chat", "/v1/client/t3chat-link", {
       headers: RelayBearerRequestHeaders,
       success: RelayOkResponse,
       error: RelayAuthAndInternalErrors,
-    }).annotate(OpenApi.Summary, "Unlink the T3 Chat account (experimental)"),
+    }).annotate(OpenApi.Summary, "Unlink the T3 Chat account"),
   )
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")
   .middleware(RelayClientAuth);
