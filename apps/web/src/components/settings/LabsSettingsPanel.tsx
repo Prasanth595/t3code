@@ -51,11 +51,10 @@ function BoringSidebarRow() {
 function BoringSidebarMultilineRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  if (!settings.boringSidebarEnabled && !settings.legacySidebarEnabled) return null;
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
-      description="Show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description="In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}
