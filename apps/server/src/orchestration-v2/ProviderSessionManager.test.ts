@@ -1150,7 +1150,7 @@ it.effect(
             Effect.flatMap((hold) =>
               hold
                 ? Deferred.succeed(projectReadHeld, undefined).pipe(Effect.andThen(Effect.never))
-                : Effect.succeed(Option.some(makeBrowserAccessProject(requestedProjectId))),
+                : Effect.succeedSome(makeBrowserAccessProject(requestedProjectId)),
             ),
           ),
       });
@@ -1557,6 +1557,59 @@ it.effect(
           }),
         ),
       );
+    }),
+);
+
+it.effect.each([
+  { relationshipToParent: null, subagent: false },
+  { relationshipToParent: "subagent", subagent: true },
+] as const)(
+  "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent)",
+  ({ relationshipToParent, subagent }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-mcp-lineage");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const created = yield* makeThreadCreatedEvent({ idAllocator, threadId, now });
+        const parentThreadId = ThreadId.make("thread-provider-session-manager-mcp-parent");
+        yield* eventSink.write({
+          events: [
+            {
+              ...created,
+              payload: {
+                ...created.payload,
+                lineage:
+                  relationshipToParent === null
+                    ? created.payload.lineage
+                    : { parentThreadId, relationshipToParent, rootThreadId: parentThreadId },
+              },
+            },
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        const token = (yield* Ref.get(mcpConfigs))[0]?.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        assert.isDefined(token);
+        assert.equal((yield* registry.resolve(token!))?.thread.subagent, subagent);
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
     }),
 );
 
@@ -2845,6 +2898,92 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
+);
+
+it.effect.each(["manual_shutdown", "server_shutdown"] as const)(
+  "ProviderSessionManagerV2 preserves questions only for server shutdown (%s)",
+  (reason) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-request-expire",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-request-expire",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread,
+          now,
+        });
+        yield* eventSink.write({
+          events: pendingRequest.events.map((event) =>
+            event.type === "turn-item.updated"
+              ? {
+                  ...event,
+                  payload: {
+                    ...event.payload,
+                    type: "user_input_request",
+                    questions: [
+                      { id: "color", header: "Color", question: "Which color?", options: [] },
+                    ],
+                  },
+                }
+              : event.type === "runtime-request.updated"
+                ? { ...event, payload: { ...event.payload, kind: "user_input" } }
+                : event,
+          ),
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.release({
+          providerSessionId,
+          reason,
+        });
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = projection.runtimeRequests.at(-1);
+        const requestNode = projection.nodes.find((node) => node.id === request?.nodeId);
+        const requestTurnItem = projection.turnItems.find(
+          (item) => item.type === "user_input_request" && item.requestId === request?.id,
+        );
+
+        const preserved = reason === "server_shutdown";
+        assert.equal(request?.status, preserved ? "pending" : "cancelled");
+        assert.equal(request?.responseCapability.type, preserved ? "live" : "not_resumable");
+        assert.equal(requestNode?.status, preserved ? "waiting" : "cancelled");
+        assert.equal(requestTurnItem?.status, preserved ? "waiting" : "cancelled");
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests without a run", () =>
