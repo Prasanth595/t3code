@@ -155,10 +155,11 @@ export function createWorkspaceFocusController(doc: Document) {
       composer && isWorkspaceElementVisible(composer)
         ? composer.getBoundingClientRect().top
         : Infinity;
+    const inConversationView = (element: HTMLElement) =>
+      isInScrollView(element) && element.getBoundingClientRect().top < coveredFrom;
     const listItems = isConversation
       ? Array.from(area.querySelectorAll<HTMLElement>(TIMELINE_ITEM_SELECTOR)).filter(
-          (item) =>
-            belongs(item) && isInScrollView(item) && item.getBoundingClientRect().top < coveredFrom,
+          (item) => belongs(item) && inConversationView(item),
         )
       : [];
     const listEntry =
@@ -173,7 +174,7 @@ export function createWorkspaceFocusController(doc: Document) {
     const targets = new Set([
       previous &&
       belongs(previous) &&
-      (!isConversation || (previous !== area && isInScrollView(previous)))
+      (!isConversation || (previous !== area && inConversationView(previous)))
         ? previous
         : undefined,
       isConversation ? undefined : restored,

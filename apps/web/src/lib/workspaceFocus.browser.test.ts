@@ -241,6 +241,8 @@ describe("workspace area focus", () => {
     timeline.scrollTop = timeline.scrollHeight;
     const box = timeline.getBoundingClientRect();
     composer.element.style.cssText = `position: fixed; left: 0; right: 0; top: ${box.bottom - 20}px; height: 20px`;
+    latest.tabIndex = 0;
+    latest.focus();
     composer.button.focus();
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(earlier);
