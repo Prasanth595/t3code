@@ -283,4 +283,19 @@ describe("Simlock device host", () => {
       expect(pool.ran("close")).toHaveLength(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
+
+  it.effect("holds a lease for its full maximum age, then returns it", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const host = yield* makeHost(pool, config({ maxLeaseMinutes: 5 }), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      yield* ready.devices.boot(iphone!);
+
+      yield* TestClock.adjust("299 seconds");
+      expect(pool.ran("close")).toHaveLength(0);
+      yield* TestClock.adjust("1 second");
+      expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
 });

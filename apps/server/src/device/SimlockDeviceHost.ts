@@ -254,12 +254,12 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
 
   /** Renews until the lease ends on its own or reaches its maximum age, then releases it. */
   const renewLoop = Effect.fn("SimlockDeviceHost.renewLoop")(function* (lease: Lease) {
-    const renewals = Math.floor(
-      Duration.toMillis(Duration.minutes(config.maxLeaseMinutes)) /
-        Duration.toMillis(RENEW_INTERVAL),
-    );
-    for (let index = 0; index < renewals; index++) {
-      yield* Effect.sleep(RENEW_INTERVAL);
+    let left = Duration.toMillis(Duration.minutes(config.maxLeaseMinutes));
+    while (left > 0) {
+      const wait = Math.min(left, Duration.toMillis(RENEW_INTERVAL));
+      yield* Effect.sleep(Duration.millis(wait));
+      left -= wait;
+      if (left === 0) break;
       const renewed = yield* request(
         "POST",
         `/v1/leases/${encodeURIComponent(lease.leaseId)}/renew`,

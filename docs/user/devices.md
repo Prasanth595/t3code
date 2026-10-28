@@ -141,7 +141,9 @@ token: Simlock counts every lease made with one token against the same
 requester, and allows one at a time unless the gateway's
 `lease.maxPerRequester` is raised to the host's **Devices at once**. The token
 leases devices and reaches only its own leases, but commands on a leased device
-run on its worker, so treat it like shell access to your workers. The gateway
+run on its worker, so treat it like shell access to your workers. T3 sends it
+with every request, so use an HTTPS gateway URL, or plain HTTP only over an
+encrypted network such as Tailscale. The gateway
 and workers need `capabilities.stream.enabled` and `capabilities.input.enabled`
 for the live screen and for input.
 
