@@ -688,10 +688,10 @@ export function PullRequestDetailPanel({
     if (action === "delete-branch") {
       toastManager.add({ type: "success", title: "Branch deleted" });
     }
-    if (result.value != null) {
-      if (nativeStack !== null) nativeStackQuery.refresh();
-    } else if (pullRequestActionNeedsHostRefresh(action)) {
+    if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
+    } else if (result.value != null) {
+      if (nativeStack !== null) nativeStackQuery.refresh();
     } else {
       refreshDetail();
     }
