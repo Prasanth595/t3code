@@ -22,6 +22,7 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
+    readonly moveToEnd?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -42,14 +43,14 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     const allocate: TurnItemPositionStoreV2Shape["allocate"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
-        function* ({ threadId, turnItemId, runId, runOrdinal: suppliedRunOrdinal }) {
+        function* ({ threadId, turnItemId, runId, runOrdinal: suppliedRunOrdinal, moveToEnd }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
           FROM orchestration_v2_turn_item_positions
           WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
           LIMIT 1
         `;
-          if (existing[0] !== undefined) return existing[0].ordinal;
+          if (existing[0] !== undefined && !moveToEnd) return existing[0].ordinal;
 
           const runRows =
             runId === null
@@ -73,7 +74,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           WHERE thread_id = ${threadId}
             AND ordinal >= ${lowerBound}
             AND ordinal <= ${upperBound}
-          ON CONFLICT(thread_id, turn_item_id) DO NOTHING
+          ON CONFLICT(thread_id, turn_item_id) DO UPDATE SET ordinal = excluded.ordinal
         `;
           const rows = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
@@ -105,10 +106,30 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(function* (item, runOrdinal) {
+        const previous =
+          item.type === "user_message" &&
+          item.status === "completed" &&
+          (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer")
+            ? yield* sql<{ readonly status: string }>`
+                SELECT status FROM orchestration_v2_projection_turn_items
+                WHERE thread_id = ${item.threadId} AND turn_item_id = ${item.id}
+                LIMIT 1
+              `.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new TurnItemPositionStoreError({
+                      threadId: item.threadId,
+                      turnItemId: item.id,
+                      cause,
+                    }),
+                ),
+              )
+            : [];
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          moveToEnd: previous[0]?.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),

@@ -7,7 +7,14 @@ export interface UserMessageIntentBadgePresentation {
 
 export function resolveUserMessageIntentBadge(
   intent: OrchestrationV2UserMessageInputIntent | undefined,
+  queued = false,
 ): UserMessageIntentBadgePresentation | null {
+  if (queued && (intent === "steer" || intent === "promoted_queued_to_steer")) {
+    return {
+      label: "Steer queued",
+      accessibilityLabel: "Waiting for the provider to consume this message",
+    };
+  }
   switch (intent) {
     case "steer":
       return {

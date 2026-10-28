@@ -116,6 +116,15 @@ export const ProviderAdapterV2Event = Schema.Union([
     message: OrchestrationV2ConversationMessage,
   }),
   Schema.Struct({
+    type: Schema.Literal("user_message.delivery"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    runId: RunId,
+    providerTurnId: ProviderTurnId,
+    messageId: MessageId,
+    status: Schema.Literals(["pending", "completed", "failed", "cancelled"]),
+  }),
+  Schema.Struct({
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,

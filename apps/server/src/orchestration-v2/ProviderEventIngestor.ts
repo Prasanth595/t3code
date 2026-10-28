@@ -649,6 +649,38 @@ export const layer: Layer.Layer<
                   nodeId: input.event.message.nodeId,
                 }),
               ];
+            case "user_message.delivery": {
+              const event = input.event;
+              const item = yield* projections.getTurnItem({
+                threadId: event.threadId,
+                itemId: idAllocator.derive.userTurnItem({ messageId: event.messageId }),
+              });
+              if (
+                item?.type !== "user_message" ||
+                item.runId !== event.runId ||
+                item.providerTurnId !== event.providerTurnId ||
+                item.status === event.status ||
+                (event.status !== "pending" && item.status !== "pending")
+              ) {
+                return [];
+              }
+              const now = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "turn-item.updated",
+                  threadId: item.threadId,
+                  runId: item.runId,
+                  nodeId: item.nodeId,
+                  occurredAt: now,
+                  payload: {
+                    ...item,
+                    status: event.status,
+                    completedAt: event.status === "pending" ? null : now,
+                    updatedAt: now,
+                  },
+                }),
+              ];
+            }
             case "turn_item.updated":
               return [
                 yield* makeDomainEvent(input, {

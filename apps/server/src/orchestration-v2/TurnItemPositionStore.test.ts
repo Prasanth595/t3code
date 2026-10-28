@@ -11,6 +11,33 @@ const layerTest = TurnItemPositionStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
+it.effect("moves a consumed steer after intervening output within its run", () =>
+  Effect.gen(function* () {
+    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const input = {
+      threadId: ThreadId.make("thread:steer-delivery"),
+      turnItemId: TurnItemId.make("item:steer"),
+      runId: RunId.make("run:steer-delivery"),
+      runOrdinal: 1,
+    };
+    const submitted = yield* positions.allocate(input);
+    const response = yield* positions.allocate({
+      ...input,
+      turnItemId: TurnItemId.make("item:response"),
+    });
+    const nextRun = yield* positions.allocate({
+      ...input,
+      turnItemId: TurnItemId.make("item:next-run"),
+      runOrdinal: 2,
+    });
+    assert.equal(yield* positions.allocate(input), submitted);
+    const delivered = yield* positions.allocate({ ...input, moveToEnd: true });
+    assert.isAbove(delivered, response);
+    assert.isBelow(delivered, nextRun);
+    assert.equal(yield* positions.allocate(input), delivered);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("reuses an item's position without attempting another allocation insert", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

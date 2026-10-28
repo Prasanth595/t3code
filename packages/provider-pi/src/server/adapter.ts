@@ -6,6 +6,7 @@ import * as Predicate from "effect/Predicate";
 import {
   ProviderDriverKind,
   type ChatAttachment,
+  type MessageId,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -350,6 +351,7 @@ interface ActivePiTurn {
   nextItemOrdinal: number;
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
+  readonly pendingSteers: Array<{ readonly messageId: MessageId; readonly text: string }>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
@@ -563,6 +565,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const pendingPromptResponses: Array<{
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
         readonly kind: "turn_start" | "steer";
+        readonly messageId?: MessageId;
       }> = [];
       const pendingCompactResponses: Array<{
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
@@ -1459,6 +1462,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         };
       });
 
+      const emitSteerDelivery = (
+        turn: ActivePiTurn,
+        messageId: MessageId,
+        status: "pending" | "completed" | "failed" | "cancelled",
+      ) =>
+        emit({
+          type: "user_message.delivery",
+          driver: PI_PROVIDER,
+          threadId: turn.turnInput.threadId,
+          runId: turn.turnInput.runId,
+          providerTurnId: turn.providerTurn.id,
+          messageId,
+          status,
+        });
+
       const finalizeTurn = Effect.fnUntraced(function* (state: PiThreadState, readUsage = true) {
         const turn = state.activeTurn;
         if (turn === null) return;
@@ -1466,6 +1484,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const interrupted = turn.interrupted || turn.nativeAborted;
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
+        for (const steer of turn.pendingSteers.splice(0)) {
+          yield* emitSteerDelivery(turn, steer.messageId, "cancelled");
+        }
         if (turn.activeCompaction !== null) {
           const status = interrupted ? "cancelled" : turn.failure === null ? "completed" : "failed";
           yield* emitCompaction(turn, turn.activeCompaction, status);
@@ -1684,6 +1705,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           case "message_start": {
+            if (turn !== null && recordString(event["message"], "role") === "user") {
+              const text = contentText(recordField(event["message"], "content"));
+              const index = turn.pendingSteers.findIndex((steer) => steer.text === text);
+              const steer = index === -1 ? undefined : turn.pendingSteers.splice(index, 1)[0];
+              if (steer !== undefined) {
+                yield* completeOpenStreamItems(turn);
+                yield* emitSteerDelivery(turn, steer.messageId, "completed");
+              }
+            }
             if (turn !== null && recordString(event["message"], "role") === "assistant") {
               turn.sawAgentActivity = true;
               turn.messageOrdinal += 1;
@@ -1967,6 +1997,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             if (event["success"] !== false) return;
             if (command === "steer" || pendingPrompt?.kind === "steer") {
+              if (responseTurn !== null && pendingPrompt?.messageId !== undefined) {
+                const index = responseTurn.pendingSteers.findIndex(
+                  (steer) => steer.messageId === pendingPrompt.messageId,
+                );
+                if (index !== -1) {
+                  responseTurn.pendingSteers.splice(index, 1);
+                  yield* emitSteerDelivery(responseTurn, pendingPrompt.messageId, "failed");
+                }
+              }
               // A rejected steer refuses only that message; its target turn keeps running.
               yield* Effect.logWarning("Pi rejected a steer message.", {
                 errorLength: recordString(event, "error")?.length,
@@ -2451,6 +2490,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               messageOrdinal: 0,
               streamItems: new Map(),
+              pendingSteers: [],
               toolArgs: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
@@ -2598,9 +2638,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     streamingBehavior: "steer",
                     ...(payload.images.length === 0 ? {} : { images: payload.images }),
                   });
+                  const tracksDelivery = !payload.message.trimStart().startsWith("/");
+                  if (tracksDelivery) {
+                    turn.pendingSteers.push({
+                      messageId: steerInput.message.messageId,
+                      text: payload.message,
+                    });
+                    yield* emitSteerDelivery(turn, steerInput.message.messageId, "pending");
+                  }
                   pendingPromptResponses.push({
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
+                    ...(tracksDelivery ? { messageId: steerInput.message.messageId } : {}),
                   });
                 }
                 turn.settleProbeGeneration += 1;

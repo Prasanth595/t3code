@@ -4,6 +4,7 @@ import {
   CheckpointId,
   ChatAttachmentId,
   EnvironmentId,
+  MessageId,
   NodeId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -4046,6 +4047,115 @@ describe("PiAdapterV2", () => {
       yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
       assert.isFalse(fake.allRequests().some((request) => request["type"] === "abort"));
       yield* fake.closeStdout;
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports steers as consumed only when Pi starts their user messages", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      assert.equal(running.type, "provider_turn.updated");
+      if (running.type !== "provider_turn.updated") return;
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: "Hello pi" },
+      });
+      for (const text of ["first", "second"]) {
+        yield* runtime.steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: MessageId.make(`message:steer-${text}`),
+            text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        yield* fake.takeRequest("prompt");
+        const queued = yield* takeEvent((event) => event.type === "user_message.delivery");
+        assert.isTrue(queued.type === "user_message.delivery" && queued.status === "pending");
+      }
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "first" }] },
+      });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "First response" },
+      });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "second" }] },
+      });
+      const transcript: Array<string> = [];
+      yield* takeEvent((event) => {
+        if (event.type === "user_message.delivery") {
+          transcript.push(`${event.messageId}:${event.status}`);
+          return event.messageId === "message:steer-second" && event.status === "completed";
+        }
+        if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+          if (!transcript.includes(event.turnItem.text)) transcript.push(event.turnItem.text);
+        }
+        return false;
+      });
+      assert.deepEqual(transcript, [
+        "message:steer-first:completed",
+        "First response",
+        "message:steer-second:completed",
+      ]);
+      for (const outcome of ["failed", "cancelled"] as const) {
+        yield* runtime.steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            messageId: MessageId.make(`message:steer-${outcome}`),
+            text: outcome,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        yield* fake.takeRequest("prompt");
+        const queued = yield* takeEvent((event) => event.type === "user_message.delivery");
+        assert.isTrue(queued.type === "user_message.delivery" && queued.status === "pending");
+        if (outcome === "failed") {
+          yield* fake.emit({
+            type: "response",
+            command: "prompt",
+            success: false,
+            error: "Steer rejected",
+          });
+        } else {
+          yield* runtime.interruptTurn({ providerThread, providerTurnId: running.providerTurn.id });
+          yield* fake.takeRequest("abort");
+          yield* fake.emit({ type: "agent_settled" });
+        }
+        const delivery = yield* takeEvent((event) => event.type === "user_message.delivery");
+        assert.isTrue(delivery.type === "user_message.delivery" && delivery.status === outcome);
+      }
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),

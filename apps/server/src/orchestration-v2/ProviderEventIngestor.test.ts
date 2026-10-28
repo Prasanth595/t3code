@@ -327,6 +327,143 @@ it.effect("records accepted billed turn usage once without billing the context w
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
+it.effect("orders back-to-back steers by consumption rather than submission", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const sink = yield* EventSink.EventSinkV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const thread = yield* threadCreatedEvent(now);
+    yield* sink.write({ events: [thread] });
+    const providerSessionId = yield* ids.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: thread.threadId,
+    });
+    const runId = RunId.make("run:steer-delivery");
+    const providerTurnId = ProviderTurnId.make("turn:steer-delivery");
+    const base = {
+      threadId: thread.threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    const steer = (suffix: string): Extract<OrchestrationV2TurnItem, { type: "user_message" }> => {
+      const messageId = MessageId.make(`message:steer-${suffix}`);
+      return {
+        ...base,
+        id: ids.derive.userTurnItem({ messageId }),
+        type: "user_message",
+        messageId,
+        inputIntent: "promoted_queued_to_steer",
+        createdBy: "user",
+        creationSource: "mobile",
+        text: `Steer ${suffix}`,
+        attachments: [],
+      };
+    };
+    const first = steer("first");
+    const second = steer("second");
+    const deliver = (
+      item: typeof first,
+      status: "pending" | "completed" | "failed" | "cancelled",
+    ) =>
+      ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: thread.threadId,
+        event: {
+          type: "user_message.delivery",
+          driver: CODEX_DRIVER,
+          threadId: thread.threadId,
+          runId,
+          providerTurnId,
+          messageId: item.messageId,
+          status,
+        },
+      });
+    for (const item of [first, second]) {
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId: thread.threadId }),
+            type: "turn-item.updated",
+            threadId: thread.threadId,
+            occurredAt: now,
+            payload: item,
+          },
+        ],
+      });
+      yield* deliver(item, "pending");
+    }
+    yield* deliver(first, "completed");
+    const response: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("item:response-between-steers"),
+      type: "assistant_message",
+      messageId: MessageId.make("message:response-between-steers"),
+      text: "Responding to the first steer",
+      streaming: false,
+    };
+    yield* ingestor.ingestNormalized({
+      providerSessionId,
+      providerInstanceId: modelSelection.instanceId,
+      threadId: thread.threadId,
+      event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: response },
+    });
+    yield* deliver(second, "completed");
+    const projection = yield* projections.getThreadProjection(thread.threadId);
+    assert.deepEqual(
+      projection.visibleTurnItems.map((row) => row.item.id),
+      [first.id, response.id, second.id],
+    );
+    const delivered = projection.visibleTurnItems.at(-1)?.item;
+    assert.equal(delivered?.type, "user_message");
+    if (delivered?.type !== "user_message") return;
+    assert.equal(delivered.inputIntent, "promoted_queued_to_steer");
+    assert.equal(delivered.creationSource, "mobile");
+    assert.equal(delivered.status, "completed");
+    assert.deepEqual(yield* deliver(second, "completed"), []);
+    for (const status of ["failed", "cancelled"] as const) {
+      const item = steer(status);
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId: thread.threadId }),
+            type: "turn-item.updated",
+            threadId: thread.threadId,
+            occurredAt: now,
+            payload: item,
+          },
+        ],
+      });
+      yield* deliver(item, "pending");
+      const pending = yield* projections.getTurnItem({
+        threadId: thread.threadId,
+        itemId: item.id,
+      });
+      yield* deliver(item, status);
+      const settled = yield* projections.getTurnItem({
+        threadId: thread.threadId,
+        itemId: item.id,
+      });
+      assert.equal(settled?.status, status);
+      assert.equal(settled?.ordinal, pending?.ordinal);
+      assert.deepEqual(yield* deliver(item, status), []);
+      assert.deepEqual(yield* deliver(item, "completed"), []);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 layer("ProviderEventIngestorV2", (it) => {
   it.effect("normalizes provider events through the real event log and projection store", () =>
     Effect.gen(function* () {
