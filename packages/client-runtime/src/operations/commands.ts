@@ -25,6 +25,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type ThreadSnoozeWakeOn,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -106,6 +107,7 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
+  readonly wakeOn?: ThreadSnoozeWakeOn;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -552,6 +554,7 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
+    ...(input.wakeOn === undefined ? {} : { wakeOn: input.wakeOn }),
   });
 });
 

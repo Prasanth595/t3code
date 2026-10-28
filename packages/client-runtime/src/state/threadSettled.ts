@@ -1,6 +1,16 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
-import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type {
+  ThreadPullRequestLink,
+  ThreadSnoozeWakeOn,
+  ThreadSnoozeWakeReason,
+} from "@t3tools/contracts";
+import {
+  DEFAULT_SNOOZE_PRESETS,
+  MAX_SNOOZE_PRESET_MINUTES,
+  type SnoozePresetSetting,
+} from "@t3tools/contracts/settings";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
@@ -321,6 +331,59 @@ export function pickSnoozePreset(input: {
     (candidate) => candidate.kind === "after" && snoozePresetId(candidate) === input.id,
   );
   return (setting && resolveSnoozePreset(setting, input.now, input.formatTime)) ?? ahead;
+}
+
+export const PULL_REQUEST_REPLY_SNOOZE_LABEL = "Until a maintainer replies";
+
+export function canSnoozeUntilPullRequestReply(shell: {
+  readonly pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+}): boolean {
+  return visibleThreadPullRequests(shell.pullRequests).some(
+    (link) => link.snapshot?.state === "open" && link.snapshot.viewerDidAuthor === true,
+  );
+}
+
+export interface SnoozeChoice {
+  readonly snoozedUntil: string;
+  readonly wakeOn?: ThreadSnoozeWakeOn;
+}
+
+/** The command still needs a wake time, so a reply snooze carries the longest preset as a backstop. */
+export function pullRequestReplySnooze(now: Date): Required<SnoozeChoice> {
+  return {
+    snoozedUntil: new Date(now.getTime() + MAX_SNOOZE_PRESET_MINUTES * 60_000).toISOString(),
+    wakeOn: "pull-request-reply",
+  };
+}
+
+export function describeSnoozeWakeReason(reason: ThreadSnoozeWakeReason) {
+  const pullRequest = `#${reason.pullRequestNumber}`;
+  const url = reason.url ?? reason.pullRequestUrl;
+  if (reason.kind === "merged" || reason.kind === "closed") {
+    return {
+      badge: reason.kind === "merged" ? "Merged" : "Closed",
+      label: `${pullRequest} was ${reason.kind}`,
+      actionLabel: "Open pull request",
+      url,
+    };
+  }
+  const actor = reason.actor ?? "A maintainer";
+  return {
+    badge: "Replied",
+    label:
+      reason.reviewState === "approved"
+        ? `${actor} approved ${pullRequest}`
+        : reason.reviewState === "changes-requested"
+          ? `${actor} requested changes on ${pullRequest}`
+          : `${actor} commented on ${pullRequest}`,
+    actionLabel:
+      reason.url === null
+        ? "Open pull request"
+        : reason.reviewState === null
+          ? "Open comment"
+          : "Open review",
+    url,
+  };
 }
 
 export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {

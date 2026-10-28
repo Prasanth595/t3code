@@ -1,12 +1,14 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   canSnooze,
+  canSnoozeUntilPullRequestReply,
   effectiveSnoozed,
+  pullRequestReplySnooze,
   hasQueuedTurnStart,
   pickSnoozePreset,
   resolveSnoozePresets,
@@ -201,6 +203,89 @@ describe("canSnooze", () => {
         { now: NOW },
       ),
     ).toBe(true);
+  });
+});
+
+describe("snooze until a maintainer replies", () => {
+  const link = (
+    number: number,
+    snapshot: { state: "open" | "closed" | "merged"; viewerDidAuthor?: boolean } | null,
+    source: ThreadPullRequestLink["source"] = "created",
+  ): ThreadPullRequestLink => ({
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    source,
+    linkedAt: SNOOZED_AT,
+    stack: null,
+    snapshot:
+      snapshot === null
+        ? null
+        : {
+            state: snapshot.state,
+            title: "Fix",
+            headBranch: "fix",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: SNOOZED_AT,
+            ...(snapshot.viewerDidAuthor === undefined
+              ? {}
+              : { viewerDidAuthor: snapshot.viewerDidAuthor }),
+          },
+  });
+
+  it.each([
+    {
+      name: "an open PR the viewer authored",
+      links: [link(1, { state: "open", viewerDidAuthor: true })],
+      expected: true,
+    },
+    {
+      name: "someone else's open PR",
+      links: [link(1, { state: "open", viewerDidAuthor: false })],
+      expected: false,
+    },
+    {
+      name: "a host that cannot tell the author",
+      links: [link(1, { state: "open" })],
+      expected: false,
+    },
+    {
+      name: "a merged PR the viewer authored",
+      links: [link(1, { state: "merged", viewerDidAuthor: true })],
+      expected: false,
+    },
+    { name: "a PR without a snapshot", links: [link(1, null)], expected: false },
+    {
+      name: "a dismissed stack member",
+      links: [link(1, { state: "open", viewerDidAuthor: true }, "stack-dismissed")],
+      expected: false,
+    },
+    {
+      name: "a closed PR next to an open authored one",
+      links: [
+        link(1, { state: "closed", viewerDidAuthor: true }),
+        link(2, { state: "open", viewerDidAuthor: true }),
+      ],
+      expected: true,
+    },
+  ])("offers the option for $name: $expected", ({ links, expected }) => {
+    expect(canSnoozeUntilPullRequestReply({ pullRequests: links })).toBe(expected);
+  });
+
+  it("waits up to the longest preset, then wakes like a timer", () => {
+    const preset = pullRequestReplySnooze(new Date(SNOOZED_AT));
+    expect(preset).toEqual({
+      snoozedUntil: "2026-05-10T09:00:00.000Z",
+      wakeOn: "pull-request-reply",
+    });
+    const shell = makeShell({ snoozedUntil: preset.snoozedUntil });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    const afterBackstop = "2026-05-10T09:00:00.001Z";
+    expect(effectiveSnoozed(shell, { now: afterBackstop })).toBe(false);
+    expect(threadWokeAt(shell, { now: afterBackstop })).toBe(preset.snoozedUntil);
   });
 });
 
