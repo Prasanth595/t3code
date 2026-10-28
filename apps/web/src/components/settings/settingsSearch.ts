@@ -94,6 +94,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/agents": "Workflow",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
@@ -105,7 +106,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
-  "/settings/agents": "Agent presets",
   "/settings/archived": "Archive",
 };
 
@@ -211,9 +211,9 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "workflow-presets",
-    title: "Agent presets",
+    title: "Workflow",
     to: "/settings/agents",
-    searchTerms: ["workflow worker default provider model options"],
+    searchTerms: ["workflow worker presets agent presets default provider model options"],
     environmentOnly: true,
     scope: "environment",
   },
