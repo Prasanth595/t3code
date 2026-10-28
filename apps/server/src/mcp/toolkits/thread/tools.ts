@@ -50,7 +50,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     snoozedUntil: Schema.optional(IsoDateTime),
     wakeOn: Schema.optional(ThreadSnoozeWakeOn).annotate({
       description:
-        "With `snooze`: also wake when a maintainer comments on or reviews, merges, or closes an open linked PR the user authored. `snoozedUntil` stays the backstop.",
+        "With `snooze`: also wake on a maintainer reply, merge, or close on the user's open linked PRs.",
     }),
   }),
   success: Schema.Union([
