@@ -59,6 +59,25 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("keeps a call's credential through a thread-wide revocation until the call ends", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-call");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const session = yield* registry.issue({ threadId, providerInstanceId });
+    const call = yield* registry.issue({ threadId, providerInstanceId, call: true });
+    const tokenOf = (issued: typeof session) =>
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    yield* registry.revokeThread(threadId);
+    expect(yield* registry.resolve(tokenOf(session))).toBeUndefined();
+    expect((yield* registry.resolve(tokenOf(call)))?.thread.threadId).toBe(threadId);
+
+    yield* registry.revokeProviderSession(call.config.providerSessionId);
+    expect(yield* registry.resolve(tokenOf(call))).toBeUndefined();
+  }),
+);
+
 it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);

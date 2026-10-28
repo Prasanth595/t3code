@@ -229,6 +229,8 @@ const mismatchedProvider = {
   ...background,
   thread: { ...background.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
 };
+// A call acts for the chat it opened, which has no run of its own, until the call ends.
+const callCaller = { ...ended, thread: { ...ended.thread!, call: true } };
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
@@ -266,6 +268,9 @@ it.effect.each([
 
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
+  ["writes", callCaller, {}, "ran"],
+  ["acts_as_caller", callCaller, {}, "ran"],
+  ["writes_threads", callCaller, { threadId: supervisedThreadId }, "ran"],
   ["writes", background, {}, "ran"],
   ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],

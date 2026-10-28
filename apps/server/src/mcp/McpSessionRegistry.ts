@@ -19,6 +19,8 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  /** Held by a call, not a provider session: only `revokeProviderSession` ends it, never `revokeThread`. */
+  readonly call?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -107,6 +109,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          call: request.call === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
@@ -184,7 +187,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       },
     ),
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
-      yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
+      yield* revokeWhere(
+        (record) => record.scope.thread.threadId === threadId && !record.scope.thread.call,
+      );
     }),
     revokeAll: SynchronizedRef.set(state, { records: new Map() }),
   });

@@ -28,6 +28,8 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /** A voice call's credential: it acts for as long as the call lasts, which ends it. */
+  readonly call?: boolean;
 }
 
 export interface McpClientCaller {
