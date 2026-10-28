@@ -380,7 +380,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",
-    searchTerms: ["long lines code blocks tables diffs file previews"],
+    searchTerms: ["long lines code blocks diffs file previews"],
   },
   {
     id: "composer-context",
@@ -430,6 +430,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
     searchTerms: ["beta folders project tree legacy old classic sidebar"],
+  },
+  {
+    id: "boring-sidebar-multiline",
+    title: "Two-line folder rows",
+    to: "/settings/labs",
+    searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
     id: "guest-links",
