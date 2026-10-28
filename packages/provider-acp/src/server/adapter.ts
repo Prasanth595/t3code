@@ -74,6 +74,7 @@ import {
   findModelConfigOption,
   mergeToolCallState,
   parsePermissionRequest,
+  withTrackedToolCall,
   parseSessionUpdateEvent,
   toolCallVisibleOutputChanged,
   type AcpPlanUpdate,
@@ -5974,9 +5975,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               projectAcpRuntimeSessionUpdate(handlerGeneration, rawNotification),
             );
           }
-          yield* targetRuntime.handleRequestPermission((params, requestContext) =>
+          yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
               const transportRequestId = requestContext.requestId;
+              const params = withTrackedToolCall(
+                nativeParams,
+                (yield* Ref.get(activeTurn))?.tools.get(nativeParams.toolCall.toolCallId),
+              );
               const permissionQuestion = flavor.extractPermissionQuestion?.(params);
               if (permissionQuestion !== undefined) {
                 const userInput = yield* requestUserInputWithAdmission(

@@ -1179,6 +1179,27 @@ export function embeddedTerminalIdsFromSessionUpdate(
   return terminalIds.length === 0 ? undefined : { toolCallId: update.toolCallId, terminalIds };
 }
 
+/** ID-only permission requests reuse the tool context received earlier in the turn. */
+export function withTrackedToolCall(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  tracked: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (tracked === undefined) return params;
+  const { toolCall } = params;
+  const title = typeof tracked.data.title === "string" ? tracked.data.title : tracked.title;
+  return {
+    ...params,
+    toolCall: {
+      ...toolCall,
+      ...(!toolCall.title && title ? { title } : {}),
+      ...(!toolCall.kind && tracked.kind ? { kind: tracked.kind } : {}),
+      ...(toolCall.rawInput == null && tracked.data.rawInput != null
+        ? { rawInput: tracked.data.rawInput }
+        : {}),
+    },
+  };
+}
+
 export function parsePermissionRequest(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionRequest {
