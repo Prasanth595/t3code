@@ -240,7 +240,9 @@ export function ProposedPlanTimelineRow({
           cwd={ctx.markdownCwd}
           workspaceRoot={ctx.workspaceRoot}
           findActive={ctx.findActive}
-          forceExpanded={ctx.citationRequest?.citation.messageId === row.id}
+          expandKey={
+            ctx.citationRequest?.citation.messageId === row.id ? ctx.citationRequest.key : null
+          }
         />
       </AssistantCitationSource>
     </div>
