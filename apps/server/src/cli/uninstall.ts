@@ -6,6 +6,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -17,7 +18,9 @@ import {
   pinnedRuntimeVersionsDir,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { managedUninstallMessage, resolveManagedPackage } from "./packageManager.ts";
 import * as CliService from "./service.ts";
 import { findWindowsShim, resolveLauncherPath } from "./update.ts";
 
@@ -103,7 +106,7 @@ export const uninstallCommand = Command.make("uninstall", {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUninstall({ baseDir: config.baseDir, assumeYes: flags.yes }).pipe(
-        Effect.provide(CliService.layer(config)),
+        Effect.provide(Layer.mergeAll(CliService.layer(config), ProcessRunner.layer)),
       );
     }),
   ),
@@ -117,6 +120,10 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const service = yield* BootService.BootService;
+  const managed = yield* resolveManagedPackage;
+  if (managed !== undefined) {
+    return yield* new CliUninstallError({ reason: managedUninstallMessage(managed) });
+  }
   const plan = yield* planUninstall({ baseDir: input.baseDir });
 
   if (!plan.service && plan.launcher === undefined && plan.runtimeDir === undefined) {
