@@ -160,6 +160,31 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline messages", () => {
+  it("keeps overflowing content reported while the composer inset changes", async () => {
+    setup();
+    const props = baseProps();
+    const onContentOverflowChange = vi.fn();
+    const entries = [message("History\n\n".repeat(100), { role: "assistant" })];
+    const timeline = (inset: number) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        contentInsetEndAdjustment={inset}
+        onContentOverflowChange={onContentOverflowChange}
+      />
+    );
+    await using screen = await renderElement(timeline(150));
+    await vi.waitFor(() => expect(onContentOverflowChange).toHaveBeenLastCalledWith(true));
+    onContentOverflowChange.mockClear();
+
+    await screen.rerender(timeline(80));
+    await vi.waitFor(() => expect(onContentOverflowChange).toHaveBeenLastCalledWith(true));
+    expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
+
+    await screen.unmount();
+    expect(onContentOverflowChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
