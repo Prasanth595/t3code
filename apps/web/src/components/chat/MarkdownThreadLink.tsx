@@ -9,6 +9,7 @@ import {
 } from "@t3tools/shared/threadLinks";
 
 import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useThreadFamily } from "../../state/threads";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
 
@@ -25,6 +26,8 @@ export function MarkdownThreadLink(props: {
     written === null && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null,
   );
   const local = written ?? decoded;
+  // Shells leave older settled threads out; the family read brings the linked one in.
+  useThreadFamily(environmentId, local === null ? (decodedId ?? props.link.threadId) : null);
   const guess = local === null && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
   const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
