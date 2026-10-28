@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import { makeZeroClawAdapterV2 } from "./adapter.ts";
 import { ProviderAdapterProtocolError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ZEROCLAW_PROVIDER } from "./projection.ts";
-import { decodeAgentsListResult, decodeStatusResult } from "./protocol.ts";
+import { INITIALIZE_PARAMS, decodeAgentsListResult, decodeStatusResult } from "./protocol.ts";
 import { makeZeroClawRpcConnection } from "./rpc.ts";
 import { ZeroClawSettings } from "../settings.ts";
 
@@ -127,7 +127,7 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
   const probed = yield* Effect.scoped(
     Effect.gen(function* () {
       const connection = yield* makeZeroClawRpcConnection({ socketPath: input.socketPath });
-      yield* connection.request("initialize", { protocolVersion: 1 });
+      yield* connection.request("initialize", INITIALIZE_PARAMS);
       const status = yield* connection.request("status", {}).pipe(
         Effect.flatMap(decodeStatusResult),
         Effect.orElseSucceed(() => ({ version: undefined })),
@@ -138,16 +138,22 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
       );
       const catalog = yield* connection
         .request("config/catalog", {})
-        .pipe(Effect.orElseSucceed(() => ({ providers: [] as string[] })));
-      const providers = Array.isArray((catalog as { providers?: unknown }).providers)
-        ? ((catalog as { providers: unknown[] }).providers.filter(
-            (provider) => typeof provider === "string",
-          ) as string[])
+        .pipe(Effect.orElseSucceed(() => ({ model_providers: [] })));
+      // The daemon returns `{ model_providers: [{ name, display_name, local }] }`.
+      const listedProviders = (catalog as { model_providers?: unknown }).model_providers;
+      const providers = Array.isArray(listedProviders)
+        ? listedProviders.flatMap((provider: unknown) =>
+            typeof provider === "object" &&
+            provider !== null &&
+            typeof (provider as { name?: unknown }).name === "string"
+              ? [(provider as { name: string }).name]
+              : [],
+          )
         : [];
       const models: ServerProviderModel[] = [];
       for (const provider of providers) {
         const listed = yield* connection
-          .request("config/catalog-models", { provider })
+          .request("config/catalog-models", { model_provider: provider })
           .pipe(Effect.orElseSucceed(() => ({ models: [] as string[] })));
         const names = Array.isArray((listed as { models?: unknown }).models)
           ? ((listed as { models: unknown[] }).models.filter(

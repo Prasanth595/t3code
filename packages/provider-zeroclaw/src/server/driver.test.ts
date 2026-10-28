@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Driver tests probe a fake daemon over a real socket.
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -10,10 +10,13 @@ import * as Effect from "effect/Effect";
 
 import { agentOptionDescriptor, probeZeroClaw } from "./driver.ts";
 
-const withDaemon = <A, E>(use: (socketPath: string) => Effect.Effect<A, E>) =>
+const withDaemon = <A, E>(
+  use: (socketPath: string, initializeParams: unknown[]) => Effect.Effect<A, E>,
+) =>
   Effect.gen(function* () {
+    const initializeParams: unknown[] = [];
     const dir = yield* Effect.promise(() =>
-      NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "zc-driver-")),
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "zc-driver-")),
     );
     const socketPath = NodePath.join(dir, "daemon.sock");
     const server = NodeNet.createServer((socket) => {
@@ -30,20 +33,39 @@ const withDaemon = <A, E>(use: (socketPath: string) => Effect.Effect<A, E>) =>
           const frame = JSON.parse(line) as {
             id?: string;
             method?: string;
-            params?: { provider?: string };
+            params?: { model_provider?: string };
           };
           if (frame.id === undefined || frame.method === undefined) continue;
+          if (frame.method === "initialize") initializeParams.push(frame.params);
+          // Shapes match the daemon's snake_case serde output.
           const result =
             frame.method === "initialize"
-              ? { protocolVersion: 1 }
+              ? { protocol_version: 1, server_version: "0.4.0", server_pid: 1, commands: [] }
               : frame.method === "status"
-                ? { version: "0.4.0" }
+                ? {
+                    server_version: "0.4.0",
+                    protocol_version: 1,
+                    active_sessions: 0,
+                    session_ids: [],
+                  }
                 : frame.method === "agents/list"
-                  ? { agents: [{ alias: "coder" }, { alias: "reviewer" }] }
+                  ? {
+                      agents: [
+                        { alias: "coder", enabled: true, channels: [] },
+                        { alias: "reviewer", enabled: true, channels: [] },
+                      ],
+                    }
                   : frame.method === "config/catalog"
-                    ? { providers: ["openai"] }
+                    ? {
+                        model_providers: [{ name: "openai", display_name: "OpenAI", local: false }],
+                      }
                     : frame.method === "config/catalog-models"
-                      ? { models: ["gpt"] }
+                      ? {
+                          model_provider: frame.params?.model_provider,
+                          models: frame.params?.model_provider === "openai" ? ["gpt"] : [],
+                          local: false,
+                          live: false,
+                        }
                       : {};
           socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: frame.id, result })}\n`);
         }
@@ -55,11 +77,11 @@ const withDaemon = <A, E>(use: (socketPath: string) => Effect.Effect<A, E>) =>
     });
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => server.close()).pipe(
-        Effect.andThen(Effect.promise(() => NodeFS.rm(dir, { recursive: true, force: true }))),
+        Effect.andThen(Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }))),
         Effect.ignore,
       ),
     );
-    return yield* use(socketPath);
+    return yield* use(socketPath, initializeParams);
   }).pipe(Effect.scoped);
 
 describe("probeZeroClaw", () => {
@@ -80,6 +102,20 @@ describe("probeZeroClaw", () => {
           { id: "coder", label: "coder" },
           { id: "reviewer", label: "reviewer" },
         ]);
+      }),
+    ),
+  );
+
+  it.live("does not advertise elicitation support on initialize", () =>
+    withDaemon((socketPath, initializeParams) =>
+      Effect.gen(function* () {
+        yield* probeZeroClaw({
+          socketPath,
+          instanceId: ProviderInstanceId.make("zc"),
+          cache: { current: undefined },
+        });
+        // The daemon reads `elicitation: {}` as form support, so the key must be absent.
+        expect(initializeParams).toEqual([{ protocol_version: 1, clientCapabilities: {} }]);
       }),
     ),
   );

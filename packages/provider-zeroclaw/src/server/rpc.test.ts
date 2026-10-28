@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalRandom:off -- RPC tests drive a real Unix socket.
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -34,7 +34,7 @@ const makeFakeDaemon = Effect.fn("makeFakeDaemon")(function* (
   onLine?: (line: unknown, send: (message: unknown) => void) => void,
 ) {
   const dir = yield* Effect.promise(() =>
-    NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "zc-rpc-")),
+    NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "zc-rpc-")),
   );
   const socketPath = NodePath.join(dir, "daemon.sock");
   const received = yield* Queue.unbounded<unknown>();
@@ -81,7 +81,7 @@ const makeFakeDaemon = Effect.fn("makeFakeDaemon")(function* (
     Effect.sync(() => {
       server.close();
     }).pipe(
-      Effect.andThen(Effect.promise(() => NodeFS.rm(dir, { recursive: true, force: true }))),
+      Effect.andThen(Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }))),
       Effect.ignore,
     ),
   );
@@ -214,6 +214,23 @@ describe("ZeroClawRpcConnection", () => {
           });
           return Effect.void;
         });
+        const exit = yield* Fiber.join(pending);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(ZeroClawRpcError);
+        }
+      }),
+    ),
+  );
+
+  it.live("fails a request when the daemon drops the socket", () =>
+    withConnection(({ connection, daemon }) =>
+      Effect.gen(function* () {
+        const pending = yield* connection
+          .request("initialize", {}, 60_000)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Queue.take(daemon.received);
+        yield* daemon.disconnect;
         const exit = yield* Fiber.join(pending);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {

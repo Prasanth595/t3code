@@ -2,11 +2,8 @@
 import {
   MessageId,
   NodeId,
-  ProviderDriverKind,
-  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
-  RuntimeRequestId,
   ThreadId,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -15,7 +12,6 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { ProviderAdapterProtocolError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -37,11 +33,14 @@ import {
   splitModelSlug,
   type ProjectionState,
 } from "./projection.ts";
-import { decodeSessionNewResult, decodeSessionUpdate } from "./protocol.ts";
+import {
+  INITIALIZE_PARAMS,
+  UNSUPPORTED_REQUEST_ERROR,
+  decodeSessionNewResult,
+  decodeSessionUpdate,
+} from "./protocol.ts";
 import { makeZeroClawRpcConnection, type ZeroClawRpcConnection } from "./rpc.ts";
 import type { ZeroClawSettings } from "../settings.ts";
-
-export const ZeroClawAdapterV2DriverKind = ProviderDriverKind.make("zeroclaw");
 
 export interface ZeroClawAdapterV2Options {
   readonly instanceId: ProviderAdapter.ProviderAdapterV2SessionRuntime["instanceId"];
@@ -61,6 +60,8 @@ export interface ZeroClawAdapterV2Options {
 interface ThreadState {
   providerThread: OrchestrationV2ProviderThread;
   agentAlias: string;
+  /** Workspace the daemon session was opened in; a reconnect reopens it there. */
+  cwd: string;
   appliedModel: string | undefined;
   activeTurn: OrchestrationV2ProviderTurn | undefined;
   text: Map<"assistant" | "reasoning", string>;
@@ -80,37 +81,61 @@ function providerRef(nativeId: string) {
   return { driver: ZEROCLAW_PROVIDER, nativeId, strength: "strong" as const };
 }
 
-export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function* (
+export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
   options: ZeroClawAdapterV2Options,
-) {
+) => {
   const openSession = Effect.fn("ZeroClawAdapter.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
   ) {
+    // Provider requests must outlive `startTurn`: the orchestrator returns as
+    // soon as the prompt is accepted, but the JSON-RPC response can arrive later.
+    const sessionScope = yield* Effect.scope;
     const socketPath = yield* options.resolveSocketPath(options.settings);
+    // Filled in once the session map exists. The transport calls it after a
+    // reconnect, before it writes anything new.
+    const reattach: { current: Effect.Effect<void> } = { current: Effect.void };
     const connection = yield* (
       options.connect ??
       ((path: string) =>
-        makeZeroClawRpcConnection({ socketPath: path }).pipe(
-          Effect.mapError((cause) => protocolError(cause.message)),
-        ))
+        // Reconnect: a daemon reload restarts its process and drops the socket.
+        makeZeroClawRpcConnection({
+          socketPath: path,
+          reconnect: { onReconnect: () => reattach.current },
+        }).pipe(Effect.mapError((cause) => protocolError(cause.message))))
     )(socketPath);
 
-    yield* connection.request("initialize", { protocolVersion: 1 }).pipe(
+    yield* connection.request("initialize", INITIALIZE_PARAMS).pipe(
       Effect.forkChild,
       Effect.flatMap(Fiber.join),
       Effect.mapError((cause) => protocolError(cause.message)),
     );
 
+    // Elicitation is not advertised, so the daemon should send no requests.
+    // Refuse any that arrive rather than leave the daemon waiting on a timeout.
+    yield* Stream.fromQueue(connection.inboundRequests).pipe(
+      Stream.runForEach((inbound) =>
+        connection
+          .respond(inbound.id, { _tag: "error", error: UNSUPPORTED_REQUEST_ERROR })
+          .pipe(Effect.ignore),
+      ),
+      Effect.ignore,
+      Effect.forkScoped,
+    );
+
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
     const threads = new Map<string, ThreadState>();
+    /** Approval request id → the session that raised it; session/approve needs both. */
+    const approvalSessions = new Map<string, string>();
     const now = yield* DateTime.now;
+    /** The daemon runs every tool call of a session in the workspace it was opened with. */
+    const sessionCwd = input.runtimePolicy.cwd ?? "/";
 
     const providerSession: OrchestrationV2ProviderSession = {
       id: input.providerSessionId,
       driver: ZEROCLAW_PROVIDER,
       providerInstanceId: options.instanceId,
       status: "ready",
-      cwd: "/",
+      cwd: sessionCwd,
       model: input.modelSelection.model,
       capabilities: ZEROCLAW_CAPABILITIES,
       createdAt: now,
@@ -119,6 +144,32 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
     };
 
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => Queue.offer(events, event);
+
+    const emitContextUsage = Effect.fnUntraced(function* (
+      thread: ThreadState,
+      usage: { readonly usedTokens: number; readonly maxTokens?: number },
+      now: DateTime.Utc,
+    ) {
+      const activeTurn = thread.activeTurn;
+      if (activeTurn === undefined) return;
+      const providerTurn: OrchestrationV2ProviderTurn = {
+        ...activeTurn,
+        tokenUsage: {
+          usedTokens: usage.usedTokens,
+          ...(usage.maxTokens === undefined ? {} : { maxTokens: usage.maxTokens }),
+          updatedAt: DateTime.formatIso(now),
+        },
+      };
+      thread.activeTurn = providerTurn;
+      yield* emit({
+        type: "provider_turn.updated",
+        driver: ZEROCLAW_PROVIDER,
+        ...(thread.providerThread.appThreadId === null
+          ? {}
+          : { threadId: thread.providerThread.appThreadId }),
+        providerTurn,
+      });
+    });
 
     const flushText = Effect.fnUntraced(function* (thread: ThreadState) {
       for (const [kind, text] of thread.text) {
@@ -135,9 +186,47 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
     yield* Effect.gen(function* () {
       while (true) {
         yield* Effect.sleep(TEXT_FLUSH);
-        for (const thread of threads.values()) yield* flushText(thread);
+        const now = yield* DateTime.now;
+        for (const thread of threads.values()) {
+          thread.projection.now = now;
+          yield* flushText(thread);
+        }
       }
     }).pipe(Effect.forkScoped);
+
+    // A daemon reload drops the socket and restarts the process. The transport
+    // reopens it and calls this before writing anything new; the sessions do
+    // not survive the restart, so reattach each one by its id.
+    reattach.current = Effect.gen(function* () {
+      yield* connection.request("initialize", INITIALIZE_PARAMS).pipe(Effect.orDie);
+      for (const [sessionId, thread] of threads) {
+        const reattached = yield* connection
+          .request("session/new", {
+            agent_alias: thread.agentAlias,
+            cwd: thread.cwd,
+            session_id: sessionId,
+            keep_siblings: true,
+          })
+          .pipe(Effect.exit);
+        if (reattached._tag === "Failure") {
+          yield* Effect.logWarning("ZeroClaw session could not be reattached.", {
+            sessionId,
+            cause: String(reattached.cause),
+          });
+          continue;
+        }
+        const model = thread.appliedModel;
+        if (model === undefined) continue;
+        const split = splitModelSlug(model);
+        if (split === null) continue;
+        yield* connection
+          .request("session/configure", {
+            session_id: sessionId,
+            overrides: { model: split.model, model_provider: split.modelProvider },
+          })
+          .pipe(Effect.ignore);
+      }
+    });
 
     yield* Stream.fromQueue(connection.events).pipe(
       Stream.runForEach((notification) =>
@@ -164,24 +253,33 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
             thread.text.set(kind, `${thread.text.get(kind) ?? ""}${update.text}`);
             return;
           }
+          const now = yield* DateTime.now;
+          thread.projection.now = now;
           yield* flushText(thread);
+          if (
+            update.type === "approval_request" &&
+            "requestId" in update &&
+            typeof update.requestId === "string"
+          ) {
+            approvalSessions.set(update.requestId, sessionId);
+          }
           const projected = sessionUpdateToEvents(thread.projection, update);
           for (const event of projected.events) yield* emit(event);
-          if (
-            update.type === "turn_complete" &&
-            "outcome" in update &&
-            thread.activeTurn !== undefined
-          ) {
-            const outcome = update.outcome;
+          if (projected.tokenUsage !== undefined) {
+            yield* emitContextUsage(thread, projected.tokenUsage, now);
+          }
+          if (update.type === "turn_complete" && "outcome" in update) {
+            const activeTurn = thread.activeTurn;
+            if (activeTurn === undefined) return;
             thread.activeTurn = {
-              ...thread.activeTurn,
+              ...activeTurn,
               status:
-                outcome === "failed"
+                update.outcome === "failed"
                   ? "failed"
-                  : outcome === "cancelled"
+                  : update.outcome === "cancelled"
                     ? "cancelled"
                     : "completed",
-              completedAt: yield* DateTime.now,
+              completedAt: now,
             };
           }
         }),
@@ -190,8 +288,6 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
     );
 
     const request = (method: string, params: unknown, timeoutMs?: number) =>
-      // Fork here, at the call site. Forking inside the yielded effect puts the
-      // join on the fiber that sent the request, and that fiber never resumes.
       connection.request(method, params, timeoutMs).pipe(
         Effect.forkChild,
         Effect.flatMap(Fiber.join),
@@ -212,66 +308,73 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
             : undefined;
     };
 
-    // @effect-diagnostics effectFnOpportunity:off -- Effect.fn here keeps a socket reply from resuming.
-    const openThread = (threadId: ThreadId, agentAlias: string, cwd: string, sessionId?: string) =>
-      Effect.gen(function* () {
-        const created = yield* connection
-          .request("session/new", {
-            agent_alias: agentAlias,
-            cwd,
-            keep_siblings: true,
-            ...(sessionId === undefined ? {} : { session_id: sessionId }),
-          })
-          .pipe(
-            Effect.forkChild,
-            Effect.flatMap(Fiber.join),
-            Effect.mapError((cause) => protocolError(cause.message)),
-          );
-        const decoded = yield* decodeSessionNewResult(created).pipe(
+    const openThread = Effect.fn("ZeroClawAdapter.openThread")(function* (
+      threadId: ThreadId,
+      agentAlias: string,
+      cwd: string,
+      sessionId?: string,
+    ) {
+      const created = yield* connection
+        .request("session/new", {
+          agent_alias: agentAlias,
+          cwd,
+          keep_siblings: true,
+          ...(sessionId === undefined ? {} : { session_id: sessionId }),
+        })
+        .pipe(
+          Effect.forkChild,
+          Effect.flatMap(Fiber.join),
           Effect.mapError((cause) => protocolError(cause.message)),
         );
-        const createdAt = yield* DateTime.now;
-        const providerThread: OrchestrationV2ProviderThread = {
-          id: ProviderThreadId.make(`zc-${decoded.sessionId}`),
-          driver: ZEROCLAW_PROVIDER,
-          providerInstanceId: options.instanceId,
-          providerSessionId: input.providerSessionId,
-          appThreadId: threadId,
-          ownerNodeId: null,
-          nativeThreadRef: providerRef(decoded.sessionId),
-          nativeConversationHeadRef: null,
-          status: "idle",
-          firstRunOrdinal: null,
-          lastRunOrdinal: null,
-          handoffIds: [],
-          forkedFrom: null,
-          createdAt,
-          updatedAt: createdAt,
-        };
-        threads.set(decoded.sessionId, {
-          providerThread,
-          agentAlias: decoded.agentAlias ?? agentAlias,
-          appliedModel: undefined,
-          activeTurn: undefined,
-          text: new Map(),
-          projection: {
-            identity: {
-              threadId,
-              runId: null as never,
-              nodeId: NodeId.make(`zc-node-${decoded.sessionId}`),
-              providerThreadId: providerThread.id,
-              providerTurnId: ProviderTurnId.make(`zc-turn-${decoded.sessionId}`),
-              providerInstanceId: options.instanceId,
-              ordinal: 1,
-            },
-            now: createdAt,
-            items: new Map(),
-            subagents: new Map(),
-            nextOrdinal: 0,
+      const decoded = yield* decodeSessionNewResult(created).pipe(
+        Effect.mapError((cause) => protocolError(cause.message)),
+      );
+      const createdAt = yield* DateTime.now;
+      const providerThread: OrchestrationV2ProviderThread = {
+        id: ProviderThreadId.make(`zc-${decoded.sessionId}`),
+        driver: ZEROCLAW_PROVIDER,
+        providerInstanceId: options.instanceId,
+        providerSessionId: input.providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: providerRef(decoded.sessionId),
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      threads.set(decoded.sessionId, {
+        providerThread,
+        agentAlias: decoded.agentAlias ?? agentAlias,
+        cwd,
+        appliedModel: undefined,
+        activeTurn: undefined,
+        text: new Map(),
+        projection: {
+          identity: {
+            threadId,
+            runId: null as never,
+            nodeId: NodeId.make(`zc-node-${decoded.sessionId}`),
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make(`zc-turn-${decoded.sessionId}`),
+            providerInstanceId: options.instanceId,
+            providerSessionId: input.providerSessionId,
+            ordinal: 1,
           },
-        });
-        return providerThread;
+          now: createdAt,
+          items: new Map(),
+          tools: new Map(),
+          subagents: new Map(),
+          text: { assistant: "", reasoning: "" },
+          nextOrdinal: 0,
+        },
       });
+      return providerThread;
+    });
 
     const sessionIdOf = (thread: OrchestrationV2ProviderThread) =>
       thread.nativeThreadRef?.nativeId ?? undefined;
@@ -283,138 +386,175 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
       providerSession,
       events: Stream.fromQueue(events),
       hasPendingBackgroundWork: Effect.succeed(false),
-      ensureThread: (ensureInput) =>
-        Effect.gen(function* () {
-          const agent = resolveAgent(ensureInput.modelSelection, []);
-          if (agent === undefined) return yield* protocolError(NO_AGENT_MESSAGE);
-          return yield* openThread(ensureInput.threadId, agent, providerSession.cwd);
-        }),
-      resumeThread: (resumeInput) =>
-        Effect.gen(function* () {
-          const sessionId = sessionIdOf(resumeInput.providerThread);
-          if (sessionId === undefined)
-            return yield* protocolError("Thread has no ZeroClaw session.");
-          const existing = threads.get(sessionId);
-          return yield* openThread(
-            resumeInput.threadId ??
-              resumeInput.providerThread.appThreadId ??
-              ThreadId.make("resumed"),
-            existing?.agentAlias ?? options.settings.defaultAgentAlias,
-            providerSession.cwd,
-            sessionId,
-          );
-        }),
-      startTurn: (turnInput) =>
-        Effect.gen(function* () {
-          const sessionId = sessionIdOf(turnInput.providerThread);
-          const thread = sessionId === undefined ? undefined : threads.get(sessionId);
-          if (thread === undefined) return yield* protocolError("Thread is not open.");
-          const requestedAgent = getModelSelectionStringOptionValue(
-            turnInput.modelSelection,
-            "agent",
-          );
-          if (
-            requestedAgent !== undefined &&
-            requestedAgent.length > 0 &&
-            requestedAgent !== thread.agentAlias
-          ) {
-            return yield* protocolError(AGENT_MISMATCH_MESSAGE(thread.agentAlias, requestedAgent));
-          }
-          const model = turnInput.modelSelection.model;
-          if (model !== (thread.appliedModel ?? "default")) {
-            if (model === "default") {
-              if (thread.appliedModel !== undefined) {
-                return yield* protocolError(DEFAULT_RESTORE_MESSAGE(thread.appliedModel));
-              }
-            } else {
-              const split = splitModelSlug(model);
-              if (split === null)
-                return yield* protocolError(`Cannot switch to model \`${model}\`.`);
-              yield* request("session/configure", {
-                session_id: sessionId,
-                model: split.model,
-                model_provider: split.modelProvider,
-              });
-              thread.appliedModel = model;
+      ensureThread: Effect.fn("ZeroClawAdapter.ensureThread")(function* (ensureInput) {
+        const agent = resolveAgent(ensureInput.modelSelection, []);
+        if (agent === undefined) return yield* protocolError(NO_AGENT_MESSAGE);
+        return yield* openThread(
+          ensureInput.threadId,
+          agent,
+          ensureInput.runtimePolicy.cwd ?? sessionCwd,
+        );
+      }),
+      resumeThread: Effect.fn("ZeroClawAdapter.resumeThread")(function* (resumeInput) {
+        const sessionId = sessionIdOf(resumeInput.providerThread);
+        if (sessionId === undefined) return yield* protocolError("Thread has no ZeroClaw session.");
+        const existing = threads.get(sessionId);
+        return yield* openThread(
+          resumeInput.threadId ??
+            resumeInput.providerThread.appThreadId ??
+            ThreadId.make("resumed"),
+          existing?.agentAlias ?? options.settings.defaultAgentAlias,
+          resumeInput.runtimePolicy?.cwd ?? sessionCwd,
+          sessionId,
+        );
+      }),
+      startTurn: Effect.fn("ZeroClawAdapter.startTurn")(function* (turnInput) {
+        const sessionId = sessionIdOf(turnInput.providerThread);
+        const thread = sessionId === undefined ? undefined : threads.get(sessionId);
+        if (thread === undefined) return yield* protocolError("Thread is not open.");
+        const requestedAgent = getModelSelectionStringOptionValue(
+          turnInput.modelSelection,
+          "agent",
+        );
+        if (
+          requestedAgent !== undefined &&
+          requestedAgent.length > 0 &&
+          requestedAgent !== thread.agentAlias
+        ) {
+          return yield* protocolError(AGENT_MISMATCH_MESSAGE(thread.agentAlias, requestedAgent));
+        }
+        const model = turnInput.modelSelection.model;
+        if (model !== (thread.appliedModel ?? "default")) {
+          if (model === "default") {
+            if (thread.appliedModel !== undefined) {
+              return yield* protocolError(DEFAULT_RESTORE_MESSAGE(thread.appliedModel));
             }
-          }
-          const startedAt = yield* DateTime.now;
-          const providerTurn: OrchestrationV2ProviderTurn = {
-            id: ProviderTurnId.make(`zc-turn-${sessionId}-${turnInput.providerTurnOrdinal}`),
-            providerThreadId: thread.providerThread.id,
-            nodeId: turnInput.rootNodeId,
-            runAttemptId: turnInput.attemptId,
-            nativeTurnRef: null,
-            ordinal: turnInput.providerTurnOrdinal,
-            status: "running",
-            startedAt,
-            completedAt: null,
-          };
-          thread.activeTurn = providerTurn;
-          thread.projection = {
-            ...thread.projection,
-            identity: {
-              ...thread.projection.identity,
-              runId: turnInput.runId,
-              nodeId: turnInput.rootNodeId,
-              providerTurnId: providerTurn.id,
-              ordinal: turnInput.providerTurnOrdinal,
-            },
-            now: startedAt,
-          };
-          yield* emit({
-            type: "provider_turn.updated",
-            driver: ZEROCLAW_PROVIDER,
-            threadId: turnInput.threadId,
-            providerTurn,
-          });
-          // A turn can run for minutes; completion arrives as turn_complete.
-          yield* request(
-            "session/prompt",
-            { session_id: sessionId, text: turnInput.message.text },
-            0,
-          ).pipe(Effect.forkChild);
-        }),
-      steerTurn: (steerInput) =>
-        Effect.gen(function* () {
-          const sessionId = sessionIdOf(steerInput.providerThread);
-          if (sessionId === undefined) return yield* protocolError("Thread is not open.");
-          yield* request("session/steer", { session_id: sessionId, text: steerInput.message.text });
-        }),
-      interruptTurn: (interruptInput) =>
-        Effect.gen(function* () {
-          const sessionId = sessionIdOf(interruptInput.providerThread);
-          if (sessionId === undefined) return yield* protocolError("Thread is not open.");
-          yield* request("session/cancel", { session_id: sessionId });
-        }),
-      respondToRuntimeRequest: (responseInput) =>
-        Effect.gen(function* () {
-          if (responseInput.decision !== undefined) {
-            const decision = approvalDecisionToZeroClaw(responseInput.decision);
-            yield* request("session/approve", {
-              request_id: responseInput.requestId,
-              decision,
+          } else {
+            const split = splitModelSlug(model);
+            if (split === null) return yield* protocolError(`Cannot switch to model \`${model}\`.`);
+            yield* request("session/configure", {
+              session_id: sessionId,
+              overrides: { model: split.model, model_provider: split.modelProvider },
             });
-            if (responseInput.decision === "cancel") {
-              yield* request("session/cancel", { request_id: responseInput.requestId });
-            }
-            return;
+            thread.appliedModel = model;
           }
-          yield* connection
-            .respond(responseInput.requestId, {
-              _tag: "result",
-              result: responseInput.answers ?? responseInput.response ?? {},
-            })
-            .pipe(Effect.mapError((cause) => protocolError(cause.message)));
-        }),
-      readThreadSnapshot: (snapshotInput) =>
-        Effect.gen(function* () {
+        }
+        const startedAt = yield* DateTime.now;
+        const providerTurn: OrchestrationV2ProviderTurn = {
+          id: ProviderTurnId.make(`zc-turn-${sessionId}-${turnInput.providerTurnOrdinal}`),
+          providerThreadId: thread.providerThread.id,
+          nodeId: turnInput.rootNodeId,
+          runAttemptId: turnInput.attemptId,
+          nativeTurnRef: null,
+          ordinal: turnInput.providerTurnOrdinal,
+          status: "running",
+          startedAt,
+          completedAt: null,
+        };
+        thread.activeTurn = providerTurn;
+        thread.projection = {
+          ...thread.projection,
+          identity: {
+            ...thread.projection.identity,
+            runId: turnInput.runId,
+            nodeId: turnInput.rootNodeId,
+            providerTurnId: providerTurn.id,
+            ordinal: turnInput.providerTurnOrdinal,
+            appThread: turnInput.appThread,
+            modelSelection: turnInput.modelSelection,
+          },
+          now: startedAt,
+          text: { assistant: "", reasoning: "" },
+        };
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: ZEROCLAW_PROVIDER,
+          threadId: turnInput.threadId,
+          providerTurn,
+        });
+        // ZeroClaw's session/prompt is asynchronous: completion is signaled by
+        // session/update(turn_complete), while its JSON-RPC response may arrive
+        // much later. The response fiber must outlive startTurn, so bind it to
+        // the provider session scope rather than the orchestration caller.
+        yield* connection
+          .request("session/prompt", { session_id: sessionId, prompt: turnInput.message.text }, 0)
+          .pipe(
+            Effect.mapError((cause) => protocolError(cause.message)),
+            Effect.catch((cause) =>
+              Effect.gen(function* () {
+                const failed = sessionUpdateToEvents(thread.projection, {
+                  type: "turn_complete",
+                  outcome: "failed",
+                  content: cause.message,
+                });
+                for (const event of failed.events) yield* emit(event);
+                if (thread.activeTurn !== undefined) {
+                  thread.activeTurn = {
+                    ...thread.activeTurn,
+                    status: "failed",
+                    completedAt: yield* DateTime.now,
+                  };
+                }
+              }),
+            ),
+            Effect.forkIn(sessionScope),
+            Effect.asVoid,
+          );
+      }),
+      steerTurn: Effect.fn("ZeroClawAdapter.steerTurn")(function* (steerInput) {
+        const sessionId = sessionIdOf(steerInput.providerThread);
+        if (sessionId === undefined) return yield* protocolError("Thread is not open.");
+        yield* request("session/steer", {
+          session_id: sessionId,
+          content: steerInput.message.text,
+        });
+      }),
+      interruptTurn: Effect.fn("ZeroClawAdapter.interruptTurn")(function* (interruptInput) {
+        const sessionId = sessionIdOf(interruptInput.providerThread);
+        if (sessionId === undefined) return yield* protocolError("Thread is not open.");
+        yield* request("session/cancel", { session_id: sessionId });
+      }),
+      respondToRuntimeRequest: Effect.fn("ZeroClawAdapter.respondToRuntimeRequest")(
+        function* (responseInput) {
+          if (responseInput.decision === undefined) {
+            // Only approvals become runtime requests; elicitation is not advertised.
+            return yield* protocolError(
+              "ZeroClaw runtime requests only accept approval decisions.",
+            );
+          }
+          const sessionId = approvalSessions.get(responseInput.requestId);
+          if (sessionId === undefined) {
+            return yield* protocolError(
+              `No pending ZeroClaw approval for request ${responseInput.requestId}.`,
+            );
+          }
+          approvalSessions.delete(responseInput.requestId);
+          const decision = approvalDecisionToZeroClaw(responseInput.decision);
+          yield* request("session/approve", {
+            session_id: sessionId,
+            request_id: responseInput.requestId,
+            decision,
+          });
+          if (responseInput.decision === "cancel") {
+            yield* request("session/cancel", { session_id: sessionId });
+          }
+        },
+      ),
+      readThreadSnapshot: Effect.fn("ZeroClawAdapter.readThreadSnapshot")(
+        function* (snapshotInput) {
           const sessionId = sessionIdOf(snapshotInput.providerThread);
           if (sessionId === undefined) return yield* protocolError("Thread is not open.");
           const raw = yield* request("session/messages", { session_id: sessionId });
-          const messages = Array.isArray((raw as { messages?: unknown }).messages)
-            ? (raw as { messages: ReadonlyArray<{ role?: string; content?: string }> }).messages
+          const entries = Array.isArray((raw as { messages?: unknown }).messages)
+            ? (
+                raw as {
+                  messages: ReadonlyArray<{ role?: string; content?: string; kind?: string }>;
+                }
+              ).messages
             : [];
+          const messages = entries.filter(
+            (entry) => entry.kind === undefined || entry.kind === "message",
+          );
           const conversation: OrchestrationV2ConversationMessage[] = messages.map(
             (message, index) => ({
               createdBy: message.role === "user" ? "user" : "agent",
@@ -442,46 +582,32 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")(function
             messages: conversation,
             runtimeRequests: [],
           };
-        }),
-      unloadThread: (unloadInput) =>
-        Effect.gen(function* () {
-          const sessionId = sessionIdOf(unloadInput.providerThread);
-          if (sessionId === undefined) return;
-          threads.delete(sessionId);
-          yield* request("session/close", { session_id: sessionId });
-        }),
+        },
+      ),
+      unloadThread: Effect.fn("ZeroClawAdapter.unloadThread")(function* (unloadInput) {
+        const sessionId = sessionIdOf(unloadInput.providerThread);
+        if (sessionId === undefined) return;
+        threads.delete(sessionId);
+        yield* request("session/close", { session_id: sessionId });
+      }),
       rollbackThread: () => Effect.fail(protocolError("ZeroClaw does not support rollback.")),
       forkThread: () => Effect.fail(protocolError("ZeroClaw does not support fork.")),
     };
 
-    void Fiber;
-    void ProviderSessionId;
-    void RuntimeRequestId;
     return runtime;
   });
 
-  return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: options.instanceId,
-    driver: ZEROCLAW_PROVIDER,
-    getCapabilities: () =>
-      Effect.gen(function* () {
-        return ZEROCLAW_CAPABILITIES;
-      }),
-    planSelectionTransition: () =>
-      Effect.gen(function* () {
-        return turnScopedSelectionTransition();
-      }),
-    openSession,
-  });
+  return Effect.succeed(
+    ProviderAdapter.ProviderAdapterV2.of({
+      instanceId: options.instanceId,
+      driver: ZEROCLAW_PROVIDER,
+      getCapabilities: Effect.fn("ZeroClawAdapter.getCapabilities")(() =>
+        Effect.succeed(ZEROCLAW_CAPABILITIES),
+      ),
+      planSelectionTransition: Effect.fn("ZeroClawAdapter.planSelectionTransition")(() =>
+        Effect.succeed(turnScopedSelectionTransition()),
+      ),
+      openSession,
+    }),
+  );
 });
-
-export type ZeroClawAdapterV2DriverEnv = never;
-
-export const ZeroClawAdapterV2Driver = {
-  driverKind: ZeroClawAdapterV2DriverKind,
-  configSchema: undefined as never,
-  defaultConfig: () => ({}) as ZeroClawSettings,
-  create: (() => {
-    throw new Error("Use makeZeroClawAdapterV2");
-  }) as never,
-};

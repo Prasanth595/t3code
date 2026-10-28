@@ -1,5 +1,6 @@
 // NDJSON JSON-RPC 2.0 over a Unix socket or Windows named pipe.
 // This is the only file that touches node:net.
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -12,7 +13,7 @@ import * as Stream from "effect/Stream";
 import * as NodeNet from "node:net";
 
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export class ZeroClawRpcError extends Schema.TaggedError<ZeroClawRpcError>()("ZeroClawRpcError", {
   operation: Schema.String,
@@ -70,9 +71,15 @@ export interface ZeroClawRpcConnection {
 
 export interface ZeroClawRpcConnectionOptions {
   readonly socketPath: string;
+  /**
+   * Reconnect when the socket drops. `onReconnect` runs after the socket is
+   * back and before new requests are written, so it can restore state the
+   * restart dropped. In-flight requests fail so their caller can retry.
+   */
+  readonly reconnect?: {
+    readonly onReconnect?: () => Effect.Effect<void>;
+  };
 }
-
-type RpcError = ZeroClawRpcError | ZeroClawRpcTimeoutError;
 
 interface PendingRequest {
   readonly deferred: Deferred.Deferred<unknown, ZeroClawRpcError>;
@@ -152,6 +159,8 @@ export function makeNdjsonFramer(maxBytes: number) {
 function connectSocket(
   path: string,
   onData: (chunk: Buffer | string) => void,
+  /** A reconnect's socket must outlive the fiber that opened it. */
+  managed: boolean,
 ): Effect.Effect<NodeNet.Socket, ZeroClawRpcError, Scope.Scope> {
   return Effect.acquireRelease(
     Effect.callback<NodeNet.Socket, ZeroClawRpcError>((resume) => {
@@ -184,9 +193,11 @@ function connectSocket(
       });
     }),
     (socket) =>
-      Effect.sync(() => {
-        socket.destroy();
-      }),
+      managed
+        ? Effect.sync(() => {
+            socket.destroy();
+          })
+        : Effect.void,
   );
 }
 
@@ -213,6 +224,9 @@ function writeLine(
   });
 }
 
+const RECONNECT_DELAYS_MS = [200, 400, 800, 1_600, 3_200, 5_000];
+const RECONNECT_ATTEMPTS = 30;
+
 export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(function* (
   options: ZeroClawRpcConnectionOptions,
 ) {
@@ -222,7 +236,9 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
   const frame = makeNdjsonFramer(MAX_FRAME_BYTES);
   const pendingRequests = new Map<string, PendingRequest>();
   const incomingFrames = yield* Queue.unbounded<RpcFrame, ZeroClawRpcError>();
-  const socket = yield* connectSocket(options.socketPath, (chunk) => {
+  /** The socket writes go to. Reconnect swaps it; the data callback reads it. */
+  const current: { socket: NodeNet.Socket | undefined } = { socket: undefined };
+  const onData = (chunk: Buffer | string) => {
     const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
     const framed = frame(text);
     for (const line of framed.lines) {
@@ -245,14 +261,19 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
           ),
         );
       }
-      socket.destroy();
+      current.socket?.destroy();
     }
-  });
+  };
+  const socket = yield* connectSocket(options.socketPath, onData, true);
+  current.socket = socket;
 
   const outgoing = yield* Queue.unbounded<unknown, ZeroClawRpcError>();
   const transportDown = yield* Deferred.make<never, ZeroClawRpcError>();
   const closed = yield* Deferred.make<void, ZeroClawRpcError>();
+  /** A dropped socket offers here when the connection should reopen instead of dying. */
+  const socketLost = yield* Queue.unbounded<ZeroClawRpcError>();
   let nextRequestId = 0;
+  let stopped = false;
 
   const failTransport = Effect.fnUntraced(function* (error: ZeroClawRpcError) {
     const claimed = yield* Deferred.fail(transportDown, error);
@@ -311,30 +332,87 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
     Effect.forkIn(scope),
   );
 
-  let readsClosed = false;
-  const failPending = (detail: string) => {
-    if (readsClosed) return;
-    readsClosed = true;
+  // A dropped socket fails every request waiting on it, then either reopens or
+  // ends the connection. A request with no timeout would otherwise wait forever.
+  const reportSocketLost = (lost: NodeNet.Socket, error: ZeroClawRpcError) => {
+    if (lost !== current.socket) return;
+    current.socket = undefined;
     for (const [key, pending] of pendingRequests) {
-      if (pending.settled) continue;
       pendingRequests.delete(key);
-      Deferred.doneUnsafe(
-        pending.deferred,
-        Effect.fail(new ZeroClawRpcError({ operation: "read", detail })),
-      );
+      Queue.offerUnsafe(pending.reply, Effect.fail(error));
     }
+    Queue.offerUnsafe(socketLost, error);
   };
-  socket.once("close", () => {
-    // A close that races a just-completed response must not fail that response.
-    // Pending requests fail on the next write or on their own timeout.
-  });
-  socket.on("error", (cause: Error) => {
-    const code = (cause as NodeJS.ErrnoException).code;
-    if (code === "ECONNRESET" || code === "EPIPE") return;
+  const watchSocket = (watched: NodeNet.Socket) => {
+    watched.once("close", () => {
+      reportSocketLost(
+        watched,
+        new ZeroClawRpcError({ operation: "read", detail: "Connection closed" }),
+      );
+    });
+    watched.on("error", (cause: Error) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ECONNRESET" || code === "EPIPE") return;
+      reportSocketLost(
+        watched,
+        new ZeroClawRpcError({ operation: "read", detail: cause.message, cause }),
+      );
+    });
+  };
+  watchSocket(socket);
+
+  const reopen = Effect.fnUntraced(function* (lost: ZeroClawRpcError) {
+    let lastError: ZeroClawRpcError = lost;
+    for (let attempt = 0; attempt < RECONNECT_ATTEMPTS; attempt++) {
+      if (stopped) return;
+      yield* Effect.sleep(
+        Duration.millis(
+          RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)] ?? 0,
+        ),
+      );
+      if (stopped) return;
+      // Unmanaged: this fiber ends, and the socket must outlive it.
+      const opened = yield* connectSocket(options.socketPath, onData, false).pipe(Effect.exit);
+      if (opened._tag === "Failure") {
+        if (stopped) return;
+        const failure = Cause.squash(opened.cause);
+        lastError =
+          failure instanceof Error && failure.name === "ZeroClawRpcError"
+            ? (failure as ZeroClawRpcError)
+            : lost;
+        continue;
+      }
+      if (stopped) {
+        opened.value.destroy();
+        return;
+      }
+      // Claim the socket before watching it: its close can fire synchronously.
+      current.socket = opened.value;
+      watchSocket(opened.value);
+      yield* (options.reconnect?.onReconnect?.() ?? Effect.void).pipe(Effect.ignore);
+      yield* Effect.logInfo("ZeroClaw daemon socket reconnected.");
+      return;
+    }
+    yield* failTransport(lastError);
   });
 
+  yield* Stream.fromQueue(socketLost).pipe(
+    Stream.runForEach((error) =>
+      options.reconnect !== undefined ? reopen(error) : failTransport(error),
+    ),
+    Effect.forkIn(scope),
+  );
+
   yield* Stream.fromQueue(outgoing).pipe(
-    Stream.runForEach((record) => writeLine(socket, record, "write")),
+    Stream.runForEach((record) => {
+      const target = current.socket;
+      if (target === undefined) {
+        return Effect.fail(
+          new ZeroClawRpcError({ operation: "write", detail: "Connection closed" }),
+        );
+      }
+      return writeLine(target, record, "write");
+    }),
     Effect.catchCause((cause) =>
       failTransport(new ZeroClawRpcError({ operation: "write", cause })),
     ),
@@ -403,12 +481,17 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
     inboundRequests,
     respond,
     closed: Deferred.await(closed),
-    terminate: failTransport(
-      new ZeroClawRpcError({ operation: "terminate", detail: "connection was stopped" }),
-    ).pipe(
+    terminate: Effect.sync(() => {
+      stopped = true;
+    }).pipe(
+      Effect.andThen(
+        failTransport(
+          new ZeroClawRpcError({ operation: "terminate", detail: "connection was stopped" }),
+        ),
+      ),
       Effect.andThen(
         Effect.sync(() => {
-          socket.destroy();
+          current.socket?.destroy();
         }),
       ),
       Effect.ignore,
