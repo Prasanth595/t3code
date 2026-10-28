@@ -173,6 +173,28 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice calls
+
+In the browser and desktop app, the wave button between the attach and Send buttons toggles a spoken
+conversation with Codex using your ChatGPT subscription. No API key is used. The button
+only appears when a Codex account signed in with ChatGPT is connected. Click it again to
+end the call, and use the mic button to mute.
+
+With more than one ChatGPT-signed-in Codex account, a call starts on the account the thread
+runs on, or the first one otherwise. Right-click the wave button, or use the arrow that appears
+beside it on hover, to choose another account, a voice, or the model the call's chat runs on for the next call. The chat
+runs on the call's account unless you pick a model. Each account's default voice, extra instructions, and
+whether it offers calls at all are set under Settings → Providers.
+
+Started from a saved thread, the call opens a new chat under it, named "Voice call: <thread>",
+and does the work you ask for there. Typing in that chat messages its agent; the live voice does
+not hear typed text. It can also read and
+message the thread you started from. Your conversation stays on screen; the chat appears under the
+thread's subagents, and what you and the voice say is written into it. The call keeps going while
+you switch between chats, and the wave icon moves with the sound of you and the voice, in the composer, the
+chat list, and the subagent row. Stopping the voice chat ends the call, and starting a call from
+another chat ends the one in progress. In a new chat the call is a plain conversation.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
