@@ -57,17 +57,17 @@ describe("usageProgress", () => {
     const waiting = [environment("a", { isPending: true }), environment("b", { isPending: true })];
     expect(usageProgress(waiting, options)).toEqual({
       dimmed: true,
-      label: "Updating 2 environments…",
+      label: "Se actualizează 2 medii…",
     });
     expect(
       usageProgress([environment("a"), ...waiting.slice(1), environment("c")], options),
-    ).toEqual({ dimmed: false, label: "Updating b…" });
+    ).toEqual({ dimmed: false, label: "Se actualizează b…" });
     expect(
       usageProgress(
         [environment("a"), environment("b", { summary: null, isPending: true })],
         options,
       ),
-    ).toEqual({ dimmed: false, label: "Updating b…" });
+    ).toEqual({ dimmed: false, label: "Se actualizează b…" });
   });
 
   it("names a slow source without dimming once its environment answers from cache", () => {
@@ -75,14 +75,14 @@ describe("usageProgress", () => {
     expect(usageEnvironmentProgress(partway)).toEqual({ phase: "partway", providers: ["cursor"] });
     expect(usageProgress([partway, environment("b")], options)).toEqual({
       dimmed: false,
-      label: "Updating cursor label…",
+      label: "Se actualizează cursor label…",
     });
     expect(
       usageProgress(
         [partway, environment("b", { isPending: true, summary: summary(["cursor", "grok"]) })],
         options,
       ),
-    ).toEqual({ dimmed: false, label: "Updating 2 providers…" });
+    ).toEqual({ dimmed: false, label: "Se actualizează 2 furnizori…" });
     expect(usageProgress([{ ...partway, isPending: false }], options)).toEqual({
       dimmed: false,
       label: null,
@@ -103,7 +103,7 @@ describe("usageProgress", () => {
         [environment("a"), ...ignored, environment("slow", { summary: null, isPending: true })],
         options,
       ),
-    ).toEqual({ dimmed: false, label: "Updating slow…" });
+    ).toEqual({ dimmed: false, label: "Se actualizează slow…" });
     expect(usageEnvironmentProgress(ignored[0]!)).toEqual({ phase: "inactive" });
   });
 });

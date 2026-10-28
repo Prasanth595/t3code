@@ -147,7 +147,7 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: `Creează și comută pe un branch înainte de push sau de a deschide ${terminology.shortLabelWithArticle}.`,
+      hint: `Creează și comută pe un branch înainte de push sau de a deschide ${terminology.shortLabel}.`,
     };
   }
 
@@ -180,7 +180,7 @@ export function resolveQuickAction(
         label: "Push",
         disabled: true,
         kind: "show_hint",
-        hint: `Adaugă un remote „origin” înainte de push sau de a crea ${terminology.shortLabelWithArticle}.`,
+        hint: `Adaugă un remote „origin” înainte de push sau de a crea ${terminology.shortLabel}.`,
       };
     }
     if (!isAhead) {
@@ -304,16 +304,16 @@ export function getGitActionDisabledReason(input: {
     return `Vizualizarea ${terminology.shortLabel} nu e disponibilă momentan.`;
   }
   if (!hasBranch) {
-    return `HEAD detașat: comută pe un branch înainte de a crea ${terminology.shortLabelWithArticle}.`;
+    return `HEAD detașat: comută pe un branch înainte de a crea ${terminology.shortLabel}.`;
   }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
-    return `Adaugă un remote „origin” înainte de a crea ${terminology.shortLabelWithArticle}.`;
+    return `Adaugă un remote „origin” înainte de a crea ${terminology.shortLabel}.`;
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `Niciun commit local de inclus în ${terminology.shortLabelWithArticle}.`;
+    return `Niciun commit local de inclus în ${terminology.shortLabel}.`;
   }
   if (isBehind) {
-    return `Branch-ul e în urma upstream. Fă pull/rebase înainte de a crea ${terminology.shortLabelWithArticle}.`;
+    return `Branch-ul e în urma upstream. Fă pull/rebase înainte de a crea ${terminology.shortLabel}.`;
   }
   return `Crearea ${terminology.shortLabel} nu e disponibilă momentan.`;
 }
@@ -338,7 +338,7 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   terminology: ChangeRequestTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
-  const { shortLabel, shortLabelWithArticle } = input.terminology;
+  const { shortLabel } = input.terminology;
   const suffix = ` pe „${branchLabel}”. Poți continua pe acest branch sau poți crea un branch nou și rula aceeași acțiune acolo.`;
 
   if (input.action === "push" || input.action === "commit_push") {
@@ -359,13 +359,13 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   if (input.includesCommit) {
     return {
       title: `Commit, push & create ${shortLabel} from default branch?`,
-      description: `Această acțiune va face commit, push și va crea ${shortLabelWithArticle}${suffix}`,
+      description: `Această acțiune va face commit, push și va crea ${shortLabel}${suffix}`,
       continueLabel: `Commit, push și creează ${shortLabel}`,
     };
   }
   return {
     title: `Push & create ${shortLabel} from default branch?`,
-    description: `Această acțiune va face push la commit-urile locale și va crea ${shortLabelWithArticle}${suffix}`,
+    description: `Această acțiune va face push la commit-urile locale și va crea ${shortLabel}${suffix}`,
     continueLabel: `Push și creează ${shortLabel}`,
   };
 }

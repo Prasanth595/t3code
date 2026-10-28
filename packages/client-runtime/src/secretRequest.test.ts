@@ -11,7 +11,7 @@ describe("secretRequestDisplay", () => {
   it("never offers the form for a request inherited from another thread", () => {
     expect(secretRequestDisplay({ secretStatus: "pending" }, "inherited")).toEqual({
       kind: "pending-elsewhere",
-      label: "Waiting for an answer in the original thread",
+      label: "Se așteaptă răspunsul în conversația originală",
     });
     expect(secretRequestDisplay({ secretStatus: "saved" }, "inherited")).toMatchObject({
       outcome: "saved",
@@ -21,7 +21,9 @@ describe("secretRequestDisplay", () => {
 
 describe("secretRequestPrivacyNote", () => {
   it("does not promise to hide a value that the agent's commands can read", () => {
-    expect(secretRequestPrivacyNote({})).toBe("Stored securely, never shown to the agent");
+    expect(secretRequestPrivacyNote({})).toBe(
+      "Stocat în siguranță, nu e arătat niciodată agentului",
+    );
     expect(secretRequestPrivacyNote({ delivery: "file" })).not.toContain("never shown");
   });
 });
@@ -32,8 +34,10 @@ describe("secretRequestFailureMessage", () => {
       secretRequestFailureMessage(new SecretRequestError({ reason: "already_answered" })),
     ).toBe("This secret request was already answered.");
     expect(secretRequestFailureMessage(new Error('Expected string, got "whsec_1"'))).toBe(
-      "Could not answer the request. Try again.",
+      "Nu am putut răspunde la cerere. Încearcă din nou.",
     );
-    expect(secretRequestFailureMessage(undefined)).toBe("Could not answer the request. Try again.");
+    expect(secretRequestFailureMessage(undefined)).toBe(
+      "Nu am putut răspunde la cerere. Încearcă din nou.",
+    );
   });
 });

@@ -360,7 +360,7 @@ describe("ChatHistory", () => {
   });
 
   it("titles empty and long first messages", () => {
-    expect(chatTitle("   ")).toBe("New chat");
+    expect(chatTitle("   ")).toBe("Chat nou");
     expect(chatTitle("x".repeat(100))).toHaveLength(60);
   });
 });
