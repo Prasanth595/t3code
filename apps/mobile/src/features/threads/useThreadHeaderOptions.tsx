@@ -23,6 +23,7 @@ export function useThreadHeaderOptions(props: {
   readonly usesNativeHeaderGlass: boolean;
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
+  readonly onOpenThreadDetails?: (() => void) | undefined;
   readonly draft?: boolean;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -70,6 +71,21 @@ export function useThreadHeaderOptions(props: {
     ],
     [sidebarHeaderItem, props.onReturnToThread, props.draft, startNewTask, usesDuoHeader],
   );
+  const detailsHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      props.onOpenThreadDetails
+        ? [
+            withNativeGlassHeaderItem({
+              accessibilityLabel: "Open thread details",
+              icon: { name: "sidebar.right", type: "sfSymbol" as const },
+              identifier: "thread-right-details",
+              onPress: props.onOpenThreadDetails,
+              type: "button" as const,
+            }),
+          ]
+        : compactRightHeaderItems,
+    [props.onOpenThreadDetails, compactRightHeaderItems],
+  );
   const canGoBack = navigation.canGoBack();
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
@@ -96,7 +112,7 @@ export function useThreadHeaderOptions(props: {
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
     unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : detailsHeaderItems,
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
@@ -109,6 +125,7 @@ export function useThreadHeaderOptions(props: {
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,
+      detailsHeaderItems,
       usesDuoHeader,
       environmentId,
       threadId,

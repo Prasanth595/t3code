@@ -3,6 +3,16 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Inspect a thread on mobile
+
+On phones, swipe left across the conversation or tap **Thread details** to open
+its workspace and source-control drawer. Dismiss the keyboard before swiping.
+Swipe right, tap outside, or close the drawer to return to the conversation.
+
+Use the drawer to run or edit project actions, import actions from `t3.json`,
+review changes, and manage branches and worktrees. Source-control and terminal
+actions need a saved thread; send the first message before using them.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

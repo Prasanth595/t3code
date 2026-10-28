@@ -4,6 +4,8 @@ import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { AuthFilesystemReadScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -16,6 +18,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "../../state/vcs";
 import { useVcsActionState } from "../../state/use-vcs-action-state";
 import { ThreadHeader } from "./ThreadHeader";
+import {
+  useRemoteEnvironmentRuntime,
+  useSavedRemoteConnection,
+} from "../../state/use-remote-environment-registry";
 
 export function DraftThreadHeader(props: {
   readonly thread: EnvironmentThreadShell;
@@ -25,6 +31,8 @@ export function DraftThreadHeader(props: {
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
   const environmentId = props.thread.environmentId;
+  const environment = useSavedRemoteConnection(environmentId);
+  const runtime = useRemoteEnvironmentRuntime(environmentId);
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const status = useEnvironmentQuery(
@@ -51,6 +59,15 @@ export function DraftThreadHeader(props: {
       draft
       title="New thread"
       subtitle=""
+      workspace={{
+        projectTitle: props.project.title,
+        projectId: props.project.id,
+        workspaceRoot: props.project.workspaceRoot,
+        environmentLabel: environment?.environmentLabel ?? "Environment",
+        connectionState: runtime?.connectionState ?? "available",
+        cwd: props.cwd,
+        worktreePath: props.thread.worktreePath,
+      }}
       headerColor={themeVariables["--color-header"]}
       usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}
       hasThreadCwd={props.cwd !== null}
@@ -70,7 +87,10 @@ export function DraftThreadHeader(props: {
         canOpenTerminal: false,
         canOperateTerminal: false,
         canOpenFiles: canReadFiles && props.cwd !== null,
-        projectScripts: [],
+        projectScripts: resolveProjectScripts(
+          runtime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+          props.project,
+        ),
         terminalSessions: [],
         onOpenFilesInspector: openFiles,
         onOpenGitInspector: requiresThread,

@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { ThreadDetailsDrawer, type ThreadWorkspaceDetails } from "./ThreadDetailsDrawer";
+import { useThreadDetailsDrawer } from "./thread-list-drawer";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
@@ -15,6 +17,7 @@ import {
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    readonly workspace: ThreadWorkspaceDetails;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -28,7 +31,11 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
-  const native = useThreadHeaderOptions(props);
+  const details = useThreadDetailsDrawer();
+  const native = useThreadHeaderOptions({
+    ...props,
+    onOpenThreadDetails: layout.usesSplitView ? undefined : details.openDrawer,
+  });
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -86,11 +93,7 @@ export function ThreadHeader(
       {usesFloatingThreadControls(layout) ? (
         <>
           <ThreadFloatingTopScrim />
-          <ThreadFloatingHeader
-            actions={androidHeaderActions}
-            onCloseThread={goBack}
-            hidden={composerKeyboardActive}
-          />
+          <ThreadFloatingHeader hidden={composerKeyboardActive} />
         </>
       ) : (
         <AppBar
@@ -100,7 +103,14 @@ export function ThreadHeader(
           options={native.options}
           optionsVersion={native.optionsVersion}
           trailing={
-            props.fileInspectorSupported && props.hasThreadCwd ? (
+            !layout.usesSplitView ? (
+              <ScreenHeaderButton
+                accessibilityLabel="Open thread details"
+                icon="sidebar.right"
+                selected={details.open}
+                onPress={details.openDrawer}
+              />
+            ) : props.fileInspectorSupported && props.hasThreadCwd ? (
               <ScreenHeaderButton
                 accessibilityLabel={
                   props.inspectorMode !== null && panes.auxiliaryPaneVisible
@@ -119,7 +129,14 @@ export function ThreadHeader(
           compact={composerKeyboardActive}
         />
       )}
-      {native.fallback}
+      {layout.usesSplitView ? native.fallback : null}
+      <ThreadDetailsDrawer
+        title={props.title}
+        workspace={props.workspace}
+        gitControls={props.gitControls}
+        onCloseThread={goBack}
+        onReturnToThread={props.onReturnToThread}
+      />
     </>
   );
 }

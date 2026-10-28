@@ -41,13 +41,15 @@ function ThreadScreenOutlet() {
   return (
     <>
       {"props" in content ? content.props.header : content.header}
-      {Platform.OS === "android" ? (
-        <ThreadListDrawerGestureWrapper>
+      <ThreadListDrawerGestureWrapper
+        detailsEnabled={("props" in content ? content.props.header : content.header) != null}
+      >
+        {Platform.OS === "android" ? (
           <View className="flex-1 overflow-hidden rounded-t-[28px] bg-thread-canvas">{body}</View>
-        </ThreadListDrawerGestureWrapper>
-      ) : (
-        body
-      )}
+        ) : (
+          body
+        )}
+      </ThreadListDrawerGestureWrapper>
     </>
   );
 }

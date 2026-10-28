@@ -24,36 +24,23 @@ import Animated, {
 
 import { useHardwareBack } from "../../lib/backHandler";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
-
-/**
- * ChatGPT-style thread list drawer: the compact Android thread sidebar slides over the chat from
- * the left. Split view (tablet / unfolded) keeps its own sidebar and iOS keeps its native chrome,
- * so this file only ever draws on `Platform.OS === "android"` without a split layout.
- */
+import {
+  drawerDragProgress,
+  drawerShouldOpen,
+  type ThreadDrawerSide,
+} from "./thread-drawer-gesture";
 
 const DRAWER_MAX_WIDTH = 360;
 const DRAWER_WIDTH_RATIO = 0.86;
-const DRAWER_OPEN_DURATION = 260;
-// 12px, just above touch slop: a swipe activates the pan fast enough that the
-// feed's native TextView cancels its pending long-press instead of starting a
-// text selection mid-swipe (a 24px activation left a ~400ms window where a slow
-// or hesitant swipe was eaten by the long-press timer and selected text).
-const DRAWER_OPEN_ACTIVATION_DISTANCE = 12;
-const DRAWER_CLOSE_ACTIVATION_DISTANCE = 12;
-// Vertical drift above this fails the pan, so feed scrolling still wins.
+// Activate before the feed's long-press selection; vertical scrolling still wins.
+const DRAWER_ACTIVATION_DISTANCE = 12;
 const DRAWER_VERTICAL_FAIL_DISTANCE = 18;
-const DRAWER_OPEN_COMMIT_RATIO = 0.35;
-const DRAWER_CLOSE_COMMIT_RATIO = 0.35;
-const DRAWER_OPEN_COMMIT_VELOCITY = 500;
-const DRAWER_CLOSE_COMMIT_VELOCITY = -500;
-const SCRIM_COLOR = "rgba(0, 0, 0, 0.4)";
 const DRAWER_TIMING = {
-  duration: DRAWER_OPEN_DURATION,
+  duration: 260,
   easing: Easing.out(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
 
-/** The drawer is narrower than the viewport so the chat stays visibly behind it. */
 export function threadListDrawerWidth(listPaneWidth: number | null, viewportWidth: number): number {
   return Math.min(listPaneWidth ?? DRAWER_MAX_WIDTH, viewportWidth * DRAWER_WIDTH_RATIO);
 }
@@ -67,11 +54,13 @@ export interface ThreadListDrawerState {
 }
 
 export interface ThreadListDrawerContextValue extends ThreadListDrawerState {
-  /** 0 = closed, 1 = fully open. Drags write it directly; commits animate it. */
   readonly progress: SharedValue<number>;
+  readonly mounted: boolean;
+  readonly prepareOpen: () => void;
 }
 
 export const ThreadListDrawerContext = createContext<ThreadListDrawerContextValue | null>(null);
+const ThreadDetailsDrawerContext = createContext<ThreadListDrawerContextValue | null>(null);
 
 export function useThreadListDrawer(): ThreadListDrawerContextValue {
   const drawer = useContext(ThreadListDrawerContext);
@@ -81,58 +70,89 @@ export function useThreadListDrawer(): ThreadListDrawerContextValue {
   return drawer;
 }
 
-export function ThreadListDrawerProvider({ children }: { readonly children: ReactNode }) {
-  const [open, setOpenState] = useState(false);
-  const openRef = useRef(false);
-  const progress = useSharedValue(0);
-
-  const setOpen = useCallback(
-    (next: boolean) => {
-      openRef.current = next;
-      setOpenState(next);
-      progress.set(withTiming(next ? 1 : 0, DRAWER_TIMING));
-    },
-    [progress],
-  );
-  const openDrawer = useCallback(() => {
-    // The drawer takes the screen; leaving the composer's keyboard up would keep it half covered.
-    void KeyboardController.dismiss();
-    setOpen(true);
-  }, [setOpen]);
-  const closeDrawer = useCallback(() => setOpen(false), [setOpen]);
-  const toggleDrawer = useCallback(() => {
-    if (openRef.current) {
-      setOpen(false);
-      return;
-    }
-    void KeyboardController.dismiss();
-    setOpen(true);
-  }, [setOpen]);
-
-  const value = useMemo<ThreadListDrawerContextValue>(
-    () => ({ open, setOpen, openDrawer, closeDrawer, toggleDrawer, progress }),
-    [open, setOpen, openDrawer, closeDrawer, toggleDrawer, progress],
-  );
-  return <ThreadListDrawerContext value={value}>{children}</ThreadListDrawerContext>;
+export function useThreadDetailsDrawer(): ThreadListDrawerContextValue {
+  const drawer = useContext(ThreadDetailsDrawerContext);
+  if (drawer === null) {
+    throw new Error("useThreadDetailsDrawer must be used inside a ThreadListDrawerProvider");
+  }
+  return drawer;
 }
 
-/** Tracks the drag in place, so the panel follows the finger instead of only snapping. */
-function drawerProgress(value: number): number {
-  "worklet";
-  return Math.min(1, Math.max(0, value));
+function useDrawerState(
+  side: ThreadDrawerSide,
+  active: ThreadDrawerSide | null,
+  setActive: (side: ThreadDrawerSide, open: boolean) => void,
+  progress: SharedValue<number>,
+) {
+  const open = active === side;
+  const [mounted, setMounted] = useState(false);
+  const prepareOpen = useCallback(() => setMounted(true), []);
+  const setOpen = useCallback((next: boolean) => setActive(side, next), [setActive, side]);
+  const openDrawer = useCallback(() => {
+    void KeyboardController.dismiss();
+    prepareOpen();
+    setOpen(true);
+  }, [prepareOpen, setOpen]);
+  const closeDrawer = useCallback(() => setOpen(false), [setOpen]);
+  const toggleDrawer = useCallback(() => {
+    if (open) closeDrawer();
+    else openDrawer();
+  }, [open, closeDrawer, openDrawer]);
+  return useMemo<ThreadListDrawerContextValue>(
+    () => ({
+      open,
+      setOpen,
+      openDrawer,
+      closeDrawer,
+      toggleDrawer,
+      progress,
+      mounted,
+      prepareOpen,
+    }),
+    [open, setOpen, openDrawer, closeDrawer, toggleDrawer, progress, mounted, prepareOpen],
+  );
+}
+
+export function ThreadListDrawerProvider({ children }: { readonly children: ReactNode }) {
+  const [active, setActiveState] = useState<ThreadDrawerSide | null>(null);
+  const activeRef = useRef<ThreadDrawerSide | null>(null);
+  const leftProgress = useSharedValue(0);
+  const rightProgress = useSharedValue(0);
+  const setActive = useCallback(
+    (side: ThreadDrawerSide, open: boolean) => {
+      const next = open ? side : activeRef.current === side ? null : activeRef.current;
+      if (!open && activeRef.current === side) void KeyboardController.dismiss();
+      activeRef.current = next;
+      setActiveState(next);
+      leftProgress.set(withTiming(next === "left" ? 1 : 0, DRAWER_TIMING));
+      rightProgress.set(withTiming(next === "right" ? 1 : 0, DRAWER_TIMING));
+    },
+    [leftProgress, rightProgress],
+  );
+  const left = useDrawerState("left", active, setActive, leftProgress);
+  const right = useDrawerState("right", active, setActive, rightProgress);
+  return (
+    <ThreadListDrawerContext value={left}>
+      <ThreadDetailsDrawerContext value={right}>{children}</ThreadDetailsDrawerContext>
+    </ThreadListDrawerContext>
+  );
 }
 
 interface ThreadListDrawerHostProps {
-  /** Resolved panel width; the sidebar inside is rendered at the same width. */
   readonly width: number;
-  /** Rendered inside the sliding panel. Receives the drawer state it has to reflect. */
+  readonly side?: ThreadDrawerSide;
   readonly children: (drawer: ThreadListDrawerState) => ReactNode;
 }
 
-export function ThreadListDrawerHost({ width, children }: ThreadListDrawerHostProps) {
-  const drawer = useContext(ThreadListDrawerContext);
+export function ThreadListDrawerHost({
+  width,
+  side = "left",
+  children,
+}: ThreadListDrawerHostProps) {
+  const drawer = useContext(side === "left" ? ThreadListDrawerContext : ThreadDetailsDrawerContext);
   const { layout } = useAdaptiveWorkspaceLayout();
-  const enabled = Platform.OS === "android" && !layout.usesSplitView && drawer !== null;
+  const enabled =
+    (side === "right" || Platform.OS === "android") && !layout.usesSplitView && drawer !== null;
   const isOpen = drawer?.open ?? false;
   const open = enabled && isOpen;
   const fallbackProgress = useSharedValue(0);
@@ -140,13 +160,15 @@ export function ThreadListDrawerHost({ width, children }: ThreadListDrawerHostPr
   const setOpen = drawer?.setOpen;
   const closeDrawer = drawer?.closeDrawer;
 
-  // A rotation into split view drops the drawer from the tree; do not leave it "open" behind.
-  // oxlint-disable-next-line t3code/react-effect-budget -- a tablet rotation must not leave a phone drawer open
+  // oxlint-disable-next-line t3code/react-effect-budget -- rotation must close the phone overlay before split view takes ownership
   useEffect(() => {
     if (!enabled && isOpen && setOpen) setOpen(false);
   }, [enabled, isOpen, setOpen]);
 
   const commitOpen = useEffectEvent((next: boolean) => setOpen?.(next));
+  const settleOpen = useEffectEvent(() => {
+    progress.set(withTiming(drawer?.open ? 1 : 0, DRAWER_TIMING));
+  });
   const handleBack = useEffectEvent(() => {
     if (!drawer?.open) return false;
     closeDrawer?.();
@@ -159,25 +181,28 @@ export function ThreadListDrawerHost({ width, children }: ThreadListDrawerHostPr
       // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
       Gesture.Pan()
         .enabled(open && width > 0)
-        .activeOffsetX(-DRAWER_CLOSE_ACTIVATION_DISTANCE)
+        .activeOffsetX(side === "left" ? -DRAWER_ACTIVATION_DISTANCE : DRAWER_ACTIVATION_DISTANCE)
         .failOffsetY([-DRAWER_VERTICAL_FAIL_DISTANCE, DRAWER_VERTICAL_FAIL_DISTANCE])
         .onUpdate((event) => {
           "worklet";
-          progress.set(drawerProgress(1 + event.translationX / width));
+          progress.set(drawerDragProgress(side, event.translationX, width, true));
         })
-        .onFinalize((event) => {
+        .onEnd((event) => {
           "worklet";
-          const shouldClose =
-            event.translationX < -width * DRAWER_CLOSE_COMMIT_RATIO ||
-            event.velocityX < DRAWER_CLOSE_COMMIT_VELOCITY;
-          runOnJS(commitOpen)(!shouldClose);
+          runOnJS(commitOpen)(
+            drawerShouldOpen(side, event.translationX, event.velocityX, width, true),
+          );
+        })
+        .onFinalize((_event, success) => {
+          "worklet";
+          if (!success) runOnJS(settleOpen)();
         }),
-    // oxlint-disable-next-line react/memo-dependencies -- The compiler infers the effect event, and runOnJS needs it in the dep set.
-    [open, width, progress, commitOpen],
+    // oxlint-disable-next-line react/memo-dependencies -- runOnJS needs the effect event in its dependency set.
+    [open, width, side, progress, commitOpen, settleOpen],
   );
 
   const panelStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -width * (1 - progress.value) }],
+    transform: [{ translateX: (side === "left" ? -1 : 1) * width * (1 - progress.value) }],
   }));
   const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
 
@@ -193,70 +218,93 @@ export function ThreadListDrawerHost({ width, children }: ThreadListDrawerHostPr
         <Pressable
           className="flex-1"
           accessibilityRole="button"
-          accessibilityLabel="Close threads"
-          onPress={() => drawer.closeDrawer()}
+          accessibilityLabel={side === "left" ? "Close threads" : "Close thread details"}
+          onPress={closeDrawer}
         />
       </Animated.View>
       <GestureDetector gesture={closeGesture}>
         <Animated.View
-          className="absolute bottom-0 left-0 top-0 overflow-hidden bg-header"
+          className={
+            side === "left"
+              ? "absolute bottom-0 left-0 top-0 overflow-hidden bg-header"
+              : "absolute bottom-0 right-0 top-0 overflow-hidden bg-header"
+          }
+          accessibilityViewIsModal={open}
           accessibilityElementsHidden={!open}
           importantForAccessibility={open ? "auto" : "no-hide-descendants"}
           style={[styles.panel, { width }, panelStyle]}
         >
-          {children(drawer)}
+          {side === "left" || drawer.mounted ? children(drawer) : null}
         </Animated.View>
       </GestureDetector>
     </View>
   );
 }
 
-/**
- * Swipe right on the chat to pull the drawer in. The pan gives up as soon as the finger moves
- * vertically, so the feed keeps scrolling.
- */
-export function ThreadListDrawerGestureWrapper({ children }: { readonly children: ReactNode }) {
-  const drawer = useContext(ThreadListDrawerContext);
-  const { layout, composerKeyboardActive } = useAdaptiveWorkspaceLayout();
-  const { width: viewportWidth } = useWindowDimensions();
-  const width = threadListDrawerWidth(layout.listPaneWidth, viewportWidth);
+function useDrawerOpenGesture(
+  side: ThreadDrawerSide,
+  drawer: ThreadListDrawerContextValue | null,
+  enabled: boolean,
+  width: number,
+) {
   const fallbackProgress = useSharedValue(0);
   const progress = drawer?.progress ?? fallbackProgress;
-  const setOpen = drawer?.setOpen;
-  const commitOpen = useEffectEvent((next: boolean) => setOpen?.(next));
-
-  const canOpen =
-    Platform.OS === "android" &&
-    !layout.usesSplitView &&
-    // Design: while a sheet owns the screen (composer keyboard up), the swipe stays inert.
-    !composerKeyboardActive &&
-    drawer !== null &&
-    !drawer.open;
-
-  const openGesture = useMemo(
+  const commitOpen = useEffectEvent((next: boolean) => drawer?.setOpen(next));
+  const prepareOpen = useEffectEvent(() => drawer?.prepareOpen());
+  const settleOpen = useEffectEvent(() => {
+    progress.set(withTiming(drawer?.open ? 1 : 0, DRAWER_TIMING));
+  });
+  return useMemo(
     () =>
       // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
       Gesture.Pan()
-        .enabled(canOpen && width > 0)
-        .activeOffsetX(DRAWER_OPEN_ACTIVATION_DISTANCE)
+        .enabled(enabled && width > 0)
+        .activeOffsetX(side === "left" ? DRAWER_ACTIVATION_DISTANCE : -DRAWER_ACTIVATION_DISTANCE)
+        .failOffsetX(side === "left" ? -DRAWER_ACTIVATION_DISTANCE : DRAWER_ACTIVATION_DISTANCE)
         .failOffsetY([-DRAWER_VERTICAL_FAIL_DISTANCE, DRAWER_VERTICAL_FAIL_DISTANCE])
+        .onStart(() => {
+          "worklet";
+          runOnJS(prepareOpen)();
+        })
         .onUpdate((event) => {
           "worklet";
-          progress.set(drawerProgress(event.translationX / width));
+          progress.set(drawerDragProgress(side, event.translationX, width, false));
         })
-        .onFinalize((event) => {
+        .onEnd((event) => {
           "worklet";
-          const shouldOpen =
-            event.translationX > width * DRAWER_OPEN_COMMIT_RATIO ||
-            event.velocityX > DRAWER_OPEN_COMMIT_VELOCITY;
-          runOnJS(commitOpen)(shouldOpen);
+          runOnJS(commitOpen)(
+            drawerShouldOpen(side, event.translationX, event.velocityX, width, false),
+          );
+        })
+        .onFinalize((_event, success) => {
+          "worklet";
+          if (!success) runOnJS(settleOpen)();
         }),
-    // oxlint-disable-next-line react/memo-dependencies -- The compiler infers the effect event, and runOnJS needs it in the dep set.
-    [canOpen, width, progress, commitOpen],
+    // oxlint-disable-next-line react/memo-dependencies -- runOnJS needs the effect events in its dependency set.
+    [enabled, width, side, progress, commitOpen, prepareOpen, settleOpen],
   );
+}
 
+export function ThreadListDrawerGestureWrapper({
+  children,
+  detailsEnabled,
+}: {
+  readonly children: ReactNode;
+  readonly detailsEnabled: boolean;
+}) {
+  const threads = useContext(ThreadListDrawerContext);
+  const details = useContext(ThreadDetailsDrawerContext);
+  const { layout, composerKeyboardActive } = useAdaptiveWorkspaceLayout();
+  const { width: viewportWidth } = useWindowDimensions();
+  const width = threadListDrawerWidth(layout.listPaneWidth, viewportWidth);
+  const enabled =
+    !layout.usesSplitView && !composerKeyboardActive && !threads?.open && !details?.open;
+  const left = useDrawerOpenGesture("left", threads, enabled && Platform.OS === "android", width);
+  const right = useDrawerOpenGesture("right", details, enabled && detailsEnabled, width);
+  // oxlint-disable-next-line react/capitalized-calls -- Gesture.Race composes native gestures, not React components.
+  const gesture = useMemo(() => Gesture.Race(left, right), [left, right]);
   return (
-    <GestureDetector gesture={openGesture}>
+    <GestureDetector gesture={gesture}>
       <View className="flex-1">{children}</View>
     </GestureDetector>
   );
@@ -270,7 +318,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: SCRIM_COLOR,
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
   },
   panel: { elevation: 8 },
 });

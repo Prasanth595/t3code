@@ -1,5 +1,6 @@
 import * as Dialog from "../../../components/ui/Dialog";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
+import { GitBranchesContent } from "./GitBranchesSheet";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -59,7 +60,8 @@ type GitOverviewSheetProps = StaticScreenProps<{
   readonly threadId: string;
 }> & {
   readonly headerInset?: number;
-  readonly presentation?: "sheet" | "inspector";
+  readonly presentation?: "sheet" | "inspector" | "drawer";
+  readonly onNavigate?: () => void;
 };
 
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
@@ -79,6 +81,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
+  const isDrawer = presentation === "drawer";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
@@ -165,6 +168,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       !input.featureBranch &&
       requiresDefaultBranchConfirmation(input.action, isDefaultRef)
     ) {
+      props.onNavigate?.();
       navigation.navigate("GitConfirm", {
         environmentId: String(environmentId),
         threadId: String(threadId),
@@ -175,7 +179,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       return;
     }
 
-    if (!isInspector) {
+    if (presentation === "sheet") {
       navigation.goBack();
     }
     await gitActions.onRunSelectedThreadGitAction(input);
@@ -184,11 +188,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const onPressMenuItem = async (item: (typeof menuItems)[number]) => {
     if (item.disabled) return;
     if (item.kind === "open_pr") {
+      props.onNavigate?.();
       await openExistingPr();
       return;
     }
     if (!canWriteSourceControl) return;
     if (item.dialogAction === "commit") {
+      props.onNavigate?.();
       navigation.navigate("GitCommit", {
         environmentId: String(environmentId),
         threadId: String(threadId),
@@ -233,26 +239,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     setIsRefreshing(false);
   };
 
-  const content = (
-    <ScrollView
-      nestedScrollEnabled
-      alwaysBounceVertical
-      className="flex-1 android:bg-sheet-solid ios:bg-screen"
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-      showsVerticalScrollIndicator={false}
-      contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{
-        paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
-        paddingTop: 8,
-        gap: Platform.OS === "android" ? 8 : 14,
-      }}
-      refreshControl={
-        Platform.OS === "ios" || isInspector ? (
-          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
-        ) : undefined
-      }
-    >
-      <ListSection>
+  const sections = (
+    <>
+      <ListSection title={isDrawer ? "Source control" : undefined}>
+        {isDrawer ? (
+          <ListRow
+            icon="arrow.clockwise"
+            label={currentBranchLabel}
+            description={`${currentStatusSummary} · Refresh status`}
+            disabled={busy || isRefreshing}
+            onPress={() => void handleRefresh()}
+          />
+        ) : null}
         {sheetMenuItems.map(({ item, disabledReason }) => (
           <ListRow
             key={`${item.id}-${item.label}`}
@@ -279,39 +277,50 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <ListRow
           icon="text.bubble"
           label="Review changes"
-          description="Inspect changes, uncommitted edits, and turn diffs"
+          description={
+            isDrawer && gitStatus.data
+              ? `+${(gitStatus.data.branchChanges ?? gitStatus.data.workingTree).insertions} −${(gitStatus.data.branchChanges ?? gitStatus.data.workingTree).deletions} · ${gitStatus.data.workingTree.files.length} uncommitted files`
+              : "Inspect changes, uncommitted edits, and turn diffs"
+          }
           disabled={busy || !isRepo}
           onPress={() => {
+            props.onNavigate?.();
             const params = { environmentId, threadId };
             navigation.dispatch(
-              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
+              resolveGitOverviewReviewNavigationAction(isDrawer ? "inspector" : presentation) ===
+                "replace"
                 ? StackActions.replace("ThreadReview", params)
                 : CommonActions.navigate("ThreadReview", params),
             );
           }}
         />
-        <ListRow
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          label="Branches & worktrees"
-          description={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
-          }
-          disabled={busy || !isRepo}
-          onPress={() =>
-            navigation.navigate("GitBranches", {
-              environmentId: String(environmentId),
-              threadId: String(threadId),
-            })
-          }
-        />
+        {!isDrawer ? (
+          <ListRow
+            icon="point.topleft.down.curvedto.point.bottomright.up"
+            label="Branches & worktrees"
+            description={
+              canChangeThreadBranch
+                ? "Switch branch, create branch, or move to a worktree"
+                : "View branches and worktrees"
+            }
+            disabled={busy || !isRepo}
+            onPress={() =>
+              navigation.navigate("GitBranches", {
+                environmentId: String(environmentId),
+                threadId: String(threadId),
+              })
+            }
+          />
+        ) : null}
         {linkedPrActions.canLink ? (
           <ListRow
             icon="link"
             label={`Link ${linkedPrActions.terminology.singular}`}
             description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
-            onPress={linkedPrActions.promptLink}
+            onPress={() => {
+              props.onNavigate?.();
+              linkedPrActions.promptLink();
+            }}
           />
         ) : null}
       </ListSection>
@@ -324,20 +333,49 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               line={line}
               separator={index < linkedPrLines.length - 1}
               surfaceClassName="text-grouped-card"
-              openPullRequest={openPullRequest}
+              openPullRequest={async (url) => {
+                props.onNavigate?.();
+                return openPullRequest(url);
+              }}
               actions={linkedPrActions}
             />
           ))}
         </ListSection>
       ) : null}
 
-      {currentWorktreePath ? (
+      {isDrawer && isRepo ? <GitBranchesContent /> : null}
+      {currentWorktreePath && !isDrawer ? (
         <ListSection title="Worktree">
           <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
             {currentWorktreePath}
           </Text>
         </ListSection>
       ) : null}
+    </>
+  );
+
+  if (isDrawer) return <View className="gap-5">{sections}</View>;
+
+  const content = (
+    <ScrollView
+      nestedScrollEnabled
+      alwaysBounceVertical
+      className="flex-1 android:bg-sheet-solid ios:bg-screen"
+      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      showsVerticalScrollIndicator={false}
+      contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
+      contentContainerStyle={{
+        paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
+        paddingTop: 8,
+        gap: Platform.OS === "android" ? 8 : 14,
+      }}
+      refreshControl={
+        Platform.OS === "ios" || isInspector ? (
+          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        ) : undefined
+      }
+    >
+      {sections}
     </ScrollView>
   );
 

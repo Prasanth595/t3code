@@ -1,16 +1,12 @@
-import type { MenuAction } from "@react-native-menu/menu";
-import { useMemo } from "react";
 import type { JSX } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useThreadListDrawer } from "./thread-list-drawer";
+import { useThreadDetailsDrawer, useThreadListDrawer } from "./thread-list-drawer";
 
 export const THREAD_FLOATING_CONTROL_TOP_GAP = 8;
 export const THREAD_FLOATING_CONTROL_SIZE = 44;
@@ -19,8 +15,6 @@ export const THREAD_FLOATING_CONTROL_ROW_OFFSET =
   THREAD_FLOATING_CONTROL_TOP_GAP + THREAD_FLOATING_CONTROL_SIZE;
 /** Extra tail past the pill row where the top scrim finishes fading out. */
 const THREAD_FLOATING_TOP_SCRIM_TAIL = 24;
-
-const CLOSE_THREAD_ACTION_ID = "close-thread";
 
 const CONTROLS_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const CONTROLS_EXITING = FadeOut.duration(160).reduceMotion(ReduceMotion.System);
@@ -60,34 +54,14 @@ export function usesFloatingThreadControls(layout: { readonly usesSplitView: boo
   return Platform.OS === "android" && !layout.usesSplitView;
 }
 
-/** Two floating pills over the feed: threads list on the left, thread actions on the right. */
+/** Two floating pills over the feed: threads on the left, details on the right. */
 export function ThreadFloatingHeader(props: {
-  readonly actions: ReadonlyArray<AppBarAction>;
-  readonly onCloseThread: () => void;
   /** Hidden while the composer owns the keyboard so the pills never cover it. */
   readonly hidden: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const { openDrawer } = useThreadListDrawer();
-  const { actions, onCloseThread } = props;
-  const menuActions = useMemo<ReadonlyArray<MenuAction>>(() => {
-    const entries: MenuAction[] = [{ id: CLOSE_THREAD_ACTION_ID, title: "Close thread" }];
-    for (const action of actions) {
-      entries.push({
-        id: action.accessibilityLabel,
-        title: action.accessibilityLabel,
-        ...(action.selected === undefined ? {} : { state: action.selected ? "on" : "off" }),
-      });
-    }
-    return entries;
-  }, [actions]);
-  const pressMenuAction = (id: string) => {
-    if (id === CLOSE_THREAD_ACTION_ID) {
-      onCloseThread();
-      return;
-    }
-    actions.find((action) => action.accessibilityLabel === id)?.onPress();
-  };
+  const details = useThreadDetailsDrawer();
 
   return (
     <View
@@ -116,27 +90,21 @@ export function ThreadFloatingHeader(props: {
               type="monochrome"
             />
           </Pressable>
-          <AndroidAnchoredMenu
-            actions={menuActions}
-            onPressAction={({ nativeEvent }) => pressMenuAction(nativeEvent.event)}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open thread details"
+            accessibilityState={{ expanded: details.open }}
+            className={PILL_CLASS_NAME}
+            style={PILL_STYLE}
+            onPress={details.openDrawer}
           >
-            {(open) => (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Thread options"
-                className={PILL_CLASS_NAME}
-                style={PILL_STYLE}
-                onPress={open}
-              >
-                <SymbolView
-                  name="ellipsis"
-                  size={24}
-                  tintColorClassName="accent-header-foreground"
-                  type="monochrome"
-                />
-              </Pressable>
-            )}
-          </AndroidAnchoredMenu>
+            <SymbolView
+              name="sidebar.right"
+              size={24}
+              tintColorClassName="accent-header-foreground"
+              type="monochrome"
+            />
+          </Pressable>
         </Animated.View>
       )}
     </View>
