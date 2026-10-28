@@ -207,7 +207,12 @@ describe("thread link family lookups", () => {
       const decoded = ref("provider:1");
       const failed = lookup === "written" ? literal : decoded;
       const remote = ref(failed.threadId, EnvironmentId.make("remote-environment"));
-      using fixture = setup(new Map([[key(remote), row(remote.threadId, "Remote thread")]]));
+      const alternative = ref(decoded.threadId, EnvironmentId.make("decoded-remote-environment"));
+      const shells = new Map([[key(remote), row(remote.threadId, "Remote thread")]]);
+      if (lookup === "written") {
+        shells.set(key(alternative), row(alternative.threadId, "Decoded remote thread"));
+      }
+      using fixture = setup(shells);
       await using screen = await render(view(literal, "markdown", true));
       if (lookup === "decoded") await fixture.resolve(literal, []);
       await fixture.fail(failed, true);
@@ -221,6 +226,13 @@ describe("thread link family lookups", () => {
       expect(fixture.requested.has(key(remote))).toBe(false);
       await fixture.setShell(remote, null);
       expect(fixture.requested.has(key(remote))).toBe(true);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Decoded remote thread" }))
+        .not.toBeInTheDocument();
+      await fixture.fail(remote);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Decoded remote thread" }))
+        .not.toBeInTheDocument();
       await fixture.resolve(remote, [row(remote.threadId, "Remote thread reloaded")]);
       await expect
         .element(screen.getByRole("link", { name: "Thread, Remote thread reloaded" }))
@@ -234,11 +246,29 @@ describe("thread link family lookups", () => {
       await expect
         .element(screen.getByRole("link", { name: "Thread, Remote thread reloaded" }))
         .toBeInTheDocument();
+      if (lookup === "written") {
+        await fixture.resolve(remote, []);
+        await expect
+          .element(screen.getByRole("link", { name: "Thread, Decoded remote thread" }))
+          .toBeInTheDocument();
+      } else {
+        const preferred = ref(literal.threadId, EnvironmentId.make("written-remote-environment"));
+        await fixture.setShell(preferred, row(preferred.threadId, "Preferred written remote"));
+        await expect
+          .element(screen.getByRole("link", { name: "Thread, Preferred written remote" }))
+          .toBeInTheDocument();
+      }
       const next = ref("different-thread");
       await screen.rerender(view(next, "markdown", true));
       await fixture.fail(next);
       await expect
         .element(screen.getByRole("link", { name: "Thread, Remote thread reloaded" }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Decoded remote thread" }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Preferred written remote" }))
         .not.toBeInTheDocument();
       expect(appAtomRegistry.get(mocks.shells).has(key(remote))).toBe(false);
     },

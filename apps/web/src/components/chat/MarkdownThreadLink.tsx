@@ -65,17 +65,29 @@ export function MarkdownThreadLink(props: {
     ref: ScopedThreadRef;
   } | null>(null);
   const rememberedRef = remoteSelection?.sourceKey === sourceKey ? remoteSelection.ref : null;
+  const remoteRef = guess ? rememberedRef : null;
+  const remote = useThreadShell(remoteRef);
+  const remoteFamily = useThreadFamilyIfMissing(remoteRef, remoteRef !== null && remote === null);
+  const remoteMissing =
+    remoteRef !== null &&
+    remote === null &&
+    AsyncResult.isSuccess(remoteFamily) &&
+    !remoteFamily.waiting &&
+    !remoteFamily.value.threads.some((thread) => thread.id === remoteRef.threadId);
+  const matchesGuess =
+    guessedRef !== null &&
+    rememberedRef?.environmentId === guessedRef.environmentId &&
+    rememberedRef.threadId === guessedRef.threadId;
+  const preferWrittenGuess =
+    guessedRef?.threadId === props.link.threadId && rememberedRef?.threadId !== props.link.threadId;
   if (
     guessedRef !== null &&
-    (rememberedRef?.environmentId !== guessedRef.environmentId ||
-      rememberedRef.threadId !== guessedRef.threadId)
+    !matchesGuess &&
+    (rememberedRef === null || remoteMissing || preferWrittenGuess)
   ) {
     setRemoteSelection({ sourceKey, ref: guessedRef });
   }
-  const remoteRef = guess ? (guessedRef ?? rememberedRef) : null;
-  const remote = useThreadShell(remoteRef);
-  useThreadFamilyIfMissing(remoteRef, remoteRef !== null && remote === null);
-  const thread = local ?? (guessedRef === null ? null : remote);
+  const thread = local ?? (matchesGuess ? remote : null);
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
