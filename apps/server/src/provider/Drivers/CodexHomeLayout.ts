@@ -274,8 +274,8 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
         }),
       );
       // Codex deletes a thread lock on release, so one that is left may still guard a live
-      // writer. Keep the local directory until a later setup finds it empty.
-      if (lockNames.some((name) => name !== ".coordination.lock")) {
+      // writer. Keep the local directory until a later setup finds none.
+      if (lockNames.some((name) => name.endsWith(".lock") && name !== ".coordination.lock")) {
         return yield* Effect.logWarning(
           "Codex shadow home still has thread writer locks; it will share them on a later setup.",
           { path: link },

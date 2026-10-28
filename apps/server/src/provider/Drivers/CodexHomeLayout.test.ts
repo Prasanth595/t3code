@@ -240,6 +240,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const threadLock = path.join(shadowLocks, "019a0000-0000-7000-8000-000000000000.lock");
 
           yield* writeTextFile(path.join(shadowLocks, ".coordination.lock"), "");
+          yield* writeTextFile(path.join(shadowLocks, ".DS_Store"), "");
           yield* writeTextFile(threadLock, "");
 
           const layout = yield* resolveCodexHomeLayout(
