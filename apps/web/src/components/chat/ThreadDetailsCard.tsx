@@ -13,6 +13,13 @@ import {
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
+// Hidden sections can leave nothing to show. An empty glass card reads as a glitch, and an
+// empty popover still holds a padded dialog.
+const hiddenWhenEmpty = cn(
+  "has-[[data-thread-details-content]:empty]:hidden",
+  "has-[[data-thread-details-content]>section:only-child>[data-thread-details-section-body]:empty]:hidden",
+);
+
 export function ThreadDetailsCard({
   threadRef,
   anchor,
@@ -105,9 +112,7 @@ export function ThreadDetailsCard({
     <div
       className={cn(
         "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
-        // Hidden sections can leave nothing to show, and an empty glass card reads as a glitch.
-        "has-[[data-thread-details-content]:empty]:hidden",
-        "has-[[data-thread-details-content]>section:only-child>[data-thread-details-section-body]:empty]:hidden",
+        hiddenWhenEmpty,
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
@@ -180,6 +185,7 @@ export function ThreadDetailsCard({
         sideOffset={topInset}
         variant="panel"
         padding="none"
+        className={hiddenWhenEmpty}
       >
         {mode === "popover" ? (
           <div data-density={density} data-thread-details-panel="popover">

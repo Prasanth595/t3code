@@ -196,3 +196,57 @@ it("hides the card when every section is hidden, and shows it again when one ret
   await vi.waitFor(() => expect(getComputedStyle(section("Lineage")!).borderTopWidth).toBe("0px"));
   await vi.waitFor(() => expect(card()?.getBoundingClientRect().height).toBeGreaterThan(0));
 });
+
+it("hides the popover when its card is empty", async () => {
+  using fixture = setup();
+  await using screen = await render(
+    <Card threadRef={threadB} inline={false} content={emptySection} fixture={fixture} />,
+  );
+  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
+  const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+  await vi.waitFor(() => expect(popup()?.getBoundingClientRect().height).toBe(0));
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+
+  await screen.rerender(
+    <Card
+      threadRef={threadB}
+      inline={false}
+      content={
+        <ThreadDetailsSection headingId="lineage-heading" title="Lineage" showHeading={false}>
+          <p>Lineage for thread-b</p>
+        </ThreadDetailsSection>
+      }
+      fixture={fixture}
+    />,
+  );
+  await expect.element(page.getByText("Lineage for thread-b")).toBeVisible();
+  await vi.waitFor(() => expect(popup()?.getBoundingClientRect().height).toBeGreaterThan(0));
+});
+
+it("lets clicks through when an open popover's card empties", async () => {
+  using fixture = setup();
+  await using screen = await render(
+    <Card
+      threadRef={threadB}
+      inline={false}
+      content={
+        <ThreadDetailsSection headingId="lineage-heading" title="Lineage" showHeading={false}>
+          <p className="h-50">Lineage for thread-b</p>
+        </ThreadDetailsSection>
+      }
+      fixture={fixture}
+    />,
+  );
+  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
+  const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
+  const positioner = () => document.querySelector<HTMLElement>('[data-slot="popover-positioner"]')!;
+  await vi.waitFor(() => expect(positioner().getBoundingClientRect().height).toBeGreaterThan(0));
+  const shown = popup().getBoundingClientRect();
+
+  await screen.rerender(
+    <Card threadRef={threadB} inline={false} content={emptySection} fixture={fixture} />,
+  );
+  await vi.waitFor(() => expect(popup().getBoundingClientRect().height).toBe(0));
+  const hit = document.elementFromPoint(shown.left + shown.width / 2, shown.top + shown.height / 2);
+  expect(hit?.closest('[data-slot="popover-positioner"]')).toBeNull();
+});
