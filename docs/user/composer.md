@@ -183,9 +183,10 @@ end the call, and use the mic button to mute.
 
 With more than one ChatGPT-signed-in Codex account, a call starts on the account the thread
 runs on, or the first one otherwise. Right-click the wave button (press and hold on a touch screen), or use the arrow that appears
-beside it on hover, to choose another account, a voice, or the model the call's chat runs on for the next call. The chat
+beside it on hover, to choose another account, a voice, or the model and effort the call's chat runs on for the next call. The chat
 runs on the call's account unless you pick a model. Each account's default voice, extra instructions, and
-whether it offers calls at all are set under Settings → Providers.
+whether it offers calls at all are set under Settings → Providers. During a call, right-click or
+press and hold the mute button, or use the arrow beside it, to switch the microphone or speaker.
 
 Started from a saved thread, the call opens a new chat under it, named "Voice call: <thread>",
 and does the work you ask for there. Typing in that chat messages its agent; the live voice does

@@ -28,7 +28,7 @@ import { getDisplayModelName } from "./providerIconUtils";
 import { effortDescriptor } from "./VoiceCallButton.logic";
 
 /** A radio row marked, when chosen, with the same bar the model picker uses. */
-function RadioRow({ className, children, ...props }: ComponentProps<typeof MenuRadioItem>) {
+export function RadioRow({ className, children, ...props }: ComponentProps<typeof MenuRadioItem>) {
   return (
     <MenuRadioItem closeOnClick {...props}>
       <span className={cn("flex w-full min-w-0 items-center gap-1.5", className)}>

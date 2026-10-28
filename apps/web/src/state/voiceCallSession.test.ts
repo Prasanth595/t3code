@@ -24,7 +24,7 @@ class FakeConnection extends EventTarget {
 const platform: VoiceCallPlatform = {
   getUserMedia: async () => ({ getTracks: () => [] }) as unknown as MediaStream,
   createPeerConnection: () => new FakeConnection() as unknown as RTCPeerConnection,
-  playRemote: () => () => {},
+  playRemote: () => ({ stop: () => {}, setSpeaker: async () => {} }),
   watchAudio: () => () => {},
 };
 

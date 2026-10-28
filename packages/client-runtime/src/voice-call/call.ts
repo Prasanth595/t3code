@@ -2,6 +2,7 @@
 import { type AudioBands, SILENCE, SPEAKING_LEVEL } from "./audio-levels.ts";
 import {
   browserVoiceCallPlatform,
+  type RemotePlayback,
   type VoiceCallPlatform,
   waitForIceGathering,
 } from "./platform.ts";
@@ -12,6 +13,9 @@ export type VoiceCallState = {
   readonly phase: VoiceCallPhase;
   readonly error: string | null;
   readonly muted: boolean;
+  /** The microphone and speaker in use; null is the system default. */
+  readonly microphoneId: string | null;
+  readonly speakerId: string | null;
   /** The chat opened for the call, once the server has opened it. */
   readonly chatThreadId: string | null;
   /** Someone is talking: the person on this microphone or the voice answering. */
@@ -22,6 +26,8 @@ export const IDLE_STATE: VoiceCallState = {
   phase: "idle",
   error: null,
   muted: false,
+  microphoneId: null,
+  speakerId: null,
   chatThreadId: null,
   speaking: false,
 };
@@ -57,7 +63,11 @@ export class VoiceCall {
 
   private readonly signaling: VoiceCallSignaling;
   private readonly platform: VoiceCallPlatform;
+  private connection: RTCPeerConnection | null = null;
   private microphone: MediaStream | null = null;
+  private stopWatchingLocal = () => {};
+  private hearLocal: (bands: AudioBands) => void = () => {};
+  private remote: RemotePlayback | null = null;
   private bands = SILENCE;
   private readonly bandListeners = new Set<(bands: AudioBands) => void>();
 
@@ -125,15 +135,36 @@ export class VoiceCall {
     this.set({ muted });
   };
 
+  /** Swaps the live call's microphone without renegotiating; null returns to the system default. */
+  readonly selectMicrophone = async (deviceId: string | null) => {
+    const { connection } = this;
+    const sender = connection?.getSenders().find(({ track }) => track?.kind === "audio");
+    if (!connection || !sender) return;
+    const next = await this.platform.getUserMedia(deviceId ?? undefined);
+    if (this.connection !== connection) return next.getTracks().forEach((track) => track.stop());
+    next.getAudioTracks().forEach((track) => (track.enabled = !this.state.muted));
+    await sender.replaceTrack(next.getAudioTracks()[0] ?? null);
+    this.stopWatchingLocal();
+    this.microphone?.getTracks().forEach((track) => track.stop());
+    this.microphone = next;
+    this.stopWatchingLocal = this.platform.watchAudio(next, this.hearLocal);
+    this.set({ microphoneId: deviceId });
+  };
+
+  readonly selectSpeaker = async (deviceId: string | null) => {
+    await this.remote?.setSpeaker(deviceId);
+    this.set({ speakerId: deviceId });
+  };
+
   /** Registers its teardown as soon as it holds resources, so a hang-up can end a call mid-connect. */
   private async negotiate(generation: number): Promise<void> {
-    const microphone = await this.platform.getUserMedia();
+    const microphone = await this.platform.getUserMedia(this.state.microphoneId ?? undefined);
     if (generation !== this.generation)
       return microphone.getTracks().forEach((track) => track.stop());
     this.microphone = microphone;
     const connection = this.platform.createPeerConnection();
+    this.connection = connection;
     let sessionId: string | null = null;
-    let stopRemote = () => {};
     const heard = { local: SILENCE, remote: SILENCE };
     const hear = (side: keyof typeof heard) => (bands: AudioBands) => {
       heard[side] = bands;
@@ -141,18 +172,19 @@ export class VoiceCall {
       if (generation !== this.generation || this.state.phase !== "live") return;
       this.publishBands(heard.local.map((level, band) => Math.max(level, heard.remote[band]!)));
     };
-    const stopWatchingLocal = this.platform.watchAudio(microphone, hear("local"));
+    this.hearLocal = hear("local");
+    this.stopWatchingLocal = this.platform.watchAudio(microphone, this.hearLocal);
     let released = false;
     let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
     const teardown = async () => {
       if (!released) {
         released = true;
         clearTimeout(disconnectTimer);
-        stopRemote();
-        stopWatchingLocal();
-        microphone.getTracks().forEach((track) => track.stop());
+        this.remote?.stop();
+        this.stopWatchingLocal();
+        this.microphone?.getTracks().forEach((track) => track.stop());
         connection.close();
-        this.microphone = null;
+        this.connection = this.microphone = this.remote = null;
       }
       const ended = sessionId;
       sessionId = null;
@@ -164,9 +196,9 @@ export class VoiceCall {
       connection.createDataChannel(EVENTS_CHANNEL);
       connection.addEventListener("track", ({ streams: [stream] }) => {
         if (!stream) return;
-        const stopPlaying = this.platform.playRemote(stream);
+        const playback = this.platform.playRemote(stream, this.state.speakerId ?? undefined);
         const stopWatching = this.platform.watchAudio(stream, hear("remote"));
-        stopRemote = () => (stopPlaying(), stopWatching());
+        this.remote = { ...playback, stop: () => (playback.stop(), stopWatching()) };
       });
       connection.addEventListener("connectionstatechange", () => {
         if (generation !== this.generation) return;

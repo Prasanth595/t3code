@@ -1,2 +1,2 @@
 export * from "./call.ts";
-export type { VoiceCallPlatform } from "./platform.ts";
+export { type AudioDevices, listAudioDevices, type VoiceCallPlatform } from "./platform.ts";

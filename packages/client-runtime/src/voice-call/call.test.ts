@@ -10,6 +10,8 @@ class FakeConnection extends EventTarget {
   remote: RTCSessionDescriptionInit | null = null;
   closed = false;
   addTrack = vi.fn();
+  sender = { track: { kind: "audio" }, replaceTrack: vi.fn(async () => {}) };
+  getSenders = () => [this.sender];
   createDataChannel = vi.fn();
   createOffer = async () => ({ type: "offer" as const, sdp: "offer-sdp" });
   setLocalDescription = async (description: { sdp: string }) =>
@@ -31,10 +33,11 @@ const setup = () => {
   const track = { enabled: true, stop: vi.fn() };
   const microphone = { getTracks: () => [track], getAudioTracks: () => [track] };
   const microphoneBands: Array<(bands: ReadonlyArray<number>) => void> = [];
+  const getUserMedia = vi.fn(async (_deviceId?: string) => microphone as unknown as MediaStream);
   const platform: VoiceCallPlatform = {
-    getUserMedia: async () => microphone as unknown as MediaStream,
+    getUserMedia,
     createPeerConnection: () => connection as unknown as RTCPeerConnection,
-    playRemote: () => () => {},
+    playRemote: () => ({ stop: () => {}, setSpeaker: async () => {} }),
     watchAudio: (_stream, onBands) => {
       microphoneBands.push(onBands);
       return () => {};
@@ -53,6 +56,7 @@ const setup = () => {
     track,
     signaling,
     microphoneBands,
+    getUserMedia,
   };
 };
 
@@ -157,6 +161,23 @@ describe("VoiceCall", () => {
     call.toggleMute();
     expect(track.enabled).toBe(false);
     expect(call.getSnapshot().muted).toBe(true);
+  });
+
+  it("switches microphones mid-call, keeping the mute and releasing the old one", async () => {
+    const { call, connection, track, getUserMedia } = setup();
+    await call.start();
+    call.toggleMute();
+    const next = { enabled: true, stop: vi.fn() };
+    getUserMedia.mockResolvedValueOnce({
+      getTracks: () => [next],
+      getAudioTracks: () => [next],
+    } as unknown as MediaStream);
+    await call.selectMicrophone("usb-mic");
+    expect(getUserMedia).toHaveBeenLastCalledWith("usb-mic");
+    expect(connection.sender.replaceTrack).toHaveBeenCalledWith(next);
+    expect(next.enabled).toBe(false);
+    expect(track.stop).toHaveBeenCalled();
+    expect(call.getSnapshot().microphoneId).toBe("usb-mic");
   });
 
   it("reports signaling failures and still releases the microphone", async () => {
