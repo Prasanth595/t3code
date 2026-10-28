@@ -252,6 +252,8 @@ describe("composer file attachments", () => {
         }),
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
+      expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
     });
 
     it("measures the picker file instead of trusting the reported size", async () => {

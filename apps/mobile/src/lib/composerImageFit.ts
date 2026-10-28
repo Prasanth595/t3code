@@ -54,6 +54,13 @@ export async function renderPhoto(
           ? shrinkToByteLimit(image, estimateBase64ByteSize(saved.base64))
           : null;
       if (size === null) return { base64: saved.base64, uri: saved.uri };
+      try {
+        const { File } = await import("expo-file-system");
+        const discarded = new File(saved.uri);
+        if (discarded.exists) discarded.delete();
+      } catch (error) {
+        console.warn("[composer-images] could not remove discarded render", error);
+      }
     }
   } finally {
     image.release();
