@@ -387,8 +387,8 @@ export default function DiffPanel({
     ? toolCallPreview?.patch
     : selectedTurn
       ? activeCheckpointDiff.error === null
-          ? activeCheckpointDiff.data?.diff
-          : undefined
+        ? activeCheckpointDiff.data?.diff
+        : undefined
       : gitDiff;
   const isSelectedPatchTruncated =
     toolCallPreview?.truncated === true ||
