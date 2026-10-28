@@ -18,9 +18,8 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 // NTFS cannot enforce POSIX modes; choose the host platform.
 const hostPlatform: NodeJS.Platform =
   HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
-const executableName =
-  hostPlatform === "win32" ? "chrome-headless-shell.exe" : "chrome-headless-shell";
-const ROOT = "chrome-headless-shell-fixture/";
+const executableName = PreviewBrowser.executableName(hostPlatform);
+const ROOT = "chrome-fixture/";
 
 const makeZip = (
   entries: ReadonlyArray<{ readonly name: string; readonly data?: string; readonly mode: number }>,
@@ -95,7 +94,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
       : {
           version: "1.2.3",
           platform: "fixture",
-          url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
+          url: "https://storage.googleapis.com/chrome-fixture.zip",
           bytes: archive.byteLength,
           sha256,
         },
@@ -116,14 +115,16 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
       ),
     ),
   );
-  const installRoot = path.join(baseDir, "tools", "chrome-headless-shell", "fixture");
+  const installRoot = path.join(baseDir, "tools", "chrome-for-testing", "fixture");
   return { browser, fs, path, baseDir, installRoot, requests };
 });
 
 it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
   it.effect("installs a verified download with its file modes and then reuses it", () =>
     Effect.gen(function* () {
-      const { browser, fs, path, installRoot, requests } = yield* makeHarness();
+      const { browser, fs, path, baseDir, installRoot, requests } = yield* makeHarness();
+      const headlessShell = path.join(baseDir, "tools", "chrome-headless-shell");
+      yield* fs.makeDirectory(path.join(headlessShell, "linux64", "156"), { recursive: true });
       yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
       const active = path.join(installRoot, ".install-other");
       const abandoned = path.join(installRoot, ".install-abandoned");
@@ -152,6 +153,49 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       expect(yield* browser.executable).toBe(executable);
       expect(yield* browser.installed).toEqual(Option.some(executable));
       expect(requests).toHaveLength(1);
+      expect(yield* fs.exists(headlessShell)).toBe(false);
+    }),
+  );
+
+  // macOS framework bundles link inside themselves; links are written as POSIX links.
+  it.effect.skipIf(hostPlatform === "win32")(
+    "installs links that stay inside the browser's directory",
+    () =>
+      Effect.gen(function* () {
+        const { browser, fs, path, installRoot } = yield* makeHarness({
+          archive: makeZip([
+            { name: `${ROOT}${executableName}`, data: "#!/bin/sh\n", mode: 0o100755 },
+            { name: `${ROOT}Versions/A/library`, data: "library", mode: 0o100644 },
+            { name: `${ROOT}Versions/Current`, data: "A", mode: 0o120755 },
+            { name: `${ROOT}library`, data: "Versions/Current/library", mode: 0o120755 },
+          ]),
+        });
+
+        yield* browser.executable;
+
+        const version = path.join(installRoot, "1.2.3");
+        expect(yield* fs.readLink(path.join(version, "library"))).toBe("Versions/Current/library");
+        expect(yield* fs.readFileString(path.join(version, "library"))).toBe("library");
+      }),
+  );
+
+  it.effect.each([
+    { name: "a parent directory", link: "../../escape" },
+    { name: "an absolute path", link: "/etc" },
+    { name: "nothing", link: "" },
+  ])("rejects an archive with a link to $name", (testCase) =>
+    Effect.gen(function* () {
+      const { browser, fs, installRoot } = yield* makeHarness({
+        archive: makeZip([
+          { name: `${ROOT}${executableName}`, data: "#!/bin/sh\n", mode: 0o100755 },
+          { name: `${ROOT}link`, data: testCase.link, mode: 0o120755 },
+        ]),
+      });
+
+      const error = yield* browser.executable.pipe(Effect.flip);
+
+      expect(error._tag).toBe("PreviewBrowserInstallError");
+      expect(yield* fs.readDirectory(installRoot)).toEqual([]);
     }),
   );
 
@@ -193,7 +237,7 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
 
       expect(error._tag).toBe("PreviewBrowserInstallError");
       expect(yield* fs.readDirectory(installRoot)).toEqual([]);
-      expect(yield* fs.exists(path.join(baseDir, "tools", "chrome-headless-shell", "escape"))).toBe(
+      expect(yield* fs.exists(path.join(baseDir, "tools", "chrome-for-testing", "escape"))).toBe(
         false,
       );
     }),

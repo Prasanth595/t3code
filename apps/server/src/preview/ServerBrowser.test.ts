@@ -54,6 +54,12 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async scratchPage() {
       return makeEncoderPage() as unknown as Page;
     }
+    async recorderPage() {
+      if (!tabCapture) return null;
+      const page = makeEncoderPage(tabCapture.globals());
+      tabCapture.pages.push(page);
+      return page as unknown as Page;
+    }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext();
       desktopConnections.push({ endpoint, context });
@@ -98,6 +104,8 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
       }
       // Snapshots shrink their screenshot in the page; the header stands in for the result.
       if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
+      if (method === "Target.getTargetInfo") return { targetInfo: { targetId: "tab-target" } };
+      if (method === "Browser.getWindowForTarget") return { windowId: 1 };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {
@@ -217,7 +225,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 }
 
 // Runs the real encoder script against fake canvas and MediaRecorder globals.
-function makeEncoderPage() {
+function makeEncoderPage(globals: Record<string, unknown> = {}) {
   const canvas = {
     width: 0,
     height: 0,
@@ -245,6 +253,7 @@ function makeEncoderPage() {
     atob,
     Blob,
     performance,
+    ...globals,
   };
   sandbox.window = sandbox;
   const context = NodeVM.createContext(sandbox);
@@ -258,7 +267,48 @@ function makeEncoderPage() {
   };
 }
 
+// The recorder extension's APIs, capturing one 2560x1600 frame of the tab the CDP target names.
+const makeTabCapture = (tabId: number | undefined) => {
+  const capture = {
+    pages: [] as Array<ReturnType<typeof makeEncoderPage>>,
+    constraints: [] as Array<unknown>,
+    track: { stop: vi.fn() },
+    globals: () => ({
+      chrome: {
+        debugger: { getTargets: async () => [{ id: "tab-target", tabId }] },
+        tabCapture: { getMediaStreamId: async () => `stream-for-${tabId}` },
+      },
+      navigator: {
+        mediaDevices: {
+          getUserMedia: async (constraints: unknown) => {
+            capture.constraints.push(constraints);
+            return { getVideoTracks: () => [capture.track] };
+          },
+        },
+      },
+      MediaStreamTrackProcessor: class {
+        readonly readable = {
+          getReader: () => {
+            let read = 0;
+            return {
+              read: () =>
+                read++ === 0
+                  ? Promise.resolve({
+                      done: false,
+                      value: { displayWidth: 2560, displayHeight: 1600, close() {} },
+                    })
+                  : new Promise(() => {}),
+            };
+          },
+        };
+      },
+    }),
+  };
+  return capture;
+};
+
 const contexts: ReturnType<typeof makeContext>[] = [];
+let tabCapture: ReturnType<typeof makeTabCapture> | null = null;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
@@ -370,6 +420,7 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
 
 beforeEach(() => {
   contexts.length = 0;
+  tabCapture = null;
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
@@ -570,6 +621,76 @@ it.live.each([
         expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "records a tab the browser can capture from its composited frames, not the screencast",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        tabCapture = makeTabCapture(7);
+        const { browser, broker, tabId } = yield* ready;
+        yield* browser.reportProfiles({
+          profiles: [],
+          defaultProfileId: "default",
+          recordingFrameRate: 60,
+        });
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        expect(encoderStreams).toEqual([{ frameRate: 60, bitsPerSecond: 2560 * 1600 * 60 * 0.05 }]);
+        expect(tabCapture.constraints).toEqual([
+          {
+            audio: false,
+            video: {
+              mandatory: {
+                chromeMediaSource: "tab",
+                chromeMediaSourceId: "stream-for-7",
+                maxFrameRate: 60,
+                minWidth: 3,
+                minHeight: 2,
+                maxWidth: 7680,
+                maxHeight: 7680,
+              },
+            },
+          },
+        ]);
+        const sends = contexts
+          .flatMap((context) => context.sessions)
+          .flatMap((session) => session.send.mock.calls);
+        expect(sends.some(([method]) => method === "Page.startScreencast")).toBe(false);
+        expect(sends).toContainEqual([
+          "Browser.setContentsSize",
+          expect.objectContaining({ width: 1280, height: 800 }),
+        ]);
+        // A resize during the recording moves the window and the cursor scale with it.
+        const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* operator.input({ type: "takeControl" });
+        yield* operator.input({ type: "resize", width: 800, height: 800 });
+        const followed = contexts
+          .flatMap((context) => context.sessions)
+          .flatMap((session) => session.send.mock.calls);
+        expect(followed).toContainEqual([
+          "Browser.setContentsSize",
+          expect.objectContaining({ width: 800, height: 800 }),
+        ]);
+        expect(tabCapture.pages[0]?.evaluate).toHaveBeenLastCalledWith(expect.any(Function), 800);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("closes the recorder page when it cannot capture the tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      tabCapture = makeTabCapture(undefined);
+      const { broker, tabId } = yield* ready;
+      const failed = yield* broker
+        .invoke<void>({ scope, tabId, operation: "recordingStart", input: {} })
+        .pipe(Effect.flip);
+      expect(failed).toMatchObject({ _tag: "PreviewAutomationExecutionError" });
+      expect(JSON.stringify(failed)).toContain("The recorder cannot see this tab.");
+      expect(tabCapture.pages[0]?.close).toHaveBeenCalled();
+      expect(encoderStreams).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
