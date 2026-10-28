@@ -1212,6 +1212,54 @@ it.effect("shows an action's confirmed state in mounted readers and list pages w
   ),
 );
 
+it.effect("keeps a confirmed merge when a read that started before it answers late", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let state: "open" | "merged" = "open";
+      let reads = 0;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const client = actionResultClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const snapshot = { ...actionReference, state, isDraft: false, observedAt: 100 };
+            if (reads === 2) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            return snapshot;
+          }),
+        [WS_METHODS.pullRequestsRunActionWithResult]: () =>
+          Effect.sync(() => {
+            state = "merged";
+            return confirmedActionResult;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      registry.refresh(detail);
+      yield* Deferred.await(started);
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).state,
+      ).toBe("merged");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
+    }),
+  ),
+);
+
 it.effect("applies an action result another client's refresh event carries without a read", () =>
   Effect.scoped(
     Effect.gen(function* () {
