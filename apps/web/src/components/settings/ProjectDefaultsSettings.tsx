@@ -38,6 +38,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
