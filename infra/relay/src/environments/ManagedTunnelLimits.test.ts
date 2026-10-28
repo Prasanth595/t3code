@@ -242,6 +242,13 @@ describe("ManagedTunnelLimits", () => {
           allocation: { updatedAt: 50 },
           link: { revoked: true, updatedAt: 48 },
         },
+        // Tunnel deleted but the row survived; deprovision marked it released, then a relink stalled.
+        {
+          environmentId: "released-after-failed-removal-then-reserved",
+          counted: false,
+          allocation: { tunnelId: "t", releasedAt: 20, updatedAt: 30 },
+          link: { revoked: true, updatedAt: 15 },
+        },
         {
           environmentId: "withdrawn-at-provisioning-write",
           counted: false,
