@@ -3,6 +3,8 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
   canCheckForUpdate,
+  getArm64IntelBuildWarningDescription,
+  shouldShowArm64IntelBuildWarning,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
@@ -89,4 +91,24 @@ describe("canCheckForUpdate", () => {
       }),
     ).toBe(true);
   });
+});
+
+it("describes emulated x64 updates without assuming macOS", () => {
+  const state: DesktopUpdateState = {
+    ...baseState,
+    hostArch: "arm64",
+    runningUnderArm64Translation: true,
+  };
+  expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
+  for (const status of ["idle", "available", "downloaded"] as const) {
+    const description = getArm64IntelBuildWarningDescription({
+      ...state,
+      status,
+      availableVersion: status === "idle" ? null : "1.1.0",
+      downloadedVersion: status === "downloaded" ? "1.1.0" : null,
+    });
+    expect(description).toContain("ARM64");
+    expect(description).toContain("x64");
+    expect(description).not.toMatch(/Mac|Apple|Rosetta|Intel/);
+  }
 });

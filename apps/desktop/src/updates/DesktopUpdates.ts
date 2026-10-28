@@ -64,8 +64,10 @@ type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
+  path: Schema.optional(Schema.String),
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
+  files: Schema.optional(Schema.Unknown),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -81,6 +83,9 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
+const decodeReleaseFileUrls = Schema.decodeUnknownOption(
+  Schema.Array(Schema.Struct({ url: Schema.String })),
+);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -329,6 +334,31 @@ function getAutoUpdateDisabledReason(args: {
 
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
+}
+
+function hasWindowsUpdateForHostArch(
+  info: typeof UpdateInfo.Type,
+  hostArch: DesktopRuntimeInfo["hostArch"],
+): boolean {
+  if (hostArch !== "arm64" && hostArch !== "x64") return true;
+
+  const releaseFiles = Option.getOrElse(decodeReleaseFileUrls(info.files), () => []);
+  const files = releaseFiles.length ? releaseFiles : info.path ? [{ url: info.path }] : [];
+  const architectures = files.map(({ url }) => {
+    const filename = url.split(/[?#]/, 1)[0]?.split(/[\\/]/).at(-1) ?? "";
+    return filename
+      .match(/(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64|ia32)(?=[-_.]|$)/i)?.[1]
+      ?.toLowerCase();
+  });
+  // Untagged legacy releases carry no architecture information.
+  return (
+    architectures.every((arch) => arch === undefined) ||
+    architectures.some((arch) =>
+      hostArch === "arm64"
+        ? arch === "arm64" || arch === "aarch64"
+        : arch === "x64" || arch === "x86_64" || arch === "amd64",
+    )
+  );
 }
 
 /** @public */
@@ -860,6 +890,21 @@ export const make = Effect.gen(function* () {
             return;
           }
 
+          if (
+            environment.platform === "win32" &&
+            !hasWindowsUpdateForHostArch(info, environment.runtimeInfo.hostArch)
+          ) {
+            yield* logUpdaterInfo("ignoring update that has no package for host architecture", {
+              version: info.version,
+              hostArch: environment.runtimeInfo.hostArch,
+              appArch: environment.runtimeInfo.appArch,
+            });
+            const checkedAt = yield* currentIsoTimestamp;
+            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+            yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
+            return;
+          }
+
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
             info.releaseNotes,
@@ -1061,7 +1106,7 @@ export const make = Effect.gen(function* () {
 
       if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
         yield* logUpdaterInfo(
-          "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
+          "arm64 host detected while running the x64 build; updates will switch to arm64 packages",
         );
       }
 

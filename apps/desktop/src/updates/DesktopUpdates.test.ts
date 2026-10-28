@@ -1,3 +1,9 @@
+import { expect, vi } from "vite-plus/test";
+import { NsisUpdater } from "electron-updater/out/NsisUpdater.js";
+import { GenericProvider } from "electron-updater/out/providers/GenericProvider.js";
+import { CancellationToken, type UpdateInfo } from "electron-updater/out/types.js";
+import { ElectronHttpExecutor } from "electron-updater/out/electronHttpExecutor.js";
+import type { DownloadExecutorTask } from "electron-updater/out/AppUpdater.js";
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -744,6 +750,50 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
   );
+  it.effect("offers native Windows updates under Prism and hides incompatible releases", () => {
+    let disableDifferentialCount = 0;
+    const harness = makeHarness({
+      platform: "win32",
+      processArch: "x64",
+      runningUnderArm64Translation: true,
+      setDisableDifferentialDownload: Effect.sync(() => {
+        disableDifferentialCount += 1;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const initialState = yield* updates.getState;
+        assert.equal(initialState.hostArch, "arm64");
+        assert.equal(initialState.appArch, "x64");
+        assert.isTrue(initialState.runningUnderArm64Translation);
+        assert.equal(disableDifferentialCount, 1);
+
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [{ url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 }],
+        });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "up-to-date");
+        assert.isNull((yield* updates.getState).availableVersion);
+        assert.isFalse((yield* updates.download).accepted);
+
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [
+            { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
+            { url: "T3-Code-1.2.4-arm64.exe", sha512: "arm64sha", size: 95 },
+          ],
+        });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "available");
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
+        assert.isTrue((yield* updates.download).accepted);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 });
 
 describe("describeUpdateErrorCause", () => {
@@ -791,5 +841,96 @@ describe("describeUpdateErrorCause", () => {
       },
     });
     assert.equal(DesktopUpdates.describeUpdateErrorCause(unreadable), "UnknownError");
+  });
+});
+
+describe("installed Windows updater package selection", () => {
+  const hosts = [
+    { name: "native ARM64", arch: "arm64", translated: false, installerArch: "arm64" },
+    { name: "x64 under Prism", arch: "x64", translated: true, installerArch: "arm64" },
+    { name: "native x64", arch: "x64", translated: false, installerArch: "x64" },
+  ];
+  const installer = (arch: string) => `T3-Code-1.2.4-${arch}.exe`;
+  const manifest = (...names: string[]): UpdateInfo => ({
+    version: "1.2.4",
+    releaseDate: "2026-10-01T00:00:00.000Z",
+    path: names[0]!,
+    sha512: "legacy-checksum",
+    files: names.map((url) => ({ url, sha512: `${url}-checksum`, size: 100 })),
+  });
+
+  function makeWindowsUpdater(host: (typeof hosts)[number]) {
+    const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "arch", { ...originalArch, value: host.arch });
+
+    const app = {
+      app: { runningUnderARM64Translation: host.translated },
+      version: "1.2.3",
+      name: "T3 Code",
+      isPackaged: true,
+      appUpdateConfigPath: "/unused/app-update.yml",
+      userDataPath: "/unused/user-data",
+      baseCachePath: "/unused/cache",
+      whenReady: () => Promise.resolve(),
+      relaunch: vi.fn(),
+      quit: vi.fn(),
+      onQuit: vi.fn(),
+    };
+    // Stop before filesystem, network, signature verification, or installer execution.
+    class CapturingNsisUpdater extends NsisUpdater {
+      override executeDownload = vi.fn((task: DownloadExecutorTask) =>
+        Promise.resolve([task.fileInfo.url.href]),
+      );
+
+      async selectInstaller(info: UpdateInfo) {
+        return this.doDownloadUpdate({
+          updateInfoAndProvider: { info, provider },
+          requestHeaders: {},
+          cancellationToken: new CancellationToken(),
+        });
+      }
+    }
+    const updater = new CapturingNsisUpdater(null, app);
+    const executor = new ElectronHttpExecutor();
+    vi.spyOn(executor, "createRequest").mockImplementation(() => {
+      throw new Error("Updater selection must not make network requests");
+    });
+    const provider = new GenericProvider(
+      { provider: "generic", url: "https://updates.example.invalid/" },
+      updater,
+      { platform: "win32", isUseMultipleRangeRequest: false, executor },
+    );
+    return Object.assign(updater, {
+      [Symbol.dispose]() {
+        Object.defineProperty(process, "arch", originalArch);
+      },
+    });
+  }
+
+  it.each(hosts)(
+    "selects the host installer on $name regardless of manifest order",
+    async (host) => {
+      using updater = makeWindowsUpdater(host);
+      const files = [installer("x64"), installer("arm64")];
+      for (const order of [files, files.toReversed()]) {
+        await expect(updater.selectInstaller(manifest(...order))).resolves.toEqual([
+          `https://updates.example.invalid/${installer(host.installerArch)}`,
+        ]);
+      }
+    },
+  );
+
+  it.each(hosts)("refuses an opposite-architecture-only release on $name", async (host) => {
+    using updater = makeWindowsUpdater(host);
+    const opposite = host.installerArch === "arm64" ? "x64" : "arm64";
+    await expect(updater.selectInstaller(manifest(installer(opposite)))).rejects.toThrow();
+    expect(updater.executeDownload).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy untagged manifests usable", async () => {
+    using updater = makeWindowsUpdater(hosts[0]!);
+    await expect(updater.selectInstaller(manifest("T3-Code-setup.exe"))).resolves.toEqual([
+      "https://updates.example.invalid/T3-Code-setup.exe",
+    ]);
   });
 });
