@@ -72,7 +72,7 @@ import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolb
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Tabs } from "../../components/ui/Tabs";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { relativeTime } from "../../lib/time";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -171,6 +171,7 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   })();
   return {
     rows,
+    count: result.data ? result.data.commentCount + result.data.reviewThreads.length : undefined,
     hiddenCount: filtered?.hiddenCount ?? 0,
     pending: result.isPending && !result.data,
     error: result.error,
@@ -838,18 +839,21 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
+                          <Tabs
                             options={[
                               { value: "overview", label: "Overview" },
                               ...(guidesEnabled
                                 ? [{ value: "guide" as const, label: "Guide" }]
                                 : []),
-                              { value: "activity", label: "Activity" },
+                              {
+                                value: "activity",
+                                label: "Activity",
+                                count: activityContent.count,
+                              },
                             ]}
                             selected={section}
                             onSelect={selectSection}
-                            role="tab"
-                            size="compact"
+                            className="-mx-3.5"
                           />
                         </View>
                       ) : null}
