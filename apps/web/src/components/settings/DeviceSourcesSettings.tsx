@@ -38,7 +38,6 @@ import {
 } from "./easDeviceHostsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsSection } from "./settingsLayout";
-import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SimlockDeviceHostEditor } from "./SimlockDeviceHostEditor";
 import {
@@ -162,7 +161,7 @@ export function DeviceSourcesSettings(props: {
   const active = members.filter((member) => member.settings?.enableDeviceSupport);
   const simlockEnabled = members.some((member) => member.settings?.simlockDeviceHostsEnabled);
   // Like every scoped setting, a change reaches the connected environments and skips the rest.
-  const disabled = busy || members.length === 0;
+  const disabled = projectScope || busy || members.length === 0;
 
   /** Writes one settings patch per environment; reports the environments it could not change. */
   const write = async (
@@ -537,15 +536,6 @@ export function DeviceSourcesSettings(props: {
       </MenuPopup>
     </Menu>
   );
-
-  if (projectScope)
-    return (
-      <SettingsSection id="device-sources" title="Device sources">
-        <SettingsScopeNotice inline target="environment">
-          Choose an environment to change its device sources.
-        </SettingsScopeNotice>
-      </SettingsSection>
-    );
 
   return (
     <SettingsSection id="device-sources" title="Device sources" headerAction={addMenu}>
