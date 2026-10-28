@@ -189,8 +189,7 @@ export function useManagedTunnelUsage() {
   const cap = t3Chat.accountId !== null && t3Chat.data ? managedTunnelCap(t3Chat.data) : null;
   return {
     used,
-    // An override can exceed the default cap; never show more tunnels than the cap.
-    limit: cap && used !== null ? Math.max(cap.limit, used) : (cap?.limit ?? null),
+    limit: cap?.limit ?? null,
     upgrade: cap?.upgrade ?? null,
     refresh: refreshManagedTunnelUsage,
   };

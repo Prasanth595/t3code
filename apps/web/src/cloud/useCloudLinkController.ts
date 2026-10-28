@@ -22,6 +22,7 @@ import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { CloudEnvironmentLinkError } from "./linkEnvironment";
+import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
@@ -155,6 +156,7 @@ export function useCloudLinkController() {
         target,
         clerkToken: tokenResult._tag === "Success" ? (tokenResult.value ?? null) : null,
       });
+      refreshManagedTunnelUsage();
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
           reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
@@ -185,6 +187,8 @@ export function useCloudLinkController() {
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
         });
+        // Any link attempt can change the account's tunnel count.
+        refreshManagedTunnelUsage();
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {
             const cause = squashAtomCommandFailure(linkResult);

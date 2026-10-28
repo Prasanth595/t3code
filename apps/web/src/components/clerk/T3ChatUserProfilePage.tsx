@@ -12,26 +12,25 @@ import {
 } from "./ClerkUserProfilePage";
 import { useT3ChatLink } from "./useT3ChatLink";
 
+const upgradeLink = (
+  <a className="underline" href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer">
+    Upgrade on T3 Chat
+  </a>
+);
+
 function planLabel(link: RelayT3ChatLink): ReactNode {
   switch (link.plan) {
     case "premier":
       return `Premier · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels`;
     case "pro":
-      return `Pro · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels, or ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier`;
-    case "free":
       return (
         <>
-          <a
-            className="underline"
-            href={T3CHAT_SUBSCRIPTION_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Upgrade on T3 Chat
-          </a>{" "}
-          for more tunnels
+          Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
+          {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
         </>
       );
+    case "free":
+      return <>{upgradeLink} for more tunnels</>;
   }
 }
 
