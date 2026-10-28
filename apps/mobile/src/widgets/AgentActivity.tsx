@@ -181,13 +181,12 @@ function AgentActivity(
   const row3 = ordered[3];
   const row4 = ordered[4];
 
-  const attentionRows = activities.filter(
+  const attentionRow = ordered.find(
     (row) =>
       row.phase === "waiting_for_approval" ||
       row.phase === "waiting_for_input" ||
       row.phase === "woke",
   );
-  const attentionRow = attentionRows[0];
   const failedRow = activities.find((row) => row.phase === "failed");
   const heroRow = attentionRow ?? failedRow ?? row0;
   const tint =
