@@ -724,14 +724,15 @@ function threadSettlement(
 }
 
 function threadSnooze(
-  thread: Parameters<typeof isSnoozed>[0],
+  thread: Parameters<typeof isSnoozed>[0] & Pick<OrchestrationV2ThreadShell, "snoozeWakeOn">,
   nowMs: number,
-): Pick<OrchestratorMcpThreadListItem, "snoozed" | "snoozedUntil"> {
+): Pick<OrchestratorMcpThreadListItem, "snoozed" | "snoozedUntil" | "snoozeWakeOn"> {
   const snoozed = isSnoozed(thread, nowMs);
   return {
     snoozed,
     snoozedUntil:
       snoozed && thread.snoozedUntil != null ? DateTime.formatIso(thread.snoozedUntil) : null,
+    ...(snoozed && thread.snoozeWakeOn != null ? { snoozeWakeOn: thread.snoozeWakeOn } : {}),
   };
 }
 

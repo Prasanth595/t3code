@@ -1326,10 +1326,12 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
         commandId: CommandId.make(`snooze-before-settle-${round}`),
         threadId,
         snoozedUntil: DateTime.formatIso(snoozedUntil),
+        ...(round === 1 ? { wakeOn: "pull-request-reply" as const } : {}),
       });
       assert.deepInclude(yield* projections.getThread(threadId), {
         snoozedUntil,
         snoozedAt: yield* DateTime.now,
+        snoozeWakeOn: round === 1 ? "pull-request-reply" : null,
       });
       yield* TestClock.adjust("1 second");
       const commandId = CommandId.make(`settle-snoozed-${round}`);
@@ -1339,6 +1341,7 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
         settledAt,
         snoozedUntil: null,
         snoozedAt: null,
+        snoozeWakeOn: null,
         updatedAt: yield* DateTime.now,
       } as const;
       const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);

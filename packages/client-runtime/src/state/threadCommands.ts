@@ -382,6 +382,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             pinOrderKey: null,
             snoozedAt: null,
             snoozedUntil: null,
+            snoozeWakeOn: null,
           },
     ),
     unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
@@ -401,12 +402,15 @@ export function createThreadEnvironmentAtoms<R, E>(
             pendingRuntimeRequest: null,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,
+            snoozeWakeOn: input.wakeOn ?? null,
+            snoozeWakeReason: null,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
       snoozedUntil: null,
       snoozedAt: null,
+      snoozeWakeOn: null,
     })),
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
@@ -425,6 +429,7 @@ export function createThreadEnvironmentAtoms<R, E>(
         : {}),
       snoozedUntil: null,
       snoozedAt: null,
+      snoozeWakeOn: null,
     })),
     unpin: optimistic.wrap(commands.unpin, (thread) => ({
       ...thread,

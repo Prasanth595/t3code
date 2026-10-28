@@ -106,6 +106,7 @@ const reactionGroups = (groups: ReadonlyArray<Json> | undefined) =>
 const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
+  authorAssociation: "NONE",
   url: "https://github.com/acme/web/pull/1#discussion",
   ...raw,
   author: actor(author),
@@ -424,6 +425,7 @@ describe("pull request detail decoding", () => {
               nodes: ((raw["comments"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
                 (comment) => ({
                   lastEditedAt: null,
+                  authorAssociation: "NONE",
                   url: "https://github.com/c",
                   author: null,
                   ...comment,
@@ -435,6 +437,7 @@ describe("pull request detail decoding", () => {
               nodes: ((raw["reviews"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
                 (review) => ({
                   lastEditedAt: null,
+                  authorAssociation: "NONE",
                   url: "https://github.com/r",
                   author: null,
                   submittedAt: null,
@@ -1093,7 +1096,11 @@ describe("review thread decoding", () => {
             comments: {
               totalCount: 2,
               nodes: [
-                { ...comment("c1", "first"), lastEditedAt: "2026-07-02T00:00:00Z" },
+                {
+                  ...comment("c1", "first"),
+                  lastEditedAt: "2026-07-02T00:00:00Z",
+                  authorAssociation: "COLLABORATOR",
+                },
                 comment("c2", "second"),
               ],
             },
@@ -1113,6 +1120,7 @@ describe("review thread decoding", () => {
           {
             id: "c1",
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
+            authorIsMaintainer: true,
             body: "first",
             createdAt: "2026-07-01T00:00:00Z",
             editedAt: "2026-07-02T00:00:00Z",
@@ -1122,6 +1130,7 @@ describe("review thread decoding", () => {
           {
             id: "c2",
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
+            authorIsMaintainer: false,
             body: "second",
             createdAt: "2026-07-01T00:00:00Z",
             editedAt: null,

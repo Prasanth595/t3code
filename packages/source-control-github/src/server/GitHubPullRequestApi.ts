@@ -91,6 +91,7 @@ import {
   toStackMembership,
   toViewerPermissions,
   decodePullRequestFilesJson,
+  decodePullRequestNotificationsJson,
   decodePullRequestStacksJson,
   buildLabelRequest,
   PULL_REQUEST_SEARCH_MAX_ROWS,
@@ -112,6 +113,7 @@ import {
   IMMEDIATELY_MERGEABLE,
 } from "./gitHubPullRequestJson.ts";
 import type {
+  ProviderChangeRequestNotifications,
   ProviderChangeRequestSummary,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -503,6 +505,12 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly headRepositoryOwner: string;
       readonly isCrossRepository: true;
     }) => Effect.Effect<ReadonlyArray<GitHubWorkflowRunApproval>, GitHubPullRequestApiError>;
+
+    readonly getPullRequestNotifications: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly since: string;
+    }) => Effect.Effect<ProviderChangeRequestNotifications | null, GitHubPullRequestApiError>;
 
     readonly getPullRequestStack: (input: {
       readonly cwd: string;
@@ -1203,6 +1211,59 @@ export const make = Effect.gen(function* () {
       : Cache.invalidate(validators, key);
     return decoded;
   });
+
+  const notificationDates = yield* Cache.make({
+    capacity: 64,
+    timeToLive: "1 hour",
+    lookup: (_key: string) => Effect.succeed(Option.none<string>()),
+  });
+  const getPullRequestNotifications: GitHubPullRequestApi["Service"]["getPullRequestNotifications"] =
+    Effect.fn("GitHubPullRequestApi.getPullRequestNotifications")(function* (input) {
+      const host = normalizeHost(input.host);
+      const operation = "getPullRequestNotifications";
+      const { token, fingerprint } = yield* api.credential(host);
+      const path = `notifications?all=true&participating=true&per_page=100&since=${encodeURIComponent(input.since)}`;
+      const key = `${fingerprint}\0${host}\0${path}`;
+      const previous = yield* Cache.get(notificationDates, key);
+      const response = yield* api
+        .rest({
+          host,
+          operation,
+          path,
+          ...(Option.isSome(previous) ? { ifModifiedSince: previous.value } : {}),
+        })
+        .pipe(
+          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+            host,
+            token,
+            credentialFingerprint: fingerprint,
+          }),
+          Effect.asSome,
+          Effect.catchTags({
+            GitHubApiNotFoundError: () => Effect.succeedNone,
+            GitHubApiResponseError: (error) =>
+              error.status === 403 ? Effect.succeedNone : Effect.fail(error),
+          }),
+        );
+      if (Option.isNone(response)) return null;
+      const interval = Number(response.value.headers["x-poll-interval"]);
+      const pollIntervalSeconds = Number.isFinite(interval) && interval > 0 ? interval : null;
+      if (response.value.status === 304 && Option.isSome(previous)) {
+        yield* Cache.set(notificationDates, key, previous);
+        return { changeRequests: null, pollIntervalSeconds };
+      }
+      const changeRequests = yield* decodeWith(
+        input.cwd,
+        operation,
+        decodePullRequestNotificationsJson,
+        response.value.body,
+      );
+      const lastModified = response.value.headers["last-modified"]?.trim();
+      yield* lastModified
+        ? Cache.set(notificationDates, key, Option.some(lastModified))
+        : Cache.invalidate(notificationDates, key);
+      return { changeRequests, pollIntervalSeconds };
+    });
 
   const diffFilesPage = (input: {
     readonly cwd: string;
@@ -1941,6 +2002,8 @@ export const make = Effect.gen(function* () {
       },
     ),
     listWorkflowRunsRequiringApproval,
+
+    getPullRequestNotifications,
 
     getPullRequestStack: Effect.fn("GitHubPullRequestApi.getPullRequestStack")(function (input) {
       const { owner, name } = parseRepositorySelector(input.repository);

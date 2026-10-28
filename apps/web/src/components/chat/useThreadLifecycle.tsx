@@ -24,6 +24,7 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import {
+  describeSnoozeWakeReason,
   effectiveSnoozed,
   snoozeWakeLabel,
   threadWokeAt,
@@ -33,7 +34,7 @@ import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction, useRef, useState } from "react";
+import { type MouseEvent, type SetStateAction, useRef, useState } from "react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -42,7 +43,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useUiStateStore } from "../../uiStateStore";
 import { type ChatMessage } from "../../types";
-import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
+import { AlarmClockIcon, CheckCircle2Icon, MessageSquareReplyIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -53,6 +54,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
 import { environmentShell } from "../../state/shell";
 import { ThreadStatusLine } from "./ThreadStatusLine";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentScope } from "../../state/session";
@@ -200,6 +202,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     lastVisitedAt: activeThreadLastVisitedAt,
     latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
   });
+  const activeThreadWokeReason =
+    activeThreadWokeVisible && activeThreadShell?.snoozeWakeReason
+      ? describeSnoozeWakeReason(activeThreadShell.snoozeWakeReason)
+      : null;
+  const openPrLink = useOpenPrLink(activeThreadRef ?? undefined);
+  const openActiveThreadWokeReason = (event: MouseEvent<HTMLButtonElement>) => {
+    if (activeThreadWokeReason === null) return;
+    acknowledgeActiveThreadWoke();
+    openPrLink(event, activeThreadWokeReason.url);
+  };
+  const openActiveThreadWokeReasonStable = useStableCallback(openActiveThreadWokeReason);
   const activeThreadSettled =
     serverConfigLoaded && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
@@ -528,14 +541,24 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     ? snoozeWakeLabel(snoozedUntil, { now: `${nowMinute}:00.000Z` })
     : null;
   const threadStatusLine = activeThreadSnoozed ? (
-    <ThreadStatusLine
-      icon={<AlarmClockIcon />}
-      label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
-      clockMinute={nowMinute}
-      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
-      actionDisabled={!canOperateThread || isUnsnoozing}
-      onAction={() => void handleUnsnoozeActiveThreadStable()}
-    />
+    activeThreadShell?.snoozeWakeOn === "pull-request-reply" ? (
+      <ThreadStatusLine
+        icon={<MessageSquareReplyIcon />}
+        label="Snoozed until a maintainer replies"
+        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+        actionDisabled={!canOperateThread || isUnsnoozing}
+        onAction={() => void handleUnsnoozeActiveThreadStable()}
+      />
+    ) : (
+      <ThreadStatusLine
+        icon={<AlarmClockIcon />}
+        label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
+        clockMinute={nowMinute}
+        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+        actionDisabled={!canOperateThread || isUnsnoozing}
+        onAction={() => void handleUnsnoozeActiveThreadStable()}
+      />
+    )
   ) : activeThreadSettled ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
@@ -544,6 +567,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
       actionDisabled={!canOperateThread || isUnsettling}
       onAction={() => void handleUnsettleActiveThreadStable()}
+    />
+  ) : activeThreadWokeReason ? (
+    <ThreadStatusLine
+      icon={<MessageSquareReplyIcon />}
+      label={activeThreadWokeReason.label}
+      actionLabel={activeThreadWokeReason.actionLabel}
+      onAction={openActiveThreadWokeReasonStable}
     />
   ) : activeThreadWokeVisible ? (
     <ThreadStatusLine

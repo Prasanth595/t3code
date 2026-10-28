@@ -144,6 +144,7 @@ export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: PullRequestCommentKind,
   author: Schema.NullOr(PullRequestActor),
+  authorIsMaintainer: Schema.optional(Schema.Boolean),
   body: Schema.String,
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -164,6 +165,7 @@ export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type;
 export const PullRequestThreadComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   author: Schema.NullOr(PullRequestActor),
+  authorIsMaintainer: Schema.optional(Schema.Boolean),
   body: Schema.String,
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -465,6 +467,7 @@ export const PullRequestSummary = Schema.Struct({
   updatedAt: IsoDateTime,
   observedAt: Schema.optional(Schema.Finite),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
+  viewerDidAuthor: Schema.optional(Schema.Boolean),
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
   changedFiles: Schema.optional(NonNegativeInt),

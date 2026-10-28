@@ -77,6 +77,7 @@ export interface ProviderChangeRequest {
   readonly title: string;
   readonly url: string;
   readonly author: PullRequestActor | null;
+  readonly viewerDidAuthor?: boolean | undefined;
   readonly headBranch: string;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
@@ -107,6 +108,7 @@ export interface ProviderChangeRequestSummary {
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
   readonly author?: PullRequestActor | null | undefined;
+  readonly viewerDidAuthor?: boolean | undefined;
   readonly additions?: number | undefined;
   readonly deletions?: number | undefined;
   readonly changedFiles?: number | undefined;
@@ -115,6 +117,15 @@ export interface ProviderChangeRequestSummary {
   readonly mergeability?: PullRequestMergeability | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
+}
+
+export interface ProviderChangeRequestNotifications {
+  readonly changeRequests: ReadonlyArray<{
+    readonly repository: string;
+    readonly number: number;
+    readonly updatedAt: string;
+  }> | null;
+  readonly pollIntervalSeconds: number | null;
 }
 
 export interface ProviderChangeRequestStackLayer {
@@ -359,6 +370,11 @@ export interface PullRequestProviderApi {
     PullRequestProviderError
   >;
 
+  readonly getChangeRequestNotifications?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly since: string;
+  }) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestProviderError>;
   readonly getChangeRequestSummary?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;

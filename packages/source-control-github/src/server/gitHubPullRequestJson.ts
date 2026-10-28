@@ -635,7 +635,11 @@ interface RemarkFields {
   readonly author: ActorFields | null;
   readonly body: string;
   readonly url: string | null;
+  readonly authorAssociation: string;
 }
+
+const isMaintainerAssociation = (association: string) =>
+  association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
 
 function toComments(raw: {
   readonly comments: ReadonlyArray<RemarkFields & { readonly createdAt: string }>;
@@ -647,6 +651,7 @@ function toComments(raw: {
     id: comment.id,
     kind: "issue-comment",
     author: toActor(comment.author),
+    authorIsMaintainer: isMaintainerAssociation(comment.authorAssociation),
     body: comment.body ?? "",
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt ?? null,
@@ -669,6 +674,7 @@ function toComments(raw: {
         id: review.id,
         kind: "review",
         author: toActor(review.author),
+        authorIsMaintainer: isMaintainerAssociation(review.authorAssociation),
         body: review.body ?? "",
         createdAt: submittedAt,
         editedAt: review.lastEditedAt ?? null,
@@ -900,6 +906,7 @@ export interface GitHubPullRequestSummary {
   readonly mergedAt: string | null;
   readonly updatedAt: string;
   readonly author: PullRequestActor | null;
+  readonly viewerDidAuthor: boolean;
   readonly additions: number;
   readonly deletions: number;
   readonly changedFiles: number;
@@ -923,6 +930,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     mergedAt: trimmed(pr.mergedAt),
     updatedAt: pr.updatedAt,
     author: toActor(pr.author),
+    viewerDidAuthor: pr.viewerDidAuthor,
     additions: pr.additions,
     deletions: pr.deletions,
     changedFiles: pr.changedFiles,
@@ -1223,6 +1231,9 @@ export function reviewThreadConversation(
       id: comment.id,
       kind: "review-comment",
       author: comment.author,
+      ...(comment.authorIsMaintainer === undefined
+        ? {}
+        : { authorIsMaintainer: comment.authorIsMaintainer }),
       body: comment.body,
       createdAt: comment.createdAt,
       editedAt: comment.editedAt ?? null,
@@ -1263,6 +1274,7 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
   return {
     id: comment.id,
     author: toActor(comment.author),
+    authorIsMaintainer: isMaintainerAssociation(comment.authorAssociation),
     body: comment.body,
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt,
@@ -1722,6 +1734,34 @@ const RawStackSchema = Schema.Struct({
 });
 
 const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
+
+const decodeNotifications = decodeJsonResult(
+  Schema.Array(
+    Schema.Struct({
+      updated_at: Schema.String,
+      subject: Schema.Struct({ type: Schema.String, url: Schema.NullOr(Schema.String) }),
+      repository: Schema.Struct({ full_name: Schema.String }),
+    }),
+  ),
+);
+
+export function decodePullRequestNotificationsJson(raw: string): Result.Result<
+  ReadonlyArray<{
+    readonly repository: string;
+    readonly number: number;
+    readonly updatedAt: string;
+  }>,
+  DecodeFailure
+> {
+  return Result.map(decodeNotifications(raw), (threads) =>
+    threads.flatMap((thread) => {
+      const number = Number(/\/pulls\/(\d+)$/.exec(thread.subject.url ?? "")?.[1]);
+      return thread.subject.type === "PullRequest" && Number.isSafeInteger(number) && number > 0
+        ? [{ repository: thread.repository.full_name, number, updatedAt: thread.updated_at }]
+        : [];
+    }),
+  );
+}
 
 export interface GitHubPullRequestStackLayer {
   readonly title?: string;

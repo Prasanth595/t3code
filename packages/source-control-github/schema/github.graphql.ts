@@ -68,6 +68,21 @@ export const CheckStatusState = Schema.Literals(["COMPLETED", "IN_PROGRESS", "PE
 export type CheckStatusState = typeof CheckStatusState.Type
 
 /**
+ * A comment author association with repository.
+ *
+ * - `COLLABORATOR`: Author has been invited to collaborate on the repository.
+ * - `CONTRIBUTOR`: Author has previously committed to the repository.
+ * - `FIRST_TIMER`: Author has not previously committed to GitHub.
+ * - `FIRST_TIME_CONTRIBUTOR`: Author has not previously committed to the repository.
+ * - `MANNEQUIN`: Author is a placeholder for an unclaimed user.
+ * - `MEMBER`: Author is a member of the organization that owns the repository.
+ * - `NONE`: Author has no association with the repository.
+ * - `OWNER`: Author is the owner of the repository.
+ */
+export const CommentAuthorAssociation = Schema.Literals(["COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "MEMBER", "NONE", "OWNER"])
+export type CommentAuthorAssociation = typeof CommentAuthorAssociation.Type
+
+/**
  * The possible sides of a diff.
  *
  * - `LEFT`: The left side of the diff.

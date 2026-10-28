@@ -10,7 +10,11 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type SidebarProjectGroupingMode,
+  type ThreadSnoozeWakeOn,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { use, useEffect, useRef, useState, type ComponentProps } from "react";
 import {
@@ -113,6 +117,7 @@ interface HomeScreenProps {
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
+    wakeOn?: ThreadSnoozeWakeOn,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;

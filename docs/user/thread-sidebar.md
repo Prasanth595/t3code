@@ -276,3 +276,8 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
+
+When a thread is linked to an open pull request you authored, the menu also offers
+**Snooze → Until a maintainer replies**. The thread wakes when a maintainer comments on or
+reviews one of those pull requests, or when one is merged or closed; bot comments and CI
+results do not wake it. If nobody replies, it wakes after 30 days.

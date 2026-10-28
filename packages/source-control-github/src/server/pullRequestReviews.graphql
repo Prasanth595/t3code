@@ -37,6 +37,7 @@ fragment ThreadComment on PullRequestReviewComment {
   createdAt
   lastEditedAt
   url
+  authorAssociation
   ...Reactions
 }
 

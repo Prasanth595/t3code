@@ -1,3 +1,5 @@
+import type { ThreadSnoozeWakeOn } from "@t3tools/contracts";
+
 // Shared across hook instances so sidebar, header and menu actions invalidate each other.
 const currentActions = new Map<string, symbol>();
 const listeners = new Set<() => void>();
@@ -39,7 +41,11 @@ export type ThreadUndoStep =
   | { readonly action: "unsettle" }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
-  | { readonly action: "snooze"; readonly snoozedUntil: string };
+  | {
+      readonly action: "snooze";
+      readonly snoozedUntil: string;
+      readonly wakeOn?: ThreadSnoozeWakeOn;
+    };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
 
@@ -49,6 +55,7 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly snoozeWakeOn?: ThreadSnoozeWakeOn | null;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -59,7 +66,13 @@ export function planThreadUndo(
   // Pinning clears snooze on the server; restore it after restoring pin placement.
   const snooze =
     thread?.snoozedUntil != null
-      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
+      ? [
+          {
+            action: "snooze" as const,
+            snoozedUntil: thread.snoozedUntil,
+            ...(thread.snoozeWakeOn == null ? {} : { wakeOn: thread.snoozeWakeOn }),
+          },
+        ]
       : [];
   if (action === "unpin") return [pin, ...snooze];
   return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];

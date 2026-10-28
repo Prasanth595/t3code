@@ -28,6 +28,7 @@ export type FloatingWorkingStatus =
   | {
       readonly kind: "lifecycle";
       readonly state: "snoozed" | "settled" | "woke";
+      readonly reply?: boolean;
       readonly label: string;
       readonly action: FloatingStatusAction;
     }

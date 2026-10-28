@@ -39,6 +39,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  ThreadSnoozeWakeOn,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -369,6 +370,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeWakeOn: Schema.optional(ThreadSnoozeWakeOn),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -448,6 +450,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeWakeOn: Schema.optional(ThreadSnoozeWakeOn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

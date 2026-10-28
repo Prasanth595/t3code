@@ -9,7 +9,11 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
+  canSnoozeUntilPullRequestReply,
+  describeSnoozeWakeReason,
   hasQueuedTurnStart,
+  PULL_REQUEST_REPLY_SNOOZE_LABEL,
+  pullRequestReplySnooze,
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -40,6 +44,7 @@ import {
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  MessageSquareReplyIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -99,7 +104,7 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozeChoice } from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
@@ -368,9 +373,10 @@ function SidebarThreadTooltip({
 function SnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (preset: SnoozeChoice) => void;
   timestampFormat: TimestampFormat;
   environmentId: EnvironmentId;
+  canSnoozeUntilReply: boolean;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat, environmentId } = props;
   const presets = open
@@ -414,6 +420,19 @@ function SnoozeMenuButton(props: {
           </MenuItem>
         ))}
         {presets.length > 0 ? <MenuSeparator /> : null}
+        {props.canSnoozeUntilReply ? (
+          <>
+            <MenuItem
+              onClick={(event) => {
+                event.stopPropagation();
+                onSnooze(pullRequestReplySnooze(new Date()));
+              }}
+            >
+              {PULL_REQUEST_REPLY_SNOOZE_LABEL}
+            </MenuItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         <MenuItem
           onClick={async (event) => {
             event.stopPropagation();
@@ -562,7 +581,7 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozeChoice) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -695,6 +714,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     thread.settledOverride !== "settled";
+  const wokeReason =
+    isWoke && thread.snoozeWakeReason ? describeSnoozeWakeReason(thread.snoozeWakeReason) : null;
   const shouldRecede = shouldRecedeSidebarThread({
     status,
     isUnread,
@@ -747,7 +768,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     }
                   : isWoke
                     ? {
-                        label: "Woke",
+                        label: wokeReason?.badge ?? "Woke",
                         icon: "woke" as const,
                         className: "text-warning-foreground",
                       }
@@ -879,7 +900,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
-  const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
+  const handleSnoozePreset = (preset: SnoozeChoice) => {
     onSnooze(threadRef, preset);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
@@ -1171,11 +1192,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   )}
                 >
                   {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
-                      {/* The clock tells a wake time from an age at a glance. */}
-                      <AlarmClockIcon aria-hidden className="size-3" />
-                      {props.snoozeWakeLabelText}
-                    </span>
+                    thread.snoozeWakeOn === "pull-request-reply" ? (
+                      <MessageSquareReplyIcon
+                        role="img"
+                        aria-label="Snoozed until a maintainer replies"
+                        className="size-3 text-info-foreground"
+                      />
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
+                        {/* The clock tells a wake time from an age at a glance. */}
+                        <AlarmClockIcon aria-hidden className="size-3" />
+                        {props.snoozeWakeLabelText}
+                      </span>
+                    )
                   ) : isWoke ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -1186,8 +1215,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             onClick={handleAcknowledgeWokeClick}
                             className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-warning-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                           >
-                            <AlarmClockIcon aria-hidden className="size-3" />
-                            <span role="status">Woke</span>
+                            {wokeReason ? (
+                              <MessageSquareReplyIcon aria-hidden className="size-3" />
+                            ) : (
+                              <AlarmClockIcon aria-hidden className="size-3" />
+                            )}
+                            <span role="status">{wokeReason?.badge ?? "Woke"}</span>
                           </button>
                         }
                       />
@@ -1363,7 +1396,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                   topStatus.className,
                                 )}
                               >
-                                <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                                {wokeReason ? (
+                                  <MessageSquareReplyIcon aria-hidden className="size-4 shrink-0" />
+                                ) : (
+                                  <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                                )}
                                 <span role="status">{topStatus.label}</span>
                               </button>
                             }
@@ -1444,6 +1481,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           onSnooze={handleSnoozePreset}
                           timestampFormat={props.timestampFormat}
                           environmentId={thread.environmentId}
+                          canSnoozeUntilReply={canSnoozeUntilPullRequestReply(thread)}
                         />
                       ) : null}
                       {props.settlementSupported ? (

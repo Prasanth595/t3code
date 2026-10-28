@@ -1,5 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  PULL_REQUEST_REPLY_SNOOZE_LABEL,
+  type SnoozePreset,
+} from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
@@ -88,6 +91,7 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  readonly canSnoozeUntilReply: boolean;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
 }
@@ -148,10 +152,19 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
+                  ...(state.canSnoozeUntilReply
+                    ? [
+                        {
+                          id: "snooze:pull-request-reply" as const,
+                          label: PULL_REQUEST_REPLY_SNOOZE_LABEL,
+                          separatorBefore: state.snoozePresets.length > 0,
+                        },
+                      ]
+                    : []),
                   {
                     id: "snooze:custom" as const,
                     label: "Custom…",
-                    separatorBefore: state.snoozePresets.length > 0,
+                    separatorBefore: state.snoozePresets.length > 0 || state.canSnoozeUntilReply,
                   },
                 ],
               },

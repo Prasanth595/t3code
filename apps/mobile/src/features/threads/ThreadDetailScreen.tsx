@@ -678,8 +678,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
     if (contentPresentationKind === "ready" && (snoozed || settled || woke)) {
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
-      const label =
-        snoozed && snoozedUntil !== null
+      const replySnoozed = snoozed && props.selectedThread.snoozeWakeOn === "pull-request-reply";
+      const label = replySnoozed
+        ? "Snoozed until a maintainer replies"
+        : snoozed && snoozedUntil !== null
           ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
           : settled
             ? "Settled"
@@ -688,6 +690,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       return {
         kind: "lifecycle",
         state,
+        reply: replySnoozed,
         label,
         action: {
           label: statusPending

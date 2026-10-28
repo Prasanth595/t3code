@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   type ScopedThreadRef,
   ThreadId,
+  type ThreadSnoozeWakeOn,
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
@@ -816,7 +817,11 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+  const snoozeThread = async (
+    target: ScopedThreadRef,
+    snoozedUntil: string,
+    wakeOn?: ThreadSnoozeWakeOn,
+  ) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -842,7 +847,7 @@ export function useThreadActions() {
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: { threadId: target.threadId, snoozedUntil, ...(wakeOn ? { wakeOn } : {}) },
     });
     if (result._tag !== "Success") {
       action.finish();
@@ -874,7 +879,11 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil: step.snoozedUntil,
+                ...(step.wakeOn ? { wakeOn: step.wakeOn } : {}),
+              },
             });
         }
       },

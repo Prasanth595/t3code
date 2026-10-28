@@ -182,7 +182,15 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pullRequests"
+  | "snoozedUntil"
+  | "snoozedAt"
+  | "snoozeWakeOn"
 >;
 
 export type ProjectionSettlementCandidate = Pick<
@@ -480,6 +488,9 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  readonly getReplySnoozedThreads: (
+    now: DateTime.Utc,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
@@ -1031,6 +1042,20 @@ const encodeContextTransferPayload = Schema.encodeEffect(
 const decodeThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
+const decodeThreadPullRequests = (payloadJson: string) =>
+  decodeThreadPayload(payloadJson).pipe(
+    Effect.map((thread): ProjectionThreadPullRequests => ({
+      id: thread.id,
+      projectId: thread.projectId,
+      lineage: thread.lineage,
+      settledOverride: thread.settledOverride,
+      settledAt: thread.settledAt,
+      pullRequests: thread.pullRequests ?? [],
+      snoozedUntil: thread.snoozedUntil ?? null,
+      snoozedAt: thread.snoozedAt ?? null,
+      snoozeWakeOn: thread.snoozeWakeOn ?? null,
+    })),
+  );
 const decodeRunPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2RunJsonSchema),
 );
@@ -1513,6 +1538,8 @@ export function threadShellFromProjection(
     unsettledAt: projection.thread.unsettledAt ?? null,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
+    snoozeWakeOn: projection.thread.snoozeWakeOn ?? null,
+    snoozeWakeReason: projection.thread.snoozeWakeReason ?? null,
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
@@ -1779,6 +1806,8 @@ function shellFromState(input: {
     unsettledAt: input.state.thread.unsettledAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
+    snoozeWakeOn: input.state.thread.snoozeWakeOn ?? null,
+    snoozeWakeReason: input.state.thread.snoozeWakeReason ?? null,
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
@@ -6111,21 +6140,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_array_length(payload_json, '$.pullRequests') > 0
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          return yield* Effect.forEach(rows, (row) =>
-            decodeThreadPayload(row.payload_json).pipe(
-              Effect.map((thread): ProjectionThreadPullRequests => ({
-                id: thread.id,
-                projectId: thread.projectId,
-                lineage: thread.lineage,
-                settledOverride: thread.settledOverride,
-                settledAt: thread.settledAt,
-                pullRequests: thread.pullRequests ?? [],
-              })),
-            ),
-          );
+          return yield* Effect.forEach(rows, (row) => decodeThreadPullRequests(row.payload_json));
         },
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
+
+    const getReplySnoozedThreads: ProjectionStoreV2Shape["getReplySnoozedThreads"] = Effect.fn(
+      "ProjectionStore.getReplySnoozedThreads",
+    )(
+      function* (now) {
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_threads
+          WHERE deleted_at IS NULL
+            AND json_extract(payload_json, '$.snoozeWakeOn') = 'pull-request-reply'
+            AND julianday(json_extract(payload_json, '$.snoozedUntil')) > julianday(${DateTime.formatIso(now)})
+            AND json_extract(payload_json, '$.archivedAt') IS NULL
+            AND json_array_length(payload_json, '$.pullRequests') > 0
+          ORDER BY thread_id ASC
+        `;
+        return yield* Effect.forEach(rows, (row) => decodeThreadPullRequests(row.payload_json));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
 
     const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) =>
       sql<{ readonly thread_id: string; readonly worktree_path: string }>`
@@ -6629,6 +6666,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
+      getReplySnoozedThreads: readOnReader(getReplySnoozedThreads),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection,

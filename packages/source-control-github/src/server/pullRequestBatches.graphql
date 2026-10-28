@@ -20,6 +20,7 @@ query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks
       closedAt
       headRefName
       baseRefName
+      viewerDidAuthor
       author {
         login
         avatarUrl
