@@ -2235,9 +2235,8 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* The cap keeps one long path, URL, or chip from widening its column past the
-   lane; text longer than the cap wraps inside it. */
-.chat-markdown td {
+/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
+.chat-markdown :is(th, td) {
   max-width: 24rem;
   overflow-wrap: break-word;
 }
@@ -2245,12 +2244,6 @@ code {
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown td:has([data-markdown-math]) {
   max-width: none;
-}
-
-/* External link text has a <wbr> after every character, so a squeezed column
-   would split a short link such as #363 mid-number. */
-.chat-markdown :is(th, td) wbr {
-  display: none;
 }
 
 :root {
