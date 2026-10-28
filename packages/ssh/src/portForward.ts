@@ -631,8 +631,11 @@ export const makeSshPortForwardManager = Effect.fn(
             cause: result.cause,
           });
           if (
-            Cause.hasFails(result.cause) &&
-            Cause.failures(result.cause).some((e) => (e as { _tag?: string })._tag === "SshPasswordPromptError")
+            result.cause.reasons.some(
+              (reason) =>
+                Cause.isFailReason(reason) &&
+                (reason.error as { _tag?: string })._tag === "SshPasswordPromptError",
+            )
           ) {
             break;
           }

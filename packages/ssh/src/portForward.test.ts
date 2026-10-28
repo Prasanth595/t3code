@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
+import { SshPasswordPromptError } from "./errors.ts";
 import * as SshPortForward from "./portForward.ts";
 
 const makeRunningProcess = (onKill?: () => void) => {
@@ -368,6 +369,56 @@ describe("ssh port forward manager", () => {
         yield* manager.closeAllForTarget(target);
         const finalList = yield* manager.listForwardedPorts(target);
         assert.equal(finalList.length, 0);
+      }).pipe(Effect.provide(testLayer), Effect.scoped);
+    }),
+  );
+
+  it.effect("syncAutoPortForwards aborts remaining ports if password authentication fails", () =>
+    Effect.gen(function* () {
+      let tunnelSpawnCount = 0;
+      const activeListeners = new Set<number>();
+
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = [...commandArgs(command)];
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess(
+              "hostname devbox.internal\nuser developer\nport 22\n",
+            );
+          }
+          tunnelSpawnCount += 1;
+          return makeFailingProcess("Permission denied (publickey,password).\n", 255);
+        }),
+      );
+
+      const mockPromptLayer = Layer.succeed(
+        SshAuth.SshPasswordPrompt,
+        SshAuth.SshPasswordPrompt.of({
+          isAvailable: true,
+          request: () =>
+            Effect.fail(
+              new SshPasswordPromptError({
+                message: "Authentication was canceled",
+              }),
+            ),
+        }),
+      );
+
+      const testLayer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(NetService.NetService, createNetService(activeListeners)),
+        mockPromptLayer,
+        SshPortForward.layer,
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshPortForward.SshPortForwardManager;
+        const result = yield* manager.syncAutoPortForwards(target, [3000, 3001, 3002]);
+
+        // Loop should abort immediately after first port fails with SshPasswordPromptError
+        assert.equal(tunnelSpawnCount, 1);
+        assert.deepEqual(result.forwarded, []);
       }).pipe(Effect.provide(testLayer), Effect.scoped);
     }),
   );
