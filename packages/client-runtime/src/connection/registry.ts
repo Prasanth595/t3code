@@ -20,7 +20,6 @@ import {
   type ConnectionRegistration,
   type ConnectionRoute,
   type PlatformConnectionRegistration,
-  type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
@@ -116,7 +115,6 @@ export class EnvironmentRegistry extends Context.Service<
     readonly assertKnownAddress: (
       route: ConnectionRoute,
     ) => Effect.Effect<void, ConnectionBlockedError>;
-    readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
@@ -809,12 +807,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const registerPlatform = Effect.fn("EnvironmentRegistry.registerPlatform")(function* (
-    registration: PrimaryConnectionRegistration,
-  ) {
-    yield* installPlatformRegistration(registration);
-  });
-
   const reconcilePlatform = Effect.fn("EnvironmentRegistry.reconcilePlatform")(function* (
     platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
   ) {
@@ -1171,7 +1163,6 @@ export const make = Effect.gen(function* () {
     start,
     register,
     assertKnownAddress,
-    registerPlatform,
     reconcilePlatform,
     remove,
     removeRoute,
