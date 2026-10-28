@@ -22,8 +22,12 @@ import {
   ensureSshEnvironment,
   fetchSshEnvironmentDescriptor,
   fetchSshSessionState,
+  forwardSshPort,
+  listSshForwardedPorts,
   resolveSshHost,
   resolveSshPasswordPrompt,
+  syncSshAutoPortForwards,
+  unforwardSshPort,
 } from "./methods/sshEnvironment.ts";
 import {
   checkForUpdate,
@@ -120,6 +124,10 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(resolveSshHost);
   yield* ipc.handle(ensureSshEnvironment);
   yield* ipc.handle(disconnectSshEnvironment);
+  yield* ipc.handle(forwardSshPort);
+  yield* ipc.handle(unforwardSshPort);
+  yield* ipc.handle(listSshForwardedPorts);
+  yield* ipc.handle(syncSshAutoPortForwards);
   yield* ipc.handle(fetchSshEnvironmentDescriptor);
   yield* ipc.handle(bootstrapSshBearerSession);
   yield* ipc.handle(fetchSshSessionState);

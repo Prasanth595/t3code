@@ -8,6 +8,8 @@ import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/enviro
 import {
   EnvironmentAuthInvalidError,
   DesktopDiscoveredSshHostSchema,
+  DesktopSshAutoPortForwardSyncInputSchema,
+  DesktopSshAutoPortForwardSyncResultSchema,
   DesktopSshBearerBootstrapInputSchema,
   DesktopSshBearerRequestInputSchema,
   DesktopSshEnvironmentEnsureInputSchema,
@@ -16,6 +18,9 @@ import {
   DesktopSshHttpBaseUrlInputSchema,
   DesktopSshPasswordPromptCancelledType,
   DesktopSshPasswordPromptResolutionInputSchema,
+  DesktopSshPortForwardInputSchema,
+  DesktopSshPortForwardSchema,
+  DesktopSshPortUnforwardInputSchema,
   ExecutionEnvironmentDescriptor,
   EnvironmentInternalError,
   EnvironmentOperationForbiddenError,
@@ -152,6 +157,54 @@ export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.sshEnvironment.disconnectEnvironment")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     yield* sshEnvironment.disconnectEnvironment(target);
+  }),
+});
+
+export const forwardSshPort = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.FORWARD_SSH_PORT_CHANNEL,
+  payload: DesktopSshPortForwardInputSchema,
+  result: DesktopSshPortForwardSchema,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.forwardPort")(function* (input) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.forwardPort(
+      input.target,
+      input.remotePort,
+      input.preferredLocalPort,
+    );
+  }),
+});
+
+export const unforwardSshPort = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UNFORWARD_SSH_PORT_CHANNEL,
+  payload: DesktopSshPortUnforwardInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.unforwardPort")(function* (input) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.unforwardPort(input.target, input.remotePort);
+  }),
+});
+
+export const listSshForwardedPorts = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.LIST_SSH_FORWARDED_PORTS_CHANNEL,
+  payload: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
+  result: Schema.Array(DesktopSshPortForwardSchema),
+  handler: Effect.fn("desktop.ipc.sshEnvironment.listForwardedPorts")(function* (target) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.listForwardedPorts(target);
+  }),
+});
+
+export const syncSshAutoPortForwards = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SYNC_SSH_AUTO_PORT_FORWARDS_CHANNEL,
+  payload: DesktopSshAutoPortForwardSyncInputSchema,
+  result: DesktopSshAutoPortForwardSyncResultSchema,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.syncAutoPortForwards")(function* (input) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.syncAutoPortForwards(
+      input.target,
+      input.discoveredRemotePorts,
+      input.excludePorts,
+    );
   }),
 });
 

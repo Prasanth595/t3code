@@ -459,6 +459,46 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
   password: Schema.NullOr(Schema.String),
 });
 
+export const DesktopSshPortForwardStatusSchema = Schema.Literals(["active", "error", "closed"]);
+export type DesktopSshPortForwardStatus = typeof DesktopSshPortForwardStatusSchema.Type;
+
+export const DesktopSshPortForwardSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  remotePort: Schema.Number,
+  localPort: Schema.Number,
+  localUrl: Schema.String,
+  status: DesktopSshPortForwardStatusSchema,
+  error: Schema.optionalKey(Schema.String),
+});
+export type DesktopSshPortForward = typeof DesktopSshPortForwardSchema.Type;
+
+export const DesktopSshPortForwardInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  remotePort: Schema.Number,
+  preferredLocalPort: Schema.optionalKey(Schema.Number),
+});
+export type DesktopSshPortForwardInput = typeof DesktopSshPortForwardInputSchema.Type;
+
+export const DesktopSshPortUnforwardInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  remotePort: Schema.Number,
+});
+export type DesktopSshPortUnforwardInput = typeof DesktopSshPortUnforwardInputSchema.Type;
+
+export const DesktopSshAutoPortForwardSyncInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  discoveredRemotePorts: Schema.Array(Schema.Number),
+  excludePorts: Schema.optionalKey(Schema.Array(Schema.Number)),
+});
+export type DesktopSshAutoPortForwardSyncInput = typeof DesktopSshAutoPortForwardSyncInputSchema.Type;
+
+export const DesktopSshAutoPortForwardSyncResultSchema = Schema.Struct({
+  activeForwards: Schema.Array(DesktopSshPortForwardSchema),
+  forwarded: Schema.Array(Schema.Number),
+  unforwarded: Schema.Array(Schema.Number),
+});
+export type DesktopSshAutoPortForwardSyncResult = typeof DesktopSshAutoPortForwardSyncResultSchema.Type;
+
 export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -1055,6 +1095,14 @@ export interface DesktopBridge {
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
+  forwardSshPort: (input: DesktopSshPortForwardInput) => Promise<DesktopSshPortForward>;
+  unforwardSshPort: (input: DesktopSshPortUnforwardInput) => Promise<boolean>;
+  listSshForwardedPorts: (
+    target?: DesktopSshEnvironmentTarget,
+  ) => Promise<readonly DesktopSshPortForward[]>;
+  syncSshAutoPortForwards: (
+    input: DesktopSshAutoPortForwardSyncInput,
+  ) => Promise<DesktopSshAutoPortForwardSyncResult>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
     httpBaseUrl: string,

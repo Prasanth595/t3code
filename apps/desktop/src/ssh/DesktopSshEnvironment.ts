@@ -1,7 +1,9 @@
 import type {
   DesktopDiscoveredSshHost,
+  DesktopSshAutoPortForwardSyncResult,
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
+  DesktopSshPortForward,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
@@ -16,6 +18,7 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "@t3tools/ssh/errors";
+import * as SshPortForward from "@t3tools/ssh/portForward";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
@@ -63,6 +66,23 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly forwardPort: (
+      target: DesktopSshEnvironmentTarget,
+      remotePort: number,
+      preferredLocalPort?: number,
+    ) => Effect.Effect<DesktopSshPortForward, DesktopSshEnvironmentOperationError>;
+    readonly unforwardPort: (
+      target: DesktopSshEnvironmentTarget,
+      remotePort: number,
+    ) => Effect.Effect<boolean, DesktopSshEnvironmentOperationError>;
+    readonly listForwardedPorts: (
+      target?: DesktopSshEnvironmentTarget,
+    ) => Effect.Effect<readonly DesktopSshPortForward[], DesktopSshEnvironmentOperationError>;
+    readonly syncAutoPortForwards: (
+      target: DesktopSshEnvironmentTarget,
+      discoveredRemotePorts: readonly number[],
+      excludePorts?: readonly number[],
+    ) => Effect.Effect<DesktopSshAutoPortForwardSyncResult, DesktopSshEnvironmentOperationError>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
@@ -128,6 +148,7 @@ const makePasswordPrompt = (
 /** @public */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
+  const portForwardManager = yield* SshPortForward.SshPortForwardManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
@@ -148,7 +169,38 @@ export const make = Effect.gen(function* () {
     ),
     disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(
       function* (target) {
+        yield* portForwardManager.closeAllForTarget(target).pipe(Effect.ignore);
         return yield* manager.disconnectEnvironment(target);
+      },
+      Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+      Effect.provide(runtimeContext),
+    ),
+    forwardPort: Effect.fn("desktop.ssh.forwardPort")(
+      function* (target, remotePort, preferredLocalPort) {
+        return yield* portForwardManager.forwardPort(target, remotePort, preferredLocalPort);
+      },
+      Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+      Effect.provide(runtimeContext),
+    ),
+    unforwardPort: Effect.fn("desktop.ssh.unforwardPort")(
+      function* (target, remotePort) {
+        return yield* portForwardManager.unforwardPort(target, remotePort);
+      },
+      Effect.provide(runtimeContext),
+    ),
+    listForwardedPorts: Effect.fn("desktop.ssh.listForwardedPorts")(
+      function* (target) {
+        return yield* portForwardManager.listForwardedPorts(target);
+      },
+      Effect.provide(runtimeContext),
+    ),
+    syncAutoPortForwards: Effect.fn("desktop.ssh.syncAutoPortForwards")(
+      function* (target, discoveredRemotePorts, excludePorts) {
+        return yield* portForwardManager.syncAutoPortForwards(
+          target,
+          discoveredRemotePorts,
+          excludePorts,
+        );
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
       Effect.provide(runtimeContext),
@@ -159,10 +211,13 @@ export const make = Effect.gen(function* () {
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
-          ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
+      Layer.mergeAll(
+        SshTunnel.SshEnvironmentManager.layer(
+          options.resolveCliRunner === undefined
+            ? {}
+            : { resolveCliRunner: options.resolveCliRunner },
+        ),
+        SshPortForward.layer,
       ),
     ),
   );

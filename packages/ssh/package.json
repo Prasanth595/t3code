@@ -22,6 +22,10 @@
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"
+    },
+    "./portForward": {
+      "types": "./src/portForward.ts",
+      "import": "./src/portForward.ts"
     }
   },
   "scripts": {
