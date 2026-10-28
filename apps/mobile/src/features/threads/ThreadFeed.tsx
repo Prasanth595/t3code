@@ -128,6 +128,7 @@ import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { splitMermaidMarkdown } from "../../lib/mermaidMarkdown";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { messageImageGallery } from "./messageImageGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -228,6 +229,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -928,19 +930,25 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         />
       );
     }
-    if (segment.markdown.trim().length === 0) return null;
-
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
-    return (
-      <SelectableMarkdownText
-        key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...linkHandlers}
-        renderImage={props.renderImage}
-      />
-    );
+    return splitMermaidMarkdown(segment.markdown).map((part) => {
+      const key = `${part.kind}:${segment.sourceOffset + part.sourceOffset}`;
+      if (part.markdown.trim().length === 0) return null;
+      const text = (
+        <SelectableMarkdownText
+          key={key}
+          markdown={renderCodexInlineDirectivesAsMarkdown(part.markdown)}
+          skills={props.skills}
+          textStyle={props.markdownStyles.nativeTextStyle}
+          {...linkHandlers}
+          renderImage={props.renderImage}
+        />
+      );
+      return part.kind === "mermaid" ? (
+        <MermaidDiagram key={key} source={part.source} fallback={text} />
+      ) : (
+        text
+      );
+    });
   });
 });
 
