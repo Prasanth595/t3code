@@ -585,16 +585,11 @@ const make = Effect.gen(function* () {
       snapshotSequence: snapshot.snapshotSequence,
       projection: snapshot.projection,
     });
-    const record = sentRecord(share.id);
-    rememberSent(
-      share.id,
-      openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
-    );
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
       { type: "thread", item: openingSnapshot },
     ];
-    return Stream.fromIterable(opening).pipe(
+    const events = Stream.fromIterable(opening).pipe(
       Stream.concat(
         Stream.merge(live, Stream.fromEffect(Effect.as(untilExpiry, ended)), {
           haltStrategy: "either",
@@ -612,17 +607,25 @@ const make = Effect.gen(function* () {
           }),
         ),
       ),
-      // Counted while the stream runs, so a response whose body never runs (HEAD) counts nothing.
-      Stream.onStart(
+    );
+    // The record is opened and counted when the stream runs, paired with its release, so a
+    // response whose body never runs (HEAD) touches nothing.
+    return Stream.unwrap(
+      Effect.acquireRelease(
         Effect.sync(() => {
+          const record = sentRecord(share.id);
           record.openStreams += 1;
+          rememberSent(
+            share.id,
+            openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
+          );
+          return record;
         }),
-      ),
-      Stream.ensuring(
-        Effect.sync(() => {
-          record.openStreams -= 1;
-        }),
-      ),
+        (record) =>
+          Effect.sync(() => {
+            record.openStreams -= 1;
+          }),
+      ).pipe(Effect.as(events)),
     );
   });
 
