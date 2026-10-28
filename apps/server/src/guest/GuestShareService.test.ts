@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1082,12 +1083,24 @@ it.effect("keeps a connected guest's images while other shares come and go", () 
 
     // This guest's page stays open while more guests than the record keeps open and close theirs.
     const { guestShares, token } = yield* sharedWithImage(threadId);
-    yield* Stream.runDrain(yield* guestShares.stream(token)).pipe(Effect.forkScoped);
+    const opened = yield* Deferred.make<void>();
+    yield* Stream.runForEach(yield* guestShares.stream(token), () =>
+      Deferred.succeed(opened, undefined),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(opened);
+    const closedTokens: Array<string> = [];
     for (let index = 0; index < 65; index++) {
       const other = yield* sharedWithImage(ThreadId.make(`thread:other-${index}`));
-      yield* Stream.runDrain(Stream.take(yield* guestShares.stream(other.token), 2));
+      const events = yield* guestShares.stream(other.token);
+      // The first is built but never read, as for a HEAD request; the rest open and close.
+      if (index > 0) yield* Stream.runDrain(Stream.take(events, 2));
+      closedTokens.push(other.token);
     }
     assert.equal((yield* guestShares.media(token, shot)).mimeType, "image/png");
+    // Records of guests with no open page were dropped to make room.
+    for (const closed of closedTokens.slice(0, 2)) {
+      assert.equal((yield* Effect.flip(guestShares.media(closed, shot))).reason, "unavailable");
+    }
 
     // A new link on the thread starts empty: its guest gets nothing the last guest was sent.
     const { url } = yield* guestShares.create({ threadId });

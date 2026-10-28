@@ -584,7 +584,6 @@ const make = Effect.gen(function* () {
       projection: snapshot.projection,
     });
     const record = sentRecord(share.id);
-    record.openStreams += 1;
     rememberSent(
       share.id,
       openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
@@ -610,6 +609,12 @@ const make = Effect.gen(function* () {
             until: ([host, enabled]) => host !== share.host || !enabled,
           }),
         ),
+      ),
+      // Counted while the stream runs, so a response whose body never runs (HEAD) counts nothing.
+      Stream.onStart(
+        Effect.sync(() => {
+          record.openStreams += 1;
+        }),
       ),
       Stream.ensuring(
         Effect.sync(() => {
