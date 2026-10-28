@@ -1378,14 +1378,16 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("runs the settle script once when a settlement is re-emitted", () =>
+  it.effect.each([false, true])("cleans up once per settlement with close all %s", (closeAll) =>
     Effect.scoped(
       Effect.gen(function* () {
         const repeated = appThread("repeated-thread", "settled", "/worktrees/repeated");
         const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+        const currentThreads = [repeated, marker];
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
-          currentThreads: [repeated, marker],
+          settings: { ...DEFAULT_SERVER_SETTINGS, closeRunningTerminalsOnSettle: closeAll },
+          currentThreads,
           existingWorktreePaths: ["/worktrees/repeated", "/worktrees/marker"],
         });
 
@@ -1397,6 +1399,15 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+          const closed = closeAll ? fixture.closedAll : fixture.closedIdle;
+          assert.strictEqual(yield* Queue.size(closed), 2);
+          currentThreads[0] = {
+            ...repeated,
+            settledAt: DateTime.add(repeated.settledAt!, { seconds: 1 }),
+          };
+          yield* fixture.publishEvent(settledEvent(currentThreads[0]));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
+          assert.strictEqual(yield* Queue.size(closed), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1409,6 +1420,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         const starts = yield* Ref.make(0);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, closeRunningTerminalsOnSettle: true },
           currentThreads: [thread],
           existingWorktreePaths: ["/worktrees/failed-start"],
           onScriptRun: () =>
@@ -1426,6 +1438,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(thread));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, thread.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, thread.id);
+          assert.strictEqual(yield* Queue.size(fixture.closedAll), 1);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
