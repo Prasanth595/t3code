@@ -127,38 +127,54 @@ export const make = Effect.gen(function* () {
     );
 
   return TextGeneration.of({
-    generateCommitMessage: ({ fallbackModelSelection, ...input }) =>
-      withFallback(
+    generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function ({
+      fallbackModelSelection,
+      ...input
+    }) {
+      return withFallback(
         "generateCommitMessage",
         input.modelSelection,
         fallbackModelSelection,
         (textGeneration, modelSelection) =>
           textGeneration.generateCommitMessage({ ...input, modelSelection }),
-      ),
-    generatePrContent: ({ fallbackModelSelection, ...input }) =>
-      withFallback(
+      );
+    }),
+    generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function ({
+      fallbackModelSelection,
+      ...input
+    }) {
+      return withFallback(
         "generatePrContent",
         input.modelSelection,
         fallbackModelSelection,
         (textGeneration, modelSelection) =>
           textGeneration.generatePrContent({ ...input, modelSelection }),
-      ),
-    generateBranchName: ({ fallbackModelSelection, ...input }) =>
-      withFallback(
+      );
+    }),
+    generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function ({
+      fallbackModelSelection,
+      ...input
+    }) {
+      return withFallback(
         "generateBranchName",
         input.modelSelection,
         fallbackModelSelection,
         (textGeneration, modelSelection) =>
           textGeneration.generateBranchName({ ...input, modelSelection }),
-      ),
-    generateReviewGuide: ({ fallbackModelSelection, ...input }) =>
-      withFallback(
+      );
+    }),
+    generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function ({
+      fallbackModelSelection,
+      ...input
+    }) {
+      return withFallback(
         "generateReviewGuide",
         input.modelSelection,
         fallbackModelSelection,
         (textGeneration, modelSelection) =>
           textGeneration.generateReviewGuide({ ...input, modelSelection }),
-      ),
+      );
+    }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function* ({
       fallbackModelSelection,
       ...input
