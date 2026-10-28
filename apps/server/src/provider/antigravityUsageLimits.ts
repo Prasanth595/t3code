@@ -96,6 +96,8 @@ function quotaWindow(
   };
 }
 
+const isGeminiBucket = (bucketId: string) => bucketId.startsWith("gemini-");
+
 function summaryWindows(summary: typeof Summary.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
@@ -104,7 +106,7 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
+      const family = isGeminiBucket(bucket.bucketId)
         ? "Gemini"
         : bucket.bucketId.startsWith("3p-")
           ? "Claude & GPT (shared)"
@@ -125,7 +127,7 @@ function summaryWindows(summary: typeof Summary.Type) {
 }
 
 /** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
-function modelWindows(models: typeof Models.Type) {
+function modelWindows(models: typeof Models.Type, onlyFamily?: "Gemini") {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
     const family =
@@ -136,7 +138,7 @@ function modelWindows(models: typeof Models.Type) {
           : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
             ? "GPT"
             : undefined;
-    if (!family) continue;
+    if (!family || (onlyFamily && family !== onlyFamily)) continue;
     for (const [suffix, quota] of [
       ["quota", model.quotaInfo],
       ["weekly", model.weeklyQuotaInfo],
@@ -281,13 +283,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     );
     // Some accounts get only the Claude & GPT buckets from the summary; Gemini quota is then only
     // reported per model.
-    const windows = summary.some((window) => window.id.startsWith("gemini-"))
+    const modelFamily = summary.length === 0 ? undefined : "Gemini";
+    const windows = summary.some((window) => isGeminiBucket(window.id))
       ? summary
       : [
           ...summary,
           ...(yield* fetchWindows("fetchAvailableModels", (response) =>
-            decodeModels(response).pipe(Effect.map(modelWindows)),
-          )).filter((window) => summary.length === 0 || window.id.startsWith("gemini-")),
+            decodeModels(response).pipe(Effect.map((models) => modelWindows(models, modelFamily))),
+          )),
         ];
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
