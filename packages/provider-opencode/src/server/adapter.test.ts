@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   ProjectId,
   ProviderInstanceId,
@@ -145,12 +146,13 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  localMcp = false,
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
-    model: "anthropic/claude-sonnet",
+    model: localMcp ? "openai/gpt-5.4" : "anthropic/claude-sonnet",
     options: [],
   };
   const policy = runtimePolicy("full-access", { cwd: "/workspace" });
@@ -160,7 +162,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     environment: {},
   }).pipe(
     Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      connectToOpenCodeServer: () =>
+        Effect.succeed({ url: "http://test.invalid", external: !localMcp, exitCode: null }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
@@ -169,6 +172,19 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
+  if (localMcp) {
+    const sessions = yield* McpProviderSessions.McpProviderSessions;
+    yield* sessions.set({
+      environmentId: EnvironmentId.make("test"),
+      threadId,
+      providerSessionId: "test-credential",
+      providerInstanceId: instanceId,
+      endpoint: "http://test.invalid/mcp",
+      authorizationHeader: "Bearer synthetic",
+      browserToolsAvailable: false,
+      capabilities: new Set(["orchestration", "workflows"]),
+    });
+  }
   const runtime = yield* adapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make(`session-opencode-${suffix}`),
@@ -185,6 +201,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    model = modelSelection.model,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -224,7 +241,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         text,
         attachments: [],
       },
-      modelSelection,
+      modelSelection: { ...modelSelection, model },
       runtimePolicy: turnPolicy,
     });
   return {
@@ -240,6 +257,75 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect(
+    "renders workflow family instructions from each turn's model (GPT to Claude and back)",
+    () =>
+      Effect.gen(function* () {
+        const prompts: Array<{ system: string; messageID: string }> = [];
+        const native = asyncEventStream();
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          "family-switch",
+          "root",
+          {
+            event: { subscribe: async () => ({ stream: native.stream }) },
+            mcp: { add: async () => ({ data: true }) },
+            session: {
+              create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              update: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              status: async () => ({ data: { root: { type: "busy" } } }),
+              promptAsync: async (input: { system: string; messageID: string }) => {
+                prompts.push(input);
+                return { data: true };
+              },
+              abort: async () => ({ data: true }),
+              children: async () => ({ data: [] }),
+            },
+          },
+          {},
+          true,
+        );
+        for (const model of ["openai/gpt-5.4", "anthropic/claude-sonnet", "openai/gpt-5.4"]) {
+          const terminal = yield* harness.runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* harness.startTurn("Continue", harness.providerThread, harness.policy, model);
+          yield* Effect.promise(() =>
+            native.push({
+              type: "message.updated",
+              properties: {
+                sessionID: "root",
+                info: { id: prompts.at(-1)!.messageID, role: "user", time: { created: 1 } },
+              },
+            }),
+          );
+          yield* Effect.promise(() =>
+            native.push({
+              type: "session.status",
+              properties: { sessionID: "root", status: { type: "busy" } },
+            }),
+          );
+          yield* Effect.promise(() =>
+            native.push({
+              type: "session.status",
+              properties: { sessionID: "root", status: { type: "idle" } },
+            }),
+          );
+          yield* Fiber.join(terminal);
+          assert.equal(
+            prompts.at(-1)!.system.includes("- Claude Code: native subagents"),
+            model.includes("claude"),
+          );
+        }
+        assert.equal(prompts.length, 3);
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
     Effect.gen(function* () {
       const updates: Array<{ sessionID: string; permission: unknown }> = [];

@@ -948,12 +948,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
-        const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(
-          hasT3Mcp,
-          mcpSession?.capabilities?.has("device") === true,
-          mcpSession?.capabilities?.has("workflows") === true,
-          input.modelSelection.model,
-        );
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -3255,7 +3249,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 return;
               }
               const systemPrompt = [
-                orchestrationSystemPrompt,
+                t3OrchestrationSystemPrompt(
+                  hasT3Mcp,
+                  mcpSession?.capabilities?.has("device") === true,
+                  mcpSession?.capabilities?.has("workflows") === true,
+                  turnInput.modelSelection.model,
+                ),
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
