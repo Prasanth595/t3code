@@ -69,7 +69,7 @@ describe("acpRegistrySnapshotReadiness", () => {
           unavailable: {
             reason: "unsupported",
             message:
-              "Devin does not report subscription limits over ACP. View your allowance and on-demand credits in Devin.",
+              "Devin does not report your remaining quota here. Open Devin with the same account to view your allowance and on-demand credits.",
           },
           externalUsage: { label: "Devin usage", url: "https://app.devin.ai/settings/usage" },
         });
