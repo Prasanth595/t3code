@@ -112,7 +112,7 @@ describe("thread links", () => {
     expect(
       relabelThreadLinks("See (t3-thread://v1/t1), then t3-thread://v2/there/t1.", local, title),
     ).toBe("See ([Here](t3-thread://v1/t1)), then [There](t3-thread://v2/there/t1).");
-    for (const marker of ["*", "**", "_", "__", '"', "'"]) {
+    for (const marker of ["*", "**", "_", "__", "~~", '"', "'"]) {
       const emphasized = `${marker}t3-thread://v2/there/t1${marker}`;
       expect(threadLinkRefs(emphasized, local)).toEqual([ref("there", "t1")]);
       expect(relabelThreadLinks(emphasized, local, title)).toBe(
@@ -150,6 +150,10 @@ describe("thread links", () => {
       "Literal `t3-thread://v2/local/t1`",
       "Literal `first line\nt3-thread://v2/local/t1`",
       "[open](https://example.com/?redirect=t3-thread://v1/t1)",
+      "https://example.com/?redirect=t3-thread://v1/t1",
+      "[Open][ref]",
+      "",
+      "[ref]: t3-thread://v2/local/t1",
     ].join("\n");
     expect(relabelThreadLinks(markdown, local, () => "New")).toBe(
       [
@@ -161,8 +165,15 @@ describe("thread links", () => {
         "Literal `t3-thread://v2/local/t1`",
         "Literal `first line\nt3-thread://v2/local/t1`",
         "[open](https://example.com/?redirect=t3-thread://v1/t1)",
+        "https://example.com/?redirect=t3-thread://v1/t1",
+        "[Open][ref]",
+        "",
+        "[ref]: t3-thread://v2/local/t1",
       ].join("\n"),
     );
+    expect(threadLinkRefs("Stray `\n\n[old](t3-thread://v1/t1) `code`", local)).toEqual([
+      ref("local", "t1"),
+    ]);
     expect(threadLinkRefs("`first line\nt3-thread://v2/local/t1`", local)).toEqual([]);
     expect(
       threadLinkRefs("[open](https://example.com/?redirect=t3-thread://v1/t1)", local),
