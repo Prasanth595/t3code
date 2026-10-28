@@ -3,13 +3,15 @@ import type {
   DesktopSshEnvironmentTarget,
   DesktopSshPortForward,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -44,18 +46,25 @@ export interface SshPortForwardEntry {
   readonly scope: Scope.Closeable;
 }
 
+export type SshPortForwardEffectContext =
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | NetService.NetService
+  | SshAuth.SshPasswordPrompt;
+
+export type SshPortForwardEffectError =
+  | SshCommandError
+  | SshInvalidTargetError
+  | SshPasswordPromptError
+  | NetService.NetError;
+
 export interface SshPortForwardManagerShape {
   readonly forwardPort: (
     target: DesktopSshEnvironmentTarget,
     remotePort: number,
     preferredLocalPort?: number,
-  ) => Effect.Effect<
-    DesktopSshPortForward,
-    SshCommandError | SshInvalidTargetError | SshPasswordPromptError | NetService.NetError,
-    | ChildProcessSpawner.ChildProcessSpawner
-    | NetService.NetService
-    | SshAuth.SshPasswordPrompt
-  >;
+  ) => Effect.Effect<DesktopSshPortForward, SshPortForwardEffectError, SshPortForwardEffectContext>;
 
   readonly unforwardPort: (
     target: DesktopSshEnvironmentTarget,
@@ -72,10 +81,8 @@ export interface SshPortForwardManagerShape {
     excludePorts?: ReadonlyArray<number>,
   ) => Effect.Effect<
     DesktopSshAutoPortForwardSyncResult,
-    SshCommandError | SshInvalidTargetError | SshPasswordPromptError | NetService.NetError,
-    | ChildProcessSpawner.ChildProcessSpawner
-    | NetService.NetService
-    | SshAuth.SshPasswordPrompt
+    SshPortForwardEffectError,
+    SshPortForwardEffectContext
   >;
 
   readonly closeAllForTarget: (
@@ -104,11 +111,23 @@ const toContractPortForward = (
   ...(error ? { error } : {}),
 });
 
+interface SshAuthAttemptInput<T> {
+  readonly key: string;
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly operation: (
+    authOptions: SshAuth.SshAuthOptions,
+  ) => Effect.Effect<T, SshPortForwardEffectError, SshPortForwardEffectContext>;
+  readonly promptCount: number;
+  readonly authSecret: string | null;
+}
+
 export const makeSshPortForwardManager = Effect.fn(
   "ssh/portForward.makeSshPortForwardManager",
 )(function* (): Effect.fn.Return<SshPortForwardManagerShape, never, Scope.Scope> {
   const managerScope = yield* Scope.Scope;
   const forwardsRef = yield* Ref.make<Map<string, SshPortForwardEntry>>(new Map());
+  const forwardLocks = yield* KeyedLock.make<string>();
+  const authSecrets = new Map<string, string>();
 
   const closeEntry = Effect.fn("ssh/portForward.closeEntry")(function* (
     entry: SshPortForwardEntry,
@@ -135,32 +154,145 @@ export const makeSshPortForwardManager = Effect.fn(
         Effect.ignore,
       );
       yield* Ref.set(forwardsRef, new Map());
+      authSecrets.clear();
     }),
   );
 
-  const forwardPort: SshPortForwardManagerShape["forwardPort"] = Effect.fn(
-    "ssh/portForward.forwardPort",
-  )(function* (target, remotePort, preferredLocalPort) {
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
-    const key = forwardKey(resolvedTarget, remotePort);
-    const currentForwards = yield* Ref.get(forwardsRef);
-    const existing = currentForwards.get(key);
-    if (existing) {
-      return toContractPortForward(existing);
+  const promptForPassword = Effect.fn("ssh/portForward.promptForPassword")(function* (
+    target: DesktopSshEnvironmentTarget,
+    attempt: number,
+  ): Effect.fn.Return<
+    string,
+    SshInvalidTargetError | SshPasswordPromptError,
+    SshAuth.SshPasswordPrompt
+  > {
+    const promptService = yield* SshAuth.SshPasswordPrompt;
+    const hostSpec = yield* buildSshHostSpecEffect(target);
+    if (!promptService.isAvailable) {
+      yield* Effect.logWarning("ssh.auth.passwordPrompt.unavailable", {
+        ...sshTargetLogFields(target),
+        attempt,
+      });
+      return yield* new SshPasswordPromptError({
+        message: `SSH authentication failed for ${hostSpec}.`,
+      });
     }
 
-    const net = yield* NetService.NetService;
-    const preferred = preferredLocalPort && preferredLocalPort > 0 ? preferredLocalPort : remotePort;
-    const localPort = yield* net.findAvailablePort(preferred);
-    const localUrl = `http://127.0.0.1:${localPort}`;
+    yield* Effect.logInfo("ssh.auth.passwordPrompt.request", {
+      ...sshTargetLogFields(target),
+      attempt,
+    });
+    const password = yield* promptService.request({
+      attempt,
+      destination: target.alias.trim() || target.hostname.trim(),
+      username: target.username,
+      prompt: `Enter the SSH password or verification code for ${hostSpec}.`,
+    });
+    if (password === null) {
+      yield* Effect.logWarning("ssh.auth.passwordPrompt.cancelled", {
+        ...sshTargetLogFields(target),
+        attempt,
+      });
+      return yield* new SshPasswordPromptError({
+        message: `SSH authentication cancelled for ${hostSpec}.`,
+      });
+    }
+    yield* Effect.logInfo("ssh.auth.passwordPrompt.received", {
+      ...sshTargetLogFields(target),
+      attempt,
+    });
+    return password;
+  });
 
+  const handleSshAuthFailure = Effect.fn("ssh/portForward.runWithSshAuthAttempt.handleFailure")(
+    function* <T>(
+      input: SshAuthAttemptInput<T> & {
+        readonly error: SshPortForwardEffectError;
+      },
+    ): Effect.fn.Return<T, SshPortForwardEffectError, SshPortForwardEffectContext> {
+      if (!SshAuth.isSshAuthFailure(input.error)) {
+        return yield* input.error;
+      }
+
+      yield* Effect.logWarning("ssh.portForward.auth.failed", {
+        ...sshTargetLogFields(input.target),
+        key: input.key,
+        promptCount: input.promptCount,
+        cause: input.error,
+      });
+      const promptService = yield* SshAuth.SshPasswordPrompt;
+      if (!promptService.isAvailable) {
+        return yield* input.error;
+      }
+      if (input.authSecret !== null) {
+        authSecrets.delete(input.key);
+      }
+      if (input.promptCount >= 2) {
+        return yield* input.error;
+      }
+
+      const nextPromptCount = input.promptCount + 1;
+      const nextAuthSecret = yield* promptForPassword(input.target, nextPromptCount);
+      authSecrets.set(input.key, nextAuthSecret);
+      return yield* runWithSshAuthAttempt({
+        ...input,
+        promptCount: nextPromptCount,
+        authSecret: nextAuthSecret,
+      });
+    },
+  );
+
+  const runWithSshAuthAttempt = Effect.fn("ssh/portForward.runWithSshAuthAttempt")(function* <T>(
+    input: SshAuthAttemptInput<T>,
+  ): Effect.fn.Return<T, SshPortForwardEffectError, SshPortForwardEffectContext> {
+    const promptService = yield* SshAuth.SshPasswordPrompt;
+    const authOptions =
+      input.authSecret === null
+        ? {
+            batchMode: promptService.isAvailable ? ("yes" as const) : ("no" as const),
+            interactiveAuth: !promptService.isAvailable,
+          }
+        : {
+            authSecret: input.authSecret,
+            batchMode: "no" as const,
+            interactiveAuth: true,
+          };
+
+    return yield* input
+      .operation(authOptions)
+      .pipe(Effect.catch((error) => handleSshAuthFailure({ ...input, error })));
+  });
+
+  const runWithSshAuth = Effect.fn("ssh/portForward.runWithSshAuth")(function* <T>(
+    target: DesktopSshEnvironmentTarget,
+    operation: (
+      authOptions: SshAuth.SshAuthOptions,
+    ) => Effect.Effect<T, SshPortForwardEffectError, SshPortForwardEffectContext>,
+  ): Effect.fn.Return<T, SshPortForwardEffectError, SshPortForwardEffectContext> {
+    const targetKey = targetConnectionKey(target);
+    return yield* runWithSshAuthAttempt({
+      key: targetKey,
+      target,
+      operation,
+      promptCount: 0,
+      authSecret: authSecrets.get(targetKey) ?? null,
+    });
+  });
+
+  const spawnForwardProcess = Effect.fn("ssh/portForward.spawnForwardProcess")(function* (input: {
+    readonly resolvedTarget: DesktopSshEnvironmentTarget;
+    readonly key: string;
+    readonly remotePort: number;
+    readonly localPort: number;
+    readonly localUrl: string;
+    readonly authOptions: SshAuth.SshAuthOptions;
+  }) {
+    const { resolvedTarget, key, remotePort, localPort, localUrl, authOptions } = input;
     const hostSpec = yield* buildSshHostSpecEffect(resolvedTarget);
-    const childEnvironment = yield* SshAuth.buildSshChildEnvironment({}).pipe(
+    const childEnvironment = yield* SshAuth.buildSshChildEnvironment({
+      ...(authOptions.authSecret === undefined ? {} : { authSecret: authOptions.authSecret }),
+      ...(authOptions.interactiveAuth === undefined ? {} : { interactiveAuth: authOptions.interactiveAuth }),
+    }).pipe(
       Effect.mapError(
         (cause) =>
           new SshCommandError({
@@ -174,7 +306,7 @@ export const makeSshPortForwardManager = Effect.fn(
     );
 
     const args = [
-      ...baseSshArgs(resolvedTarget, { batchMode: "no" }),
+      ...baseSshArgs(resolvedTarget, { batchMode: authOptions.batchMode ?? "no" }),
       "-o",
       "ExitOnForwardFailure=yes",
       "-o",
@@ -190,7 +322,7 @@ export const makeSshPortForwardManager = Effect.fn(
       "-n",
       "-N",
       "-L",
-      `${localPort}:127.0.0.1:${remotePort}`,
+      `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
       "--",
       hostSpec,
     ];
@@ -247,7 +379,7 @@ export const makeSshPortForwardManager = Effect.fn(
       Effect.forkIn(entryScope),
     );
 
-    // Give SSH a brief window to fail immediately if the forward could not bind or connect
+    // Give SSH a brief window to fail immediately if the forward could not bind or authenticate
     const exitOrProbe = yield* Effect.raceFirst(
       child.exitCode.pipe(Effect.map(Number)),
       Effect.sleep(Duration.millis(FORWARD_ESTABLISH_PROBE_MS)).pipe(Effect.as(null)),
@@ -286,20 +418,81 @@ export const makeSshPortForwardManager = Effect.fn(
         .pipe(Effect.ignore),
     );
 
-    yield* Ref.update(forwardsRef, (map) => {
-      const next = new Map(map);
-      next.set(key, entry);
-      return next;
-    });
+    return entry;
+  });
 
-    yield* Effect.logInfo("ssh.portForward.spawn.succeeded", {
-      ...sshTargetLogFields(resolvedTarget),
-      localPort,
-      remotePort,
-      localUrl,
-    });
+  const forwardPort: SshPortForwardManagerShape["forwardPort"] = Effect.fn(
+    "ssh/portForward.forwardPort",
+  )(function* (target, remotePort, preferredLocalPort) {
+    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
+    const resolvedTarget: DesktopSshEnvironmentTarget = {
+      ...baseResolved,
+      ...(target.username !== null ? { username: target.username } : {}),
+      ...(target.port !== null ? { port: target.port } : {}),
+    };
+    const key = forwardKey(resolvedTarget, remotePort);
 
-    return toContractPortForward(entry);
+    return yield* forwardLocks.withLock(
+      key,
+      Effect.gen(function* () {
+        const currentForwards = yield* Ref.get(forwardsRef);
+        const existing = currentForwards.get(key);
+        if (existing) {
+          return toContractPortForward(existing);
+        }
+
+        const net = yield* NetService.NetService;
+        const preferred =
+          preferredLocalPort && preferredLocalPort > 0 ? preferredLocalPort : remotePort;
+        const localPort = yield* net.findAvailablePort(preferred);
+        const localUrl = `http://127.0.0.1:${localPort}`;
+
+        const entry = yield* runWithSshAuth(resolvedTarget, (authOptions) =>
+          spawnForwardProcess({
+            resolvedTarget,
+            key,
+            remotePort,
+            localPort,
+            localUrl,
+            authOptions,
+          }),
+        );
+
+        // If another entry was added while preparing, close previous cleanly before setting
+        const previousEntry = (yield* Ref.get(forwardsRef)).get(key);
+        if (previousEntry) {
+          yield* closeEntry(previousEntry);
+        }
+
+        yield* Ref.update(forwardsRef, (map) => {
+          const next = new Map(map);
+          next.set(key, entry);
+          return next;
+        });
+
+        // Monitor child exit code for its full lifetime; remove from active forwards upon exit
+        yield* entry.process.exitCode.pipe(
+          Effect.zipRight(
+            Ref.update(forwardsRef, (map) => {
+              if (map.get(key) !== entry) return map;
+              const next = new Map(map);
+              next.delete(key);
+              return next;
+            }),
+          ),
+          Effect.forkIn(managerScope),
+        );
+
+        yield* Effect.logInfo("ssh.portForward.spawn.succeeded", {
+          ...sshTargetLogFields(resolvedTarget),
+          localPort,
+          remotePort,
+          localUrl,
+        });
+
+        return toContractPortForward(entry);
+      }),
+    );
   });
 
   const unforwardPort: SshPortForwardManagerShape["unforwardPort"] = Effect.fn(
@@ -312,20 +505,26 @@ export const makeSshPortForwardManager = Effect.fn(
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const key = forwardKey(resolvedTarget, remotePort);
-    const current = yield* Ref.get(forwardsRef);
-    const entry = current.get(key);
-    if (!entry) {
-      return false;
-    }
 
-    yield* Ref.update(forwardsRef, (map) => {
-      const next = new Map(map);
-      next.delete(key);
-      return next;
-    });
+    return yield* forwardLocks.withLock(
+      key,
+      Effect.gen(function* () {
+        const current = yield* Ref.get(forwardsRef);
+        const entry = current.get(key);
+        if (!entry) {
+          return false;
+        }
 
-    yield* closeEntry(entry);
-    return true;
+        yield* Ref.update(forwardsRef, (map) => {
+          const next = new Map(map);
+          next.delete(key);
+          return next;
+        });
+
+        yield* closeEntry(entry);
+        return true;
+      }),
+    );
   });
 
   const listForwardedPorts: SshPortForwardManagerShape["listForwardedPorts"] = Effect.fn(
@@ -414,6 +613,8 @@ export const makeSshPortForwardManager = Effect.fn(
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const targetKey = targetConnectionKey(resolvedTarget);
+    authSecrets.delete(targetKey);
+
     const current = yield* Ref.get(forwardsRef);
     const matching = [...current.values()].filter(
       (e) => targetConnectionKey(e.target) === targetKey,

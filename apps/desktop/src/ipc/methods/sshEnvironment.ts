@@ -186,7 +186,7 @@ export const unforwardSshPort = DesktopIpc.makeIpcMethod({
 
 export const listSshForwardedPorts = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.LIST_SSH_FORWARDED_PORTS_CHANNEL,
-  payload: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
+  payload: Schema.UndefinedOr(DesktopSshEnvironmentTargetSchema),
   result: Schema.Array(DesktopSshPortForwardSchema),
   handler: Effect.fn("desktop.ipc.sshEnvironment.listForwardedPorts")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;

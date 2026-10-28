@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -10,30 +11,33 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SshAuth from "./auth.ts";
 import * as SshPortForward from "./portForward.ts";
 
-const makeRunningProcess = (onKill: () => void) => {
+const makeRunningProcess = (onKill?: () => void) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(456),
-    stdout: Stream.empty,
-    stderr: Stream.empty,
-    all: Stream.empty,
-    exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
-      finish = (exitCode) => resume(Effect.succeed(exitCode));
-      return Effect.sync(() => {
-        finish = null;
-      });
-    }),
-    isRunning: Effect.succeed(true),
-    kill: () =>
-      Effect.sync(() => {
-        onKill();
-        finish?.(ChildProcessSpawner.ExitCode(143));
+  return {
+    handle: ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(456),
+      stdout: Stream.empty,
+      stderr: Stream.empty,
+      all: Stream.empty,
+      exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
+        finish = (exitCode) => resume(Effect.succeed(exitCode));
+        return Effect.sync(() => {
+          finish = null;
+        });
       }),
-    stdin: Sink.drain,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-    unref: Effect.succeed(Effect.void),
-  });
+      isRunning: Effect.succeed(true),
+      kill: () =>
+        Effect.sync(() => {
+          onKill?.();
+          finish?.(ChildProcessSpawner.ExitCode(143));
+        }),
+      stdin: Sink.drain,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    }),
+    finish: (exitCode = 0) => finish?.(ChildProcessSpawner.ExitCode(exitCode)),
+  };
 };
 
 const makeSuccessfulProcess = (stdout: string) => {
@@ -44,6 +48,23 @@ const makeSuccessfulProcess = (stdout: string) => {
     stderr: Stream.empty,
     all: stdoutStream,
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
+
+const makeFailingProcess = (stderr: string, exitCode = 255) => {
+  const stderrStream = Stream.make(new TextEncoder().encode(stderr));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: Stream.empty,
+    stderr: stderrStream,
+    all: stderrStream,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -73,7 +94,7 @@ describe("ssh port forward manager", () => {
     port: 22,
   };
 
-  it.effect("forwards a remote port to matching local port when available", () =>
+  it.effect("forwards a remote port to matching local port with loopback binding", () =>
     Effect.gen(function* () {
       let killed = false;
       const spawnedCommands: string[][] = [];
@@ -89,7 +110,7 @@ describe("ssh port forward manager", () => {
           }
           return makeRunningProcess(() => {
             killed = true;
-          });
+          }).handle;
         }),
       );
 
@@ -110,10 +131,10 @@ describe("ssh port forward manager", () => {
         assert.equal(forward.localUrl, "http://127.0.0.1:3000");
         assert.equal(forward.status, "active");
 
-        // Verify SSH forward command arguments
+        // Verify SSH forward command arguments use 127.0.0.1:localPort:127.0.0.1:remotePort
         const forwardCmd = spawnedCommands.find((c) => c.includes("-L"));
         assert.isDefined(forwardCmd);
-        assert.isTrue(forwardCmd?.includes("3000:127.0.0.1:3000"));
+        assert.isTrue(forwardCmd?.includes("127.0.0.1:3000:127.0.0.1:3000"));
         assert.isTrue(forwardCmd?.includes("ExitOnForwardFailure=yes"));
 
         // List forwards
@@ -132,6 +153,145 @@ describe("ssh port forward manager", () => {
     }),
   );
 
+  it.effect("monitors process exit and removes dead forwards during lifetime", () =>
+    Effect.gen(function* () {
+      let processControls: ReturnType<typeof makeRunningProcess> | null = null;
+
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = [...commandArgs(command)];
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess(
+              "hostname devbox.internal\nuser developer\nport 22\n",
+            );
+          }
+          processControls = makeRunningProcess();
+          return processControls.handle;
+        }),
+      );
+
+      const testLayer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshPortForward.layer,
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshPortForward.SshPortForwardManager;
+        yield* manager.forwardPort(target, 4000);
+
+        const listBefore = yield* manager.listForwardedPorts(target);
+        assert.equal(listBefore.length, 1);
+
+        // Tunnel process exits unexpectedly later during its lifetime
+        processControls?.finish(255);
+        yield* Effect.yieldNow();
+
+        const listAfter = yield* manager.listForwardedPorts(target);
+        assert.equal(listAfter.length, 0);
+      }).pipe(Effect.provide(testLayer), Effect.scoped);
+    }),
+  );
+
+  it.effect("serializes concurrent forwardPort calls for the same target and port", () =>
+    Effect.gen(function* () {
+      let tunnelSpawnCount = 0;
+
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = [...commandArgs(command)];
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess(
+              "hostname devbox.internal\nuser developer\nport 22\n",
+            );
+          }
+          tunnelSpawnCount += 1;
+          return makeRunningProcess().handle;
+        }),
+      );
+
+      const testLayer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshPortForward.layer,
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshPortForward.SshPortForwardManager;
+        // Two concurrent calls for the same target and port
+        const [first, second] = yield* Effect.all(
+          [manager.forwardPort(target, 5000), manager.forwardPort(target, 5000)],
+          { concurrency: 2 },
+        );
+
+        assert.equal(first.remotePort, 5000);
+        assert.equal(second.remotePort, 5000);
+        assert.equal(tunnelSpawnCount, 1); // Only spawned once
+      }).pipe(Effect.provide(testLayer), Effect.scoped);
+    }),
+  );
+
+  it.effect("handles password authentication prompt on auth failure and retries", () =>
+    Effect.gen(function* () {
+      let attemptCount = 0;
+      let promptRequested = false;
+
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = [...commandArgs(command)];
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess(
+              "hostname devbox.internal\nuser developer\nport 22\n",
+            );
+          }
+          attemptCount += 1;
+          if (attemptCount === 1) {
+            // First attempt fails with permission denied
+            return makeFailingProcess(
+              "Permission denied (publickey,password).\n",
+              255,
+            );
+          }
+          // Second attempt succeeds after password prompt
+          return makeRunningProcess().handle;
+        }),
+      );
+
+      const mockPromptLayer = Layer.succeed(
+        SshAuth.SshPasswordPrompt,
+        SshAuth.SshPasswordPrompt.of({
+          isAvailable: true,
+          request: () =>
+            Effect.sync(() => {
+              promptRequested = true;
+              return "secret-password";
+            }),
+        }),
+      );
+
+      const testLayer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(NetService.NetService, testNetService),
+        mockPromptLayer,
+        SshPortForward.layer,
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshPortForward.SshPortForwardManager;
+        const forward = yield* manager.forwardPort(target, 8080);
+
+        assert.equal(forward.remotePort, 8080);
+        assert.isTrue(promptRequested);
+        assert.equal(attemptCount, 2);
+      }).pipe(Effect.provide(testLayer), Effect.scoped);
+    }),
+  );
+
   it.effect("syncAutoPortForwards adds new ports and removes closed ones", () =>
     Effect.gen(function* () {
       let killCount = 0;
@@ -145,7 +305,7 @@ describe("ssh port forward manager", () => {
           }
           return makeRunningProcess(() => {
             killCount += 1;
-          });
+          }).handle;
         }),
       );
 
