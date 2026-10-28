@@ -1,6 +1,8 @@
 import {
   isOrchestrationV2WorkActive,
   ORCHESTRATION_V2_WS_METHODS,
+  type CommandId,
+  type RunId,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -54,6 +56,19 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+export function queuedRunEditOwnership(
+  state: EnvironmentThreadState,
+  edit: { readonly runId: RunId; readonly editId: CommandId | null; readonly sequence: number },
+): "pending" | "owned" | "lost" {
+  if (
+    (state.status !== "live" && state.status !== "deleted") ||
+    (state.sequence ?? 0) < edit.sequence
+  )
+    return "pending";
+  const run = Option.getOrNull(state.data)?.runs.find((run) => run.id === edit.runId);
+  return run?.status === "queued" && (run.queueEditId ?? null) === edit.editId ? "owned" : "lost";
+}
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -227,6 +242,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const initialState: EnvironmentThreadState = retained
     ? cachedThreadState(retained.state)
     : {
+        sequence: Option.match(cached, {
+          onNone: () => 0,
+          onSome: (snapshot) => snapshot.snapshotSequence,
+        }),
         data: cachedThread,
         status: statusWithoutLiveData(cachedThread),
         error: Option.none(),
@@ -403,6 +422,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // Atomic with concurrent history meta updates: never get-then-set the whole
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
+    const sequence = yield* SubscriptionRef.get(lastSequence);
     const next = yield* SubscriptionRef.updateAndGet(state, (previous) => {
       const history =
         options?.history !== undefined
@@ -412,6 +432,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             : previous.history;
       return {
         ...previous,
+        sequence,
         data: Option.some(thread),
         status: Option.isSome(previous.error)
           ? ("cached" as const)
@@ -447,6 +468,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* SubscriptionRef.set(state, {
+      sequence: yield* SubscriptionRef.get(lastSequence),
       data: Option.none(),
       status: "deleted",
       error: Option.none(),
@@ -496,7 +518,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
     if (sequence === appliedSequence) return;
     yield* SubscriptionRef.set(lastSequence, sequence);
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) {
+      yield* SubscriptionRef.update(state, (current) => ({ ...current, sequence }));
+      return;
+    }
 
     const waiting = yield* Ref.get(awaitingCompletion);
     // Apply against the latest projection/history in one update so a concurrent
@@ -553,6 +578,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
       const updated: EnvironmentThreadState = {
         ...current,
+        sequence,
         data: Option.some(next),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),

@@ -139,6 +139,7 @@ export function QueuedRunsControl({
           url: queuedImageUrlById.get(attachment.id) ?? null,
         })),
       pending: false,
+      held: run.queueEditId != null,
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
@@ -157,11 +158,17 @@ export function QueuedRunsControl({
           url: attachment.previewUrl ?? null,
         })),
       pending: true,
+      held: false,
     })),
   ];
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    if (!canSend || steerInFlightRef.current) return;
+    if (
+      !canSend ||
+      steerInFlightRef.current ||
+      queued.find(({ run }) => run.id === queuedRunId)?.run.queueEditId != null
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -182,7 +189,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      if (!next || !canSend || next.run.queueEditId != null) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -260,7 +267,7 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSend && !isEditing ? (
+                {canSend && !isEditing && !item.held ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -289,6 +296,9 @@ export function QueuedRunsControl({
                     <Clock3Icon aria-hidden className="size-3" />
                     Saving
                   </span>
+                ) : null}
+                {item.held && !isEditing ? (
+                  <span className="px-1 text-foreground">Editing elsewhere</span>
                 ) : null}
                 {isEditing ? (
                   <>

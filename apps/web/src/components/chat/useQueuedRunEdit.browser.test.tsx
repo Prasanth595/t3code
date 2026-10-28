@@ -22,6 +22,8 @@ interface RunStatus {
 const mocks = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
   return {
+    acquireEdit: vi.fn(async () => ({ _tag: "Success", value: { editId: null, sequence: 0 } })),
+    releaseEdit: vi.fn(async () => ({ _tag: "Success" })),
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
@@ -31,18 +33,35 @@ const mocks = await vi.hoisted(async () => {
 });
 
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.editQueuedRun,
+  useAtomCommand: (command: unknown) =>
+    command === "begin"
+      ? mocks.acquireEdit
+      : command === "cancel"
+        ? mocks.releaseEdit
+        : mocks.editQueuedRun,
 }));
 
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
 
 vi.mock("../../state/threads", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { useAtomValue } = await import("@effect/atom-react");
+  const Option = await import("effect/Option");
   const key = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
   return {
+    useEnvironmentThread: (environmentId: string, threadId: string) => {
+      const runs = useAtomValue(mocks.threadRuns(`${environmentId}:${threadId}`));
+      return {
+        status: "live",
+        sequence: 0,
+        data: runs === null ? Option.none() : Option.some({ runs }),
+      };
+    },
     threadEnvironment: {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
+      beginQueuedRunEdit: "begin",
+      cancelQueuedRunEdit: "cancel",
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),
