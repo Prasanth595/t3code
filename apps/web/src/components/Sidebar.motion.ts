@@ -81,6 +81,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     const animation = clone.animate(
       [
         { opacity: entryProgress, transform: "translateY(0px)" },
+        { opacity: 0, offset: 0.5 },
         { opacity: 0, transform: `translateY(${travel}px)` },
       ],
       motionTiming,
@@ -195,7 +196,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           fadeOut(
             node,
             { ...position, top: position.top + clampShift },
-            delta === undefined ? rowTravel(position.height) : -delta,
+            delta === undefined ? rowTravel(position.height) : clampShift - delta,
           );
         }
       }

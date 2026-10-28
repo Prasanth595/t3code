@@ -41,7 +41,28 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
       !mountRevealOwed.current &&
       !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
-    row.scrollIntoView({ block: "nearest", behavior: glide ? "smooth" : "instant" });
+    if (!glide) {
+      row.scrollIntoView({ block: "nearest", behavior: "instant" });
+      return;
+    }
+    const scroller = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    const view = scroller?.getBoundingClientRect();
+    const { top, bottom } = row.getBoundingClientRect();
+    const glideDistance = (view?.height ?? 0) / 4;
+    const jump =
+      view === undefined
+        ? 0
+        : top < view.top - glideDistance
+          ? top - view.top + glideDistance
+          : bottom > view.bottom + glideDistance
+            ? bottom - view.bottom - glideDistance
+            : 0;
+    if (scroller && jump !== 0) {
+      scroller.scrollTop += jump;
+      requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+      return;
+    }
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
   };
 }
 
