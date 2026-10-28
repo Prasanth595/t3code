@@ -299,6 +299,16 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
+      const resolveWebHost = gh.resolveRemoteWebHost;
+      assert.ok(resolveWebHost);
+      assert.strictEqual(
+        yield* resolveWebHost({
+          cwd: "/repo",
+          context: { ...githubContext(host), remoteUrl },
+          resolveContext: () => Effect.succeed(null),
+        }),
+        "github.com",
+      );
       yield* gh.getDefaultBranch({ cwd: "/repo" });
       yield* gh.getDefaultBranch({
         cwd: "/repo",
@@ -338,6 +348,18 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       });
       return Effect.gen(function* () {
         const gh = yield* GitHubSourceControlProvider.make;
+        const resolveWebHost = gh.resolveRemoteWebHost;
+        assert.ok(resolveWebHost);
+        for (const url of [remoteUrl, "git@github.com-evil.example:me/web.git"]) {
+          assert.strictEqual(
+            yield* resolveWebHost({
+              cwd: "/repo",
+              context: { ...githubContext("github.com-scale"), remoteUrl: url },
+              resolveContext: () => Effect.succeed(null),
+            }),
+            url === remoteUrl ? "github.com-scale" : "github.com-evil.example",
+          );
+        }
         assert.strictEqual(
           yield* gh.getDefaultBranch({
             cwd: "/repo",
