@@ -815,7 +815,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleTouchPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.pointerType !== "touch") return;
-    event.stopPropagation();
+    if (!props.sortable) event.stopPropagation();
     cancelTouchHoldRef.current?.();
     if (
       !event.isPrimary ||
