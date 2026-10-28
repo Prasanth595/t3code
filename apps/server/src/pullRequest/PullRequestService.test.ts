@@ -1141,6 +1141,62 @@ it.effect("refreshes every reader before a queued merge confirmation finishes", 
   ),
 );
 
+it.effect(
+  "returns GitHub's merged result and trusts it instead of reading the pull request again",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const mergedAt = "2026-09-03T02:00:00.000Z";
+        const merged = {
+          state: "merged" as const,
+          isDraft: false,
+          updatedAt: mergedAt,
+          mergedAt,
+          closedAt: mergedAt,
+          autoMergeEnabled: false,
+        };
+        let summaryReads = 0;
+        const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+        const service = yield* makeService({
+          projects: [
+            project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          ],
+          providers: [
+            fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+              runAction: () => Effect.succeed(merged),
+              getChangeRequestSummary: () =>
+                Effect.sync(() => {
+                  summaryReads++;
+                  return { ...changeRequest(1, mergedAt), state: "merged" as const };
+                }),
+            }),
+          ],
+        });
+        const merges = yield* service.subscribeMerges;
+        const observedMerge = yield* Stream.runHead(merges).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
+        yield* TestClock.setTime(observedAt);
+
+        const result = yield* service.runActionWithResult({ ...reference, action: "merge" });
+
+        assert.deepStrictEqual(result, { ...merged, observedAt });
+        const event = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshEvents));
+        assert.deepStrictEqual(event, {
+          revision: event.revision,
+          reference: { ...reference, host: "github.com" },
+          result: { ...merged, observedAt },
+        });
+        assert.strictEqual(summaryReads, 0);
+        assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+          ...reference,
+          mergedAt,
+        });
+      }),
+    ),
+);
+
 it.effect("runs branch deletion only when the host and viewer support it, never for a stack", () =>
   Effect.gen(function* () {
     let actions = 0;

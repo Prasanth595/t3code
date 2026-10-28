@@ -446,6 +446,8 @@ export const PullRequestPreview = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  observedAt: Schema.optional(Schema.Finite),
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
 
@@ -591,6 +593,39 @@ export const PullRequestDetail = Schema.Struct({
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
+
+export const PullRequestActionResult = Schema.Struct({
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  updatedAt: IsoDateTime,
+  mergedAt: Schema.NullOr(IsoDateTime),
+  closedAt: Schema.NullOr(IsoDateTime),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  autoMergeEnabled: Schema.Boolean,
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  observedAt: Schema.Finite,
+});
+export type PullRequestActionResult = typeof PullRequestActionResult.Type;
+
+export function comparePullRequestFreshness(
+  current: { readonly updatedAt?: string | undefined; readonly observedAt?: number | undefined },
+  incoming: { readonly updatedAt?: string | undefined; readonly observedAt?: number | undefined },
+): number {
+  if (current.updatedAt !== undefined && incoming.updatedAt !== undefined) {
+    const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+    if (Number.isFinite(updated) && updated !== 0) return updated;
+  }
+  const before = current.observedAt ?? -Infinity;
+  const after = incoming.observedAt ?? -Infinity;
+  return before === after ? 0 : after - before;
+}
+
+export const PullRequestRefreshEvent = Schema.Struct({
+  revision: NonNegativeInt,
+  reference: Schema.optional(PullRequestRef),
+  result: Schema.optional(PullRequestActionResult),
+});
+export type PullRequestRefreshEvent = typeof PullRequestRefreshEvent.Type;
 
 export const PullRequestChecks = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),

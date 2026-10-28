@@ -4,6 +4,7 @@ import {
   authScopeRequiredResponse,
   type EnvironmentId,
   type ClientGuardedRpcTag,
+  type PullRequestRefreshEvent,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -67,6 +68,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDeviceState
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
+  | typeof WS_METHODS.pullRequestsSubscribeRefreshEvents
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
@@ -415,6 +417,29 @@ export function subscribeDynamicWithSession<TTag extends EnvironmentSubscription
     makeInput,
     (session, stream) => stream.pipe(Stream.map((value) => [session, value] as const)),
     options,
+  );
+}
+
+/**
+ * Older servers only count pull request refreshes. The capability is read per session because a
+ * reconnect can reach an upgraded server.
+ */
+export function subscribePullRequestRefreshEvents() {
+  return subscribeDynamicMapped(
+    WS_METHODS.pullRequestsSubscribeRefreshes,
+    () => Effect.succeed({}),
+    (session, revisions) =>
+      Stream.unwrap(
+        session.initialConfig.pipe(
+          Effect.map((config) => config.environment.capabilities.pullRequestActionResults === true),
+          Effect.orElseSucceed(() => false),
+          Effect.map((supported) =>
+            supported
+              ? session.client[WS_METHODS.pullRequestsSubscribeRefreshEvents]({})
+              : revisions.pipe(Stream.map((revision): PullRequestRefreshEvent => ({ revision }))),
+          ),
+        ),
+      ),
   );
 }
 

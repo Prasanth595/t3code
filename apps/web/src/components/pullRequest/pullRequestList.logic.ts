@@ -1,6 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
-import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
+import { comparePullRequestFreshness, resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   PullRequestListEntry,
@@ -9,6 +9,7 @@ import type {
   ProjectId,
   RepositoryIdentity,
   PullRequestAction,
+  PullRequestActionResult,
   PullRequestActor,
   PullRequestDiffStat,
   PullRequestInvolvement,
@@ -792,6 +793,15 @@ export interface PullRequestListOverride {
   readonly updatedAt: string;
   readonly token: number;
   readonly at: number;
+  readonly observedAt?: number;
+}
+
+function pullRequestResultOverride(
+  { state, isDraft, updatedAt, observedAt }: PullRequestActionResult,
+  token: number,
+  at: number,
+): PullRequestListOverride {
+  return { state, isDraft, updatedAt, observedAt, token, at };
 }
 
 export function pullRequestOverrideAfterAction(
@@ -799,7 +809,9 @@ export function pullRequestOverrideAfterAction(
   action: PullRequestAction,
   now: Date,
   token: number,
+  result?: PullRequestActionResult | null,
 ): PullRequestListOverride | null {
+  if (result != null) return pullRequestResultOverride(result, token, now.getTime());
   const stamp = { updatedAt: now.toISOString(), token, at: now.getTime() };
   switch (action) {
     case "close":
@@ -826,7 +838,13 @@ export function applyPullRequestOverrides<Entry extends PullRequestListEntry>(
   if (overrides.size === 0 && state === "all") return entries;
   const out: Entry[] = [];
   for (const entry of entries) {
-    const override = overrides.get(keyOf(entry));
+    const incoming = overrides.get(keyOf(entry));
+    const override =
+      incoming?.observedAt !== undefined &&
+      (comparePullRequestFreshness(entry, incoming) < 0 ||
+        (entry.state === "merged" && incoming.state !== "merged"))
+        ? undefined
+        : incoming;
     if (state !== "all" && (override?.state ?? entry.state) !== state) continue;
     out.push(override === undefined ? entry : { ...entry, ...override });
   }

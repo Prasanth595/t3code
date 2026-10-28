@@ -590,7 +590,7 @@ const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
   ({ environmentId }: EnvironmentQueryTarget<Readonly<Record<string, never>>>) =>
-    pullRequestEnvironment.refreshes({ environmentId, input: {} }),
+    pullRequestEnvironment.invalidations({ environmentId }),
 );
 
 export function usePullRequestTurnRefreshes(
@@ -602,7 +602,7 @@ export function usePullRequestTurnRefreshes(
 }
 
 export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
-  const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
+  const result = useAtomValue(pullRequestEnvironment.invalidations({ environmentId }));
   return AsyncResult.getOrElse(result, () => null);
 }
 

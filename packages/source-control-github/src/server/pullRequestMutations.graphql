@@ -1,5 +1,14 @@
-# Writes to a pull request and the remarks on it. None reads its answer back beyond what GitHub
-# requires a mutation to select.
+fragment PullRequestActionSnapshot on PullRequest {
+  state
+  isDraft
+  updatedAt
+  mergedAt
+  closedAt
+  headRefOid
+  autoMergeRequest {
+    mergeMethod
+  }
+}
 
 mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
@@ -93,19 +102,25 @@ mutation SetFileViewed($pullRequestId: ID!, $path: String!, $viewed: Boolean!) {
 
 mutation MergePullRequest($input: MergePullRequestInput!) {
   mergePullRequest(input: $input) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation EnablePullRequestAutoMerge($input: EnablePullRequestAutoMergeInput!) {
   enablePullRequestAutoMerge(input: $input) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
   disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
@@ -121,31 +136,41 @@ mutation UpdatePullRequestBranch(
       updateMethod: $updateMethod
     }
   ) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
   markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
   convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation ClosePullRequest($pullRequestId: ID!) {
   closePullRequest(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 
 mutation ReopenPullRequest($pullRequestId: ID!) {
   reopenPullRequest(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSnapshot
+    }
   }
 }
 

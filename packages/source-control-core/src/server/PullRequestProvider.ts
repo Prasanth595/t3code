@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
+  PullRequestActionResult,
   PullRequestStackHead,
   PullRequestActor,
   PullRequestBaseComparison,
@@ -266,6 +267,8 @@ export interface ProviderRepositoryRef {
   readonly host: string;
 }
 
+export type ProviderPullRequestActionResult = Omit<PullRequestActionResult, "observedAt">;
+
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
     /** `repository` lets a host pick the credential that can reach it. */
@@ -457,7 +460,7 @@ export interface PullRequestProviderApi {
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     },
-  ) => Effect.Effect<void, PullRequestProviderError>;
+  ) => Effect.Effect<ProviderPullRequestActionResult | void, PullRequestProviderError>;
 
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (

@@ -38,6 +38,9 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
+import type { ProviderPullRequestActionResult } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { PullRequestActionSnapshot } from "./pullRequestMutations.graphql.ts";
+
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
   PullRequestSummaryRepositoryPullRequestPullRequest as SummarizedPullRequest,
@@ -477,6 +480,23 @@ function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod
     default:
       return undefined;
   }
+}
+
+export function toPullRequestActionResult(
+  raw: PullRequestActionSnapshot | null | undefined,
+): ProviderPullRequestActionResult | undefined {
+  if (raw == null) return undefined;
+  const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  return {
+    state: toState({ state: raw.state }),
+    isDraft: raw.isDraft,
+    updatedAt: raw.updatedAt,
+    mergedAt: raw.mergedAt,
+    closedAt: raw.closedAt,
+    headSha: raw.headRefOid,
+    autoMergeEnabled: raw.autoMergeRequest !== null,
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+  };
 }
 
 /** GitHub's reviewDecision ignores reviews outside branch rules, including app approvals. */

@@ -1,5 +1,6 @@
 import {
   WS_METHODS,
+  comparePullRequestFreshness,
   PullRequestActivity,
   PullRequestDetail as PullRequestDetailSchema,
   PullRequestPreview,
@@ -13,12 +14,15 @@ import {
   type EnvironmentId,
   type PullRequestActor,
   type PullRequestActionInput,
+  type PullRequestActionResult,
+  type PullRequestListEntry,
   type PullRequestListInput,
   type PullRequestListStatsInput,
   type PullRequestListStatsResult,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestRef,
+  type PullRequestRefreshEvent,
   type PullRequestMergeMethod,
   PullRequestOperationError,
   type PullRequestSummary,
@@ -27,8 +31,9 @@ import {
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
-import { persistQuery } from "./queryPersistence.ts";
+import { persistQuery, type QueryPersistence } from "./queryPersistence.ts";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -37,14 +42,18 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
-  createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createEnvironmentQueryAtomFamily,
+  queryPersistenceKey,
   type QueryAnswerHandler,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { subscribePullRequestRefreshEvents } from "../rpc/client.ts";
+import { parsePullRequestQuery } from "../pullRequestQuery.ts";
+import { reuseUnchanged } from "./serverConfigProjection.ts";
 
 export {
   type PullRequestDiffLoadError,
@@ -79,28 +88,30 @@ function normalizePullRequestQuery<A>(
     });
 }
 
+function writableQuery<A, E>(source: Atom.Atom<AsyncResult.AsyncResult<A, E>>) {
+  return Atom.writable(
+    (get) => {
+      const result = get(source);
+      if (result._tag === "Success" && !result.waiting) return result;
+      const previous = get.self<AsyncResult.AsyncResult<A, E>>();
+      const value = Option.flatMap(previous, AsyncResult.value);
+      if (Option.isNone(value)) return result;
+      return result._tag === "Failure"
+        ? AsyncResult.failureWithPrevious(result.cause, { previous, waiting: result.waiting })
+        : AsyncResult.success<A, E>(value.value, result);
+    },
+    (context, value: AsyncResult.AsyncResult<A, E>) => context.setSelf(value),
+    (refresh) => refresh(source),
+  ).pipe(Atom.setIdleTTL(5 * 60_000));
+}
+
 function writableQueryFamily<A, E>(
   family: (target: {
     readonly environmentId: EnvironmentId;
     readonly input: PullRequestRef;
   }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
 ) {
-  const writable = Atom.family((source: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
-    Atom.writable(
-      (get) => {
-        const result = get(source);
-        if (result._tag === "Success" && !result.waiting) return result;
-        const previous = get.self<AsyncResult.AsyncResult<A, E>>();
-        const value = Option.flatMap(previous, AsyncResult.value);
-        if (Option.isNone(value)) return result;
-        return result._tag === "Failure"
-          ? AsyncResult.failureWithPrevious(result.cause, { previous, waiting: result.waiting })
-          : AsyncResult.success<A, E>(value.value, result);
-      },
-      (context, value: AsyncResult.AsyncResult<A, E>) => context.setSelf(value),
-      (refresh) => refresh(source),
-    ).pipe(Atom.setIdleTTL(5 * 60_000)),
-  );
+  const writable = Atom.family(writableQuery<A, E>);
   return normalizePullRequestQuery((target) => writable(family(target)));
 }
 
@@ -115,13 +126,173 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
+type ActionResultPatch = (
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+  result: PullRequestActionResult,
+) => Effect.Effect<void>;
+
+function samePullRequest(reader: PullRequestRef, acted: PullRequestRef) {
+  return (
+    reader.projectId === acted.projectId &&
+    (reader.host === undefined ||
+      acted.host === undefined ||
+      reader.host.toLowerCase() === acted.host.toLowerCase()) &&
+    reader.repository.toLowerCase() === acted.repository.toLowerCase() &&
+    reader.number === acted.number &&
+    reader.expectedAccountId === acted.expectedAccountId
+  );
+}
+
+/** Older than what is shown, or a merged pull request reported open again. */
+function isStaleResult(
+  shown: {
+    readonly state: string;
+    readonly updatedAt?: string | undefined;
+    readonly observedAt?: number | undefined;
+  },
+  result: PullRequestActionResult,
+) {
+  return (
+    (shown.state === "merged" && result.state !== "merged") ||
+    comparePullRequestFreshness(shown, result) < 0
+  );
+}
+
+function listAcceptsResult(input: PullRequestListInput, result: PullRequestActionResult) {
+  const draft = parsePullRequestQuery(input.query ?? "").filters.draft ?? input.filters?.draft;
+  return (
+    (input.state === "all" || input.state === result.state) &&
+    (draft !== "only" || result.isDraft) &&
+    (draft !== "hide" || !result.isDraft)
+  );
+}
+
+/** `refresh` when the result adds the pull request to a listing, which only a read can place. */
+function patchListWithResult(
+  input: PullRequestListInput,
+  value: PullRequestListResult,
+  reference: PullRequestRef,
+  result: PullRequestActionResult,
+): PullRequestListResult | "refresh" {
+  // Rows carry no account scope, so a result read through another account leaves them alone.
+  if (reference.expectedAccountId !== undefined) return value;
+  let found = false;
+  const entries = value.entries.flatMap((entry): PullRequestListEntry[] => {
+    if (!samePullRequest(entry, reference)) return [entry];
+    found = true;
+    if (isStaleResult(entry, result)) return [entry];
+    if (!listAcceptsResult(input, result)) return [];
+    const { state, isDraft, updatedAt, observedAt } = result;
+    return [{ ...entry, state, isDraft, updatedAt, observedAt }];
+  });
+  if (!found) {
+    const inScope =
+      input.cursors === undefined &&
+      (input.projectId === undefined || input.projectId === reference.projectId) &&
+      (input.projectIds === undefined || input.projectIds.includes(reference.projectId));
+    return inScope && listAcceptsResult(input, result) ? "refresh" : value;
+  }
+  return {
+    ...value,
+    entries: entries.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
+  };
+}
+
+/**
+ * The query atom for one target, writable so an action result can replace what it shows. The
+ * patch is saved and announced the way an answer would be, so cold starts and snapshots see it.
+ */
+function actionPatchedQuery<Input, A, E>(
+  patches: WeakMap<object, ActionResultPatch>,
+  source: (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: Input;
+  }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  options: {
+    readonly label: string;
+    readonly persistence: QueryPersistence<A>;
+    readonly onAnswer?: QueryAnswerHandler<Input, A> | undefined;
+    readonly patch: (
+      input: Input,
+      value: A,
+      reference: PullRequestRef,
+      result: PullRequestActionResult,
+    ) => A | "refresh";
+  },
+) {
+  const writable = Atom.family(writableQuery<A, E>);
+  return (target: { readonly environmentId: EnvironmentId; readonly input: Input }) => {
+    const atom = writable(source(target));
+    if (patches.has(atom)) return atom;
+    patches.set(
+      atom,
+      Effect.fnUntraced(function* (registry, environmentId, reference, result) {
+        if (environmentId !== target.environmentId) return;
+        const shown = Option.flatMap(
+          registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
+          (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
+        );
+        if (Option.isNone(shown)) return registry.refresh(atom);
+        const patched = options.patch(target.input, shown.value, reference, result);
+        if (patched === "refresh") return registry.refresh(atom);
+        const next = reuseUnchanged(shown.value, patched);
+        if (next === shown.value) return;
+        yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
+        updateCached(registry, atom, () => next);
+        yield* options.persistence.save(
+          environmentId,
+          queryPersistenceKey(options.label, target.input),
+          next,
+        );
+      }),
+    );
+    return atom;
+  };
+}
+
+/** Refresh events, with the state a pull request action left when the server reports it. */
+function createPullRequestRefreshEventAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  onResult?: ActionResultPatch,
+) {
+  return createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:pull-requests:turn-refreshes",
+    subscribe: (_input: {}) =>
+      subscribePullRequestRefreshEvents().pipe(
+        Stream.tap(({ reference, result }) =>
+          onResult === undefined || reference === undefined || result === undefined
+            ? Effect.void
+            : Effect.gen(function* () {
+                const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+                const registry = yield* AtomRegistry.AtomRegistry;
+                yield* onResult(registry, supervisor.target.environmentId, reference, result);
+              }),
+        ),
+      ),
+  });
+}
+
+function refreshRevisions<E>(
+  events: (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: {};
+  }) => Atom.Atom<AsyncResult.AsyncResult<PullRequestRefreshEvent, E>>,
+) {
+  const revisions = Atom.family((source: ReturnType<typeof events>) =>
+    Atom.map(
+      source,
+      AsyncResult.map((event) => event.revision),
+    ),
+  );
+  return (target: Parameters<typeof events>[0]) => revisions(events(target));
+}
+
 function createPullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "environment-data:pull-requests:turn-refreshes",
-    tag: WS_METHODS.pullRequestsSubscribeRefreshes,
-  });
+  return refreshRevisions(createPullRequestRefreshEventAtomFamily(runtime));
 }
 
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
@@ -150,6 +321,8 @@ export interface PullRequestAnswerHandlers {
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
+  /** An action's confirmed state, once per result, after the loaded readers show it. */
+  readonly actionResult?: QueryAnswerHandler<PullRequestRef, PullRequestActionResult>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -189,7 +362,38 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   >,
   onAnswer: PullRequestAnswerHandlers = {},
 ) {
-  const refreshes = createPullRequestRefreshAtomFamily(runtime);
+  const actionPatches = new WeakMap<object, ActionResultPatch>();
+  const applyActionResult = Effect.fn("PullRequests.applyActionResult")(function* (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    result: PullRequestActionResult,
+  ) {
+    for (const atom of registry.getNodes().keys()) {
+      const patch = typeof atom === "string" ? undefined : actionPatches.get(atom);
+      if (patch !== undefined) yield* patch(registry, environmentId, reference, result);
+    }
+    if (reference.expectedAccountId === undefined) {
+      yield* (
+        onAnswer.actionResult?.({ environmentId, input: reference }, result, registry) ??
+          Effect.void
+      );
+    }
+  });
+  const refreshEvents = createPullRequestRefreshEventAtomFamily(runtime, applyActionResult);
+  const refreshes = refreshRevisions(refreshEvents);
+  // Readers an action result patches re-read only on events that carry none.
+  const invalidations = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const events = get(refreshEvents({ environmentId, input: {} }));
+      const previous = get.self<typeof revisions>();
+      const revisions = AsyncResult.map(events, (event) => event.revision);
+      return Option.isSome(previous) &&
+        Option.exists(AsyncResult.value(events), (event) => event.result !== undefined)
+        ? previous.value
+        : revisions;
+    }),
+  );
   const commandScheduler = createAtomCommandScheduler();
   const routedRequest = createPullRequestRouter();
   const serialPerEnvironment = {
@@ -206,39 +410,71 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
   );
-  const detail = writableQueryFamily(
-    createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:detail",
-      persistence: persistQuery(PullRequestDetailSchema),
-      tag: WS_METHODS.pullRequestsDetail,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsDetail, input),
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-      ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
-    }),
+  const detailPersistence = persistQuery(PullRequestDetailSchema);
+  const detail = normalizePullRequestQuery(
+    actionPatchedQuery(
+      actionPatches,
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:pull-requests:detail",
+        persistence: detailPersistence,
+        tag: WS_METHODS.pullRequestsDetail,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsDetail, input),
+        staleTimeMs: 60_000,
+        refreshTrigger: ({ environmentId }) => invalidations(environmentId),
+        ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
+      }),
+      {
+        label: "environment-data:pull-requests:detail",
+        persistence: detailPersistence,
+        onAnswer: onAnswer.detail,
+        patch: (input, value, reference, result) => {
+          if (!samePullRequest(input, reference) || isStaleResult(value, result)) return value;
+          // Reopening or a new head changes branch data and permissions the result lacks.
+          if (
+            (value.state === "closed" && result.state === "open") ||
+            (result.headSha !== undefined && result.headSha !== value.headSha)
+          )
+            return "refresh";
+          return { ...value, ...result, autoMergeMethod: result.autoMergeMethod };
+        },
+      },
+    ),
   );
-  const preview = writableQueryFamily(
-    createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:preview",
-      persistence: persistQuery(PullRequestPreview),
-      tag: WS_METHODS.pullRequestsPreview,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-    }),
-  );
+  const patchPreview = (
+    input: PullRequestRef,
+    value: PullRequestPreview,
+    reference: PullRequestRef,
+    result: PullRequestActionResult,
+  ) =>
+    samePullRequest(input, reference) && !isStaleResult(value, result)
+      ? {
+          ...value,
+          state: result.state,
+          isDraft: result.isDraft,
+          updatedAt: result.updatedAt,
+          observedAt: result.observedAt,
+        }
+      : value;
+  const previewPersistence = persistQuery(PullRequestPreview);
+  const previewQuery = (label: string) =>
+    normalizePullRequestQuery(
+      actionPatchedQuery(
+        actionPatches,
+        createEnvironmentRpcQueryAtomFamily(runtime, {
+          label,
+          persistence: previewPersistence,
+          tag: WS_METHODS.pullRequestsPreview,
+          execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
+          staleTimeMs: 60_000,
+          refreshTrigger: ({ environmentId }) => invalidations(environmentId),
+        }),
+        { label, persistence: previewPersistence, patch: patchPreview },
+      ),
+    );
+  const preview = previewQuery("environment-data:pull-requests:preview");
   // Hover cards read their own atoms, so a pending or failed hover read never decides where a
   // click on the same link goes.
-  const previewCard = writableQueryFamily(
-    createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:preview-card",
-      persistence: persistQuery(PullRequestPreview),
-      tag: WS_METHODS.pullRequestsPreview,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-    }),
-  );
+  const previewCard = previewQuery("environment-data:pull-requests:preview-card");
   const labelCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
@@ -319,11 +555,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       });
       preparedInput = { ...actionInput, mergeMethod };
     }
-    return yield* routedRequest(WS_METHODS.pullRequestsRunAction, preparedInput);
+    return yield* routedRequest(WS_METHODS.pullRequestsRunActionWithResult, preparedInput);
   });
+  const listPersistence = persistQuery(PullRequestListResult);
 
   return {
     refreshes,
+    invalidations: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+      invalidations(environmentId),
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:linked-threads",
       persistence: persistQuery(PullRequestLinkedThreadsResult),
@@ -340,15 +579,24 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
-    list: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:list",
-      persistence: persistQuery(PullRequestListResult),
-      tag: WS_METHODS.pullRequestsList,
-      staleTimeMs: 30_000,
-      refreshTrigger: ({ environmentId, input }) =>
-        input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
-      ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
-    }),
+    list: actionPatchedQuery(
+      actionPatches,
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:pull-requests:list",
+        persistence: listPersistence,
+        tag: WS_METHODS.pullRequestsList,
+        staleTimeMs: 30_000,
+        refreshTrigger: ({ environmentId, input }) =>
+          input.cursors === undefined ? invalidations(environmentId) : undefined,
+        ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
+      }),
+      {
+        label: "environment-data:pull-requests:list",
+        persistence: listPersistence,
+        onAnswer: onAnswer.list,
+        patch: patchListWithResult,
+      },
+    ),
     /**
      * Its own query because the listing is quicker without them — measured over twelve
      * repositories, ~4.0s against ~7.1s — so the rows arrive first and their stats a moment
@@ -451,16 +699,28 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       },
     }),
     runAction: createEnvironmentRpcCommand(runtime, {
-      tag: WS_METHODS.pullRequestsRunAction,
+      tag: WS_METHODS.pullRequestsRunActionWithResult,
       label: "environment-data:pull-requests:run-action",
       // Preparation belongs to the write's lane. Refreshable queries would restart it after
       // every preceding action, and preparing outside the lane could reorder the clicks.
       execute: runAction,
-      onSuccess: ({ environmentId, input }, registry) =>
-        Effect.sync(() => {
+      onSuccess: ({ environmentId, input }, registry, result) => {
+        if (result !== null) {
+          const { projectId, host, repository, number, expectedAccountId } = input;
+          const reference = {
+            projectId,
+            ...(host === undefined ? {} : { host }),
+            repository,
+            number,
+            ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
+          };
+          return applyActionResult(registry, environmentId, reference, result);
+        }
+        return Effect.sync(() => {
           registry.refresh(preview({ environmentId, input }));
           registry.refresh(previewCard({ environmentId, input }));
-        }),
+        });
+      },
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

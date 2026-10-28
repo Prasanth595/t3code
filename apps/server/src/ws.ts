@@ -1294,6 +1294,10 @@ export const layerWsRpc = (
               ),
               Effect.orElseSucceed(() => null),
             );
+      const requestPullRequestSync = (reference: PullRequestRef) =>
+        resolvePullRequestSyncKey(reference).pipe(
+          Effect.flatMap((key) => (key === null ? Effect.void : pullRequestSync.requestSync(key))),
+        );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
@@ -2611,13 +2615,11 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setFilesViewed(input)),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
           withPullRequestViewer(input, pullRequests.runAction(input)).pipe(
-            Effect.tap(() =>
-              resolvePullRequestSyncKey(input).pipe(
-                Effect.flatMap((key) =>
-                  key === null ? Effect.void : pullRequestSync.requestSync(key),
-                ),
-              ),
-            ),
+            Effect.tap(() => requestPullRequestSync(input)),
+          ),
+        [WS_METHODS.pullRequestsRunActionWithResult]: (input) =>
+          withPullRequestViewer(input, pullRequests.runActionWithResult(input)).pipe(
+            Effect.tap(() => requestPullRequestSync(input)),
           ),
         [WS_METHODS.pullRequestsUpdate]: (input) =>
           withPullRequestViewer(input, pullRequests.update(input)),
@@ -2649,6 +2651,7 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
+        [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => pullRequests.subscribeRefreshEvents,
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
           withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
         [WS_METHODS.pullRequestsRequestReviewers]: (input) =>

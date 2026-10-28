@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import type { PullRequestAnswerHandlers } from "@t3tools/client-runtime/state/pull-requests";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   EnvironmentId,
   SourceControlProviderKind,
@@ -27,6 +31,19 @@ import {
   withShownPullRequestStats,
   withoutScratchProjectScope,
 } from "./pullRequestList";
+
+const answers = vi.hoisted(() => ({ handlers: {} as PullRequestAnswerHandlers }));
+vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("@t3tools/client-runtime/state/pull-requests", () => ({
+  createPullRequestEnvironmentAtoms: (_runtime: unknown, handlers: PullRequestAnswerHandlers) => {
+    answers.handlers = handlers;
+    const list = Atom.family((_key: string) => Atom.make(AsyncResult.initial()));
+    return { list: (target: unknown) => list(JSON.stringify(target)) };
+  },
+  createPullRequestStackAtomFamily: () => {},
+}));
+
+import { pullRequestListPagesFamily, pullRequestListPagesKey } from "../../state/pull-requests";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
   return {
@@ -86,6 +103,49 @@ describe("recycled PR list rows", () => {
 });
 
 describe("mobile PR list pagination", () => {
+  effectIt.effect("applies an action result to loaded pages in the same environment", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const environmentId = EnvironmentId.make("action-result");
+      const target = { environmentId, input: { state: "all" as const } };
+      const pagesAtom = pullRequestListPagesFamily(pullRequestListPagesKey(target));
+      const otherAtom = pullRequestListPagesFamily(
+        pullRequestListPagesKey({ ...target, environmentId: EnvironmentId.make("other") }),
+      );
+      registry.set(
+        pagesAtom,
+        appendPullRequestListPage(
+          pullRequestListHead(null, page([entry(3)])),
+          page([entry(1)], { repo: "next" }),
+          { state: "all" },
+        ),
+      );
+      registry.set(otherAtom, pullRequestListHead(null, page([entry(1)])));
+      try {
+        yield* answers.handlers.actionResult!(
+          { environmentId, input: entry(1) },
+          {
+            state: "closed",
+            isDraft: false,
+            autoMergeEnabled: false,
+            mergedAt: null,
+            closedAt: "2026-10-10T00:00:00Z",
+            updatedAt: "2026-10-10T00:00:00Z",
+            observedAt: 10,
+          },
+          registry,
+        );
+        expect(registry.get(pagesAtom)?.entries.map((row) => [row.number, row.state])).toEqual([
+          [1, "closed"],
+          [3, "open"],
+        ]);
+        expect(registry.get(pagesAtom)?.nextCursors).toEqual({ repo: "next" });
+        expect(registry.get(otherAtom)?.entries[0]?.state).toBe("open");
+      } finally {
+        registry.dispose();
+      }
+    }),
+  );
   it("continues only the repositories that have more, preserving the query and filters", () => {
     const first = pullRequestListHead(
       null,

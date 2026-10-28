@@ -1,6 +1,7 @@
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
+  comparePullRequestFreshness,
   resolvePullRequestAuthorFilter,
   type EnvironmentId,
   type PullRequestDiffStat,
@@ -8,6 +9,7 @@ import {
   type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type PullRequestRef,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -211,7 +213,7 @@ export function mergePullRequestListEntries(
   for (const entry of incoming) {
     const key = pullRequestListKey(entry);
     const held = entries.get(key);
-    if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
+    if (!held || comparePullRequestFreshness(held, entry) >= 0) entries.set(key, entry);
   }
   return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -253,21 +255,29 @@ export function shownPullRequestListPages(
 export function patchPullRequestListEntry(
   recorded: PullRequestListPages | null,
   head: PullRequestListResult | null,
-  entry: PullRequestListEntry,
+  entry: Pick<PullRequestRef, "projectId" | "host" | "repository" | "number">,
   patch: Partial<PullRequestListEntry>,
   observedAt: number,
 ): PullRequestListPages | null {
   const pages = shownPullRequestListPages(recorded, head);
-  return (
-    pages && {
-      ...pages,
-      entries: pages.entries.map((row) =>
-        pullRequestListKey(row) === pullRequestListKey(entry)
-          ? { ...row, ...patch, observedAt }
-          : row,
-      ),
-    }
-  );
+  if (!pages) return null;
+  let changed = false;
+  const entries = pages.entries.map((row) => {
+    if (
+      row.projectId !== entry.projectId ||
+      row.repository.toLowerCase() !== entry.repository.toLowerCase() ||
+      row.number !== entry.number ||
+      (entry.host !== undefined && row.host.toLowerCase() !== entry.host.toLowerCase()) ||
+      (row.state === "merged" && patch.state !== undefined && patch.state !== "merged") ||
+      comparePullRequestFreshness(row, { ...patch, observedAt }) < 0
+    )
+      return row;
+    changed = true;
+    return { ...row, ...patch, observedAt };
+  });
+  return changed
+    ? { ...pages, entries: entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) }
+    : pages;
 }
 
 export function pullRequestListInput(

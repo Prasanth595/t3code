@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   pullRequestHostActions,
+  pullRequestOverrideAfterAction,
   largestPullRequestReadCount,
   pullRequestQuickActions,
   filterPullRequestsByInvolvement,
@@ -821,5 +822,25 @@ describe("filter picker choices", () => {
       { name: "size:XL", color: "d93f0b", count: 7 },
       { name: "bug", color: null, count: 0 },
     ]);
+  });
+});
+
+describe("confirmed pull request actions", () => {
+  it("shows the host's state for a queued merge instead of assuming it merged", () => {
+    const row = entry({ number: 1 });
+    const result = {
+      state: "open" as const,
+      isDraft: false,
+      updatedAt: "2026-07-03T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      autoMergeEnabled: true,
+      autoMergeMethod: "squash" as const,
+      observedAt: 300,
+    };
+    const override = pullRequestOverrideAfterAction(row, "merge", new Date(900), 1, result)!;
+    expect(
+      applyPullRequestOverrides([row], new Map([["row", override]]), () => "row", "open"),
+    ).toMatchObject([{ number: 1, state: "open", updatedAt: result.updatedAt, observedAt: 300 }]);
   });
 });
