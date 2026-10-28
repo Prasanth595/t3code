@@ -596,6 +596,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.withSpan("OrchestrationEventStore.readAgentEvents"),
     );
   };
 
@@ -723,6 +724,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.withSpan("OrchestrationEventStore.readApplicationEvents"),
     );
 
   const streamProjectedApplicationEvents: OrchestrationEventStore["Service"]["streamProjectedApplicationEvents"] =
