@@ -29,6 +29,7 @@ export function ThreadDetailsCard({
   const preferredPlacement = canvas?.preferredDetailsCard ?? null;
   const placement = canvas?.detailsCardPlacement ?? null;
   const mode = placement ? "inline" : "popover";
+  const isInline = placement !== null;
   const topInset = canvas?.detailsCardTopInset ?? 0;
   const inlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
@@ -46,6 +47,7 @@ export function ThreadDetailsCard({
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const measureDetailsCard = canvas?.measureDetailsCard;
+  const measureDetailsCardHeight = canvas?.measureDetailsCardHeight;
   const cardWidth = preferredPlacement?.width;
   // The mode derives from canvas measurements, the preview frame and the
   // inline flag, which live in three stores, so no single write site sees the
@@ -82,6 +84,13 @@ export function ThreadDetailsCard({
       });
       // Only the laid-out DOM knows the full card height, and the canvas keeps preview
       // frames clear of it, so it is reported from this measure effect.
+      // The usage card stacks under whatever height this card renders at.
+      if (isInline) {
+        measureDetailsCardHeight?.({
+          threadRef: { environmentId, threadId },
+          height: Math.min(next, height),
+        });
+      }
       if (density === "full" && cardWidth !== undefined) {
         measureDetailsCard?.({
           threadRef: { environmentId, threadId },
@@ -98,6 +107,9 @@ export function ThreadDetailsCard({
     measurementKey,
     cardWidth,
     measureDetailsCard,
+    measureDetailsCardHeight,
+    isInline,
+    height,
     environmentId,
     threadId,
   ]);

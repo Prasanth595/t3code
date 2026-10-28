@@ -18,6 +18,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentThreadShells } from "./threads";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -241,4 +242,24 @@ export function useUsage(
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };
+}
+
+/** Epoch ms of the newest finished run in an environment; moves only when a run finishes. */
+export const latestRunCompletionAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): number => {
+    let latest = 0;
+    for (const shell of get(environmentThreadShells.quietThreadShellsAtom)) {
+      if (shell.environmentId !== environmentId) continue;
+      const completedAt = shell.latestRun?.completedAt;
+      if (completedAt === null || completedAt === undefined) continue;
+      const time = Date.parse(completedAt);
+      if (time > latest) latest = time;
+    }
+    return latest;
+  }).pipe(Atom.withLabel("web-usage:latest-run-completion")),
+);
+
+/** Re-reads one environment's history for a window, without refreshing model prices. */
+export function refreshUsageTotals(environmentId: EnvironmentId, input: UsageSummaryInput): void {
+  appAtomRegistry.refresh(serverEnvironment.usageSummary({ environmentId, input }));
 }

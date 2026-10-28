@@ -69,6 +69,72 @@ describe("chat canvas model", () => {
     expect(model.detailsCardMode).toBe("inline");
   });
 
+  describe("usage card", () => {
+    const resolveUsage = (input: {
+      readonly width?: number;
+      readonly height?: number;
+      readonly detailsHeight?: number | null;
+      readonly detailsOpen?: boolean;
+      readonly threadRef?: typeof threadRef;
+    }) =>
+      resolveChatCanvasModel({
+        measurements: measurements(input.width ?? 1400, input.height ?? 900),
+        detailsCardMeasurement: null,
+        threadRef,
+        preview: null,
+        detailsCardInlineOpen: input.detailsOpen ?? true,
+        detailsCardHeight:
+          input.detailsHeight === null || input.detailsHeight === undefined
+            ? null
+            : { threadRef: input.threadRef ?? threadRef, height: input.detailsHeight },
+        usageCardInlineOpen: true,
+      });
+
+    it("sits under the details card at the height that card renders", () => {
+      const model = resolveUsage({ detailsHeight: 400 });
+      expect(model.usageCardMode).toBe("inline");
+      expect(model.usageCardPlacement).toMatchObject({
+        x: model.detailsCardPlacement!.x,
+        y: model.detailsCardPlacement!.y + 400 + 12,
+      });
+    });
+
+    it("gives way to the details card when too little height is left", () => {
+      const model = resolveUsage({ detailsHeight: 800 });
+      expect(model.detailsCardMode).toBe("inline");
+      expect(model.usageCardMode).toBe("popover");
+      expect(model.usageCardPlacement).toBeNull();
+    });
+
+    it("takes the top of the column while the details card is closed", () => {
+      const model = resolveUsage({ detailsOpen: false, detailsHeight: 400 });
+      expect(model.usageCardPlacement?.y).toBe(model.detailsCardPlacement!.y);
+    });
+
+    it("waits for the details card height before it counts as inline", () => {
+      expect(resolveUsage({ detailsHeight: null }).usageCardMode).toBe("popover");
+      expect(resolveUsage({ detailsHeight: 400, threadRef: otherThreadRef }).usageCardMode).toBe(
+        "popover",
+      );
+    });
+
+    it("is a popover wherever the details card is", () => {
+      expect(resolveUsage({ width: 900, detailsHeight: 400 }).usageCardMode).toBe("popover");
+    });
+
+    it("keeps the chat lane clear of the column it adds", () => {
+      const withUsage = resolveUsage({ detailsOpen: false });
+      const without = resolveChatCanvasModel({
+        measurements: measurements(1400, 900),
+        detailsCardMeasurement: null,
+        threadRef,
+        preview: null,
+        detailsCardInlineOpen: false,
+      });
+      expect(withUsage.layout.chat.insetEnd).toBeGreaterThanOrEqual(without.layout.chat.insetEnd);
+    });
+  });
+
   it("keeps state identity when a measurement repeats", () => {
     const store = createChatCanvasStore();
     store.getState().setMeasurements(measurements(1400));

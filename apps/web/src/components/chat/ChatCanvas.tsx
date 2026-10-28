@@ -4,6 +4,7 @@ import { ChatCanvasContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import { useUsagePanelStore } from "../../usagePanelStore";
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
@@ -29,6 +30,9 @@ export function ChatCanvas({
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
   const measurements = useStore(store, (state) => state.measurements);
   const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
+  const detailsCardHeight = useStore(store, (state) => state.detailsCardHeight);
+  const usageCardHeight = useStore(store, (state) => state.usageCardHeight);
+  const usageCardInlineOpen = useUsagePanelStore((state) => state.inlineOpen);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes canvas, find bar and timeline resizes and writes the measurements to the canvas store
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -78,6 +82,9 @@ export function ChatCanvas({
     threadRef,
     preview,
     detailsCardInlineOpen,
+    detailsCardHeight,
+    usageCardInlineOpen,
+    usageCardHeight,
   });
   const context = {
     container: model.container,
@@ -86,9 +93,12 @@ export function ChatCanvas({
     previewKey: preview?.key ?? null,
     registerTimeline,
     measureDetailsCard: store.getState().measureDetailsCard,
+    measureDetailsCardHeight: store.getState().measureDetailsCardHeight,
+    measureUsageCard: store.getState().measureUsageCard,
     detailsCardTopInset: model.detailsCardTopInset,
     preferredDetailsCard: model.preferredDetailsCard,
     detailsCardPlacement: model.detailsCardPlacement,
+    usageCardPlacement: model.usageCardPlacement,
   };
   const { layout } = context;
   return (

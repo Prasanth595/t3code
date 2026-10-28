@@ -45,3 +45,28 @@ export function resolveThreadDetailsCardLayout({
     height,
   } as const;
 }
+
+const USAGE_CARD_MIN_HEIGHT = 144;
+
+/**
+ * The usage card stacks under the details card in the same column. The details card keeps
+ * its height; usage takes what is left and gives way when that is too little.
+ */
+export function resolveUsageCardLayout({
+  details,
+  detailsHeight,
+}: {
+  details: ReturnType<typeof resolveThreadDetailsCardLayout>;
+  /** The inline details card's rendered height; null while it is closed or unmeasured. */
+  detailsHeight: number | null;
+}) {
+  if (details === null) return null;
+  const bottom = details.y + details.height;
+  const y =
+    detailsHeight === null
+      ? details.y
+      : details.y + Math.min(detailsHeight, details.height) + THREAD_DETAILS_CARD_GAP;
+  const height = bottom - y;
+  if (height < USAGE_CARD_MIN_HEIGHT) return null;
+  return { x: details.x, right: details.right, width: details.width, y, height } as const;
+}

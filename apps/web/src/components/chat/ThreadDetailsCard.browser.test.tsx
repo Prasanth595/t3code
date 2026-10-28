@@ -58,9 +58,12 @@ function Card({
           previewKey: null,
           registerTimeline: () => {},
           measureDetailsCard: () => {},
+          measureDetailsCardHeight: () => {},
+          measureUsageCard: () => {},
           detailsCardTopInset: 0,
           preferredDetailsCard: placement,
           detailsCardPlacement: inline ? placement : null,
+          usageCardPlacement: null,
         }}
       >
         <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>

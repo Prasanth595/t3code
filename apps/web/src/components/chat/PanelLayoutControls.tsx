@@ -1,4 +1,4 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
+import { GaugeIcon, PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
@@ -21,6 +21,14 @@ export interface PanelLayoutControlsProps {
   threadPanelPresentation: ThreadPanelPresentation;
   threadPanelPopoverHandle?: ReturnType<typeof PopoverCreateHandle>;
   threadPanelShortcutLabel: string | null;
+  /** The provider usage toggle, shown beside the thread details one when given. */
+  usagePanel?: {
+    readonly open: boolean;
+    readonly presentation: ThreadPanelPresentation;
+    readonly popoverHandle: ReturnType<typeof PopoverCreateHandle>;
+    readonly shortcutLabel: string | null;
+    readonly onToggle: () => void;
+  };
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
@@ -41,6 +49,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   threadPanelPresentation,
   threadPanelPopoverHandle,
   threadPanelShortcutLabel,
+  usagePanel,
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
@@ -77,12 +86,42 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     </Tooltip>
   );
 
+  const usagePanelToggle = usagePanel ? (
+    <Toggle
+      className="relative shrink-0 [-webkit-app-region:no-drag]"
+      pressed={usagePanel.open}
+      onPressedChange={usagePanel.presentation === "popover" ? undefined : usagePanel.onToggle}
+      aria-label="Toggle provider usage panel"
+      variant="ghost"
+      size="sm"
+    >
+      <GaugeIcon className="size-4" />
+    </Toggle>
+  ) : null;
+  const usagePanelControl =
+    usagePanel && usagePanelToggle ? (
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
+          {usagePanel.presentation === "popover" ? (
+            <PopoverTrigger handle={usagePanel.popoverHandle} render={usagePanelToggle} />
+          ) : (
+            usagePanelToggle
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          Toggle provider usage
+          {usagePanel.shortcutLabel ? ` (${usagePanel.shortcutLabel})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+    ) : null;
+
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
       {showThreadPanelControl ? threadPanelControl : null}
+      {showThreadPanelControl ? usagePanelControl : null}
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>

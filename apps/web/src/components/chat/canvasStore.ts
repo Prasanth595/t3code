@@ -3,7 +3,7 @@ import { createStore } from "zustand";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import type { DetailsCardMeasurement } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
-import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
+import { resolveThreadDetailsCardLayout, resolveUsageCardLayout } from "./threadDetailsCardLayout";
 
 interface CanvasEdges {
   readonly left: number;
@@ -26,8 +26,18 @@ export interface ChatCanvasMeasurements {
 interface ChatCanvasStoreState {
   readonly measurements: ChatCanvasMeasurements;
   readonly detailsCardMeasurement: DetailsCardMeasurement | null;
+  /** The inline details card's rendered height, which the usage card stacks under. */
+  readonly detailsCardHeight: DetailsCardHeight | null;
+  readonly usageCardHeight: number | null;
   readonly setMeasurements: (next: ChatCanvasMeasurements) => void;
   readonly measureDetailsCard: (next: DetailsCardMeasurement) => void;
+  readonly measureDetailsCardHeight: (next: DetailsCardHeight) => void;
+  readonly measureUsageCard: (height: number) => void;
+}
+
+export interface DetailsCardHeight {
+  readonly threadRef: ScopedThreadRef;
+  readonly height: number;
 }
 
 const INITIAL_MEASUREMENTS: ChatCanvasMeasurements = {
@@ -63,6 +73,8 @@ export const createChatCanvasStore = () =>
   createStore<ChatCanvasStoreState>()((set) => ({
     measurements: INITIAL_MEASUREMENTS,
     detailsCardMeasurement: null,
+    detailsCardHeight: null,
+    usageCardHeight: null,
     setMeasurements: (next) =>
       set((state) => (sameMeasurements(state.measurements, next) ? state : { measurements: next })),
     measureDetailsCard: (next) =>
@@ -75,6 +87,17 @@ export const createChatCanvasStore = () =>
           ? state
           : { detailsCardMeasurement: next };
       }),
+    measureDetailsCardHeight: (next) =>
+      set((state) => {
+        const current = state.detailsCardHeight;
+        return current?.threadRef.environmentId === next.threadRef.environmentId &&
+          current.threadRef.threadId === next.threadRef.threadId &&
+          current.height === next.height
+          ? state
+          : { detailsCardHeight: next };
+      }),
+    measureUsageCard: (height) =>
+      set((state) => (state.usageCardHeight === height ? state : { usageCardHeight: height })),
   }));
 
 export type ChatCanvasStore = ReturnType<typeof createChatCanvasStore>;
@@ -85,9 +108,15 @@ export function resolveChatCanvasModel({
   threadRef,
   preview,
   detailsCardInlineOpen,
+  detailsCardHeight = null,
+  usageCardInlineOpen = false,
+  usageCardHeight = null,
 }: {
   measurements: ChatCanvasMeasurements;
   detailsCardMeasurement: DetailsCardMeasurement | null;
+  detailsCardHeight?: DetailsCardHeight | null;
+  usageCardInlineOpen?: boolean;
+  usageCardHeight?: number | null;
   /** The thread whose details card sits on the canvas; other threads' measurements are stale. */
   threadRef: ScopedThreadRef | null;
   preview: ChatCanvasPreview | null;
@@ -127,6 +156,37 @@ export function resolveChatCanvasModel({
             Math.min(detailsCardMeasured.fullContentHeight, preferredDetailsCard.height),
         }
       : null;
+  const openDetailsHeight =
+    detailsCardInlineOpen &&
+    threadRef !== null &&
+    detailsCardHeight !== null &&
+    detailsCardHeight.threadRef.environmentId === threadRef.environmentId &&
+    detailsCardHeight.threadRef.threadId === threadRef.threadId
+      ? detailsCardHeight.height
+      : null;
+  // The usage card sits under the details card, or at the top while that one is closed. It
+  // takes part in the canvas layout only when it fits there, so the chat and a preview
+  // keep clear of the whole column.
+  const preferredUsageCard = resolveUsageCardLayout({
+    details: preferredDetailsCard,
+    detailsHeight: detailsCardInlineOpen ? openDetailsHeight : null,
+  });
+  const usageCardObstacle =
+    usageCardInlineOpen &&
+    preferredUsageCard &&
+    (!detailsCardInlineOpen || openDetailsHeight !== null)
+      ? {
+          left: preferredUsageCard.x,
+          right: preferredUsageCard.x + preferredUsageCard.width,
+          bottom:
+            preferredUsageCard.y +
+            Math.min(usageCardHeight ?? preferredUsageCard.height, preferredUsageCard.height),
+        }
+      : null;
+  const columnObstacle =
+    detailsCard && usageCardObstacle
+      ? { ...detailsCard, bottom: Math.max(detailsCard.bottom, usageCardObstacle.bottom) }
+      : (detailsCard ?? usageCardObstacle);
   const layout = resolveChatCanvasLayout({
     container,
     preview,
@@ -134,7 +194,7 @@ export function resolveChatCanvasModel({
     maxChatWidth: measurements.maxChatWidth,
     minChatWidth: measurements.minChatWidth,
     composerHeight: measurements.composerHeight,
-    detailsCard,
+    detailsCard: columnObstacle,
     findBar,
   });
   const detailsCardPlacement = resolveThreadDetailsCardLayout({
@@ -145,6 +205,16 @@ export function resolveChatCanvasModel({
     topInset: detailsCardTopInset,
   });
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
+  const usageCardPlacement = resolveUsageCardLayout({
+    details: detailsCardPlacement,
+    detailsHeight: detailsCardInlineOpen ? openDetailsHeight : null,
+  });
+  // A details card still being measured counts as not fitting, so the toggle never
+  // flips to a popover for the moment it takes to lay out.
+  const usageCardMode: ThreadPanelPresentation =
+    usageCardPlacement && (!detailsCardInlineOpen || openDetailsHeight !== null)
+      ? "inline"
+      : "popover";
   return {
     container,
     lane,
@@ -153,5 +223,7 @@ export function resolveChatCanvasModel({
     preferredDetailsCard,
     detailsCardPlacement,
     detailsCardMode,
+    usageCardPlacement: usageCardMode === "inline" ? usageCardPlacement : null,
+    usageCardMode,
   };
 }

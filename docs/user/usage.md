@@ -54,6 +54,18 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+## Usage card in a thread
+
+In a thread or a new-thread draft, a **Usage** card appears under the thread details, with the
+provider in use first and then every other enabled provider on the same environment. Each shows
+subscription limits, then tokens and estimated cost for **Today**, **7d**, or **30d**. The card
+refreshes when a run finishes, at most every 30 seconds, and the refresh button checks again at
+once.
+
+Toggle it with the gauge button beside the thread details button or `mod+shift+u` (change
+`usagePanel.toggle` in **Settings → Keybindings**). Like thread details, it moves into a popover
+from its button when the window is too narrow or the details card leaves no room.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

@@ -283,6 +283,9 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { ThreadUsageCard } from "./chat/ThreadUsageCard";
+import { ThreadUsagePanel } from "./chat/ThreadUsagePanel";
+import { selectUsagePanelOpen, useUsagePanelStore } from "../usagePanelStore";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -1034,6 +1037,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
+  const [usagePanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
@@ -1868,6 +1872,7 @@ export default function ChatView(props: ChatViewProps) {
   const threadPanelInlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, activeThreadRef, "inline"),
   );
+  const usagePanelInlineOpen = useUsagePanelStore((state) => state.inlineOpen);
   // Selects only the mode, so canvas resizes rerender the chat view only when the
   // card switches presentation.
   const threadPanelPresentation = useStore(
@@ -1879,7 +1884,27 @@ export default function ChatView(props: ChatViewProps) {
         threadRef: activeThreadRef,
         preview: canvasPreview,
         detailsCardInlineOpen: threadPanelInlineOpen,
+        detailsCardHeight: state.detailsCardHeight,
+        usageCardInlineOpen: usagePanelInlineOpen,
+        usageCardHeight: state.usageCardHeight,
       }).detailsCardMode,
+  );
+  const usagePanelPresentation = useStore(
+    chatCanvasStore,
+    (state) =>
+      resolveChatCanvasModel({
+        measurements: state.measurements,
+        detailsCardMeasurement: state.detailsCardMeasurement,
+        threadRef: activeThreadRef,
+        preview: canvasPreview,
+        detailsCardInlineOpen: threadPanelInlineOpen,
+        detailsCardHeight: state.detailsCardHeight,
+        usageCardInlineOpen: usagePanelInlineOpen,
+        usageCardHeight: state.usageCardHeight,
+      }).usageCardMode,
+  );
+  const usagePanelOpen = useUsagePanelStore((state) =>
+    selectUsagePanelOpen(state, usagePanelPresentation),
   );
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
@@ -2280,6 +2305,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
+    toggleUsagePanelStable,
     shortcuts: rightPanelShortcuts,
   } = useRightPanelActions({
     activeThreadRef,
@@ -2290,6 +2316,7 @@ export default function ChatView(props: ChatViewProps) {
     deviceStateLoaded,
     pullRequestPanelTarget,
     threadPanelPresentation,
+    usagePanelPresentation,
     isServerThread,
     isGitRepo,
     browserAvailable,
@@ -3073,6 +3100,13 @@ export default function ChatView(props: ChatViewProps) {
     rightPanelShortcutLabel: shortcutLabelForCommand(keybindings, "rightPanel.toggle"),
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
+    usagePanel: {
+      open: usagePanelOpen,
+      presentation: usagePanelPresentation,
+      popoverHandle: usagePanelPopoverHandle,
+      shortcutLabel: shortcutLabelForCommand(keybindings, "usagePanel.toggle"),
+      onToggle: toggleUsagePanelStable,
+    },
     onToggleRightPanel: toggleRightPanelStable,
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
@@ -3687,6 +3721,13 @@ export default function ChatView(props: ChatViewProps) {
               onUpdateProjectScript={updateProjectScriptStable}
               onDeleteProjectScript={deleteProjectScriptStable}
             />
+
+            <ThreadUsageCard anchor={threadPanelPopoverAnchorRef} handle={usagePanelPopoverHandle}>
+              <ThreadUsagePanel
+                environmentId={activeThread.environmentId}
+                providerDriver={activeProviderStatus?.driver ?? null}
+              />
+            </ThreadUsageCard>
 
             <PullRequestThreadDialogHost
               threadKey={activeThreadKey}

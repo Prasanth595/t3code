@@ -13,6 +13,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useDiffPanelStore } from "../../diffPanelStore";
+import { useUsagePanelStore } from "../../usagePanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
   selectActiveRightPanel,
@@ -44,6 +45,7 @@ interface RightPanelActionsInput {
   readonly deviceStateLoaded: boolean;
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
+  readonly usagePanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
   readonly isGitRepo: boolean;
   readonly browserAvailable: boolean;
@@ -77,6 +79,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     deviceStateLoaded,
     pullRequestPanelTarget,
     threadPanelPresentation,
+    usagePanelPresentation,
     isServerThread,
     isGitRepo,
     browserAvailable,
@@ -241,6 +244,10 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
+  const toggleUsagePanel = () => {
+    useUsagePanelStore.getState().toggle(usagePanelPresentation);
+  };
+  const toggleUsagePanelStable = useStableCallback(toggleUsagePanel);
   const toggleRightPanelMaximized = () => {
     if (!canMaximizeRightPanel || !activeThreadRef) return;
     if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
@@ -328,6 +335,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!event.repeat) toggleRightPanelMaximized();
     },
     "threadPanel.toggle": () => toggleThreadPanel(),
+    "usagePanel.toggle": () => toggleUsagePanel(),
     "rightPanel.close": ({ event }) => {
       if (!activeRightPanelSurface) return false;
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
@@ -356,5 +364,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
+    toggleUsagePanelStable,
   };
 }
