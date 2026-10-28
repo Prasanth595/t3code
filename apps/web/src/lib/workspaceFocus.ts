@@ -147,9 +147,18 @@ export function createWorkspaceFocusController(doc: Document) {
     // so the conversation reuses a control only while it is still in view. Its list offers
     // the Tab-stop item when in view, else the lowest item in view.
     const isConversation = area.dataset.workspaceArea === "conversation";
+    // The composer floats over the bottom of the timeline and hides the messages under it.
+    const composer = isConversation
+      ? doc.querySelector<HTMLElement>('[data-workspace-area="composer"]')
+      : null;
+    const coveredFrom =
+      composer && isWorkspaceElementVisible(composer)
+        ? composer.getBoundingClientRect().top
+        : Infinity;
     const listItems = isConversation
       ? Array.from(area.querySelectorAll<HTMLElement>(TIMELINE_ITEM_SELECTOR)).filter(
-          (item) => belongs(item) && isInScrollView(item),
+          (item) =>
+            belongs(item) && isInScrollView(item) && item.getBoundingClientRect().top < coveredFrom,
         )
       : [];
     const listEntry =

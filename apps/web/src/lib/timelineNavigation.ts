@@ -22,12 +22,16 @@ export function timelineRevealDelta(viewport: DOMRect, item: DOMRect, bottomInse
 
 // Module scope so a reinstall (StrictMode, a remounted list) still reads each control's own value.
 const ownTabIndex = new WeakMap<HTMLElement, number>();
+const appliedTabIndex = new WeakMap<HTMLElement, number>();
 
 function setReachable(control: HTMLElement, reachable: boolean) {
   if (control.matches(TIMELINE_ITEM_SELECTOR) || control.matches(TEXT_ENTRY)) return;
-  if (!ownTabIndex.has(control)) ownTabIndex.set(control, control.tabIndex);
+  // A tab index that differs from the one applied here was set by its renderer.
+  if (!ownTabIndex.has(control) || control.tabIndex !== appliedTabIndex.get(control))
+    ownTabIndex.set(control, control.tabIndex);
   const tabIndex = reachable ? ownTabIndex.get(control)! : -1;
   if (control.tabIndex !== tabIndex) control.tabIndex = tabIndex;
+  appliedTabIndex.set(control, tabIndex);
 }
 
 function controlsIn(node: Element) {
@@ -71,8 +75,9 @@ export function installTimelineControls(root: HTMLElement) {
     const added: Element[] = [];
     for (const record of records) {
       if (record.type === "attributes") {
-        if (record.target instanceof HTMLElement && record.target.matches(TAB_STOP))
-          stop = record.target;
+        if (!(record.target instanceof HTMLElement)) continue;
+        if (record.target.matches(TAB_STOP)) stop = record.target;
+        else if (!record.target.matches(TIMELINE_ITEM_SELECTOR)) added.push(record.target);
         continue;
       }
       for (const node of record.addedNodes) {

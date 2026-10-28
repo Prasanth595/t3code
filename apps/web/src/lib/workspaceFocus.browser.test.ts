@@ -234,6 +234,16 @@ describe("workspace area focus", () => {
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(first);
     expect(timeline.scrollTop).toBe(0);
+
+    // The composer overlay hides the latest message, so the one above it takes focus.
+    first.tabIndex = -1;
+    latest.tabIndex = -1;
+    timeline.scrollTop = timeline.scrollHeight;
+    const box = timeline.getBoundingClientRect();
+    composer.element.style.cssText = `position: fixed; left: 0; right: 0; top: ${box.bottom - 20}px; height: 20px`;
+    composer.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(earlier);
   });
 
   it("returns focus to the area when its focused control disappears", async () => {
