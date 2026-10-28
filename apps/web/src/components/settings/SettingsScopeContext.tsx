@@ -7,7 +7,12 @@ import { createContext, type ReactNode, useContext } from "react";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
+import { droppedSettingKeysAtom, droppedSettingKeysFor } from "./droppedSettingKeys";
+import {
+  resolveScopedSettingsTargets,
+  scopedDisplaySettings,
+  selectScopedSettingsEnvironments,
+} from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
@@ -57,7 +62,16 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
   const groups = useSettingsProjectGroups();
-  const { environments: availableEnvironments } = useEnvironments();
+  const { environments } = useEnvironments();
+  const dropped = useAtomValue(droppedSettingKeysAtom);
+  const availableEnvironments = environments.map((environment) => {
+    const unsupportedSettingKeys = droppedSettingKeysFor(
+      dropped,
+      environment.environmentId,
+      environment.serverConfig?.environment.serverVersion,
+    );
+    return unsupportedSettingKeys ? { ...environment, unsupportedSettingKeys } : environment;
+  });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const search = singleEnvironment
     ? selectSingleEnvironmentScope(
@@ -75,10 +89,12 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
     primaryEnvironmentId,
   );
   const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
-  const target =
+  const representative =
     targets.find((candidate) => candidate.environmentId === selected.environment?.environmentId) ??
-    targets[0] ??
-    null;
+    targets[0];
+  const target = representative
+    ? { ...representative, settings: scopedDisplaySettings(representative, targets) }
+    : null;
   return { scope, groups, search, ...selected, targets, target };
 }
 

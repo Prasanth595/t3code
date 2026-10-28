@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
@@ -29,6 +29,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
 
 import { useSettingsScope } from "./SettingsScopeContext";
+import { environmentsStoringSettingKeys } from "./scopedSettings";
 import { toastManager } from "../ui/toast";
 import {
   groupDeviceHosts,
@@ -44,8 +45,20 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
-  const { scope, environments, connectedEnvironments } = useSettingsScope();
-  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
+  const { scope, environments, connectedEnvironments, targets: scopeTargets } = useSettingsScope();
+  // Same eligibility as the row's permission check: skip environments that cannot store hosts.
+  const hostDestinations = environmentsStoringSettingKeys(environments, scopeTargets, [
+    "deviceHosts",
+  ]);
+  const configurableEnvironments = environmentsStoringSettingKeys(
+    connectedEnvironments,
+    scopeTargets,
+    ["deviceHosts"],
+  );
+  const writableIds = useEnvironmentsWithScope(configurableEnvironments, AuthSettingsWriteScope);
+  const canConfigure =
+    configurableEnvironments.length > 0 &&
+    configurableEnvironments.every((environment) => writableIds.has(environment.environmentId));
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
@@ -65,10 +78,10 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   }));
   const groupedHosts = groupDeviceHosts(hostEnvironments);
   const save = async (host: SshDeviceHostConfig, remove = false, original = host) => {
-    if (!props.environmentId || projectScope) return;
+    if (!props.environmentId || projectScope || hostDestinations.length === 0) return;
     setBusy(true);
     const results = await Promise.allSettled(
-      environments.map(async (environment) => {
+      hostDestinations.map(async (environment) => {
         if (environment.connection.phase !== "connected" || !environment.serverConfig) {
           throw new Error("Environment disconnected");
         }
@@ -91,7 +104,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
       }),
     );
     setBusy(false);
-    const failed = environments.filter((_, index) => {
+    const failed = hostDestinations.filter((_, index) => {
       const result = results[index];
       return result?.status !== "fulfilled" || result.value._tag === "Failure";
     });

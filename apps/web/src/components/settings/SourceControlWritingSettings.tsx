@@ -17,7 +17,11 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import {
+  useScopedModelDisabledReason,
+  useScopedModelProviders,
+} from "./useScopedModelAvailability";
+import { targetStoresSettingKeys } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
@@ -25,8 +29,6 @@ import {
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
-import { useEnvironmentProviders } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -65,19 +67,19 @@ export function SourceControlWritingSettingsSection() {
   const updateSettings = useUpdateScopedSettings();
   const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, targets, target } = useSettingsScope();
-  const environmentId = environment?.environmentId ?? null;
+  const { connectedEnvironments, targets } = useSettingsScope();
   const hasServerTargets = connectedEnvironments.length > 0;
-  const providersByEnvironment = useEnvironmentProviders();
-  const serverProviders =
-    (environment?.serverConfig
-      ? providersByEnvironment.get(environment.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const writerModel = useScopedModelProviders("sourceControlWriterModelSelection");
+  const reviewGuideModel = useScopedModelProviders("reviewGuideModelSelection");
+  const environmentId = writerModel.environmentId;
+  const styleTargets = targets.filter((target) =>
+    targetStoresSettingKeys(target, ["sourceControlWritingStyle"]),
+  );
   const styleFieldMixed = (field: keyof ServerSettings["sourceControlWritingStyle"]) => {
-    const first = targets[0];
+    const first = styleTargets[0];
     return (
       first !== undefined &&
-      targets.some(
+      styleTargets.some(
         (candidate) =>
           candidate.settings.sourceControlWritingStyle[field] !==
           first.settings.sourceControlWritingStyle[field],
@@ -103,13 +105,13 @@ export function SourceControlWritingSettingsSection() {
     style.mode !== defaults.mode ||
     style.customInstructions !== defaults.customInstructions;
 
-  const textGenerationProviders = serverProviders.filter(
+  const textGenerationProviders = writerModel.providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
   const instanceEntries = providerInstanceEntriesFor(
     textGenerationProviders,
-    settings,
-    target?.projectId ?? null,
+    writerModel.settings,
+    writerModel.projectId,
   );
   const projectEnabledInstanceIds = new Set(
     instanceEntries
@@ -120,17 +122,17 @@ export function SourceControlWritingSettingsSection() {
     projectEnabledInstanceIds.has(provider.instanceId),
   );
   const defaultModelSelection = resolveAppModelSelectionState(
-    settings,
+    writerModel.settings,
     projectEffectiveTextGenerationProviders,
   );
   const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
   const activeSelection = resolveAppModelSelectionState(
     {
-      ...settings,
+      ...writerModel.settings,
       textGenerationModelSelection: resolveSourceControlWriterModelSelection(
-        settings,
+        writerModel.settings,
         projectEffectiveTextGenerationProviders,
-        target?.projectId ?? null,
+        writerModel.projectId,
       ),
     },
     projectEffectiveTextGenerationProviders,
@@ -140,34 +142,55 @@ export function SourceControlWritingSettingsSection() {
       entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
+    writerModel.settings,
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
-  const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const writerModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    instanceEntries,
+    "sourceControlWriterModelSelection",
+  );
   const writerInstanceEntry = instanceEntries.find(
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
   const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
+  const reviewGuideProviders = reviewGuideModel.providers.filter(
+    (provider) => provider.supportsTextGeneration !== false,
+  );
+  const reviewGuideInstanceEntries = providerInstanceEntriesFor(
+    reviewGuideProviders,
+    reviewGuideModel.settings,
+    reviewGuideModel.projectId,
+  );
   const reviewGuideSelection = resolveAppModelSelectionState(
     {
-      ...settings,
+      ...reviewGuideModel.settings,
       textGenerationModelSelection: resolveReviewGuideModelSelection(
-        settings,
-        textGenerationProviders,
-        target?.projectId ?? null,
+        reviewGuideModel.settings,
+        reviewGuideProviders,
+        reviewGuideModel.projectId,
       ),
     },
-    textGenerationProviders,
+    reviewGuideProviders,
   );
   const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
-    textGenerationProviders,
+    reviewGuideModel.settings,
+    reviewGuideProviders,
     reviewGuideSelection.instanceId,
     reviewGuideSelection.model,
   );
-  const reviewGuideInstanceEntry = instanceEntries.find(
+  const canEnableReviewGuideModel = reviewGuideInstanceEntries.some(
+    (entry) =>
+      entry.instanceId === reviewGuideSelection.instanceId && entry.enabled && entry.isAvailable,
+  );
+  const reviewGuideModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    reviewGuideInstanceEntries,
+    "reviewGuideModelSelection",
+  );
+  const reviewGuideInstanceEntry = reviewGuideInstanceEntries.find(
     (entry) => entry.instanceId === reviewGuideSelection.instanceId,
   );
 
@@ -320,20 +343,20 @@ export function SourceControlWritingSettingsSection() {
                 </span>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableDedicatedModel ? (
+                  {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableReviewGuideModel ? (
                     <ProviderModelPicker
-                      environmentId={environmentId}
+                      environmentId={reviewGuideModel.environmentId}
                       activeInstanceId={reviewGuideSelection.instanceId}
                       model={reviewGuideSelection.model}
                       lockedProvider={null}
-                      instanceEntries={instanceEntries}
+                      instanceEntries={reviewGuideInstanceEntries}
                       modelOptionsByInstance={reviewGuideModelOptionsByInstance}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       triggerAriaLabel="Review guide model"
                       {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
-                      getModelDisabledReason={writerModelDisabledReason}
+                      getModelDisabledReason={reviewGuideModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
-                        const reason = writerModelDisabledReason(instanceId, model);
+                        const reason = reviewGuideModelDisabledReason(instanceId, model);
                         if (reason) {
                           toastManager.add({
                             type: "error",
@@ -349,7 +372,7 @@ export function SourceControlWritingSettingsSection() {
                     />
                   ) : null}
                   {usesReviewGuideModel &&
-                  canEnableDedicatedModel &&
+                  canEnableReviewGuideModel &&
                   !mixedReviewGuideModel &&
                   reviewGuideInstanceEntry ? (
                     <TraitsPicker
@@ -376,15 +399,15 @@ export function SourceControlWritingSettingsSection() {
                   <Switch
                     mixed={mixedReviewGuideModel}
                     checked={mixedReviewGuideModel ? false : usesReviewGuideModel}
-                    disabled={!usesReviewGuideModel && !canEnableDedicatedModel}
+                    disabled={!usesReviewGuideModel && !canEnableReviewGuideModel}
                     onCheckedChange={(checked) => {
                       if (!checked) {
                         updateSettings({ reviewGuideModelSelection: null });
                         return;
                       }
-                      const reason = writerModelDisabledReason(
-                        activeSelection.instanceId,
-                        activeSelection.model,
+                      const reason = reviewGuideModelDisabledReason(
+                        reviewGuideSelection.instanceId,
+                        reviewGuideSelection.model,
                       );
                       if (reason) {
                         toastManager.add({
@@ -396,9 +419,9 @@ export function SourceControlWritingSettingsSection() {
                       }
                       updateSettings({
                         reviewGuideModelSelection: createModelSelection(
-                          activeSelection.instanceId,
-                          activeSelection.model,
-                          activeSelection.options,
+                          reviewGuideSelection.instanceId,
+                          reviewGuideSelection.model,
+                          reviewGuideSelection.options,
                         ),
                       });
                     }}

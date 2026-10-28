@@ -18,6 +18,7 @@ import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSe
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { recordDroppedSettingKeys } from "./droppedSettingKeys";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
@@ -48,6 +49,7 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 }
 
 function useRunScopedPlan() {
+  const context = useOptionalSettingsScope();
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
     if (plan.unavailableReason) {
@@ -79,6 +81,12 @@ function useRunScopedPlan() {
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
       if (failedEnvironments.length === 0) return;
+      for (const { environmentId, droppedKeys } of failedEnvironments) {
+        const serverVersion = context?.environments.find(
+          (environment) => environment.environmentId === environmentId,
+        )?.serverConfig?.environment.serverVersion;
+        if (serverVersion) recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
+      }
       onFailed?.();
       toastManager.add({
         type: "error",

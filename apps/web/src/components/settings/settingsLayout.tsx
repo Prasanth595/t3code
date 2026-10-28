@@ -24,6 +24,8 @@ import {
   type ProjectOverrideEntry,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  targetStoresSettingKeys,
+  environmentsStoringSettingKeys,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
@@ -325,14 +327,26 @@ export function SettingsRow({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryCanWrite = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
-  const writableIds = useEnvironmentsWithScope(
+  const outdatedTargets =
+    context && serverScoped && settingKeys.length > 0
+      ? context.targets.filter((target) => !targetStoresSettingKeys(target, settingKeys))
+      : [];
+  const outdatedLabels = [...new Set(outdatedTargets.map(({ label }) => label))].join(", ");
+  // Writes skip environments that cannot store the row's keys, so permission does too.
+  const permissionTargets = environmentsStoringSettingKeys(
     context?.connectedEnvironments ?? [],
-    AuthSettingsWriteScope,
+    outdatedTargets,
+    settingKeys,
   );
+  const writableIds = useEnvironmentsWithScope(permissionTargets, AuthSettingsWriteScope);
   const canWriteSettings = context
-    ? context.connectedEnvironments.length > 0 &&
-      context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
+    ? permissionTargets.length > 0 &&
+      permissionTargets.every((target) => writableIds.has(target.environmentId))
     : primaryCanWrite;
+  const updateMessage =
+    outdatedTargets.length > 0 && outdatedTargets.length === context?.targets.length
+      ? `Update T3 Code on ${outdatedLabels} to use this setting.`
+      : null;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();
   const isProjectScope =
@@ -345,7 +359,8 @@ export function SettingsRow({
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
     serverScoped &&
-    (!canWriteSettings ||
+    (updateMessage !== null ||
+      !canWriteSettings ||
       !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable));
   const inheritedFrom =
     source === "environment" && context?.scope.environmentIds.length === 1
@@ -395,18 +410,20 @@ export function SettingsRow({
   const renderedControl =
     unavailable && control
       ? inertControl(
-          !canWriteSettings
-            ? `This connection lacks permission to change settings on ${
-                context
-                  ? context.connectedEnvironments
-                      .filter((target) => !writableIds.has(target.environmentId))
-                      .map((target) => target.label)
-                      .join(", ") || "the selected environment"
-                  : (primaryEnvironment?.label ?? "the primary environment")
-              }.`
-            : context
-              ? "Reconnect the selected environment to change this setting."
-              : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+          updateMessage
+            ? updateMessage
+            : !canWriteSettings
+              ? `This connection lacks permission to change settings on ${
+                  context
+                    ? permissionTargets
+                        .filter((target) => !writableIds.has(target.environmentId))
+                        .map((target) => target.label)
+                        .join(", ") || "the selected environment"
+                    : (primaryEnvironment?.label ?? "the primary environment")
+                }.`
+              : context
+                ? "Reconnect the selected environment to change this setting."
+                : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
         )
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
@@ -437,7 +454,13 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
-        summary={inheritance.summary}
+        summary={
+          updateMessage
+            ? `Not supported on ${outdatedLabels}`
+            : outdatedTargets.length > 0
+              ? `${inheritance.summary} · Not supported on ${outdatedLabels}`
+              : inheritance.summary
+        }
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
@@ -450,7 +473,15 @@ export function SettingsRow({
           : {})}
       />
     ) : null;
-  const renderedStatus = status;
+  const renderedStatus =
+    updateMessage && children ? (
+      <>
+        {status}
+        <div>{updateMessage}</div>
+      </>
+    ) : (
+      status
+    );
 
   return (
     <div

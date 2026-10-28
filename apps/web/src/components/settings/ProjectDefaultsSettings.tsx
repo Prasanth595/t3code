@@ -15,8 +15,6 @@ import {
   providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
 } from "../../providerInstances";
-import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -29,12 +27,15 @@ import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  useScopedModelDisabledReason,
+  useScopedModelProviders,
+} from "./useScopedModelAvailability";
+import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -52,25 +53,22 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environments } = useEnvironments();
-  const providersByEnvironment = useEnvironmentProviders();
-  const representative = target
-    ? environments.find((environment) => environment.environmentId === target.environmentId)
-    : undefined;
-  const providers =
-    (representative?.serverConfig
-      ? providersByEnvironment.get(representative.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const {
+    environmentId,
+    providers,
+    projectId,
+    settings: modelSettings,
+  } = useScopedModelProviders("defaultModelSelection");
   const storedSelection = resolveDefaultProviderModelSelection(
     providers,
-    settings.defaultModelSelection,
+    modelSettings.defaultModelSelection,
   );
   const selection = storedSelection
-    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
+    ? resolveEffectiveDefaultModelSelection(modelSettings, providers, storedSelection)
     : null;
-  const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
+  const entries = providerInstanceEntriesFor(providers, modelSettings, projectId);
   const modelOptions = getCustomModelOptionsByInstance(
-    settings,
+    modelSettings,
     providers,
     selection?.instanceId,
     selection?.model,
@@ -90,7 +88,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
+  const modelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    entries,
+    "defaultModelSelection",
+  );
 
   const setModel = (value: ModelSelection | null) => {
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
@@ -127,7 +129,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         selection && activeEntry ? (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
-              environmentId={representative?.environmentId ?? null}
+              environmentId={environmentId}
               activeInstanceId={selection.instanceId}
               model={selection.model}
               lockedProvider={null}
@@ -137,10 +139,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
               getModelDisabledReason={modelDisabledReason}
               onOpenProviderSetup={(instanceId) => {
-                if (representative)
+                if (environmentId)
                   void navigate({
                     to: "/settings/providers",
-                    search: { environmentId: representative.environmentId, instanceId },
+                    search: { environmentId, instanceId },
                   });
               }}
               onInstanceModelChange={(instanceId, model) =>
