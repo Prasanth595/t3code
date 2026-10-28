@@ -6,10 +6,35 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+export const ProviderSkillOverride = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+});
+export type ProviderSkillOverride = typeof ProviderSkillOverride.Type;
+
+export const ProviderSkillOverrides = Schema.Array(ProviderSkillOverride).check(
+  Schema.isMaxLength(64),
+);
+export type ProviderSkillOverrides = typeof ProviderSkillOverrides.Type;
+
+export const ProviderSkillConfiguration = Schema.Struct({
+  providerVersion: TrimmedNonEmptyString,
+  overrides: ProviderSkillOverrides,
+  skills: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      path: TrimmedNonEmptyString,
+      enabled: Schema.Boolean,
+    }),
+  ),
+});
+export type ProviderSkillConfiguration = typeof ProviderSkillConfiguration.Type;
+
 const ModelSelectionWire = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
   options: Schema.optionalKey(ProviderOptionSelections),
+  skillOverrides: Schema.optionalKey(ProviderSkillOverrides),
 });
 
 const ModelSelectionSource = Schema.Struct({
@@ -17,6 +42,7 @@ const ModelSelectionSource = Schema.Struct({
   instanceId: Schema.optional(Schema.Unknown),
   model: Schema.Unknown,
   options: Schema.optional(Schema.Unknown),
+  skillOverrides: Schema.optional(Schema.Unknown),
 });
 
 export const ModelSelection = ModelSelectionSource.pipe(
@@ -35,6 +61,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
           model: raw.model,
         };
         if (raw.options !== undefined) base.options = raw.options;
+        if (raw.skillOverrides !== undefined) base.skillOverrides = raw.skillOverrides;
         return Effect.succeed(base as typeof ModelSelectionWire.Encoded);
       },
       encode: (value) => {
@@ -43,6 +70,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
           model: value.model,
         };
         if (value.options !== undefined) base.options = value.options;
+        if (value.skillOverrides !== undefined) base.skillOverrides = value.skillOverrides;
         return Effect.succeed(base as typeof ModelSelectionSource.Encoded);
       },
     }),

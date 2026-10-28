@@ -1,3 +1,5 @@
+import { skillOverridesEqual } from "@t3tools/shared/model";
+import { supportsCodexSkillOverrides } from "../provider/CodexSkillOverrides.ts";
 import {
   CommandId,
   type EnvironmentId,
@@ -783,14 +785,25 @@ function listItemFromShell(
 
 function threadDetail(
   environmentId: EnvironmentId,
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "runtimeRequests" | "providerThreads"
+  >,
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
+  const skillConfiguration = projection.providerThreads.find(
+    (thread) =>
+      thread.id ===
+      (active?.providerThreadId ??
+        latest?.providerThreadId ??
+        projection.thread.activeProviderThreadId),
+  )?.nativeMetadata?.skillConfiguration;
   return {
+    ...(skillConfiguration === undefined ? {} : { skillConfiguration }),
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -1206,6 +1219,7 @@ const make = Effect.gen(function* () {
         "runs",
         "runtimeRequests",
         "contextTransfers",
+        "providerThreads",
       ])
       .pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
@@ -1354,6 +1368,27 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const skillOverrides = input.target?.skillOverrides ?? inheritedSelection.skillOverrides;
+    if (
+      skillOverrides !== undefined &&
+      (provider.driver !== "codex" || !supportsCodexSkillOverrides(provider.version ?? ""))
+    ) {
+      return yield* failure(
+        "invalid_request",
+        "Session skill overrides require Codex 0.165.0 or newer.",
+      );
+    }
+    if (
+      inheritedSelection.skillOverrides !== undefined &&
+      input.target?.skillOverrides !== undefined &&
+      !skillOverridesEqual(input.target.skillOverrides, inheritedSelection.skillOverrides)
+    ) {
+      return yield* failure(
+        "invalid_request",
+        "A restricted child cannot replace its inherited skill overrides.",
+      );
+    }
+
     const requestedOptions = input.target?.options;
     if (requestedOptions !== undefined) {
       const descriptors = provider.models.find((candidate) => candidate.slug === model)
@@ -1383,7 +1418,12 @@ const make = Effect.gen(function* () {
       options = [...selections.values()];
     }
     return {
-      modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
+      modelSelection: {
+        instanceId,
+        model,
+        ...(options === undefined ? {} : { options }),
+        ...(skillOverrides === undefined ? {} : { skillOverrides }),
+      },
       supportedRuntimeModes: provider.supportedRuntimeModes,
     };
   });
@@ -1522,6 +1562,9 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    const skillConfiguration = childProjection.providerThreads.find(
+      (candidate) => candidate.id === childRun?.providerThreadId,
+    )?.nativeMetadata?.skillConfiguration;
     const result = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1536,7 +1579,11 @@ const make = Effect.gen(function* () {
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
+      ...(skillConfiguration === undefined ? {} : { skillConfiguration }),
       options: modelSelection.options ?? [],
+      ...(modelSelection.skillOverrides === undefined
+        ? {}
+        : { skillOverrides: modelSelection.skillOverrides }),
       summary: derivedResult,
       resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
@@ -2121,6 +2168,9 @@ const make = Effect.gen(function* () {
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions: inherited?.options ?? [],
+        ...(inherited?.skillOverrides === undefined
+          ? {}
+          : { inheritedSkillOverrides: inherited.skillOverrides }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2143,6 +2193,8 @@ const make = Effect.gen(function* () {
           return {
             providerInstanceId: provider.instanceId,
             driverKind: provider.driver,
+            supportsSessionSkillOverrides:
+              provider.driver === "codex" && supportsCodexSkillOverrides(provider.version ?? ""),
             displayName: provider.displayName ?? null,
             models: listed.map((model) => {
               const options = model.capabilities?.optionDescriptors ?? [];

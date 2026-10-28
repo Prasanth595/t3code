@@ -1,3 +1,4 @@
+import { skillOverridesEqual } from "@t3tools/shared/model";
 import {
   CommandId,
   type EnvironmentId,
@@ -27,6 +28,7 @@ import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import { OrchestratorToolkit } from "../mcp/toolkits/orchestrator/tools.ts";
 import {
   resolveInteractionMode,
   resolveRuntimeMode,
@@ -210,6 +212,16 @@ const make = Effect.gen(function* () {
       }
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
+      if (
+        parent.thread.modelSelection.skillOverrides !== undefined &&
+        target.skillOverrides !== undefined &&
+        !skillOverridesEqual(parent.thread.modelSelection.skillOverrides, target.skillOverrides)
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "A restricted child cannot replace its inherited skill overrides.",
+        });
+      }
       // A worktree there would branch from a commit this checkout has and the
       // other may not, so a remote task runs in that project's checkout.
       if (input.isolation === "worktree") {
@@ -236,6 +248,25 @@ const make = Effect.gen(function* () {
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
           : undefined);
+      const skillOverrides = target.skillOverrides ?? inherited.skillOverrides;
+      if (skillOverrides !== undefined) {
+        const capabilities = yield* forwarding.call(
+          scope,
+          OrchestratorToolkit.tools.orchestrator_capabilities,
+          target.environmentId,
+          {},
+        );
+        if (
+          capabilities.providers.find((provider) => provider.providerInstanceId === instanceId)
+            ?.supportsSessionSkillOverrides !== true
+        ) {
+          return yield* new OrchestratorMcpFailure({
+            code: "provider_unavailable",
+            message:
+              "The destination does not advertise session-scoped skill overrides for this provider. No child was launched.",
+          });
+        }
+      }
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
@@ -265,7 +296,12 @@ const make = Effect.gen(function* () {
         {
           projectId,
           title: input.title ?? parent.thread.title,
-          modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
+          modelSelection: {
+            instanceId,
+            model,
+            ...(options === undefined ? {} : { options }),
+            ...(skillOverrides === undefined ? {} : { skillOverrides }),
+          },
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,

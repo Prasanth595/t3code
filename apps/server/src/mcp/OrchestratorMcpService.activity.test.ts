@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ScheduledTaskId,
   ThreadId,
@@ -117,6 +118,12 @@ function makeRun(input: {
 }
 
 it("readThread prefers activity-run status over a newer cancelled queued run", async () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread-mcp-active");
+  const skillConfiguration = {
+    providerVersion: "0.165.0",
+    overrides: [{ path: "/skills/review/SKILL.md", enabled: false }],
+    skills: [{ name: "review", path: "/skills/review/SKILL.md", enabled: false }],
+  };
   const projection = {
     thread: baseThread({
       threadId: parentThreadId,
@@ -125,9 +132,10 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
       model: "gpt-5.4",
     }),
     runs: [
-      makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
+      { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), providerThreadId },
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
+    providerThreads: [{ id: providerThreadId, nativeMetadata: { skillConfiguration } }],
     visibleTurnItems: [],
     runtimeRequests: [],
     messages: [],
@@ -180,6 +188,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.skillConfiguration).toEqual(skillConfiguration);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
@@ -356,6 +365,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         },
       ],
       runtimeRequests: [],
+      providerThreads: [],
       messages: [],
       contextTransfers: [],
       subagents: [],

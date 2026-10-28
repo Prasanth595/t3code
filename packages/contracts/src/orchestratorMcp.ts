@@ -1,3 +1,4 @@
+import { ProviderSkillConfiguration, ProviderSkillOverrides } from "./modelSelection.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -94,6 +95,12 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
 export const OrchestratorMcpTarget = Schema.Struct({
+  skillOverrides: Schema.optional(
+    ProviderSkillOverrides.annotate({
+      description:
+        "Session-scoped Codex skill overrides by absolute SKILL.md path. Omitted inherits; [] preserves provider defaults. Requires a fresh session; other providers reject overrides. Native Codex subagents are disabled in configured sessions.",
+    }),
+  ),
   providerInstanceId: Schema.optional(
     ProviderInstanceId.annotate({
       description: "Provider instance id from `orchestrator_capabilities`.",
@@ -222,6 +229,8 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  skillOverrides: Schema.optional(ProviderSkillOverrides),
+  skillConfiguration: Schema.optional(ProviderSkillConfiguration),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   hasPendingQuestion: Schema.Boolean.annotate({
@@ -423,6 +432,7 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
+  skillConfiguration: Schema.optional(ProviderSkillConfiguration),
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -587,6 +597,7 @@ export const OrchestratorMcpModelOption = Schema.Struct({
 export type OrchestratorMcpModelOption = typeof OrchestratorMcpModelOption.Type;
 
 export const OrchestratorMcpProviderCapability = Schema.Struct({
+  supportsSessionSkillOverrides: Schema.optional(Schema.Boolean),
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
   displayName: Schema.NullOr(Schema.String),
@@ -633,6 +644,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  inheritedSkillOverrides: Schema.optional(ProviderSkillOverrides),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),

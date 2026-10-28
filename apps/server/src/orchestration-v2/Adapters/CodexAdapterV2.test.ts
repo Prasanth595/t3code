@@ -1,3 +1,4 @@
+import type { ProviderSkillOverrides } from "@t3tools/contracts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makeProviderTextDeltaCoalescer,
@@ -917,10 +918,13 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
-        ensureThread: (threadId: string) =>
+        ensureThread: (threadId: string, skillOverrides?: ProviderSkillOverrides) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
-            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            modelSelection: {
+              ...CODEX_TEST_MODEL_SELECTION,
+              ...(skillOverrides === undefined ? {} : { skillOverrides }),
+            },
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
         initializeRequests: () => initializeRequests,
@@ -929,6 +933,113 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect(
+    "applies skill overrides before starting a native thread and records the resolved inventory",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-skill-config-" });
+        const skillPath = `${directory}/SKILL.md`;
+        yield* fs.writeFileString(skillPath, "sentinel");
+        const preamble = replayPreamble("skill-configured");
+        const initial = preamble.slice(0, 3).map((entry) =>
+          entry.type === "emit_inbound" &&
+          Predicate.isObject(entry.frame) &&
+          Predicate.isObject(entry.frame.result)
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  result: { ...entry.frame.result, userAgent: "codex_cli_rs/0.165.0" },
+                },
+              }
+            : entry,
+        );
+        const config = {
+          "skills.config": [{ path: skillPath, enabled: false }],
+          "features.multi_agent": false,
+        };
+        const session = yield* openReplaySession(
+          makeCodexReplayTranscript({
+            scenario: "session-skill-overrides",
+            entries: [
+              ...initial,
+              {
+                type: "expect_outbound",
+                label: "skills/list",
+                frame: {
+                  id: 2,
+                  method: "skills/list",
+                  params: { cwds: ["/workspace"], forceReload: true },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "skills/list",
+                frame: {
+                  id: 2,
+                  result: {
+                    data: [
+                      {
+                        cwd: "/workspace",
+                        skills: [
+                          {
+                            name: "review",
+                            path: skillPath,
+                            enabled: true,
+                            description: "Review",
+                            scope: "user",
+                          },
+                        ],
+                        errors: [],
+                      },
+                    ],
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "config/read",
+                frame: {
+                  id: 3,
+                  method: "config/read",
+                  params: { cwd: "/workspace", includeLayers: false },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "config/read",
+                frame: { id: 3, result: { config: {}, origins: {} } },
+              },
+              {
+                type: "expect_outbound",
+                label: "thread/start",
+                frame: {
+                  id: 4,
+                  method: "thread/start",
+                  params: { config: { ...CodexAdapterV2.CODEX_THREAD_CONFIG, ...config } },
+                },
+              },
+              ...preamble.slice(4, 5).map((entry) => withReplayRequestId(entry, 4)),
+            ],
+          }),
+        );
+        const thread = yield* session.ensureThread("thread-skills", [
+          { path: skillPath, enabled: false },
+        ]);
+        assert.deepEqual(thread.nativeMetadata?.skillConfiguration, {
+          providerVersion: "0.165.0",
+          overrides: [{ path: skillPath, enabled: false }],
+          skills: [{ name: "review", path: skillPath, enabled: false }],
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {

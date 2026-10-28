@@ -101,6 +101,7 @@ function startWithMissingWorktree(
       {
         id: runId,
         status: "starting",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         rootNodeId,
         activeAttemptId: attemptId,
         providerThreadId,
@@ -786,6 +787,33 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect.each([
+  ["claudeAgent", "Session skill overrides unavailable"],
+  ["codex", "Session skill overrides require a fresh thread"],
+] as const)(
+  "fails before opening %s with unsupported or contaminated skill overrides",
+  ([driver, title]) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue" });
+      const projection = harness.projection();
+      harness.setProjection({
+        ...projection,
+        runs: projection.runs.map((run) => ({
+          ...run,
+          modelSelection: { ...run.modelSelection, skillOverrides: [] },
+        })),
+        providerThreads: projection.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make(driver),
+        })),
+      });
+      yield* harness.start;
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.projection().runs[0]?.status).toBe("failed");
+      expect(harness.projection().turnItems).toMatchObject([{ type: "error", title }]);
+    }),
+);
 
 effectIt.effect(
   "recovers the thread branch tip, falls back to the current project branch, and rejects detached HEAD",
