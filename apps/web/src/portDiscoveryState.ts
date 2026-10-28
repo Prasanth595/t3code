@@ -3,6 +3,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   type DiscoveredLocalServer,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 
@@ -37,6 +38,13 @@ export function boundConfiguredLocalServerUrls(
     } catch {}
   }
   return bounded;
+}
+
+function useDiscoveredPorts(
+  environmentId: EnvironmentId | null,
+  configuredUrls?: ReadonlyArray<string>,
+): ReadonlyArray<DiscoveredLocalServer> {
+  return useDiscoveredPortsState(environmentId, configuredUrls).servers;
 }
 
 export function useDiscoveredPortsState(

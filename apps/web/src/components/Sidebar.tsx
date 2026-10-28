@@ -248,7 +248,10 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarProjectFolderHeader } from "./sidebar/SidebarProjectFolderHeader";
+import {
+  SidebarProjectFolderHeader,
+  sidebarFolderRowId,
+} from "./sidebar/SidebarProjectFolderHeader";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -1253,9 +1256,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroup === null
+      ? scopedProjectGroups.length === 0
         ? projectGroups
-        : [scopedProjectGroup]
+        : scopedProjectGroups
       : null,
   });
 
@@ -3136,14 +3139,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
-                        inFolder = false,
+                        // The tree row of the project folder this row sits in.
+                        folderRow?: string,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
-                        const rowVariant = inFolder ? "folder" : isCard ? "card" : "slim";
+                        const rowVariant = folderRow ? "folder" : isCard ? "card" : "slim";
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3158,11 +3162,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             navigationParent={
-                              section === "working" ||
+                              folderRow ??
+                              (section === "working" ||
                               section === "snoozed" ||
                               section === "settled"
                                 ? `shelf:${section}`
-                                : undefined
+                                : undefined)
                             }
                             variantAction={
                               section === "snoozed"
@@ -3278,7 +3283,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             for (const thread of folder.threads) {
-                              items.push(renderThreadRow(thread, "active", true));
+                              items.push(
+                                renderThreadRow(
+                                  thread,
+                                  "active",
+                                  sidebarFolderRowId(folder.group.projectKey),
+                                ),
+                              );
                             }
                           }
                           continue;

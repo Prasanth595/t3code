@@ -17,6 +17,11 @@ const FOLDER_DOT_CLASS_NAME = {
   working: "bg-info",
 } as const;
 
+/** The folder's sidebar tree row; its thread rows name it as their parent. */
+export function sidebarFolderRowId(projectKey: string) {
+  return `folder:${projectKey}`;
+}
+
 /**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
  * count and chevron, with the count and a status dot only while it is closed, so a
@@ -31,6 +36,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
+  const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
     ? resolveSidebarFolderDot(
@@ -52,13 +58,16 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
     >
       <button
         type="button"
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={rowId}
         aria-expanded={!collapsed}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onContextMenu(group, { x: event.clientX, y: event.clientY });
         }}
-        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
@@ -86,6 +95,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       {/* Sits over the count, which hides on hover, and left of the chevron. */}
       <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
         <Button
+          data-sidebar-action-for={rowId}
           size="icon-xs"
           variant="ghost-muted"
           aria-label={`New thread in ${group.displayName}`}
