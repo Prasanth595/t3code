@@ -5682,6 +5682,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, cooldown: "999999999999999999999999h", seconds: 0 },
     { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
     { status: 401, cooldown: "4m 6s", seconds: 0 },
+    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -5699,11 +5700,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.offerAll(harness.sdkMessages, [
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
-          error: "server_error",
+          error: input.proxy ? "rate_limit" : "server_error",
         }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000653",
-          result: `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`,
+          result: input.proxy
+            ? `API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after ${input.cooldown}) (last error: rate_limit_error: Please try again later.)`
+            : `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`,
           terminalReason: "api_error",
           isError: true,
           apiErrorStatus: input.status,
