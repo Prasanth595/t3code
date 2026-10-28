@@ -75,9 +75,10 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     let data: ResultEnvelope["data"];
     let failed = false;
     for (const block of value) {
-      const text = Predicate.isObject(block) ? block.text : undefined;
+      // ACP content blocks nest the payload at content.text. A missing text property is not empty text.
+      const raw = Predicate.isObject(block) ? (block.text ?? block.content) : block;
       const result = readResult(
-        Predicate.isObject(text) ? (text.text ?? text) : text,
+        Predicate.isObject(raw) ? (raw.text ?? raw) : raw,
         budget,
         depth + 1,
       );
