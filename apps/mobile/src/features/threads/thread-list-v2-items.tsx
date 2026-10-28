@@ -1205,30 +1205,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 }
               />
             ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-              {props.environmentLabel && connectionLabel ? "  ·  " : null}
-              {connectionLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : "text-warning-foreground",
-                  )}
-                >
-                  {connectionLabel}
-                </Text>
-              ) : null}
-            </Text>
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "shrink text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+                {connectionLabel ? "  · " : null}
+              </Text>
+            ) : null}
+            {connectionLabel ? (
+              // A sibling, not nested, so a long environment name truncates before the status does.
+              <Text
+                className={cn(
+                  "max-w-full shrink-0 text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : "text-warning-foreground",
+                )}
+                numberOfLines={1}
+              >
+                {connectionLabel}
+              </Text>
+            ) : null}
           </View>
         ) : (
           <View className="flex-1" />
