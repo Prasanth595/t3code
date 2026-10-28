@@ -1,19 +1,14 @@
 import * as Schema from "effect/Schema";
 
-import {
-  IsoDateTime,
-  ProjectId,
-  ThreadId,
-  TrimmedNonEmptyString,
-} from "./baseSchemas.ts";
+import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 export const THREAD_COMPOSER_DRAFT_PREFIX = "thread:";
 export const NEW_TASK_COMPOSER_DRAFT_PREFIX = "new-task:";
-export const COMPOSER_DRAFT_SYNC_KEY_MAX_LENGTH = 200;
-export const COMPOSER_DRAFT_SYNC_PUT_MAX = 32;
+const COMPOSER_DRAFT_SYNC_KEY_MAX_LENGTH = 200;
+const COMPOSER_DRAFT_SYNC_PUT_MAX = 32;
 
 const isComposerDraftSyncKey = Schema.makeFilter(
   (value: string) => {
@@ -91,6 +86,7 @@ export class ComposerDraftSyncError extends Schema.TaggedError<ComposerDraftSync
   "ComposerDraftSyncError",
   {
     message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
@@ -98,11 +94,11 @@ export interface ComposerDraftSyncLocal {
   readonly prompt: string;
   readonly updatedAt: string | null;
   readonly deleted: boolean;
-  readonly projectId?: ProjectId;
-  readonly threadId?: ThreadId;
-  readonly modelSelection?: ModelSelection;
-  readonly runtimeMode?: RuntimeMode;
-  readonly interactionMode?: ProviderInteractionMode;
+  readonly projectId?: ProjectId | undefined;
+  readonly threadId?: ThreadId | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
 }
 
 export type ComposerDraftSyncDecision =
@@ -175,7 +171,8 @@ export function decideComposerDraftSync(input: {
   }
 
   if (local.updatedAt === null) {
-    if (local.deleted || local.prompt.trim().length === 0) return { action: "apply", draft: remote };
+    if (local.deleted || local.prompt.trim().length === 0)
+      return { action: "apply", draft: remote };
     return { action: "push", draft: toSynced(key, local, now) };
   }
   if (local.updatedAt > remote.updatedAt) {

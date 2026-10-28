@@ -18,6 +18,7 @@ import { serverEnvironment } from "./server";
 import {
   clearComposerDraft,
   composerDraftsAtom,
+  getComposerDraftSnapshot,
   isComposerDraftEmpty,
   setComposerDraftText,
   updateComposerDraftSettings,
@@ -61,7 +62,11 @@ function remember(environmentId: EnvironmentId, draft: SyncedComposerDraft): voi
   });
 }
 
-function syncKeyFor(environmentId: EnvironmentId, key: string, draft: ComposerDraft): string | null {
+function syncKeyFor(
+  environmentId: EnvironmentId,
+  key: string,
+  draft: ComposerDraft,
+): string | null {
   if (isQueuedEditDraftKey(key)) return null;
   if (isNewTaskDraftKey(key)) {
     return draft.project?.environmentId === environmentId ? key : null;
@@ -96,12 +101,19 @@ function localDrafts(environmentId: EnvironmentId): Map<string, ComposerDraftSyn
   return drafts;
 }
 
+function applyRemoteTombstone(draftKey: string): void {
+  setComposerDraftText(draftKey, "");
+  if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
+    clearComposerDraft(draftKey);
+  }
+}
+
 function applyDraft(environmentId: EnvironmentId, draft: SyncedComposerDraft): void {
   applying = true;
   try {
     if (draft.key.startsWith(NEW_TASK_COMPOSER_DRAFT_PREFIX)) {
       if (draft.deleted) {
-        clearComposerDraft(draft.key);
+        applyRemoteTombstone(draft.key);
         return;
       }
       setComposerDraftText(draft.key, draft.prompt);
@@ -114,7 +126,9 @@ function applyDraft(environmentId: EnvironmentId, draft: SyncedComposerDraft): v
           },
           ...(draft.modelSelection === undefined ? {} : { modelSelection: draft.modelSelection }),
           ...(draft.runtimeMode === undefined ? {} : { runtimeMode: draft.runtimeMode }),
-          ...(draft.interactionMode === undefined ? {} : { interactionMode: draft.interactionMode }),
+          ...(draft.interactionMode === undefined
+            ? {}
+            : { interactionMode: draft.interactionMode }),
         });
       }
       return;
@@ -122,7 +136,7 @@ function applyDraft(environmentId: EnvironmentId, draft: SyncedComposerDraft): v
     const threadId = ThreadId.make(draft.key.slice(THREAD_COMPOSER_DRAFT_PREFIX.length));
     const draftKey = `${environmentId}:${threadId}`;
     if (draft.deleted) {
-      clearComposerDraft(draftKey);
+      applyRemoteTombstone(draftKey);
       return;
     }
     setComposerDraftText(draftKey, draft.prompt);
