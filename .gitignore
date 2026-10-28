@@ -49,6 +49,9 @@ node_modules/
 .pnpm-store/
 
 # makepkg scratch and artifacts from packaging/arch.
-/packaging/arch/src/
-/packaging/arch/pkg/
-/packaging/arch/*.pkg.tar.zst
+/packaging/arch/*/src/
+/packaging/arch/*/pkg/
+/packaging/arch/*/*.pkg.tar.zst
+/packaging/arch/*/T3-Code-*.AppImage
+/packaging/arch/*/t3-*-linux-*.tar.gz
+/packaging/arch/*/*-LICENSE

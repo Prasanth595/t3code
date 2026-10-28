@@ -1,0 +1,22 @@
+post_install() {
+  cat <<'EOF'
+This package installs `t3code` (desktop app) and `t3` (server).
+
+The server keeps the shape `t3 serve` had before: same base directory (~/.t3),
+same default port (3773), so existing pairings keep working.
+
+A launcher from an older standalone install can still shadow `/usr/bin/t3`, as
+`~/.local/bin` comes first on PATH. Where one exists, repoint it:
+
+  ln -sfn /usr/bin/t3 ~/.local/bin/t3
+
+`t3 update` and `t3 uninstall` refuse on a package-managed install; rebuild and
+reinstall this package instead.
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+Restart the running server so it picks up the new binary.
+EOF
+}
