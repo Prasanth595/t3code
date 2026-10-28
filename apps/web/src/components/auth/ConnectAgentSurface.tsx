@@ -29,8 +29,8 @@ const accessConfig: Record<
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
   "read-only": {
-    label: "Read only",
-    description: "Read projects and threads. Cannot start, message or change anything.",
+    label: "Doar citire",
+    description: "Citește proiecte și conversații. Nu poate porni, scrie sau schimba nimic.",
     icon: EyeIcon,
   },
   ...runtimeModeConfig,
@@ -45,7 +45,7 @@ type Loaded =
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "ready"; readonly details: AuthMcpApprovalDetails };
 
-const UNREACHABLE = "Could not reach this environment. Try again.";
+const UNREACHABLE = "Mediul nu a putut fi contactat. Încearcă din nou.";
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 type Answer<A> =
@@ -133,15 +133,17 @@ export function ConnectAgentSurface() {
       return;
     }
     setPending(null);
-    setErrorMessage(answer.kind === "error" ? answer.message : "The sign-in could not continue.");
+    setErrorMessage(
+      answer.kind === "error" ? answer.message : "Autentificarea nu a putut continua.",
+    );
   };
 
   if (loaded.status === "loading") {
     return (
       <AuthSurfaceShell>
         <ConnectAgentHeading
-          title="Checking the sign-in request"
-          description="One moment while this environment verifies the agent's request."
+          title="Se verifică cererea de autentificare"
+          description="Un moment, mediul verifică cererea agentului."
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </AuthSurfaceShell>
@@ -151,9 +153,12 @@ export function ConnectAgentSurface() {
   if (loaded.status === "invalid") {
     return (
       <AuthSurfaceShell>
-        <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
+        <ConnectAgentHeading
+          title="Autentificarea nu poate continua"
+          description={loaded.message}
+        />
         <p className="mt-4 text-sm text-muted-foreground">
-          Close this page and start the sign-in again from your agent.
+          Închide pagina și pornește din nou autentificarea din agent.
         </p>
       </AuthSurfaceShell>
     );
@@ -166,10 +171,10 @@ export function ConnectAgentSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectAgentHeading
-        title={`Connect ${details.clientName}`}
+        title={`Conectează ${details.clientName}`}
         description={
           <>
-            This agent wants to use the threads in every project on{" "}
+            Acest agent vrea să folosească conversațiile din toate proiectele de pe{" "}
             <span className="font-medium text-foreground">{details.environmentHost}</span>.
           </>
         }
@@ -177,14 +182,14 @@ export function ConnectAgentSurface() {
       <p className="mt-2 text-xs text-muted-foreground">
         {redirectsToThisComputer(details.redirectHost) ? (
           <>
-            The name is chosen by the agent. Approval returns to {details.redirectHost} on the
-            computer that opened this page. Only approve a sign-in you just started.
+            Numele e ales de agent. Aprobarea revine la {details.redirectHost} pe calculatorul care
+            a deschis pagina. Aprobă doar o autentificare pe care tocmai ai pornit-o.
           </>
         ) : (
           <>
-            The name is chosen by the agent. Approval gives access to whoever runs{" "}
-            <span className="font-medium text-foreground">{details.redirectHost}</span>. Only
-            approve a sign-in you just started there.
+            Numele e ales de agent. Aprobarea dă acces oricui rulează{" "}
+            <span className="font-medium text-foreground">{details.redirectHost}</span>. Aprobă doar
+            o autentificare pe care tocmai ai pornit-o acolo.
           </>
         )}
       </p>
@@ -198,7 +203,7 @@ export function ConnectAgentSurface() {
       >
         <div className="space-y-2">
           <span id="connect-agent-access-label" className="text-sm font-medium">
-            What it may do
+            Ce poate face
           </span>
           <RadioGroup
             aria-labelledby="connect-agent-access-label"
@@ -210,15 +215,15 @@ export function ConnectAgentSurface() {
             ))}
           </RadioGroup>
           <p className="text-xs text-muted-foreground">
-            Beyond read only, it can start, message and stop threads, and none of them can run with
-            more than the mode you pick.
+            Pe lângă citire, poate porni, scrie și opri conversații, dar niciuna nu poate rula cu
+            mai mult decât modul ales de tine.
           </p>
         </div>
 
         {oneClick ? null : (
           <div className="space-y-2">
             <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
-              Pairing code
+              Cod de asociere
             </label>
             <Input
               id="connect-agent-pairing-code"
@@ -228,13 +233,13 @@ export function ConnectAgentSurface() {
               disabled={pending !== null}
               nativeInput
               onChange={(event) => setPairingCode(event.currentTarget.value)}
-              placeholder="Paste a one-time pairing code"
+              placeholder="Lipește un cod de asociere unic"
               spellCheck={false}
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              Create one in Settings → Connections, or run <code>t3 auth pairing create</code> on
-              this machine.
+              Creează unul din Setări → Conexiuni sau rulează <code>t3 auth pairing create</code> pe
+              acest calculator.
             </p>
           </div>
         )}
@@ -247,7 +252,7 @@ export function ConnectAgentSurface() {
 
         <div className="flex flex-wrap gap-2">
           <Button disabled={!canApprove} type="submit">
-            {pending === "approve" ? "Approving…" : "Approve"}
+            {pending === "approve" ? "Se aprobă…" : "Aprobă"}
           </Button>
           <Button
             disabled={pending !== null}
@@ -255,7 +260,7 @@ export function ConnectAgentSurface() {
             type="button"
             variant="outline"
           >
-            {pending === "deny" ? "Denying…" : "Deny"}
+            {pending === "deny" ? "Se refuză…" : "Refuză"}
           </Button>
         </div>
       </form>

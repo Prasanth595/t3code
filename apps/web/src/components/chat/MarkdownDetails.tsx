@@ -30,7 +30,7 @@ export function MarkdownDetails({
   const summary =
     isValidElement<{ children?: ReactNode }>(summaryNode) && summaryNode.props.children
       ? summaryNode.props.children
-      : "Details";
+      : "Detalii";
   const content = childNodes.filter((_, index) => index !== summaryIndex);
 
   return (

@@ -64,7 +64,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     envMode: DraftThreadEnvMode;
   }) => {
     if (!activeProject) {
-      throw new Error("No active project is available for this pull request.");
+      throw new Error("Niciun proiect activ nu e disponibil pentru acest pull request.");
     }
     const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
     const logicalProjectKey = deriveLogicalProjectKeyFromSettings(

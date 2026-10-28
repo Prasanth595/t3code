@@ -29,9 +29,9 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
         <RedactedSensitiveText
           key={label}
           value={label}
-          ariaLabel="Toggle account label visibility"
-          revealTooltip="Click to reveal account"
-          hideTooltip="Click to hide account"
+          ariaLabel="Arată sau ascunde contul"
+          revealTooltip="Apasă ca să arăți contul"
+          hideTooltip="Apasă ca să ascunzi contul"
           className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
         />
       ) : (
@@ -60,9 +60,9 @@ export function usageLimitsBannerItem(
     variant: "info",
     priority: "notice",
     icon: <GaugeIcon />,
-    title: "Usage limits",
+    title: "Limite de utilizare",
     description: summary,
-    dismissLabel: "Dismiss usage limits",
+    dismissLabel: "Închide limitele de utilizare",
     onDismiss,
     children: <UsageLimitsBannerBody report={report} environmentId={environmentId} />,
   };
@@ -109,7 +109,7 @@ function UsageLimitsBannerBody({
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >
-                  Manage usage
+                  Gestionează utilizarea
                 </Button>
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (

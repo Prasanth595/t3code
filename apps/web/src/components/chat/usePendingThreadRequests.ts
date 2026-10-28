@@ -320,7 +320,7 @@ export function usePendingThreadRequests(input: {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThreadId,
-        error instanceof Error ? error.message : "Failed to submit approval decision.",
+        error instanceof Error ? error.message : "Decizia de aprobare nu a putut fi trimisă.",
       );
     }
     setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -359,7 +359,7 @@ export function usePendingThreadRequests(input: {
       if (!uploaded) {
         setThreadError(
           activeThreadId,
-          "Wait for attachments to finish uploading, or remove failed uploads.",
+          "Așteaptă să se încarce atașamentele sau elimină încărcările eșuate.",
         );
         return;
       }
@@ -385,7 +385,7 @@ export function usePendingThreadRequests(input: {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThreadId,
-        error instanceof Error ? error.message : "Failed to submit user input.",
+        error instanceof Error ? error.message : "Răspunsul nu a putut fi trimis.",
       );
     }
     userInputResponsesInFlight.current.delete(responseKey);
@@ -407,7 +407,7 @@ export function usePendingThreadRequests(input: {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThreadId,
-        error instanceof Error ? error.message : "Failed to dismiss the question.",
+        error instanceof Error ? error.message : "Întrebarea nu a putut fi închisă.",
       );
     }
     setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));

@@ -70,7 +70,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           {props.showNewBadge ? (
             <span
               className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-              aria-label="New model"
+              aria-label="Model nou"
             >
               New
             </span>
@@ -113,7 +113,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   event.stopPropagation();
                 }}
                 disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={props.isFavorite ? "Elimină din favorite" : "Adaugă la favorite"}
               >
                 <StarIcon
                   className={cn(
@@ -127,7 +127,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {props.isFavorite ? "Elimină din favorite" : "Adaugă la favorite"}
           </TooltipPopup>
         </Tooltip>
         {/* Last, and always reserved, so stars and the check keep fixed columns. */}

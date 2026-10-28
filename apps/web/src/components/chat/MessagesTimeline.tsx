@@ -990,10 +990,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
-            label="Subagent of"
+            label="Subagent al"
             detail={parentThreadLink.title}
             icon={BotIcon}
-            actionLabel="Open parent thread"
+            actionLabel="Deschide conversația părinte"
             onAction={() => onOpenThread(parentThreadLink.threadId)}
           />
         </div>
@@ -1185,13 +1185,13 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
           <button
             type="button"
             disabled={props.loading}
-            aria-label="Load earlier turns"
+            aria-label="Încarcă rundele anterioare"
             onClick={() => props.onLoadEarlier()}
             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
             <span className="shrink-0">
-              {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+              {props.loading ? "Se încarcă rundele anterioare…" : "Încarcă rundele anterioare"}
             </span>
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
           </button>
@@ -1328,8 +1328,8 @@ function ContextCompactionTimelineRow({
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
   const label =
-    row.title && row.label.startsWith("Context compacted")
-      ? row.title + row.label.slice("Context compacted".length)
+    row.title && row.label.startsWith("Context compactat")
+      ? row.title + row.label.slice("Context compactat".length)
       : row.label;
   const content = (
     <span className="flex min-w-0 items-center gap-1.5">
@@ -1340,7 +1340,7 @@ function ContextCompactionTimelineRow({
       )}
       {row.tokenCounts ? (
         <>
-          {row.title ?? "Context compacted"} {row.tokenCounts.before}
+          {row.title ?? "Context compactat"} {row.tokenCounts.before}
           <ArrowRightIcon aria-hidden="true" className="size-3" />
           {row.tokenCounts.after} tokens
         </>

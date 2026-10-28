@@ -23,7 +23,7 @@ export function NotificationSettings() {
       {...searchableSetting("thread-notifications")}
       description={
         permissionMessage ??
-        "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while Mira is open."
+        "Alerte de sistem când o conversație se termină, eșuează sau are nevoie de răspuns ori aprobare. Se aplică pe acest dispozitiv cât timp Mira e deschisă."
       }
       control={
         <Select
@@ -42,7 +42,7 @@ export function NotificationSettings() {
             if (hasDesktopNotifications(value)) {
               if (typeof Notification === "undefined" || !window.isSecureContext) {
                 setPermissionMessage(
-                  "Notifications need a supported browser over HTTPS, or the desktop app. Sound only is still available.",
+                  "Notificările necesită un browser compatibil prin HTTPS sau aplicația desktop. Doar sunetul rămâne disponibil.",
                 );
                 return;
               }
@@ -51,13 +51,13 @@ export function NotificationSettings() {
               setRequesting(false);
               if (permission._tag === "Failure") {
                 setPermissionMessage(
-                  "Notifications are unavailable in this browser. Sound only is still available.",
+                  "Notificările nu sunt disponibile în acest browser. Doar sunetul rămâne disponibil.",
                 );
                 return;
               }
               if (permission.value !== "granted") {
                 setPermissionMessage(
-                  "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+                  "Permite notificările din setările browserului sau sistemului, apoi alege din nou opțiunea. Doar sunetul rămâne disponibil.",
                 );
                 return;
               }

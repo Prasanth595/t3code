@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Spinner } from "../ui/spinner";
 
-const TITLE = "Visual";
+const TITLE = "Vizual";
 // Near a small chart, so most visuals grow a little when they appear instead of jumping.
 const PLACEHOLDER_HEIGHT = 160;
 const MAX_REMEMBERED_HEIGHTS = 200;
@@ -25,7 +25,7 @@ function Placeholder() {
   return (
     <div className="flex size-full items-center justify-center gap-2 rounded-lg bg-muted/40 text-muted-foreground text-xs">
       <Spinner className="size-3.5" />
-      Preparing visual…
+      Se pregătește vizualul…
     </div>
   );
 }

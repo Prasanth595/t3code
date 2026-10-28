@@ -153,7 +153,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             <ComposerBanner.Peek
               ref={peekRef}
               variant={firstStackedItem.variant}
-              aria-label="Show other notices"
+              aria-label="Arată celelalte notificări"
               aria-expanded={stackExpanded}
               aria-controls={expandedItemsId}
               aria-hidden={stackExpanded || undefined}
@@ -170,7 +170,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             id={expandedItemsId}
             ref={expandedItemsRef}
             role="group"
-            aria-label="Other notices"
+            aria-label="Alte notificări"
             tabIndex={-1}
             data-composer-banner-stack-expanded-items="true"
             className={cn(
@@ -308,7 +308,7 @@ function NoticeText({
             <InfoIcon />
           </PopoverTrigger>
           <PopoverPopup
-            aria-label="Notice details"
+            aria-label="Detalii notificare"
             tooltipStyle
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
@@ -358,14 +358,14 @@ function ComposerBannerStackAlert({
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
           <NoticeText
-            detailsLabel="Show title details"
+            detailsLabel="Arată detaliile titlului"
             className="min-w-0 truncate font-medium leading-7 sm:leading-6"
           >
             {item.title}
           </NoticeText>
           {item.description ? (
             <NoticeText
-              detailsLabel="Show notice details"
+              detailsLabel="Arată detaliile notificării"
               className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
             >
               {item.description}
@@ -377,7 +377,7 @@ function ComposerBannerStackAlert({
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                aria-label={item.dismissLabel ?? "Închide avertismentul"}
                 disabled={exiting}
                 onClick={onDismissRequest}
               />

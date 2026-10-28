@@ -69,7 +69,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         </AlertDescription>
         {onDismiss ? (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+            <Button variant="ghost" size="icon-xs" aria-label="Închide eroarea" onClick={onDismiss}>
               <XIcon />
             </Button>
           </AlertAction>

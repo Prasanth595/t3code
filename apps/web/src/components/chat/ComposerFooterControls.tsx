@@ -44,8 +44,8 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
-      ? "Plan mode. Click to return to normal build mode"
-      : "Default mode. Click to enter plan mode";
+      ? "Mod plan. Apasă ca să revii la modul normal"
+      : "Mod implicit. Apasă ca să intri în modul plan";
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <Tooltip>
@@ -96,7 +96,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
               <ComposerSelectControl
                 data-composer-shortcut="composer.mode"
                 size={size}
-                aria-label="Runtime mode"
+                aria-label="Mod de rulare"
               />
             }
           >

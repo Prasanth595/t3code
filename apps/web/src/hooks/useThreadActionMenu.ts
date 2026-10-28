@@ -53,7 +53,7 @@ function failureToast(title: string, error: unknown) {
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : "A apărut o eroare.",
     }),
   );
 }
@@ -95,22 +95,26 @@ export function useThreadActionMenu(input: {
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
-      toastManager.add({ type: "success", title: "Path copied", description: path });
+      toastManager.add({ type: "success", title: "Cale copiată", description: path });
     },
-    onError: (error) => failureToast("Failed to copy path", error),
+    onError: (error) => failureToast("Calea nu a putut fi copiată", error),
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
     onCopy: ({ branch }) => {
-      toastManager.add({ type: "success", title: "Branch copied", description: branch });
+      toastManager.add({ type: "success", title: "Branch copiat", description: branch });
     },
-    onError: (error) => failureToast("Failed to copy branch", error),
+    onError: (error) => failureToast("Branch-ul nu a putut fi copiat", error),
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
-      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+      toastManager.add({
+        type: "success",
+        title: "ID-ul conversației a fost copiat",
+        description: threadId,
+      });
     },
-    onError: (error) => failureToast("Failed to copy thread ID", error),
+    onError: (error) => failureToast("ID-ul conversației nu a putut fi copiat", error),
   });
 
   const openMenu = (position: { x: number; y: number }) => {
@@ -153,8 +157,8 @@ export function useThreadActionMenu(input: {
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
       ) {
         failureToast(
-          "Thread action unavailable",
-          new Error("This connection cannot change threads."),
+          "Acțiune indisponibilă",
+          new Error("Această conexiune nu poate modifica conversații."),
         );
         return;
       }
@@ -210,24 +214,32 @@ export function useThreadActionMenu(input: {
           return;
         }
         case "settle":
-          await reportFailure("Failed to settle thread", () => settleThread(threadRef));
+          await reportFailure("Conversația nu a putut fi finalizată", () =>
+            settleThread(threadRef),
+          );
           return;
         case "unsettle":
-          await reportFailure("Failed to un-settle thread", () => unsettleThread(threadRef));
+          await reportFailure("Conversația nu a putut fi redeschisă", () =>
+            unsettleThread(threadRef),
+          );
           return;
         case "unsnooze":
-          await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+          await reportFailure("Conversația nu a putut fi reactivată", () =>
+            unsnoozeThread(threadRef),
+          );
           return;
         case "pin":
-          await reportFailure("Failed to pin thread", () => pinThread(threadRef));
+          await reportFailure("Conversația nu a putut fi fixată", () => pinThread(threadRef));
           return;
         case "unpin": {
-          await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
+          await reportFailure("Conversația nu a putut fi defixată", () =>
+            confirmAndUnpinThread(threadRef),
+          );
           return;
         }
         case "auto-settle:enabled":
         case "auto-settle:disabled":
-          await reportFailure("Failed to update auto-settle", () =>
+          await reportFailure("Finalizarea automată nu a putut fi schimbată", () =>
             setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
           );
           return;
@@ -236,7 +248,7 @@ export function useThreadActionMenu(input: {
           return;
         case "regenerate-title":
           if (isRegeneratingTitle) return;
-          await reportFailure("Failed to regenerate thread title", () =>
+          await reportFailure("Titlul nu a putut fi regenerat", () =>
             updateThreadMetadata({
               environmentId: threadRef.environmentId,
               input: { threadId: threadRef.threadId, regenerateTitle: true },
@@ -255,8 +267,8 @@ export function useThreadActionMenu(input: {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Path unavailable",
-                description: "This thread does not have a workspace path to copy.",
+                title: "Cale indisponibilă",
+                description: "Conversația nu are o cale de copiat.",
               }),
             );
             return;
@@ -275,7 +287,7 @@ export function useThreadActionMenu(input: {
         case "archive": {
           if (confirmThreadArchive) {
             const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+              api.dialogs.confirm(`Arhivezi conversația „${thread.title}”?`),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
           }
@@ -287,7 +299,9 @@ export function useThreadActionMenu(input: {
           });
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast(
-              didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+              didArchive
+                ? "Conversația a fost arhivată, dar navigarea a eșuat"
+                : "Conversația nu a putut fi arhivată",
               squashAtomCommandFailure(result),
             );
           }
@@ -298,8 +312,8 @@ export function useThreadActionMenu(input: {
             const confirmed = await settlePromise(() =>
               api.dialogs.confirm(
                 [
-                  `Delete thread "${thread.title}"?`,
-                  "This permanently clears conversation history for this thread.",
+                  `Ștergi conversația „${thread.title}”?`,
+                  "Se șterge definitiv istoricul acestei conversații.",
                 ].join("\n"),
                 { variant: "destructive" },
               ),

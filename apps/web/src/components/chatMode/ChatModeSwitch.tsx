@@ -16,7 +16,7 @@ export function ChatModeSwitch({
   const locked = !hasAgenticAccess(useMiraAccess());
   return (
     <ToggleGroup
-      aria-label="Mode"
+      aria-label="Mod"
       value={[mode]}
       onValueChange={(next) => {
         if (next[0] === "chat" && mode !== "chat") onChat?.();
@@ -24,8 +24,8 @@ export function ChatModeSwitch({
       }}
     >
       <Toggle value="chat">Chat</Toggle>
-      <Toggle value="agentic" aria-label={locked ? "Agentic, available with Pro" : "Agentic"}>
-        Agentic
+      <Toggle value="agentic" aria-label={locked ? "Agent, disponibil cu Pro" : "Agent"}>
+        Agent
         {locked ? <LockIcon aria-hidden className="size-3" /> : null}
       </Toggle>
     </ToggleGroup>

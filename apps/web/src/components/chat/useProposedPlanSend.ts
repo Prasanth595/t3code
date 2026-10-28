@@ -227,7 +227,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       const error = squashAtomCommandFailure(failure);
       setThreadError(
         threadIdForSend,
-        error instanceof Error ? error.message : "Failed to send plan follow-up.",
+        error instanceof Error ? error.message : "Continuarea planului nu a putut fi trimisă.",
       );
     }
     sendInFlightRef.current = false;
@@ -387,11 +387,9 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not start implementation thread",
+            title: "Conversația de implementare nu a putut porni",
             description:
-              error instanceof Error
-                ? error.message
-                : "An error occurred while creating the new thread.",
+              error instanceof Error ? error.message : "A apărut o eroare la crearea conversației.",
           }),
         );
       }

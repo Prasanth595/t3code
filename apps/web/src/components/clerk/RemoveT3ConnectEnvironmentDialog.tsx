@@ -36,12 +36,12 @@ export function RemoveT3ConnectEnvironmentDialog({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {shownLabel} from this device?</AlertDialogTitle>
+            <AlertDialogTitle>Elimini {shownLabel} de pe acest dispozitiv?</AlertDialogTitle>
             <AlertDialogDescription>
-              This forgets its pairing, credentials, and cached threads here.
+              Se uită asocierea, credențialele și conversațiile salvate aici.
             </AlertDialogDescription>
             <AlertDialogDescription>
-              It stays on your T3 Connect account and keeps its host space. Deregister it in{" "}
+              Rămâne în contul tău Mira și își păstrează locul de gazdă. Elimină-l din{" "}
               {openAccountPage ? (
                 <InlineButton
                   onClick={() => {
@@ -49,18 +49,18 @@ export function RemoveT3ConnectEnvironmentDialog({
                     openAccountPage();
                   }}
                 >
-                  T3 Connect settings
+                  setările T3 Connect
                 </InlineButton>
               ) : (
-                "T3 Connect settings"
+                "setările T3 Connect"
               )}{" "}
-              to free it.
+              ca să-l eliberezi.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>Anulează</AlertDialogClose>
             <Button variant="destructive" onClick={onConfirm}>
-              Remove from this device
+              Elimină de pe acest dispozitiv
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

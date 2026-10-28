@@ -30,7 +30,7 @@ export function AgenticUpgradeDialog({
       .catch((cause: unknown) =>
         toastManager.add({
           type: "error",
-          title: "Could not start the upgrade",
+          title: "Upgrade-ul nu a putut porni",
           description: cause instanceof Error ? cause.message : String(cause),
         }),
       )
@@ -40,20 +40,20 @@ export function AgenticUpgradeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Agentic mode is available with Pro</DialogTitle>
+          <DialogTitle>Modul agent e disponibil cu Pro</DialogTitle>
           <DialogDescription>
             {access.signedIn
-              ? "With Pro, Mira works on your computer: it reads and edits files, runs commands, and finishes tasks for you. Chat stays unlimited on every plan."
-              : "Create a free account first. Then upgrade to Pro to let Mira work on your computer."}
+              ? "Cu Pro, Mira lucrează pe calculatorul tău: citește și editează fișiere, rulează comenzi și duce sarcinile la capăt pentru tine. Chat-ul rămâne nelimitat pe orice plan."
+              : "Creează mai întâi un cont gratuit. Apoi treci la Pro ca Mira să lucreze pe calculatorul tău."}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Not now
+            Nu acum
           </Button>
           {access.signedIn ? (
             <Button disabled={busy || access.account === null} onClick={upgrade}>
-              Upgrade to Pro
+              Treci la Pro
             </Button>
           ) : access.openSignIn !== null ? (
             <Button
@@ -62,7 +62,7 @@ export function AgenticUpgradeDialog({
                 access.openSignIn?.();
               }}
             >
-              Create free account
+              Creează cont gratuit
             </Button>
           ) : null}
         </DialogFooter>

@@ -19,8 +19,8 @@ export function loadBalancingSendWarning(input: {
 }) {
   if (input.pending) {
     return {
-      title: "Checking machine resources",
-      description: "Resource checks are still running. You can choose a machine in the composer.",
+      title: "Se verifică resursele calculatorului",
+      description: "Verificarea resurselor încă rulează. Poți alege un calculator din editor.",
     };
   }
   const noMachineReadsEveryThread =
@@ -29,10 +29,10 @@ export function loadBalancingSendWarning(input: {
       input.threadContexts.every((record) => record.environmentId === environmentId),
     );
   return {
-    title: "Choose a machine to continue",
+    title: "Alege un calculator ca să continui",
     description: noMachineReadsEveryThread
-      ? "No machine can read every attached thread. Choose a machine in the composer or remove the threads."
-      : "No eligible machine has available resources. Choose a machine in the composer to override.",
+      ? "Niciun calculator nu poate citi toate conversațiile atașate. Alege unul din editor sau elimină conversațiile."
+      : "Niciun calculator eligibil nu are resurse disponibile. Alege unul din editor ca să forțezi.",
   };
 }
 
@@ -68,14 +68,14 @@ export function approvalRedirectNotice(input: {
 }): string | null {
   if (input.draftChanged) {
     return input.declined
-      ? "Approval declined. Your message changed, so it wasn't sent."
-      : "Your message changed, so it wasn't sent.";
+      ? "Aprobare refuzată. Mesajul tău s-a schimbat, așa că nu a fost trimis."
+      : "Mesajul tău s-a schimbat, așa că nu a fost trimis.";
   }
   if (input.approvalResponding) {
-    return "An approval is already being answered, so your message wasn't sent.";
+    return "Se răspunde deja la o aprobare, așa că mesajul tău nu a fost trimis.";
   }
   if (input.declined && input.approvalArrived) {
-    return "Another approval arrived, so your message wasn't sent.";
+    return "A sosit altă aprobare, așa că mesajul tău nu a fost trimis.";
   }
   return null;
 }

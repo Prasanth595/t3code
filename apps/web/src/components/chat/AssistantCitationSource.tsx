@@ -194,8 +194,8 @@ export function observeAssistantCitationSource({
             request.onComplete();
             toastManager.add({
               type: "warning",
-              title: "Could not open the cited response",
-              description: "Click the citation to try again.",
+              title: "Răspunsul citat nu a putut fi deschis",
+              description: "Apasă pe citat ca să încerci din nou.",
             });
           },
         );
@@ -207,8 +207,8 @@ export function observeAssistantCitationSource({
       if (!range) {
         toastManager.add({
           type: "warning",
-          title: "The quoted text has changed",
-          description: "Showing the source response. The saved quote is unchanged.",
+          title: "Textul citat s-a schimbat",
+          description: "Se arată răspunsul sursă. Citatul salvat nu s-a schimbat.",
         });
       }
     }

@@ -153,11 +153,11 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "T3 Connect route added"
-          : "Environment added",
+          ? "Ruta T3 Connect a fost adăugată"
+          : "Mediu adăugat",
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to T3 Connect when its other routes are unreachable.`
-          : `Connecting to ${environment.label} through T3 Connect.`,
+          ? `${environment.label} folosește T3 Connect când celelalte rute nu sunt accesibile.`
+          : `Se conectează la ${environment.label} prin T3 Connect.`,
       });
       return true;
     }
@@ -166,17 +166,17 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
+      cause instanceof Error ? cause.message : "Mediul T3 Connect nu a putut fi conectat.";
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
-      title: "Could not connect environment",
+      title: "Mediul nu a putut fi conectat",
       description: message,
       data: traceId
         ? {
             secondaryActionProps: {
-              children: "Copy trace ID",
+              children: "Copiază ID-ul de urmărire",
               onClick: () => void navigator.clipboard?.writeText(traceId),
             },
           }
@@ -280,13 +280,13 @@ export function CloudEnvironmentConnectRows({
 
   if (standalone && visibleEnvironments.length === 0) {
     const discoveryProblem = environmentsState.offline
-      ? "You appear to be offline."
+      ? "Se pare că ești offline."
       : (Option.getOrNull(environmentsState.error)?.message ?? null);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive">
-            Could not load T3 Connect environments
+            Mediile T3 Connect nu au putut fi încărcate
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
@@ -295,7 +295,7 @@ export function CloudEnvironmentConnectRows({
             className="mt-3"
             onClick={() => void refreshRelayEnvironments()}
           >
-            Try again
+            Încearcă din nou
           </Button>
         </div>
       );
@@ -345,11 +345,11 @@ export function CloudEnvironmentConnectRows({
             ? "bg-warning"
             : "bg-muted-foreground/35";
     const notAdded = savedWithoutRelay.has(environment.environmentId)
-      ? "Saved without T3 Connect"
-      : "Not added";
+      ? "Salvat fără T3 Connect"
+      : "Neadăugat";
     const statusText =
       unsupported && !savedEnvironment
-        ? `T3 Connect · ${notAdded} · Client not supported`
+        ? `T3 Connect · ${notAdded} · Client nesuportat`
         : offlineReason !== null
           ? offlineReason
           : savedConnection
@@ -359,9 +359,9 @@ export function CloudEnvironmentConnectRows({
               : availability === "offline"
                 ? `T3 Connect · ${notAdded} · Relay offline`
                 : availability === "checking"
-                  ? `T3 Connect · ${notAdded} · Checking relay status…`
+                  ? `T3 Connect · ${notAdded} · Se verifică relay-ul…`
                   : (Option.getOrNull(error)?.message ??
-                    `T3 Connect · ${notAdded} · Relay status unavailable`);
+                    `T3 Connect · ${notAdded} · Starea relay-ului indisponibilă`);
     if (selection) {
       return (
         <label
@@ -402,15 +402,15 @@ export function CloudEnvironmentConnectRows({
               )}
             >
               {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
+                ? "Se conectează…"
                 : (savedConnection?.buttonLabel ??
                   (availability === "online"
-                    ? "Available"
+                    ? "Disponibil"
                     : availability === "offline"
                       ? "Offline"
                       : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
+                        ? "Indisponibil"
+                        : "Se verifică…"))}
             </TooltipTrigger>
             <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
@@ -442,8 +442,9 @@ export function CloudEnvironmentConnectRows({
                           : availability === "offline"
                             ? "Relay offline"
                             : availability === "checking"
-                              ? "Checking relay status"
-                              : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                              ? "Se verifică relay-ul"
+                              : (Option.getOrNull(error)?.message ??
+                                "Starea relay-ului indisponibilă")
                 }
               />
               <EnvironmentMachineIcon
@@ -473,7 +474,7 @@ export function CloudEnvironmentConnectRows({
                   Add
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
+              <TooltipPopup>{unsupportedDetail ?? "Client nesuportat"}</TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
@@ -486,10 +487,10 @@ export function CloudEnvironmentConnectRows({
               onClick={() => void connectEnvironment(environment)}
             >
               {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Adding…"
+                ? "Se adaugă…"
                 : savedWithoutRelay.has(environment.environmentId)
-                  ? "Add route"
-                  : "Add"}
+                  ? "Adaugă rută"
+                  : "Adaugă"}
             </Button>
           )}
         </div>

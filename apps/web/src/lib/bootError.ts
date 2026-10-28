@@ -8,7 +8,7 @@ export function showBootError(error: unknown) {
   content.setAttribute("role", "alert");
 
   const message = document.createElement("p");
-  message.textContent = "Mira could not load.";
+  message.textContent = "Mira nu s-a putut încărca.";
   content.append(message);
 
   if (import.meta.env.DEV && error instanceof Error) {
@@ -19,7 +19,7 @@ export function showBootError(error: unknown) {
 
   const reload = document.createElement("button");
   reload.type = "button";
-  reload.textContent = "Reload";
+  reload.textContent = "Reîncarcă";
   reload.addEventListener("click", () => window.location.reload());
   content.append(reload);
   bootShell.replaceChildren(content);

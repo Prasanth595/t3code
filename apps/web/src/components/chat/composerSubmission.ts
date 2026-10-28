@@ -18,8 +18,8 @@ export function getComposerPromptLengthValidationMessage(prompt: string): string
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;
 
-  const characterLabel = excessCharacters === 1 ? "character" : "characters";
-  return `Prompt is ${excessCharacters.toLocaleString("en-US")} ${characterLabel} over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")}-character limit. Shorten or split it before sending.`;
+  const characterLabel = excessCharacters === 1 ? "caracter" : "caractere";
+  return `Promptul depășește cu ${excessCharacters.toLocaleString("ro-RO")} ${characterLabel} limita de ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("ro-RO")} de caractere. Scurtează-l sau împarte-l înainte de trimitere.`;
 }
 
 export function getComposerSubmissionValidationMessage(

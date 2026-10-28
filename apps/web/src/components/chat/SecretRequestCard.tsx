@@ -136,7 +136,7 @@ function PendingSecretRequestForm(props: {
           />
         </div>
         <Button type="submit" disabled={submitting || secret.trim().length === 0}>
-          Save securely
+          Salvează în siguranță
         </Button>
       </div>
       {error !== null ? (

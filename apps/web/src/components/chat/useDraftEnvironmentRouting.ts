@@ -137,9 +137,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       toastManager.add({
         type: "warning",
         id: "load-balancing-attachments",
-        title: "Keep attachments on this machine",
+        title: "Păstrează atașamentele pe acest calculator",
         description:
-          "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+          "Elimină atașamentele înainte să alegi rutarea automată, apoi atașează-le pe calculatorul ales.",
       });
       return;
     }
@@ -156,12 +156,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
   const autoEnvironmentLabel = automaticEnvironment
     ? draftThread?.loadBalancedEnvironmentId
-      ? "Auto balance"
+      ? "Echilibrare automată"
       : loadBalancing.pending
-        ? "Checking machines…"
+        ? "Se verifică calculatoarele…"
         : loadBalancing.failed
-          ? "Auto balance unavailable"
-          : "Auto balance"
+          ? "Echilibrare automată indisponibilă"
+          : "Echilibrare automată"
     : undefined;
 
   // A change in flight belongs to the draft and project it started on.
@@ -248,7 +248,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return;
     }
     setBusyEnvironmentChange(request);
-    void openScratchProject(target.environmentId, "Could not switch machine")
+    void openScratchProject(target.environmentId, "Calculatorul nu a putut fi schimbat")
       .then((project) => {
         if (project) retarget(project);
       })

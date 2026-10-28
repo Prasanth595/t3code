@@ -247,9 +247,7 @@ export function MermaidDiagram({
       ...(math ? { math, sanitize: sanitizeMathDiagramSvg } : { sanitize: sanitizeDiagramSvg }),
       onRender: () => setRenderError(null),
       onError: (error) =>
-        setRenderError(
-          error instanceof Error ? error.message : "The diagram could not be rendered.",
-        ),
+        setRenderError(error instanceof Error ? error.message : "Diagrama nu a putut fi afișată."),
     });
     return () => mounted.destroy();
   }, [load, math, trimmedSource]);
@@ -257,7 +255,7 @@ export function MermaidDiagram({
   if (load.status === "failed") {
     return (
       <DiagramError
-        message="The diagram renderer failed to load."
+        message="Afișarea diagramelor nu s-a putut încărca."
         source={source}
         onRetry={() => {
           if (core.status === "failed") coreLoad = null;
@@ -277,7 +275,7 @@ export function MermaidDiagram({
       {renderError ? <DiagramError message={renderError} source={source} /> : null}
       <button
         type="button"
-        aria-label="Expand diagram"
+        aria-label="Extinde diagrama"
         hidden={renderError !== null}
         className="block w-full cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring"
         onClick={() => {

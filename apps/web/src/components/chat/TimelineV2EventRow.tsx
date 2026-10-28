@@ -94,7 +94,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           ) : null}
           {visibility !== "local" ? (
             <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-              {visibility === "inherited" ? "Inherited" : "Synthetic"}
+              {visibility === "inherited" ? "Moștenit" : "Sintetic"}
             </span>
           ) : null}
           <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/60 transition-transform group-open:rotate-180" />
@@ -172,7 +172,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             ) : null}
             {visibility !== "local" ? (
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-                {visibility === "inherited" ? "Inherited" : "Synthetic"}
+                {visibility === "inherited" ? "Moștenit" : "Sintetic"}
               </span>
             ) : null}
           </div>

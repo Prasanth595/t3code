@@ -93,7 +93,8 @@ async function submitQueuedRunEdit(input: {
     await awaitAttachmentUploads(files.map((file) => file.id));
     validateFiles();
     const uploaded = getUploadedAttachments({ environmentId, images: files });
-    if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
+    if (uploaded === null)
+      throw new Error("Reîncearcă sau elimină încărcările eșuate înainte de salvare.");
     return uploaded;
   };
   try {
@@ -146,7 +147,7 @@ async function submitQueuedRunEdit(input: {
     });
     return result._tag === "Failure" ? "Could not save the edited queued message." : null;
   } catch (error) {
-    return error instanceof Error ? error.message : "Could not save the edited queued message.";
+    return error instanceof Error ? error.message : "Mesajul editat nu a putut fi salvat.";
   }
 }
 
@@ -257,11 +258,11 @@ export function useQueuedRunEdit(input: {
       toastManager.add(
         stackedThreadToast({
           type: recovery === "kept" ? "info" : "warning",
-          title: "Queued message is no longer queued",
+          title: "Mesajul nu mai e în coadă",
           description:
             recovery === "kept"
-              ? "Your unsaved edit was kept in the composer."
-              : "Your unsaved edit was discarded.",
+              ? "Editarea nesalvată a fost păstrată în editor."
+              : "Editarea nesalvată a fost renunțată.",
         }),
       );
     }
@@ -281,7 +282,7 @@ export function useQueuedRunEdit(input: {
     ) {
       setThreadError(
         editing.threadId,
-        `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        `Un mesaj poate avea cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente.`,
       );
       return;
     }

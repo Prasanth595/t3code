@@ -155,7 +155,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               if (runOutcome.status !== "updated") {
                 providerFailures.set(
                   run.environmentId,
-                  runOutcome.status === "failed" ? runOutcome.line : "Provider update interrupted",
+                  runOutcome.status === "failed"
+                    ? runOutcome.line
+                    : "Actualizarea furnizorului a fost întreruptă",
                 );
               }
               return runOutcome;

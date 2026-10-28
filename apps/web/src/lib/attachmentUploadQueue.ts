@@ -153,9 +153,9 @@ function uploadBytes(input: {
         reject(new Error(`Upload rejected (${xhr.status})`));
       }
     });
-    xhr.addEventListener("error", () => reject(new Error("Upload failed")));
-    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+    xhr.addEventListener("error", () => reject(new Error("Încărcarea a eșuat")));
+    xhr.addEventListener("timeout", () => reject(new Error("Încărcarea a expirat")));
+    xhr.addEventListener("abort", () => reject(new Error("Încărcare anulată")));
     xhr.send(input.file);
   });
 
@@ -167,7 +167,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason: "This connection cannot upload attachments.",
+      reason: "Această conexiune nu poate încărca atașamente.",
       ...(job.previous ? { previous: job.previous } : {}),
     });
     return;
@@ -215,8 +215,8 @@ async function runUpload(job: UploadJob): Promise<void> {
         environmentId: job.environmentId,
         reason:
           verification.status === "missing"
-            ? "Uploaded file expired. Remove it and attach it again."
-            : "Uploaded file could not be verified. Retry when the server reconnects.",
+            ? "Fișierul încărcat a expirat. Elimină-l și atașează-l din nou."
+            : "Fișierul încărcat nu a putut fi verificat. Reîncearcă după ce serverul se reconectează.",
         ...(job.previous ? { previous: job.previous } : {}),
       });
       return;
@@ -233,7 +233,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason: "Unsupported image type",
+      reason: "Tip de imagine nesuportat",
       ...(job.previous ? { previous: job.previous } : {}),
     });
     return;
@@ -243,7 +243,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason: "Original file is no longer available",
+      reason: "Fișierul original nu mai e disponibil",
       ...(job.previous ? { previous: job.previous } : {}),
     });
     return;
@@ -254,7 +254,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason: "This connection cannot upload attachments.",
+      reason: "Această conexiune nu poate încărca atașamente.",
       ...(job.previous ? { previous: job.previous } : {}),
     });
     return;
@@ -331,14 +331,14 @@ async function runUpload(job: UploadJob): Promise<void> {
     environmentId: job.environmentId,
     reason:
       result.step === "mint"
-        ? "Upload could not start"
+        ? "Încărcarea nu a putut porni"
         : result.step === "resolve-url"
           ? readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)
-            ? "Not connected"
-            : "This connection cannot upload attachments."
+            ? "Neconectat"
+            : "Această conexiune nu poate încărca atașamente."
           : result.error instanceof Error
             ? result.error.message
-            : "Upload failed",
+            : "Încărcarea a eșuat",
     ...(result.attachmentId ? { attachmentId: result.attachmentId } : {}),
     ...(job.previous ? { previous: job.previous } : {}),
   });
@@ -364,7 +364,7 @@ function pumpUploads(): void {
           setUploadState(job.image.id, {
             status: "failed",
             environmentId: job.environmentId,
-            reason: "Upload failed",
+            reason: "Încărcarea a eșuat",
             ...(job.previous ? { previous: job.previous } : {}),
           });
         }

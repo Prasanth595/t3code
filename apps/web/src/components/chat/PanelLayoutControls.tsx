@@ -44,7 +44,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  rightPanelUnavailableLabel = "Right panel is unavailable",
+  rightPanelUnavailableLabel = "Panoul din dreapta nu e disponibil",
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
@@ -53,7 +53,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     <Toggle
       className="relative shrink-0 [-webkit-app-region:no-drag]"
       pressed={threadPanelOpen}
-      aria-label="Toggle thread details panel"
+      aria-label="Comută panoul de detalii"
       variant="ghost"
       size="sm"
     >
@@ -67,7 +67,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         {...(threadPanelPresentation === "popover" ? {} : { onClick: onToggleThreadPanel })}
       />
       <TooltipPopup side="bottom">
-        Toggle thread details
+        Comută detaliile conversației
         {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
       </TooltipPopup>
     </Tooltip>
@@ -92,7 +92,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label="Comută terminalul"
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -102,8 +102,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
+              ? `Comută terminalul${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : "Terminalul nu e disponibil"}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -114,7 +114,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
+              aria-label="Comută panoul din dreapta"
               data-right-panel-toggle
               variant="ghost"
               size="sm"
@@ -125,7 +125,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
+              ? `Comută panoul din dreapta${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
               : rightPanelUnavailableLabel}
           </TooltipPopup>
         </Tooltip>
@@ -141,7 +141,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
-  const label = maximized ? "Restore panel size" : "Maximize panel";
+  const label = maximized ? "Restaurează mărimea panoului" : "Maximizează panoul";
   return (
     <Tooltip>
       <TooltipTrigger

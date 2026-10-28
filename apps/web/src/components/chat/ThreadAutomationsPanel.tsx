@@ -127,7 +127,7 @@ export function ThreadAutomationsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-automations-heading"
-      title="Automations"
+      title="Automatizări"
       data-thread-automations-panel
       actions={
         <Tooltip>
@@ -137,7 +137,7 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
-                aria-label="Manage scheduled tasks"
+                aria-label="Gestionează sarcinile programate"
                 onClick={() =>
                   void navigate({
                     to: "/settings/scheduled-tasks",
@@ -149,7 +149,7 @@ export function ThreadAutomationsPanel(props: {
               </ThreadDetailsControl>
             }
           />
-          <TooltipPopup>Manage scheduled tasks</TooltipPopup>
+          <TooltipPopup>Gestionează sarcinile programate</TooltipPopup>
         </Tooltip>
       }
     >
@@ -197,7 +197,7 @@ export function ThreadAutomationsPanel(props: {
                     size="icon-xs"
                     variant="ghost"
                     part="icon"
-                    aria-label={`Edit ${task.title}`}
+                    aria-label={`Editează ${task.title}`}
                     onClick={() =>
                       void navigate({
                         to: "/settings/scheduled-tasks",
@@ -209,7 +209,7 @@ export function ThreadAutomationsPanel(props: {
                   </ThreadDetailsControl>
                 }
               />
-              <TooltipPopup>Edit automation</TooltipPopup>
+              <TooltipPopup>Editează automatizarea</TooltipPopup>
             </Tooltip>
             {/* Webhook tasks need a request from their URL. */}
             {task.schedule.type === "webhook" ? null : (
@@ -220,7 +220,7 @@ export function ThreadAutomationsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label={`Run ${task.title} now`}
+                      aria-label={`Rulează acum ${task.title}`}
                       disabled={
                         !canOperate || busyTaskId !== null || task.lastRunStatus === "running"
                       }
@@ -230,13 +230,13 @@ export function ThreadAutomationsPanel(props: {
                     </ThreadDetailsControl>
                   }
                 />
-                <TooltipPopup>Run now</TooltipPopup>
+                <TooltipPopup>Rulează acum</TooltipPopup>
               </Tooltip>
             )}
             <Switch
               checked={task.enabled}
               disabled={!canOperate || busyTaskId !== null}
-              aria-label={task.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
+              aria-label={task.enabled ? `Pune pe pauză ${task.title}` : `Reia ${task.title}`}
               onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
             />
           </li>

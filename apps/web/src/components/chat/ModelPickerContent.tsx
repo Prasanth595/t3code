@@ -203,7 +203,9 @@ function ModelPickerProviderNotices({
                   onOpenProviderSetup?.(entry.instanceId);
                 }}
               >
-                {setupEntries.length > 1 ? `Set up ${entry.displayName}` : "Open provider setup"}
+                {setupEntries.length > 1
+                  ? `Configurează ${entry.displayName}`
+                  : "Deschide configurarea furnizorului"}
               </InlineButton>
             </div>
           ))}
@@ -223,7 +225,7 @@ function ModelPickerProviderNotices({
               void navigate({ to: "/settings/providers" });
             }}
           >
-            Provider settings
+            Setările furnizorului
           </InlineButton>
         </p>
       ))}
@@ -758,7 +760,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       setSearchQuery("");
       handleSelectInstance(next);
       announce(
-        next === "favorites" ? "Favorites" : (entryByInstanceId.get(next)?.displayName ?? next),
+        next === "favorites" ? "Favorite" : (entryByInstanceId.get(next)?.displayName ?? next),
         "model-picker",
       );
       return;
@@ -807,7 +809,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
-                    `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
+                    `${entry.displayName} nu e disponibil în această conversație. Pornește una nouă ca să schimbi furnizorul.`,
                 }
               : {})}
           />
@@ -863,7 +865,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           >
             <ComboboxSearchInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder="Caută modele..."
               value={searchQuery}
               onChange={(e) => {
                 if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
@@ -937,7 +939,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     >
                       <div className="min-w-0 flex-1 text-left">
                         <div className="text-xs font-medium leading-snug redesign:text-sm redesign:font-normal">
-                          Legacy models
+                          Modele vechi
                         </div>
                         <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70 redesign:text-muted-foreground">
                           {legacySection.legacyModels.length} models
@@ -994,8 +996,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               updateRequiredNotices={updateRequiredNotices}
               emptyLabel={
                 selectedInstanceId === "favorites" && !isSearching
-                  ? "No favorites yet"
-                  : "No models found"
+                  ? "Niciun favorit încă"
+                  : "Niciun model găsit"
               }
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}

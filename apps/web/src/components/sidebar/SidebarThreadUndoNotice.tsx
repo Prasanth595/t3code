@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
-import { undoLatestThreadAction, useThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import {
+  undoLatestThreadAction,
+  undoNoticeSummary,
+  useThreadUndoNotice,
+} from "../../hooks/showThreadUndoNotice";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { announce, cancelAnnouncement } from "../../lib/announce";
 import { primaryServerKeybindingsAtom } from "../../state/server";
@@ -13,10 +17,8 @@ export function SidebarThreadUndoNotice() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  const undoLabel = shortcut ? `${shortcut} to undo` : "Undo";
-  const summary = notice
-    ? `${notice.action} ${notice.count} ${notice.action === "Discarded" ? "draft" : "thread"}${notice.count === 1 ? "" : "s"}`
-    : null;
+  const undoLabel = shortcut ? `${shortcut} pentru anulare` : "Anulează";
+  const summary = notice ? undoNoticeSummary(notice.action, notice.count) : null;
 
   // A live region that mounts already filled is skipped by screen readers, and settling
   // usually moves focus to the next thread at the same moment.

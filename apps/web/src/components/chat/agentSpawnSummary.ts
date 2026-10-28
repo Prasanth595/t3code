@@ -38,9 +38,9 @@ export function deriveAgentSpawnSummary({
       ? `${working} working`
       : "working"
     : coordinatorStatus === "failed"
-      ? "Workflow failed"
+      ? "Workflow eșuat"
       : coordinatorStatus === "cancelled" || coordinatorStatus === "interrupted"
-        ? "Workflow stopped"
+        ? "Workflow oprit"
         : failed > 0
           ? `${failed} failed`
           : stopped > 0
@@ -49,7 +49,7 @@ export function deriveAgentSpawnSummary({
               ? `${idle} idle`
               : coordinatorStatus !== "completed" &&
                   (agents.length === 0 || agents.length < agentCount)
-                ? "Status unavailable"
+                ? "Stare indisponibilă"
                 : "✓ completed";
   const tone = live
     ? "working"

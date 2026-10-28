@@ -81,7 +81,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     aria-label={
-                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                      allDirectoriesExpanded ? "Restrânge toate dosarele" : "Extinde toate dosarele"
                     }
                     data-scroll-anchor-ignore
                     onClick={onToggleAllDirectories}
@@ -94,7 +94,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+                {allDirectoriesExpanded ? "Restrânge toate dosarele" : "Extinde toate dosarele"}
               </TooltipPopup>
             </Tooltip>
           )}
@@ -105,7 +105,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  aria-label="Open diff"
+                  aria-label="Deschide diff-ul"
                   onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
                 />
               }
@@ -113,7 +113,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               <FileDiffIcon className="size-3" />
               <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+            <TooltipPopup side="top">Deschide diff-ul complet</TooltipPopup>
           </Tooltip>
         </div>
       </div>

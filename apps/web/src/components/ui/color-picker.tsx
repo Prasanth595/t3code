@@ -109,7 +109,7 @@ export function ColorSaturationValuePlane({
 
   return (
     <div
-      aria-label={`${label} saturation and brightness`}
+      aria-label={`${label}: saturație și luminozitate`}
       role="group"
       className={cn(
         "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
@@ -122,13 +122,13 @@ export function ColorSaturationValuePlane({
       {...handlers}
     >
       <span id={instructionsId} className="sr-only">
-        Use arrow keys to adjust the focused value. Hold Shift for larger steps. Use Home and End
-        for the minimum and maximum. Press Tab to move between saturation and brightness.
+        Folosește săgețile ca să ajustezi valoarea. Ține Shift pentru pași mai mari. Home și End
+        pentru minim și maxim. Tab ca să treci între saturație și luminozitate.
       </span>
       {(
         [
-          ["s", "Saturation"],
-          ["v", "Brightness"],
+          ["s", "Saturație"],
+          ["v", "Luminozitate"],
         ] as const
       ).map(([axis, axisLabel]) => (
         <label key={axis} className="contents">

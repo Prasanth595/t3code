@@ -21,9 +21,9 @@ export interface ComposerTaskStep {
 const MAX_TASK_SEGMENTS = 10;
 
 const taskStatusLabels = {
-  pending: "Pending",
-  inProgress: "Running",
-  completed: "Completed",
+  pending: "În așteptare",
+  inProgress: "Rulează",
+  completed: "Terminat",
 } satisfies Record<ComposerTaskStep["status"], string>;
 
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
@@ -119,7 +119,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
     <ComposerBanner.Row
       render={<button type="button" />}
       aria-expanded={expanded}
-      aria-label={`${expanded ? "Collapse tasks" : "Tasks"}: ${progress.completedSteps} of ${progress.totalSteps} complete. Current task: ${progress.step}`}
+      aria-label={`${expanded ? "Restrânge sarcinile" : "Sarcini"}: ${progress.completedSteps} din ${progress.totalSteps} terminate. Sarcina curentă: ${progress.step}`}
       data-composer-tasks-badge="true"
       onClick={onToggle}
       onPointerDown={(event) => event.preventDefault()}
@@ -163,7 +163,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
             render={<ul role="list" />}
-            aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
+            aria-label={`Lista de sarcini. ${progress.completedSteps} din ${progress.totalSteps} terminate.`}
             data-composer-tasks-list="true"
           >
             {keyedTaskSteps(steps).map(({ key, step }) => (

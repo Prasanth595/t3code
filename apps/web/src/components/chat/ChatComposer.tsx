@@ -808,14 +808,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (questionAttachmentTarget &&
     !supportsQuestionAttachments &&
     (composerImages.length > 0 || composerFiles.length > 0)
-      ? "Update this server to send files with question answers"
+      ? "Actualizează serverul ca să trimiți fișiere cu răspunsurile"
       : null) ??
     fileCapabilityBlockReason ??
     (supportsAttachmentUploads
       ? needsReattachFileCount > 0
         ? needsReattachFileCount === 1
-          ? "Attach the interrupted file again or remove it"
-          : "Attach the interrupted files again or remove them"
+          ? "Atașează din nou fișierul întrerupt sau elimină-l"
+          : "Atașează din nou fișierele întrerupte sau elimină-le"
         : attachmentUploadBlockReason({
             imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
             uploadsByImageId,
@@ -967,7 +967,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : undefined))
     : undefined;
   const resolvedCompactDisabledReason =
-    compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
+    compactDisabledReason ?? (noProviderAvailable ? "Compactarea nu e disponibilă acum" : null);
   const supportedRuntimeModes = selectedProviderEntry?.snapshot.supportedRuntimeModes;
   const compatibleRuntimeModeOptions =
     supportedRuntimeModes && supportedRuntimeModes.length > 0
@@ -1300,7 +1300,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction ? "Resume thread" : "Send message";
+  const collapsedComposerPrimaryActionLabel = showResumeAction
+    ? "Reia conversația"
+    : "Trimite mesajul";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2103,8 +2105,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?.preventDefault();
       toastManager.add({
         type: "info",
-        title: "Still compressing a pasted image.",
-        description: "Send again once its thumbnail appears.",
+        title: "Se comprimă încă o imagine lipită.",
+        description: "Trimite din nou după ce apare miniatura.",
       });
       return;
     }
@@ -2112,8 +2114,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?.preventDefault();
       toastManager.add({
         type: "info",
-        title: "Still bringing attached context into this message.",
-        description: "Send again once its chip resolves.",
+        title: "Se adaugă încă contextul atașat la mesaj.",
+        description: "Trimite din nou după ce elementul e gata.",
       });
       return;
     }
@@ -2742,7 +2744,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (target === "remote") {
       toastManager.add({
         type: "error",
-        title: "Folders can only be referenced in the local desktop environment",
+        title: "Dosarele pot fi referite doar în mediul desktop local",
       });
       return;
     }
@@ -2751,8 +2753,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (path === null) {
         toastManager.add({
           type: "error",
-          title: `Couldn't get the path of "${folder.name}"`,
-          description: "Type the folder path with @ instead.",
+          title: `Calea pentru „${folder.name}” nu a putut fi obținută`,
+          description: "Scrie calea dosarului cu @ în schimb.",
         });
         continue;
       }
@@ -2762,8 +2764,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!inserted) {
         toastManager.add({
           type: "error",
-          title: "Unable to add folder",
-          description: "The composer is busy; try again once it is ready.",
+          title: "Dosarul nu a putut fi adăugat",
+          description: "Editorul e ocupat; încearcă din nou când e gata.",
         });
         break;
       }
@@ -2835,8 +2837,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onInsertRejected: () => {
       toastManager.add({
         type: "error",
-        title: "Unable to add to chat",
-        description: "The composer is busy; try again once it is ready.",
+        title: "Nu a putut fi adăugat în chat",
+        description: "Editorul e ocupat; încearcă din nou când e gata.",
       });
     },
   });
@@ -2848,7 +2850,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pendingDraftWork.begin(targetKey);
       const loadingToast = toastManager.add({
         type: "loading",
-        title: "Loading thread context…",
+        title: "Se încarcă contextul conversației…",
         timeout: 0,
         data: { threadRef: routeThreadRef, hideCopyButton: true },
       });
@@ -2873,7 +2875,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             if (activeThreadId) {
               setThreadError(
                 activeThreadId,
-                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+                `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`,
               );
             }
           },
@@ -2883,12 +2885,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const error = squashAtomCommandFailure(importResult);
         toastManager.add({
           type: "error",
-          title: "Unable to read the dropped thread",
+          title: "Conversația trasă nu a putut fi citită",
           description:
             isEnvironmentRequestInvalidError(error) &&
             error.reason === "thread_transcript_too_large"
-              ? "This thread exceeds the attachment size limit. Try a shorter thread."
-              : "Check that its environment is connected and up to date, then try again.",
+              ? "Conversația depășește limita de mărime. Încearcă una mai scurtă."
+              : "Verifică dacă mediul e conectat și actualizat, apoi încearcă din nou.",
         });
       }
       toastManager.close(loadingToast);
@@ -2931,8 +2933,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!inserted) {
         toastManager.add({
           type: "error",
-          title: "Unable to add thread",
-          description: "The composer is busy; try again once it is ready.",
+          title: "Conversația nu a putut fi adăugată",
+          description: "Editorul e ocupat; încearcă din nou când e gata.",
         });
         return;
       }
@@ -3596,10 +3598,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   )}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={expandMobileComposerStable}
-                  aria-label="Expand composer"
+                  aria-label="Extinde editorul"
                 >
                   {prompt.trim() ||
-                    (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
+                    (showProviderUnavailable
+                      ? "Activează un furnizor din Setări"
+                      : "Întreabă orice...")}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -3665,8 +3669,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {composerSuggestionsVisible && composerMenuItems.length === 0
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
-                      ? "Finding pull request..."
-                      : "Searching workspace files..."
+                      ? "Se caută pull request-ul..."
+                      : "Se caută în fișiere..."
                     : composerMenuEmptyState
                   : ""}
               </div>
@@ -3719,7 +3723,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ComposerPromptEditor
                     draftKey={composerDraftTargetKey}
                     // Switching threads lands focus here, so the label names the thread.
-                    ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
+                    ariaLabel={activeThread ? `Mesaj pentru ${activeThread.title}` : "Mesaj"}
                     suggestionListId={composerSuggestionListId}
                     activeSuggestionId={
                       composerSuggestionListVisible && activeComposerMenuItem
@@ -3761,18 +3765,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     placeholder={
                       isComposerApprovalState
                         ? activePendingApproval?.supportsFeedback
-                          ? "Send feedback to decline this request"
-                          : "Send a message to decline and redirect the agent"
+                          ? "Trimite feedback ca să refuzi cererea"
+                          : "Trimite un mesaj ca să refuzi și să redirecționezi agentul"
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
+                            ? "Alege o opțiune de mai sus"
+                            : "Scrie propriul răspuns sau lasă gol ca să folosești opțiunea selectată"
                           : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
+                            ? "Adaugă feedback ca să rafinezi planul sau lasă gol ca să-l implementezi"
                             : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
+                              ? "Alege un proiect de mai sus ca să pornești o conversație"
                               : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
+                                ? "Activează un furnizor din Setări ca să trimiți un mesaj"
                                 : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={

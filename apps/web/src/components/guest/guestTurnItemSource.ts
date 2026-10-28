@@ -50,7 +50,7 @@ const guestItemDetailAtom = Atom.family((key: string) => {
   return Atom.make(
     Effect.tryPromise({
       try: () => fetchGuestItemDetail(shareId, itemId),
-      catch: () => new GuestItemReadError({ message: "Could not load this item." }),
+      catch: () => new GuestItemReadError({ message: "Elementul nu a putut fi încărcat." }),
     }),
   );
 });
@@ -76,7 +76,7 @@ const guestCommandOutputAtom = Atom.family((key: string) => {
           if (source.readyState === EventSource.CLOSED) {
             Queue.failCauseUnsafe(
               queue,
-              Cause.fail(new GuestItemReadError({ message: "Output is no longer available." })),
+              Cause.fail(new GuestItemReadError({ message: "Rezultatul nu mai e disponibil." })),
             );
           }
         });

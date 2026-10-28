@@ -39,7 +39,7 @@ const commandFailure = (result: {
 }) => {
   const error = squashAtomCommandFailure(result);
   return new McpAppHostRefusal(
-    error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
+    error instanceof Error && error.message.trim() !== "" ? error.message : "Cererea a eșuat.",
   );
 };
 
@@ -281,7 +281,7 @@ export function McpAppFrame(props: {
       flushSync(() => setDisplayMode("inline"));
       const approved = await requestConfirmDialog(message);
       if (approved === undefined) {
-        throw new McpAppHostRefusal("T3 could not ask for approval here.");
+        throw new McpAppHostRefusal("Mira nu a putut cere aprobarea aici.");
       }
       return approved;
     };
@@ -300,12 +300,13 @@ export function McpAppFrame(props: {
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
-        if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        if (!info.value.callable)
+          throw new McpAppHostRefusal("Această aplicație nu poate folosi acel instrument.");
         if (!info.value.readOnly) {
           const approved = await ask(
-            `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
+            `Permiți ca ${app.server} să ruleze ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
           );
-          if (approved !== true) throw new McpAppHostRefusal("Declined by the user.");
+          if (approved !== true) throw new McpAppHostRefusal("Refuzat de utilizator.");
         }
         const result = await latest.current.callTool({
           environmentId,
@@ -325,15 +326,15 @@ export function McpAppFrame(props: {
       },
       openLink: async (url) => {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
-          throw new McpAppHostRefusal("Links open only from a click in the app.");
+          throw new McpAppHostRefusal("Link-urile se deschid doar la un clic în aplicație.");
         }
         window.open(url, "_blank", "noopener,noreferrer");
       },
       sendMessage: async (text) => {
         const send = latest.current.props.onSendMessage;
-        if (send === undefined) throw new McpAppHostRefusal("Messages are not available here.");
-        const approved = await ask(`Send this message from ${app.server}?\n${text}`);
-        if (approved !== true) throw new McpAppHostRefusal("Declined by the user.");
+        if (send === undefined) throw new McpAppHostRefusal("Mesajele nu sunt disponibile aici.");
+        const approved = await ask(`Trimiți acest mesaj de la ${app.server}?\n${text}`);
+        if (approved !== true) throw new McpAppHostRefusal("Refuzat de utilizator.");
         await send(text);
       },
       updateModelContext: async (context) => {
@@ -367,7 +368,7 @@ export function McpAppFrame(props: {
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
         const approved = await ask(`Save ${names} from ${app.server}?`);
-        if (approved !== true) throw new McpAppHostRefusal("Declined by the user.");
+        if (approved !== true) throw new McpAppHostRefusal("Refuzat de utilizator.");
         for (const file of files) {
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
@@ -385,9 +386,9 @@ export function McpAppFrame(props: {
             const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
             if (typeof declared === "string") mimeType = declared;
           }
-          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
+          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} nu are conținut.`);
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
-            throw new McpAppHostRefusal(`${file.name} is too large to save.`);
+            throw new McpAppHostRefusal(`${file.name} e prea mare pentru a fi salvat.`);
           }
           saveBlob(new Blob([bytes.slice()], { type: mimeType }), file.name);
         }
@@ -442,7 +443,7 @@ export function McpAppFrame(props: {
             setClosed(false);
           }}
         >
-          Show app
+          Arată aplicația
         </Button>
       </div>
     );
@@ -469,7 +470,7 @@ export function McpAppFrame(props: {
           <div className="flex h-10 shrink-0 items-center justify-between border-border border-b px-3 text-sm">
             <span className="truncate">{app.server}</span>
             <Button
-              aria-label="Exit full screen"
+              aria-label="Ieși din ecran complet"
               size="icon-sm"
               variant="ghost"
               onClick={() => setDisplayMode("inline")}

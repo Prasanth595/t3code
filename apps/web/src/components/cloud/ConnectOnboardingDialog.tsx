@@ -172,10 +172,10 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "T3 Connect enabled",
+      title: "T3 Connect activat",
       description: exposeEnvironment
-        ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        ? "Acest mediu e disponibil pe celelalte dispozitive prin T3 Connect."
+        : "Acest mediu trimite activitatea agentului pe dispozitivele mobile.",
     });
     setStep("devices");
   };
@@ -189,11 +189,11 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <WizardPopup>
         <WizardHeader
-          title="Set up T3 Connect"
+          title="Configurează T3 Connect"
           description={
             <>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
+              Leagă-ți dispozitivele. Publică acest mediu și conectează-le pe celelalte, totul
+              dintr-un singur loc.
             </>
           }
         >
@@ -258,13 +258,13 @@ function ConfiguredConnectOnboardingDialog() {
           {step === "publish" ? (
             <>
               <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
+                Nu acum
               </Button>
               <Button
                 disabled={isApplying || !canManageRelay || linkStateData === null}
                 onClick={() => void applyPublishSelection()}
               >
-                {isApplying ? "Enabling…" : "Continue"}
+                {isApplying ? "Se activează…" : "Continuă"}
               </Button>
             </>
           ) : (
@@ -279,8 +279,8 @@ function ConfiguredConnectOnboardingDialog() {
 }
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
-  devices: "Connect devices",
+  publish: "Publicare",
+  devices: "Conectează dispozitive",
 };
 
 function PublishStep({
@@ -302,15 +302,15 @@ function PublishStep({
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title="Publică acest mediu"
+          description="Fă acest mediu disponibil pe celelalte dispozitive prin T3 Connect."
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title="Publică activitatea agentului"
+          description="Trimite activitatea din acest mediu pe dispozitivele mobile pentru notificări push și Live Activities."
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
@@ -365,8 +365,8 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            Niciun alt mediu nu e publicat încă în contul tău. Publică unul de pe alt dispozitiv și
+            va apărea aici.
           </p>
         }
       />

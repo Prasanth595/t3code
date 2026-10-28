@@ -156,7 +156,7 @@ export function ThreadDetailsCard({
       {placement ? (
         inlineOpen ? (
           <aside
-            aria-label="Thread details"
+            aria-label="Detaliile conversației"
             // Skip the return transition to avoid overlapping the rising preview.
             className={cn(
               "absolute z-20",

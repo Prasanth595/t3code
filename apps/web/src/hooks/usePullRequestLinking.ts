@@ -90,7 +90,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       threadRef.environmentId !== environmentId ||
       (linked && !canLink(url))
     )
-      throw new Error("The pull request is not available in this environment.");
+      throw new Error("Pull request-ul nu e disponibil în acest mediu.");
     const legacyProject = findProjectForChangeRequest(environmentProjects, parsed);
     const mutation = planThreadPullRequestMutation({
       capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)
@@ -102,15 +102,15 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
         sourceControlClients.repositorySelector(legacyProject?.repositoryIdentity) ?? undefined,
       linked,
     });
-    if (mutation === null)
-      throw new Error("This environment does not support linking this pull request.");
+    if (mutation === null) throw new Error("Acest mediu nu suportă legarea acestui pull request.");
     const result = await (mutation.type === "thread.meta.update"
       ? updateMetadata({ environmentId: threadRef.environmentId, input: mutation.input })
       : mutation.type === "thread.pull-request.link"
         ? link({ environmentId: threadRef.environmentId, input: mutation.input })
         : unlink({ environmentId: threadRef.environmentId, input: mutation.input }));
     if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) throw new Error("Link update interrupted.");
+      if (isAtomCommandInterrupted(result))
+        throw new Error("Actualizarea legăturii a fost întreruptă.");
       throw squashAtomCommandFailure(result);
     }
   };

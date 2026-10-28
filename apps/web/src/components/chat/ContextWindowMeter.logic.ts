@@ -55,11 +55,11 @@ export function formatContextWindowCompactionMessage(
   autoCompactThreshold?: number | null,
 ): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at about ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return `Se compactează automat la aproximativ ${autoCompactThreshold.toLocaleString("ro-RO")} tokeni.`;
   }
   return modelDisplayName
-    ? `Context for ${modelDisplayName} compacts automatically when needed.`
-    : "Context compacts automatically when needed.";
+    ? `Contextul pentru ${modelDisplayName} se compactează automat când e nevoie.`
+    : "Contextul se compactează automat când e nevoie.";
 }
 
 export function shouldReserveContextWindowMeter(input: {

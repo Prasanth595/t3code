@@ -32,12 +32,12 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   showThreadUndoNotice({
     action: "Discarded",
     claim,
-    failureTitle: "Failed to restore draft",
+    failureTitle: "Ciorna nu a putut fi restaurată",
     undo: async () => {
       const current = useComposerDraftStore.getState().draftsByThreadKey[key];
       if (current && composerDraftHasUserContent(current)) {
         releaseDraftAttachments([...draft.images, ...draft.files]);
-        return AsyncResult.failure(Cause.fail(new Error("The draft has new content.")));
+        return AsyncResult.failure(Cause.fail(new Error("Ciorna are conținut nou.")));
       }
       useComposerDraftStore.setState((state) => {
         const logicalProjectDraftThreadKeyByLogicalProjectKey = {

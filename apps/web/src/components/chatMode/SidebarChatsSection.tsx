@@ -37,7 +37,7 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
         <Button
           size="icon-xs"
           variant="ghost-muted"
-          aria-label="New chat"
+          aria-label="Chat nou"
           render={<Link to="/ask" onClick={onNavigate} />}
         >
           <MessageCirclePlusIcon />
@@ -62,10 +62,10 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
                 <Button
                   size="icon-xs"
                   variant="ghost-muted"
-                  aria-label={`Delete ${chat.title}`}
+                  aria-label={`Șterge ${chat.title}`}
                   onClick={async () => {
                     const confirmed = await ensureLocalApi().dialogs.confirm(
-                      `Delete "${chat.title}"?\nIt is removed from every device signed in to your account.`,
+                      `Ștergi „${chat.title}”?\nVa fi șters de pe toate dispozitivele conectate la contul tău.`,
                       { variant: "destructive" },
                     );
                     if (confirmed) miraChatHistory.remove(chat.id);
@@ -79,7 +79,7 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
           {chats.length > COLLAPSED_LIMIT ? (
             <SidebarMenuItem>
               <SidebarMenuButton size="sm" onClick={() => setShowAll(!showAll)}>
-                <span>{showAll ? "Show fewer" : `Show all ${chats.length}`}</span>
+                <span>{showAll ? "Arată mai puține" : `Arată toate (${chats.length})`}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}
@@ -87,7 +87,7 @@ export function SidebarChatsSection({ onNavigate }: { readonly onNavigate?: () =
             <SidebarMenuItem>
               <SidebarMenuButton onClick={() => setUpgradeOpen(true)}>
                 <LockIcon />
-                <span>Agentic mode · Pro</span>
+                <span>Mod agent · Pro</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}

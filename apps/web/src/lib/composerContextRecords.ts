@@ -114,7 +114,7 @@ export function previewAnnotationContextLabel(annotation: PreviewAnnotationPaylo
       ? `${comment.slice(0, PREVIEW_LABEL_MAX_CHARS - 1)}…`
       : comment;
   }
-  return annotation.pageTitle?.trim() || "Preview annotation";
+  return annotation.pageTitle?.trim() || "Adnotare";
 }
 
 export function terminalContextReference(context: TerminalContextDraft): ComposerContextReference {

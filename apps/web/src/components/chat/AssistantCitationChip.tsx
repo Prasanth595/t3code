@@ -125,7 +125,7 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={`Vezi textul citat: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -137,7 +137,7 @@ export function AssistantCitationChip({
         kind="citation"
         icon={<QuoteIcon />}
         label={label}
-        accessibleLabel={`Quoted assistant text: ${label}`}
+        accessibleLabel={`Text citat: ${label}`}
         copyMarkdown={serializeAssistantCitation(citation)}
       >
         <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
@@ -146,7 +146,7 @@ export function AssistantCitationChip({
             render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
           >
             <ArrowUpRightIcon aria-hidden="true" />
-            Go to source
+            Mergi la sursă
           </PopoverClose>
         </div>
       </ContextChipPopover>
@@ -172,7 +172,9 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment ? "Editează comentariul citatului" : "Adaugă comentariu la citat"
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -203,7 +205,7 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
-              aria-label="Edit citation comment"
+              aria-label="Editează comentariul citatului"
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}

@@ -46,10 +46,10 @@ export function AssistantCitationCommentEditor({
     >
       <textarea
         ref={inputRef}
-        aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+        aria-label="Comentariu la textul selectat"
+        aria-description="Enter salvează comentariul; Command/Ctrl+Enter salvează și trimite; Shift+Enter pentru rând nou."
         aria-invalid={commentTooLong || undefined}
-        placeholder="Add an optional comment..."
+        placeholder="Adaugă un comentariu opțional..."
         rows={2}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
         value={comment}
@@ -94,7 +94,7 @@ export function AssistantCitationCommentEditor({
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >
-          {commentTooLong ? "Shorten comment" : "Save"}
+          {commentTooLong ? "Scurtează comentariul" : "Salvează"}
         </Button>
       </div>
     </div>

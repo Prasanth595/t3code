@@ -102,7 +102,7 @@ export function HtmlRenderFrame(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Open full screen"
+                    aria-label="Deschide pe tot ecranul"
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
@@ -114,8 +114,8 @@ export function HtmlRenderFrame(props: {
                       else
                         toastManager.add({
                           type: "error",
-                          title: "Page unavailable",
-                          description: "Reconnect to the environment and try again.",
+                          title: "Pagină indisponibilă",
+                          description: "Reconectează-te la mediu și încearcă din nou.",
                         });
                     }}
                   />
@@ -123,7 +123,7 @@ export function HtmlRenderFrame(props: {
               >
                 <Maximize2Icon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="left">Open full screen</TooltipPopup>
+              <TooltipPopup side="left">Deschide pe tot ecranul</TooltipPopup>
             </Tooltip>
           </div>
           {expandedSrc !== null ? (

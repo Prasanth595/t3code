@@ -24,9 +24,9 @@ const FAILURE_OPERATION_BY_ACTION = {
 } as const satisfies Record<ExternalLinkContextMenuAction, ExternalLinkContextMenuFailureOperation>;
 
 const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
-  { id: "open-in-preview", label: "Open in integrated browser" },
-  { id: "open-external", label: "Open in system browser" },
-  { id: "copy-link", label: "Copy Link" },
+  { id: "open-in-preview", label: "Deschide în browserul integrat" },
+  { id: "open-external", label: "Deschide în browserul sistemului" },
+  { id: "copy-link", label: "Copiază link-ul" },
 ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
 
 function externalLinkContextMenuItems(options: {
@@ -41,7 +41,9 @@ function externalLinkContextMenuItems(options: {
     {
       id: options.threadLinkAction,
       label:
-        options.threadLinkAction === "link-to-thread" ? "Link to thread" : "Unlink from thread",
+        options.threadLinkAction === "link-to-thread"
+          ? "Leagă de conversație"
+          : "Dezleagă de conversație",
     },
     ...items,
   ];

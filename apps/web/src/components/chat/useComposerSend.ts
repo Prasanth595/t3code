@@ -410,8 +410,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "Annotation attached to draft",
-          description: "Sending is unavailable right now. Finish the current action, then send.",
+          title: "Adnotare atașată la ciornă",
+          description: "Trimiterea nu e disponibilă acum. Termină acțiunea curentă, apoi trimite.",
         }),
       );
     };
@@ -451,8 +451,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add({
         ...stackedThreadToast({
           type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          title: "Neconectat: mesajul nu a fost trimis",
+          description: "Se reconectează la mediu. Încearcă din nou după ce se conectează.",
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
@@ -489,16 +489,19 @@ export function useComposerSend(input: ComposerSendInput) {
             branch: activeThreadBranch,
           });
     if (multipleModelBlock === "server-outdated") {
-      setThreadError(activeThread.id, "Update this server before starting multiple models.");
+      setThreadError(
+        activeThread.id,
+        "Actualizează serverul înainte să pornești mai multe modele.",
+      );
       return;
     }
     if (multipleModelBlock === "needs-new-git-thread") {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose models and a base branch",
+          title: "Alege modelele și un branch de bază",
           description:
-            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+            "Mai multe modele necesită o conversație nouă într-un proiect Git. Fiecare primește propriul worktree.",
         }),
       );
       return;
@@ -544,8 +547,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Attached thread is on another machine",
-          description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+          title: "Conversația atașată e pe alt calculator",
+          description: `Agentul acestui calculator nu poate citi „${strandedThread.title}”. Elimin-o sau revino la ${owner} ca să trimiți.`,
         }),
       );
       return;
@@ -596,8 +599,8 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Start a Codex thread first",
-            description: "Send a message before you submit feedback.",
+            title: "Pornește mai întâi o conversație Codex",
+            description: "Trimite un mesaj înainte să trimiți feedback.",
           }),
         );
         return;
@@ -744,8 +747,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose a project first",
-          description: "This draft no longer points to an available project.",
+          title: "Alege mai întâi un proiect",
+          description: "Ciorna nu mai indică un proiect disponibil.",
         }),
       );
       return;
@@ -787,7 +790,10 @@ export function useComposerSend(input: ComposerSendInput) {
       dispatchMode,
     });
     if (missingWorktreeBaseBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      setThreadError(
+        threadIdForSend,
+        "Alege un branch de bază înainte să trimiți în modul Worktree nou.",
+      );
       return;
     }
     // Records bind attachments by the id each side knows: the local id for the optimistic
@@ -886,7 +892,10 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
         sendInFlightRef.current = false;
-        setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
+        setThreadError(
+          threadIdForSend,
+          "Reîncearcă sau elimină încărcările eșuate înainte de trimitere.",
+        );
         return;
       }
     }
@@ -926,7 +935,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(
         threadIdForSend,
         attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
-          "This connection cannot change threads.",
+          "Această conexiune nu poate modifica conversații.",
       );
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -983,7 +992,7 @@ export function useComposerSend(input: ComposerSendInput) {
         if (composerAttachmentsSnapshot.length > 0 || outgoingMessageContext !== undefined) {
           setThreadError(
             threadIdForSend,
-            "Send approval feedback without attachments or added context.",
+            "Trimite feedback-ul la aprobare fără atașamente sau context suplimentar.",
           );
           sendInFlightRef.current = false;
           return;
@@ -1051,7 +1060,7 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add({
             type: "info",
             title: notice,
-            description: "Send again when it's ready.",
+            description: "Trimite din nou când e gata.",
           });
         }
         return;
@@ -1268,7 +1277,7 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add(
             stackedThreadToast({
               type: "warning",
-              title: "Could not open a fresh composer",
+              title: "Nu s-a putut deschide un editor nou",
               description: error instanceof Error ? error.message : undefined,
             }),
           );
@@ -1297,10 +1306,10 @@ export function useComposerSend(input: ComposerSendInput) {
             toastManager.add(
               stackedThreadToast({
                 type: "success",
-                title: "Started in background",
+                title: "Pornit în fundal",
                 timeout: 5_000,
                 actionProps: {
-                  children: "Open",
+                  children: "Deschide",
                   onClick: () => {
                     void navigate({
                       to: "/$environmentId/$threadId",
@@ -1361,7 +1370,7 @@ export function useComposerSend(input: ComposerSendInput) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send message.",
+          error instanceof Error ? error.message : "Mesajul nu a putut fi trimis.",
         );
         if (
           draftId &&
@@ -1372,11 +1381,11 @@ export function useComposerSend(input: ComposerSendInput) {
               type: "error",
               title:
                 submissionIntent === "background"
-                  ? "Background task failed"
-                  : "Could not start thread",
-              description: error instanceof Error ? error.message : "Failed to send message.",
+                  ? "Sarcina din fundal a eșuat"
+                  : "Conversația nu a putut porni",
+              description: error instanceof Error ? error.message : "Mesajul nu a putut fi trimis.",
               actionProps: {
-                children: "Open draft",
+                children: "Deschide ciorna",
                 onClick: () => {
                   void navigate({ to: "/draft/$draftId", params: { draftId } });
                 },

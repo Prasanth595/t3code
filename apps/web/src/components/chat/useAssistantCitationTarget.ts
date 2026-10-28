@@ -98,8 +98,8 @@ export function useAssistantCitationTarget({
         const cursor = loadEarlier.cursor ?? entries[0]?.id ?? "first";
         if (navigation.requestedPages.has(cursor) || navigation.requestedPages.size >= 20) {
           fail(
-            "Could not load the cited response",
-            "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
+            "Răspunsul citat nu a putut fi încărcat",
+            "Încarcă rundele anterioare, apoi apasă pe citat ca să încerci din nou. Citatul salvat nu s-a schimbat.",
           );
           return;
         }
@@ -108,15 +108,15 @@ export function useAssistantCitationTarget({
         return;
       }
       fail(
-        "The cited response is unavailable",
-        "It may have been removed. The selected text is still saved in your citation.",
+        "Răspunsul citat nu e disponibil",
+        "Poate a fost eliminat. Textul selectat e încă salvat în citat.",
       );
       return;
     }
     if (source.kind !== "message" || source.message.role !== "assistant") {
       fail(
-        "The citation does not refer to an assistant response",
-        "The selected text is still saved in your citation.",
+        "Citatul nu se referă la un răspuns al asistentului",
+        "Textul selectat e încă salvat în citat.",
       );
       return;
     }

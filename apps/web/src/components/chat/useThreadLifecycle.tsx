@@ -245,8 +245,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to un-settle thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Conversația nu a putut fi redeschisă",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     }
@@ -290,8 +290,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to wake thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Conversația nu a putut fi reactivată",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     }
@@ -347,7 +347,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch checkout",
+            title: "Checkout-ul nu a putut fi schimbat",
             description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -371,7 +371,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Checkout switched, but the thread could not be updated",
+              title: "Checkout-ul s-a schimbat, dar conversația nu a putut fi actualizată",
               description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
             }),
           );
@@ -410,7 +410,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : "Failed to stop background work.",
+          error instanceof Error ? error.message : "Activitatea din fundal nu a putut fi oprită.",
         );
       }
     }
@@ -439,7 +439,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     }
     const shell = readThreadShell(threadRef);
     if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
-      toastManager.add({ type: "info", title: "This thread is no longer available" });
+      toastManager.add({ type: "info", title: "Conversația nu mai e disponibilă" });
       return;
     }
     void navigate({
@@ -549,26 +549,26 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const threadStatusLine = activeThreadSnoozed ? (
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
-      label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
+      label={snoozeWake && snoozeWake !== "now" ? `Amânată, mai sunt ${snoozeWake}` : "Amânată"}
       clockMinute={nowMinute}
-      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+      actionLabel={isUnsnoozing ? "Se reactivează..." : "Reactivează acum"}
       actionDisabled={!canOperateThread || isUnsnoozing}
       onAction={() => void handleUnsnoozeActiveThreadStable()}
     />
   ) : activeThreadSettled ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
-      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      label={settledAt ? `Finalizată ${formatRelativeTimeLabel(settledAt)}` : "Finalizată"}
       clockMinute={nowMinute}
-      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+      actionLabel={isUnsettling ? "Se redeschide..." : "Redeschide"}
       actionDisabled={!canOperateThread || isUnsettling}
       onAction={() => void handleUnsettleActiveThreadStable()}
     />
   ) : activeThreadWokeVisible ? (
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
-      label="Woke from snooze"
-      actionLabel="Dismiss"
+      label="Revenită din amânare"
+      actionLabel="Închide"
       onAction={acknowledgeActiveThreadWokeStable}
     />
   ) : null;
@@ -580,7 +580,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         stackedThreadToast({
           type: "error",
           title,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     };
@@ -593,7 +593,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         return;
       }
       if (settleAndAdvance(activeThreadRef)) return;
-      void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+      void settleThread(activeThreadRef).then(
+        toastThreadActionFailure("Conversația nu a putut fi finalizată"),
+      );
     },
     "thread.pin": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
@@ -602,7 +604,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
       ).then(
         toastThreadActionFailure(
-          activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
+          activeThreadPinned
+            ? "Conversația nu a putut fi defixată"
+            : "Conversația nu a putut fi fixată",
         ),
       );
     },

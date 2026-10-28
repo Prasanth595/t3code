@@ -86,7 +86,7 @@ export async function startFanoutThread(input: {
   try {
     if (uncertainThreadId) {
       throw new Error(
-        "The previous request may have started. Open its thread to check before sending again.",
+        "Cererea anterioară s-ar putea să fi pornit. Deschide conversația ca să verifici înainte să trimiți din nou.",
       );
     }
     requestMayHaveStarted = true;
@@ -107,18 +107,18 @@ export async function startFanoutThread(input: {
     const failureToastId = toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `Could not start ${input.model}`,
-        description: error instanceof Error ? error.message : "Failed to send message.",
+        title: `${input.model} nu a putut porni`,
+        description: error instanceof Error ? error.message : "Mesajul nu a putut fi trimis.",
         ...(retainedThreadId
           ? {
               timeout: 0,
               data: {
                 secondaryActionProps: {
-                  children: "Allow retry",
+                  children: "Permite reîncercarea",
                   onClick: () => {
                     void readLocalApi()
                       ?.dialogs.confirm(
-                        "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
+                        "Cererea anterioară poate rula deja. Verifică mai întâi conversația. Permiți o nouă trimitere care ar putea crea o conversație duplicat?",
                       )
                       .then(
                         (confirmed) => {
@@ -136,7 +136,7 @@ export async function startFanoutThread(input: {
                 },
               },
               actionProps: {
-                children: "Open thread",
+                children: "Deschide conversația",
                 onClick: () => input.openThread(retainedThreadId),
               },
             }
@@ -183,10 +183,10 @@ export async function rewindToMessage(input: {
   const { message, environmentId, draftTarget } = input;
   try {
     if (input.composerHasPendingAttachments) {
-      throw new Error("Wait for attachments to finish preparing before rewinding.");
+      throw new Error("Așteaptă să se pregătească atașamentele înainte să revii.");
     }
     const connection = readPreparedConnection(environmentId);
-    if (!connection) throw new Error("The environment is not connected.");
+    if (!connection) throw new Error("Mediul nu e conectat.");
     const files = await prepareRevertedMessageAttachments({
       message,
       environmentId,
@@ -199,7 +199,7 @@ export async function rewindToMessage(input: {
       (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
-      throw new Error("Make room for this message's attachments in the composer before rewinding.");
+      throw new Error("Fă loc în editor pentru atașamentele mesajului înainte să revii.");
     }
     const commandId = CommandId.make(randomUUID());
     await waitForRevertedMessage(input.routeThreadRef, input.turnCount, commandId, async () => {
@@ -246,7 +246,10 @@ export async function rewindToMessage(input: {
     store.addFiles(draftTarget, restoredFiles, { allowDuplicates: true });
     return { error: null, prompt: nextPrompt };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
+    return {
+      error:
+        error instanceof Error ? error.message : "Starea conversației nu a putut fi restaurată.",
+    };
   }
 }
 
@@ -294,7 +297,7 @@ export function resolveMultipleModelTargets(input: {
       (entry) => entry.instanceId === selection.instanceId,
     );
     if (!provider?.enabled || !provider.isAvailable || provider.status !== "ready") {
-      return { error: `Provider for ${selection.model} is unavailable.` };
+      return { error: `Furnizorul pentru ${selection.model} nu e disponibil.` };
     }
     const providerState = getComposerProviderState({
       provider: provider.driverKind,
@@ -341,12 +344,12 @@ export function prepareTurnAttachments(input: {
       if (usesAttachmentUploads) {
         const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
         if (!uploaded) {
-          throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
+          throw new Error(`Atașamentul „${attachment.name}” nu s-a terminat de încărcat.`);
         }
         return uploaded;
       }
       if (attachment.type !== "image") {
-        throw new Error("This server does not support file attachments.");
+        throw new Error("Acest server nu suportă atașarea fișierelor.");
       }
       return {
         type: "image" as const,

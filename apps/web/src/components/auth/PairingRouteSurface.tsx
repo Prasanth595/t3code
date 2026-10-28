@@ -21,8 +21,8 @@ export function PairingPendingSurface() {
     <StandalonePage tone="pairing">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Pairing with this environment"
-        description="Validating the pairing link and preparing your session."
+        title="Asociere cu acest mediu"
+        description="Se validează link-ul de asociere și se pregătește sesiunea."
       />
     </StandalonePage>
   );
@@ -87,14 +87,14 @@ export function PairingRouteSurface({
     <StandalonePage tone="pairing">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Pair with this environment"
+        title="Asociază-te cu acest mediu"
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="pairing-token">
-            Pairing token
+            Token de asociere
           </label>
           <Input
             id="pairing-token"
@@ -104,7 +104,7 @@ export function PairingRouteSurface({
             disabled={isSubmitting}
             nativeInput
             onChange={(event) => setCredential(event.currentTarget.value)}
-            placeholder="Paste a one-time token or pairing secret"
+            placeholder="Lipește un token unic sau secretul de asociere"
             spellCheck={false}
             value={credential}
           />
@@ -118,7 +118,7 @@ export function PairingRouteSurface({
 
         <div className="flex flex-wrap gap-2">
           <Button disabled={isSubmitting} size="sm" type="submit">
-            {isSubmitting ? "Pairing..." : "Continue"}
+            {isSubmitting ? "Se asociază..." : "Continuă"}
           </Button>
           <Button
             disabled={isSubmitting}
@@ -126,7 +126,7 @@ export function PairingRouteSurface({
             size="sm"
             variant="outline"
           >
-            Reload app
+            Reîncarcă aplicația
           </Button>
         </div>
       </form>
@@ -148,8 +148,8 @@ export function HostedPairingRouteSurface() {
   );
   const [message, setMessage] = useState(
     request
-      ? "Connecting to this backend."
-      : "This pairing link is missing its backend host or token.",
+      ? "Se conectează la acest server."
+      : "Link-ului de asociere îi lipsește serverul sau token-ul.",
   );
   const [canRetry, setCanRetry] = useState(false);
   const submitAttemptedRef = useRef(false);
@@ -158,20 +158,20 @@ export function HostedPairingRouteSurface() {
   const submitHostedPairingRequest = async () => {
     if (!request) {
       setStatus("error");
-      setMessage("This pairing link is missing its backend host or token.");
+      setMessage("Link-ului de asociere îi lipsește serverul sau token-ul.");
       setCanRetry(false);
       return;
     }
 
     if (tokenSubmittedRef.current) {
       setStatus("error");
-      setMessage("This one-time pairing token was already submitted. Request a new pairing link.");
+      setMessage("Acest token unic a fost deja folosit. Cere un link de asociere nou.");
       setCanRetry(false);
       return;
     }
 
     setStatus("pairing");
-    setMessage("Connecting to this backend.");
+    setMessage("Se conectează la acest server.");
     setCanRetry(false);
     tokenSubmittedRef.current = true;
 
@@ -181,7 +181,7 @@ export function HostedPairingRouteSurface() {
     });
     if (result._tag === "Success") {
       setStatus("paired");
-      setMessage(`${request.label || "The environment"} is saved in this browser.`);
+      setMessage(`${request.label || "Mediul"} e salvat în acest browser.`);
       return;
     }
 
@@ -213,10 +213,10 @@ export function HostedPairingRouteSurface() {
         eyebrow={APP_DISPLAY_NAME}
         title={
           status === "paired"
-            ? "Backend paired"
+            ? "Server asociat"
             : status === "error"
-              ? "Pairing failed"
-              : "Pairing backend"
+              ? "Asocierea a eșuat"
+              : "Se asociază serverul"
         }
         description={message}
       />
@@ -230,8 +230,8 @@ export function HostedPairingRouteSurface() {
       {status === "error" ? (
         <Alert variant="error" className="mt-5">
           <AlertDescription>
-            Verify the backend is reachable from this browser, supports CORS for hosted clients, and
-            is served over HTTPS when opening this page from HTTPS.
+            Verifică dacă serverul e accesibil din acest browser, suportă CORS pentru clienți
+            găzduiți și e servit prin HTTPS când deschizi pagina prin HTTPS.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -243,12 +243,12 @@ export function HostedPairingRouteSurface() {
           </Button>
         ) : canRetry ? (
           <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
-            Try again
+            Încearcă din nou
           </Button>
         ) : null}
         {status === "paired" ? (
           <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
-            Open app
+            Deschide aplicația
           </Button>
         ) : null}
       </div>
@@ -265,15 +265,15 @@ function errorMessageFromUnknown(error: unknown): string {
     return error;
   }
 
-  return "Authentication failed.";
+  return "Autentificarea a eșuat.";
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
   if (bootstrapMethods.includes("desktop-bootstrap")) {
-    return "This environment expects a trusted pairing credential before the app can connect.";
+    return "Acest mediu cere o credențială de asociere de încredere înainte ca aplicația să se conecteze.";
   }
 
-  return "Enter a pairing token to start a session with this environment.";
+  return "Introdu un token de asociere ca să pornești o sesiune cu acest mediu.";
 }
 
 function describeSupportedMethods(bootstrapMethods: ReadonlyArray<string>): string {
@@ -281,12 +281,12 @@ function describeSupportedMethods(bootstrapMethods: ReadonlyArray<string>): stri
     bootstrapMethods.includes("desktop-bootstrap") &&
     bootstrapMethods.includes("one-time-token")
   ) {
-    return "Desktop-managed pairing and one-time pairing tokens are both accepted for this environment.";
+    return "Acest mediu acceptă atât asocierea gestionată de desktop, cât și token-uri unice.";
   }
 
   if (bootstrapMethods.includes("desktop-bootstrap")) {
-    return "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.";
+    return "Acest mediu e gestionat de desktop. Deschide-l din aplicația desktop sau lipește o credențială de pornire dacă ți s-a dat una.";
   }
 
-  return "This environment accepts one-time pairing tokens. Pairing links can open this page directly, or you can paste the token here.";
+  return "Acest mediu acceptă token-uri de asociere unice. Link-urile de asociere pot deschide direct pagina sau poți lipi token-ul aici.";
 }

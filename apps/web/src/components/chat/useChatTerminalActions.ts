@@ -255,7 +255,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         const error = squashAtomCommandFailure(openResult);
         setThreadError(
           activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          error instanceof Error ? error.message : `Scriptul „${script.name}” nu a putut rula.`,
         );
       }
       return;
@@ -273,7 +273,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         const error = squashAtomCommandFailure(writeResult);
         setThreadError(
           activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          error instanceof Error ? error.message : `Scriptul „${script.name}” nu a putut rula.`,
         );
       }
       return;
@@ -289,8 +289,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not open preview",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            title: "Previzualizarea nu a putut fi deschisă",
+            description: error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
           }),
         );
       }

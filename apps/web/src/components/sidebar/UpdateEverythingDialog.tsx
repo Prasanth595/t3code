@@ -108,8 +108,8 @@ function UpdateEverythingDialogContent({
         ) : null}
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-        <Button onClick={onConfirm}>Update</Button>
+        <AlertDialogClose render={<Button variant="outline" />}>Anulează</AlertDialogClose>
+        <Button onClick={onConfirm}>Actualizează</Button>
       </AlertDialogFooter>
     </>
   );

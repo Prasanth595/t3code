@@ -168,7 +168,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       >
         <FoldedMessageHeader
           icon={CalendarClockIcon}
-          label="Automation"
+          label="Automatizare"
           summary={summary}
           expanded={expanded}
           onToggle={() => setExpanded((value) => !value)}
@@ -195,7 +195,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
                 className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
               >
-                Open automation
+                Deschide automatizarea
               </Link>
             ) : null}
             <TimelineRowTimestamp
@@ -211,7 +211,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               {promptLink !== null && (
                 <MessageCopyButton
                   text={promptLink}
-                  label="Copy prompt link"
+                  label="Copiază link-ul promptului"
                   icon={LinkIconNode}
                   variant="ghost"
                 />
@@ -427,7 +427,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"
         >
-          Sent by Mira
+          Trimis de Mira
         </p>
       ) : null}
       {/* The row's heading already names the guest for screen readers. */}
@@ -468,7 +468,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
           >
             <MessageAuthorHeading>
-              {userMessage.guestName === undefined ? "You" : `${userMessage.guestName} (guest)`}
+              {userMessage.guestName === undefined ? "Tu" : `${userMessage.guestName} (invitat)`}
             </MessageAuthorHeading>
             {(regularImages.length > 0 || userVideos.length > 0) && (
               <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -486,7 +486,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       <button
                         type="button"
                         className="block h-full w-full cursor-zoom-in"
-                        aria-label={`Preview ${image.name}`}
+                        aria-label={`Previzualizează ${image.name}`}
                         onClick={() => {
                           const preview = buildExpandedImagePreview(regularImages, image.id);
                           if (!preview) return;
@@ -535,7 +535,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       <div key={file.id} className="flex min-w-0 items-center gap-1">
                         <button
                           type="button"
-                          aria-label={`Preview ${file.name}`}
+                          aria-label={`Previzualizează ${file.name}`}
                           onClick={() => ctx.onFileOpen(file)}
                           className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
                         >
@@ -548,7 +548,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                               <Button
                                 size="icon-xs"
                                 variant="ghost-muted"
-                                aria-label={`Download ${file.name}`}
+                                aria-label={`Descarcă ${file.name}`}
                                 onClick={() => ctx.onFileDownload(file)}
                               />
                             }
@@ -597,7 +597,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <div className="flex shrink-0 items-center gap-2">
             {folded && senderThreadId ? (
               <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-                Open thread
+                Deschide conversația
               </InlineButton>
             ) : null}
             <Tooltip>
@@ -628,7 +628,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {promptLink !== null && (
                 <MessageCopyButton
                   text={promptLink}
-                  label="Copy prompt link"
+                  label="Copiază link-ul promptului"
                   icon={LinkIconNode}
                   variant="ghost"
                 />
@@ -661,8 +661,8 @@ function UserMessageIntentMarker({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {intent === "promoted_queued_to_steer"
-          ? "Originally queued, then promoted to steer the active turn"
-          : "Steered the active turn"}
+          ? "Pus inițial în coadă, apoi folosit ca să redirecționeze runda activă"
+          : "A redirecționat runda activă"}
       </TooltipPopup>
     </Tooltip>
   );
@@ -688,13 +688,13 @@ function RevertUserMessageButton({
             variant="ghost"
             disabled={activity.isRevertingCheckpoint || activity.isWorking}
             onClick={() => ctx.onRevertToTurnCount(turnCount, messageId)}
-            aria-label="Edit from here"
+            aria-label="Editează de aici"
           />
         }
       >
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="top">Edit from here</TooltipPopup>
+      <TooltipPopup side="top">Editează de aici</TooltipPopup>
     </Tooltip>
   );
 }
@@ -767,7 +767,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               onClick={() => setExpanded((value) => !value)}
               className="-ml-1"
             >
-              {expanded ? "Show less" : "Show full message"}
+              {expanded ? "Arată mai puțin" : "Arată tot mesajul"}
             </Button>
           ) : null}
           {props.footer ? (

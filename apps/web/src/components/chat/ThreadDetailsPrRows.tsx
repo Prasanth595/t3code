@@ -131,7 +131,7 @@ export function ThreadDetailsPrRows({
           className="size-4 shrink-0"
           icon={expanded ? ChevronUp : ChevronDown}
         />
-        {expanded ? "Show less" : `Show ${rest.length} more`}
+        {expanded ? "Arată mai puțin" : `Arată încă ${rest.length}`}
       </ThreadDetailsControl>
     </>
   );

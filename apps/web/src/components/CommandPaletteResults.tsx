@@ -38,8 +38,8 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
         (props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+          ? "Nicio acțiune găsită."
+          : "Nicio comandă, proiect sau conversație găsită.")}
     </div>
   );
 }

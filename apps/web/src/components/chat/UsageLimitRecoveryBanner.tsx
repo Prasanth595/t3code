@@ -26,10 +26,10 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     variant: "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
+    title: "Limita de utilizare a fost atinsă",
     description: resetAt
-      ? `Resets ${new Date(resetAt).toLocaleString()}`
-      : "Reset time unavailable; retry manually",
+      ? `Se resetează ${new Date(resetAt).toLocaleString()}`
+      : "Ora resetării nu e disponibilă; reîncearcă manual",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
@@ -62,8 +62,8 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
       toastManager.add({
         type: "error",
-        title: "Could not snooze thread",
-        description: "The reset time has passed. Retry the thread manually.",
+        title: "Conversația nu a putut fi amânată",
+        description: "Ora resetării a trecut. Reia conversația manual.",
       });
       setNowMs(Date.now());
       return;
@@ -78,8 +78,11 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     } catch (cause) {
       toastManager.add({
         type: "error",
-        title: action === "resume" ? "Could not change auto-resume" : "Could not snooze thread",
-        description: cause instanceof Error ? cause.message : "An error occurred.",
+        title:
+          action === "resume"
+            ? "Reluarea automată nu a putut fi schimbată"
+            : "Conversația nu a putut fi amânată",
+        description: cause instanceof Error ? cause.message : "A apărut o eroare.",
       });
     }
     setPending(false);
@@ -88,7 +91,7 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <>
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending ? "Se salvează..." : scheduled ? "Anulează reluarea automată" : "Reia la resetare"}
       </Button>
       <Button
         size="xs"
@@ -96,7 +99,7 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
         disabled={pending || (!snoozed && resetPassed)}
         onClick={() => void toggle("snooze")}
       >
-        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+        {pending ? "Se salvează..." : snoozed ? "Reactivează acum" : "Amână până la resetare"}
       </Button>
     </>
   );

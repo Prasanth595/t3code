@@ -111,8 +111,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect environment",
-          description: error instanceof Error ? error.message : "Failed to reconnect.",
+          title: "Mediul nu a putut fi reconectat",
+          description: error instanceof Error ? error.message : "Reconectarea a eșuat.",
         }),
       );
     }
@@ -139,8 +139,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not disconnect server",
-            description: error instanceof Error ? error.message : "Failed to disconnect.",
+            title: "Serverul nu a putut fi deconectat",
+            description: error instanceof Error ? error.message : "Deconectarea a eșuat.",
           }),
         );
       }
@@ -167,7 +167,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
   const versionMismatchServerLabel =
     hasMultipleRegisteredEnvironments && activeThreadEnvironmentId !== null
-      ? `${activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId} server`
+      ? `${activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId} (server)`
       : "server";
   const serverUpdateEnvironmentId = activeThreadEnvironmentId;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
@@ -193,14 +193,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
-          title="Hide this server's threads. Switch it on again in Connections."
+          title="Ascunde conversațiile serverului. Îl poți reactiva din Conexiuni."
           onClick={() =>
             void handleDisconnectActiveEnvironmentStable(
               activeEnvironmentUnavailableState.environmentId,
             )
           }
         >
-          Disconnect server
+          Deconectează serverul
         </Button>
       ) : undefined;
     const environmentReconnecting =
@@ -214,7 +214,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        title: `${activeEnvironmentUnavailableState.label} ${environmentReconnecting ? "se reconectează" : "e offline"}`,
         description: activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
@@ -254,7 +254,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
         title:
           updateInProgress || updateFailed ? (
-            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+            `${updateFailed ? "Nu s-a putut actualiza" : "Se actualizează"} ${versionMismatchServerLabel}`
           ) : versionMismatch ? (
             <Tooltip>
               <TooltipTrigger
@@ -263,7 +263,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                     type="button"
                     className="block max-w-full cursor-help truncate rounded-sm text-left"
                   >
-                    Server update available
+                    Actualizare de server disponibilă
                   </button>
                 }
               />
@@ -273,7 +273,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
               </TooltipPopup>
             </Tooltip>
           ) : (
-            "Server update available"
+            "Actualizare de server disponibilă"
           ),
         description:
           serverUpdateState.status === "failed"
@@ -298,14 +298,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
             threadContinuation={versionMismatchThreadContinuation}
             targetVersion={versionMismatch.clientVersion}
-            label={updateFailed ? "Retry" : "Update"}
+            label={updateFailed ? "Reîncearcă" : "Actualizează"}
             variant="ghost"
           />
         ),
         ...(updateInProgress || (!updateFailed && !versionMismatchDismissKey)
           ? {}
           : {
-              dismissLabel: "Dismiss update notice",
+              dismissLabel: "Închide notificarea de actualizare",
               onDismiss: () => {
                 if (updateFailed) {
                   dismissServerUpdateFailure(serverUpdateState);

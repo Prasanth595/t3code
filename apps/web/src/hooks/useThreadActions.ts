@@ -69,7 +69,7 @@ export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveB
   },
 ) {
   override get message(): string {
-    return "Cannot archive while the provider is active.";
+    return "Nu se poate arhiva cât timp furnizorul e activ.";
   }
 }
 
@@ -81,7 +81,7 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedError<ThreadS
   },
 ) {
   override get message(): string {
-    return "This environment's server does not support settling yet. Update the server to use Settle.";
+    return "Serverul acestui mediu nu suportă încă finalizarea. Actualizează serverul ca să folosești Finalizează.";
   }
 }
 
@@ -93,7 +93,7 @@ export class ThreadSnoozeUnsupportedError extends Schema.TaggedError<ThreadSnooz
   },
 ) {
   override get message(): string {
-    return "This environment's server does not support snoozing yet. Update the server to use Snooze.";
+    return "Serverul acestui mediu nu suportă încă amânarea. Actualizează serverul ca să folosești Amână.";
   }
 }
 
@@ -105,7 +105,7 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlo
   },
 ) {
   override get message(): string {
-    return "This thread is waiting on you. Respond to the pending request before snoozing it.";
+    return "Conversația te așteaptă. Răspunde la cererea în așteptare înainte s-o amâni.";
   }
 }
 
@@ -126,7 +126,7 @@ export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<T
   },
 ) {
   override get message(): string {
-    return "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.";
+    return "Serverul acestui mediu nu suportă încă oprirea finalizării automate per conversație. Actualizează serverul ca s-o folosești.";
   }
 }
 
@@ -138,7 +138,7 @@ export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinn
   },
 ) {
   override get message(): string {
-    return "This environment's server does not support pinning yet. Update the server to use Pin.";
+    return "Serverul acestui mediu nu suportă încă fixarea. Actualizează serverul ca să folosești Fixează.";
   }
 }
 
@@ -150,7 +150,7 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedError<ThreadP
   },
 ) {
   override get message(): string {
-    return "This environment's server does not support reordering pinned threads yet. Update the server to reorder pins.";
+    return "Serverul acestui mediu nu suportă încă reordonarea conversațiilor fixate. Actualizează serverul.";
   }
 }
 
@@ -162,7 +162,7 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
   },
 ) {
   override get message(): string {
-    return "Update this environment's server to reorder active threads.";
+    return "Actualizează serverul acestui mediu ca să reordonezi conversațiile active.";
   }
 }
 
@@ -179,8 +179,8 @@ async function requestThreadUnpinConfirmation(input: {
   return settlePromise(() =>
     confirm(
       [
-        `Unpin thread "${input.title}"?`,
-        "This will move the thread out of your pinned section.",
+        `Defixezi conversația „${input.title}”?`,
+        "Conversația va fi scoasă din secțiunea fixate.",
       ].join("\n"),
     ),
   );
@@ -193,8 +193,8 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Thread deleted, but navigation failed",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Conversația a fost ștearsă, dar navigarea a eșuat",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       }),
     );
   }
@@ -239,7 +239,7 @@ function threadOperationFailure(target: ScopedThreadRef) {
     : AsyncResult.failure(
         Cause.fail(
           new EnvironmentAuthorizationError({
-            message: "This connection cannot change threads.",
+            message: "Această conexiune nu poate modifica conversații.",
             requiredScope: AuthOrchestrationOperateScope,
           }),
         ),
@@ -384,7 +384,7 @@ export function useThreadActions() {
       action: "Archived",
       claim: action,
       undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
-      failureTitle: "Failed to undo archive",
+      failureTitle: "Arhivarea nu a putut fi anulată",
     });
 
     if (shouldNavigateToDraft) {
@@ -490,10 +490,10 @@ export function useThreadActions() {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
-            "This thread is the only one linked to this worktree:",
+            "Această conversație e singura legată de acest worktree:",
             displayWorktreePath ?? orphanedWorktreePath,
             "",
-            "Delete the worktree too?",
+            "Ștergi și worktree-ul?",
           ].join("\n"),
           { variant: "destructive" },
         ),
@@ -572,7 +572,7 @@ export function useThreadActions() {
       : AsyncResult.failure(
           Cause.fail(
             new EnvironmentAuthorizationError({
-              message: "This connection can no longer remove worktrees.",
+              message: "Această conexiune nu mai poate elimina worktree-uri.",
               requiredScope: AuthSourceControlWriteScope,
             }),
           ),
@@ -593,7 +593,7 @@ export function useThreadActions() {
     if (cleanupFailure) {
       const removalFailed = removeResult._tag === "Failure";
       const error = squashAtomCommandFailure(cleanupFailure);
-      const message = error instanceof Error ? error.message : "An error occurred.";
+      const message = error instanceof Error ? error.message : "A apărut o eroare.";
       console.error("Worktree cleanup failed after thread deletion", {
         threadId: threadRef.threadId,
         projectCwd: threadProject.workspaceRoot,
@@ -604,10 +604,10 @@ export function useThreadActions() {
         stackedThreadToast({
           type: "error",
           title: removalFailed
-            ? "Failed to delete worktree"
-            : "Worktree deleted, but Git status refresh failed",
+            ? "Worktree-ul nu a putut fi șters"
+            : "Worktree-ul a fost șters, dar starea Git nu s-a putut reîmprospăta",
           description: removalFailed
-            ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
+            ? `${displayWorktreePath ?? orphanedWorktreePath} nu a putut fi eliminat. ${message}`
             : message,
         }),
       );
@@ -703,7 +703,7 @@ export function useThreadActions() {
         action: "Unpinned",
         claim: action,
         undo: () => runUndoPlan(target, undoPlan),
-        failureTitle: "Failed to undo unpin",
+        failureTitle: "Defixarea nu a putut fi anulată",
       });
     } else {
       action.finish();
@@ -747,7 +747,7 @@ export function useThreadActions() {
       action: "Settled",
       claim: action,
       undo: () => runUndoPlan(target, undoPlan),
-      failureTitle: "Failed to undo settle",
+      failureTitle: "Finalizarea nu a putut fi anulată",
     });
     return result;
   };
@@ -859,7 +859,7 @@ export function useThreadActions() {
       action: "Snoozed",
       claim: action,
       undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
-      failureTitle: "Failed to wake thread",
+      failureTitle: "Conversația nu a putut fi reactivată",
     });
     return result;
   };
@@ -899,8 +899,8 @@ export function useThreadActions() {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
-            `Delete thread "${title}"?`,
-            "This permanently clears conversation history for this thread.",
+            `Ștergi conversația „${title}”?`,
+            "Se șterge definitiv istoricul acestei conversații.",
           ].join("\n"),
           { variant: "destructive" },
         ),
