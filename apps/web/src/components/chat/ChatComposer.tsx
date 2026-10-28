@@ -85,6 +85,7 @@ import {
 } from "./composerMentionDrag";
 import {
   isInsideCollapsedComposerControls,
+  isInsidePendingUserInputSelectableText,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -3354,6 +3355,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const target = event.target;
         if (isInsideRestingComposerControlScope(target)) return;
         if (isInsideCollapsedComposerControls(target)) return;
+        // preventDefault below cancels a native drag-selection, and refocusing
+        // the editor would take the gesture away from the question card.
+        if (isInsidePendingUserInputSelectableText(target)) return;
         if (!(target instanceof Element)) return;
         const isInteractive = Boolean(
           target.closest('button, a, input, select, [role="button"], [role="menuitem"]'),
