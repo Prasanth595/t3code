@@ -45,7 +45,14 @@ struct AgentWidgetEntryView: View {
     if AgentWidgetStorage.withLock({ AgentWidgetStorage.owns(entry.cached.props, in: $0) }) == true {
       WidgetsEntryView(entry: entry.cached)
     } else {
-      EmptyWidgetView()
+      ZStack {
+        EmptyWidgetView()
+        VStack(alignment: .leading, spacing: 4) {
+          Text("T3 Code").font(.headline)
+          Text("Open T3 to refresh").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding()
+      }
     }
   }
 }

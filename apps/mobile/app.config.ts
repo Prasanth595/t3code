@@ -430,7 +430,7 @@ const config: ExpoConfig = {
     ...(!isIosPersonalTeamBuild
       ? ["./plugins/withWidgetLogoAsset.cjs", "./plugins/withAgentWidgetRefresh.cjs", widgetsPlugin]
       : []),
-    "./plugins/withAndroidCleartextTraffic.cjs",
+    "./plugins/withAndroidNetworkSecurityConfig.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidInputBackground.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
