@@ -1,6 +1,7 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  drillsIntoWorkspaceDetail,
   selectWorkspaceDetail,
   setNativelyPoppingWorkspaceRoute,
   workspaceDetailLinkAction,
@@ -44,6 +45,10 @@ const threadB = { name: "Thread", params: { environmentId: "env", threadId: "b" 
 const pullRequest = {
   name: "PullRequest",
   params: { environmentId: "env", projectId: "p", repository: "o/r", number: 1, host: "h" },
+} as const;
+const stackedPullRequest = {
+  name: "PullRequest",
+  params: { ...pullRequest.params, number: 2 },
 } as const;
 
 function apply(state: State, action: Parameters<typeof base.getStateForAction>[1]) {
@@ -121,6 +126,35 @@ describe("selectWorkspaceDetail", () => {
     } finally {
       setNativelyPoppingWorkspaceRoute(null);
     }
+  });
+});
+
+describe("drillsIntoWorkspaceDetail", () => {
+  it("drills in from a page of the same kind", () => {
+    expect(drillsIntoWorkspaceDetail(select(home(), pullRequest), stackedPullRequest)).toBe(true);
+  });
+
+  it("selects from a list or another tab's page", () => {
+    expect(drillsIntoWorkspaceDetail(home(), pullRequest)).toBe(false);
+    expect(drillsIntoWorkspaceDetail(select(home(), threadA), pullRequest)).toBe(false);
+  });
+
+  it("drills in from under an open sheet", () => {
+    const opened = push(select(home(), pullRequest), "GitOverview");
+    expect(drillsIntoWorkspaceDetail(opened, stackedPullRequest)).toBe(true);
+  });
+
+  it("drills in from a page opened above it", () => {
+    const opened = push(select(home(), pullRequest), "ThreadFiles");
+    expect(drillsIntoWorkspaceDetail(opened, stackedPullRequest)).toBe(true);
+  });
+
+  it("leaves the page it came from beneath the pushed page", () => {
+    const opened = select(home(), pullRequest);
+    const drilled = push(opened, "PullRequest", stackedPullRequest.params);
+    const back = apply(drilled, StackActions.pop(1));
+    expect(page(back)).toEqual({ names: ["Home", "PullRequest"], index: 1 });
+    expect(back.routes[1]?.params).toEqual(pullRequest.params);
   });
 });
 

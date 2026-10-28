@@ -1,7 +1,6 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { Platform, View } from "react-native";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
 import { pullRequestStatus } from "./pullRequestStatus";
@@ -14,7 +13,6 @@ export function PullRequestStackCard(props: {
   readonly state: PullRequestStackState;
 }) {
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
   const [expanded, setExpanded] = useState(false);
   const stack = props.state.stack;
   if (!stack) {
@@ -67,9 +65,8 @@ export function PullRequestStackCard(props: {
                       ? undefined
                       : () => {
                           const params = { ...props.params, number: layer.number };
-                          if (Platform.OS === "android")
-                            selectDetail({ name: "PullRequest", params });
-                          else navigation.dispatch(StackActions.push("PullRequest", params));
+                          // Opens over this pull request, so Back returns to it.
+                          navigation.dispatch(StackActions.push("PullRequest", params));
                         }
                   }
                   last={index === stack.layers.length - 1}
