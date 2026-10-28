@@ -45,6 +45,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type ProjectTrackedFolder,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
@@ -226,6 +227,8 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import { chooseTrackedFolders, TrackedFoldersDialogHost } from "./TrackedFoldersDialog";
+import { workspaceRepositoryEnvironment } from "../state/workspaceRepositories";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
@@ -301,6 +304,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           initialContext={state.restoredSearch}
         />
       </CommandDialog>
+      {/* Outlives the palette, which closes before "Found N repositories" opens. */}
+      <TrackedFoldersDialogHost />
     </ComposerHandleContext>
   );
 }
@@ -406,6 +411,10 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const scanFolders = useAtomCommand(workspaceRepositoryEnvironment.scanFolders, {
+    reportFailure: false,
+  });
+  const scanningNewProjectRef = useRef(false);
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
@@ -1749,6 +1758,25 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    // A folder without child repos or a .code-workspace file adds right away, as before.
+    if (scanningNewProjectRef.current) return;
+    scanningNewProjectRef.current = true;
+    const scan = await scanFolders({
+      environmentId: input.environmentId,
+      input: { workspaceRoot: cwd },
+    });
+    scanningNewProjectRef.current = false;
+    let trackedFolders: ProjectTrackedFolder[] = [];
+    if (scan._tag === "Success" && scan.value.folders.length > 0) {
+      setOpen(false);
+      const chosen = await chooseTrackedFolders({
+        submitLabel: "Add project",
+        workspaceRoot: cwd,
+        scan: scan.value,
+      });
+      if (chosen === null) return;
+      trackedFolders = chosen;
+    }
     const projectId = newProjectId();
     const createResult = await createProject({
       environmentId: input.environmentId,
@@ -1758,6 +1786,7 @@ function OpenCommandPaletteDialog(props: {
         workspaceRoot: cwd,
         createWorkspaceRootIfMissing: true,
         defaultModelSelection: null,
+        ...(trackedFolders.length > 0 ? { trackedFolders } : {}),
       },
     });
     if (createResult._tag === "Failure") {

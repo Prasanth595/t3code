@@ -14,6 +14,7 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -116,10 +117,17 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  const writableClientFileRoots = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => [
+    ...(policy.cwd === null ? [] : [policy.cwd]),
+    ...(policy.workspace?.extraRoots ?? []),
+    options.host.paths.attachmentsDir,
+  ];
+  const readableClientFileRoots = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => [
+    ...writableClientFileRoots(policy),
+    ...(policy.workspace?.referenceFolders.map((folder) => folder.path) ?? []),
+  ];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
-    function* (input: AcpAdapterV2RuntimeInput) {
+    function* ({ extraRoots, ...input }: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -127,7 +135,8 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
-            additionalDirectories: [options.host.paths.attachmentsDir],
+            // Antigravity accepts additional directories without advertising them.
+            additionalDirectories: [options.host.paths.attachmentsDir, ...(extraRoots ?? [])],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -185,18 +194,18 @@ export function makeAntigravityAcpAdapterFlavor(
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     clientFileSystem: {
-      readTextFile: (request, cwd) =>
+      readTextFile: (request, policy) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots: readableClientFileRoots(policy),
           request,
         }),
-      writeTextFile: (request, cwd) =>
+      writeTextFile: (request, policy) =>
         writeAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots: writableClientFileRoots(policy),
           request,
         }),
     },

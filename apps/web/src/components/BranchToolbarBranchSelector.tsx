@@ -35,6 +35,7 @@ import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { useWorkspaceRepositories } from "../state/threadRepositories";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -157,6 +158,12 @@ export function BranchToolbarBranchSelector({
     : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
+  const isTaskFolderThread =
+    useWorkspaceRepositories(
+      activeWorktreePath === null
+        ? null
+        : { environmentId, project: activeProject, worktreePath: activeWorktreePath },
+    )?.taskFolder != null;
   const hasServerThread = serverThread !== null;
   const canUpdateThreadBranch = !hasServerThread || canOperateThread;
   const canChangeThreadBranch = canWriteSourceControl && canUpdateThreadBranch;
@@ -256,7 +263,14 @@ export function BranchToolbarBranchSelector({
   const pickerCreateBranchItemValue = hasExactBranchMatch ? null : createBranchItemValue;
   const branchPickerItems = [
     ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
-    ...refs.map((refName) => refName.name),
+    ...refs
+      .filter(
+        (refName) =>
+          !isTaskFolderThread ||
+          !refName.worktreePath ||
+          refName.worktreePath === activeWorktreePath,
+      )
+      .map((refName) => refName.name),
     ...(pickerCreateBranchItemValue ? [pickerCreateBranchItemValue] : []),
   ];
   const filteredBranchPickerItems =
@@ -394,6 +408,7 @@ export function BranchToolbarBranchSelector({
       activeProjectCwd,
       activeWorktreePath,
       refName,
+      keepWorktree: isTaskFolderThread,
     });
 
     if (selectionTarget.reuseExistingWorktree) {
@@ -636,6 +651,7 @@ export function BranchToolbarBranchSelector({
                 activeProjectCwd,
                 activeWorktreePath,
                 refName,
+                keepWorktree: isTaskFolderThread,
               }).reuseExistingWorktree))
         }
         onClick={() => selectPickerItem(itemValue)}

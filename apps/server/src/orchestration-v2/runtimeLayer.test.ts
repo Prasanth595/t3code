@@ -248,6 +248,7 @@ const seedProject = (input: {
         workspaceRoot: input.workspaceRoot,
         defaultModelSelection: input.defaultModelSelection,
         scripts: [],
+        trackedFolders: [],
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
       },

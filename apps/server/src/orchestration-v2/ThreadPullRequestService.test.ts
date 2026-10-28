@@ -93,6 +93,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           workspaceRoot: "/workspace/project",
           defaultModelSelection: null,
           scripts: [],
+          trackedFolders: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z",
         };
@@ -208,6 +209,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             workspaceRoot: "/workspace/project",
             defaultModelSelection: null,
             scripts: [],
+            trackedFolders: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z",
           };

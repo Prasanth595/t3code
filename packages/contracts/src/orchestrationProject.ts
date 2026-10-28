@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { ProjectScript, ReceivedProjectIcon } from "./project.ts";
+import { ProjectScript, ProjectTrackedFoldersWithDefault, ReceivedProjectIcon } from "./project.ts";
 
 export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
@@ -17,6 +17,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
   scripts: Schema.Array(ProjectScript),
+  trackedFolders: ProjectTrackedFoldersWithDefault,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

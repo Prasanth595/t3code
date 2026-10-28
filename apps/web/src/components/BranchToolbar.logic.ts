@@ -69,13 +69,18 @@ export function shouldShowComposerContextStrip(input: {
   persistInActiveThreads: boolean;
   hasActiveProject: boolean;
   isGitRepo: boolean;
+  /** A plain home with tracked repos still offers "Initialize Git and commit home files". */
+  hasTrackedFolders?: boolean;
   showEnvironmentIndicator: boolean;
   hostsRestingComposerControls: boolean;
 }): boolean {
   return (
     input.hasActiveProject &&
     (input.isDraftHeroState || input.persistInActiveThreads) &&
-    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
+    (input.isGitRepo ||
+      input.hasTrackedFolders === true ||
+      input.showEnvironmentIndicator ||
+      input.hostsRestingComposerControls)
   );
 }
 
@@ -253,12 +258,22 @@ export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;
   refName: Pick<VcsRef, "isDefault" | "worktreePath">;
+  /** Task folder threads stay in their worktree; moving would leave the other repos behind. */
+  keepWorktree?: boolean;
 }): {
   checkoutCwd: string;
   nextWorktreePath: string | null;
   reuseExistingWorktree: boolean;
 } {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
+
+  if (input.keepWorktree === true && activeWorktreePath !== null) {
+    return {
+      checkoutCwd: activeWorktreePath,
+      nextWorktreePath: activeWorktreePath,
+      reuseExistingWorktree: refName.worktreePath === activeWorktreePath,
+    };
+  }
 
   if (refName.worktreePath) {
     return {

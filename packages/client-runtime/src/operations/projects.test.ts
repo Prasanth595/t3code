@@ -83,6 +83,7 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         scripts: [],
+        trackedFolders: [],
       },
       {
         environmentId: env,
@@ -94,6 +95,7 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         scripts: [],
+        trackedFolders: [],
       },
     ];
 

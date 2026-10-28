@@ -168,6 +168,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -987,6 +988,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const taskFolders = yield* Effect.serviceOption(TaskFolderStore);
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
@@ -11415,6 +11417,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           path,
           fileSystem,
           projections: projectionStore,
+          ...(Option.isSome(taskFolders) ? { taskFolders: taskFolders.value } : {}),
         }).pipe(
           Effect.mapError(
             (cause) =>

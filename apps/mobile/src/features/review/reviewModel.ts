@@ -7,6 +7,13 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 
+import {
+  reviewRepositorySectionPrefix,
+  turnDiffForReviewRepository,
+  type ReviewRepository,
+  type ReviewTurnDiff,
+} from "./reviewRepositories";
+
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
@@ -501,29 +508,39 @@ export function getReadyReviewCheckpoints(
 
 export function reviewTurnDiffsBySectionId(
   checkpoints: ReadonlyArray<Pick<ThreadCheckpointSummary, "checkpointTurnCount">>,
-  diffByTurnCount: Readonly<Record<number, string | undefined>>,
+  diffByTurnCount: Readonly<Record<number, ReviewTurnDiff | undefined>>,
+  repository: ReviewRepository | null = null,
 ): Readonly<Record<string, string | undefined>> {
+  const prefix = reviewRepositorySectionPrefix(repository);
   return Object.fromEntries(
     checkpoints.map((checkpoint) => [
-      getReviewSectionIdForCheckpoint(checkpoint),
-      diffByTurnCount[checkpoint.checkpointTurnCount],
+      `${prefix}${getReviewSectionIdForCheckpoint(checkpoint)}`,
+      turnDiffForReviewRepository(diffByTurnCount[checkpoint.checkpointTurnCount], repository),
     ]),
   );
 }
 
+/**
+ * `idPrefix` and `titleSuffix` name a tracked repo in multi-repo threads; the title carries the
+ * repo into inline review comments.
+ */
 export function buildReviewSectionItems(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingGitSections: boolean;
+  readonly idPrefix?: string;
+  readonly titleSuffix?: string;
 }): ReadonlyArray<ReviewSectionItem> {
+  const idPrefix = input.idPrefix ?? "";
+  const titleSuffix = input.titleSuffix ?? "";
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
-      const id = getReviewSectionIdForCheckpoint(checkpoint);
+      const id = `${idPrefix}${getReviewSectionIdForCheckpoint(checkpoint)}`;
       return {
         id,
         kind: "turn",
-        title: checkpointTitle(checkpoint),
+        title: `${checkpointTitle(checkpoint)}${titleSuffix}`,
         subtitle: checkpointSubtitle(checkpoint),
         diff: input.turnDiffById[id] ?? null,
         isLoading: false,
@@ -532,9 +549,9 @@ export function buildReviewSectionItems(input: {
   );
 
   const gitItems = input.gitSections.map<ReviewSectionItem>((section) => ({
-    id: `git:${section.kind}`,
+    id: `${idPrefix}git:${section.kind}`,
     kind: section.kind,
-    title: section.title,
+    title: `${section.title}${titleSuffix}`,
     subtitle: gitSubtitle(section),
     diff: section.diff,
     source: section,
@@ -542,14 +559,14 @@ export function buildReviewSectionItems(input: {
     truncated: section.truncated,
     isLoading: false,
   }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
+  const hasChangesItem = gitItems.some((item) => item.kind === "branch-range");
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID,
+            id: `${idPrefix}${CHANGES_SECTION_ID}`,
             kind: "branch-range",
-            title: CHANGES_TITLE,
+            title: `${CHANGES_TITLE}${titleSuffix}`,
             subtitle: null,
             diff: null,
             isLoading: true,
@@ -564,7 +581,7 @@ export function buildReviewSectionItems(input: {
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (sections.find((section) => section.kind === "branch-range") ?? sections[0])?.id ?? null;
 }
 
 /**

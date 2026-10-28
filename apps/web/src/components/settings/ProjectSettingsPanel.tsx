@@ -46,6 +46,7 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
@@ -560,6 +561,18 @@ function ProjectDetail({
             }
           />
         </SettingsSection>
+        {group.memberProjects.map((member) => (
+          <ProjectRepositoriesSettings
+            key={member.physicalProjectKey}
+            project={member}
+            title={
+              hasMultipleCheckouts
+                ? `Repositories on ${member.environmentLabel ?? "this machine"}`
+                : "Repositories"
+            }
+            canEdit={editableIds.has(member.environmentId)}
+          />
+        ))}
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}

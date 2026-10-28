@@ -7,11 +7,18 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
+import type { ThreadGitRepositoryTarget } from "./use-selected-thread-git-actions";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
-export function useSelectedThreadGitState() {
+export function useSelectedThreadGitState(repository?: ThreadGitRepositoryTarget) {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const worktree = useSelectedThreadWorktree();
+  const selectedThreadCwd = repository?.cwd ?? worktree.selectedThreadCwd;
+  // Worktrees share their repo's branches, so home lists them from the project's checkout.
+  const branchCwd =
+    repository === undefined || repository.home
+      ? (selectedThreadProject?.workspaceRoot ?? null)
+      : repository.cwd;
 
   const selectedThreadGitTarget = useMemo(
     () => ({
@@ -33,10 +40,10 @@ export function useSelectedThreadGitState() {
   const selectedThreadBranchTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadProject?.workspaceRoot ?? null,
+      cwd: branchCwd,
       query: null,
     }),
-    [selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
+    [selectedThread?.environmentId, branchCwd],
   );
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
   const selectedThreadBranches = useMemo(

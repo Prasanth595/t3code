@@ -395,6 +395,16 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  WorkspaceHomeGitInitInput,
+  WorkspaceHomeGitInitPreview,
+  WorkspaceInitializeHomeGitResult,
+  WorkspaceListRepositoriesInput,
+  WorkspaceListRepositoriesResult,
+  WorkspaceRepositoriesError,
+  WorkspaceScanFoldersInput,
+  WorkspaceScanFoldersResult,
+} from "./workspaceRepositories.ts";
 
 export const WS_METHODS = {
   projectsList: "projects.list",
@@ -451,6 +461,11 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+
+  workspaceListRepositories: "workspace.listRepositories",
+  workspaceScanFolders: "workspace.scanFolders",
+  workspacePreviewHomeGitInit: "workspace.previewHomeGitInit",
+  workspaceInitializeHomeGit: "workspace.initializeHomeGit",
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
@@ -1493,6 +1508,30 @@ const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkspaceListRepositoriesRpc = Rpc.make(WS_METHODS.workspaceListRepositories, {
+  payload: WorkspaceListRepositoriesInput,
+  success: WorkspaceListRepositoriesResult,
+  error: Schema.Union([WorkspaceRepositoriesError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceScanFoldersRpc = Rpc.make(WS_METHODS.workspaceScanFolders, {
+  payload: WorkspaceScanFoldersInput,
+  success: WorkspaceScanFoldersResult,
+  error: Schema.Union([WorkspaceRepositoriesError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspacePreviewHomeGitInitRpc = Rpc.make(WS_METHODS.workspacePreviewHomeGitInit, {
+  payload: WorkspaceHomeGitInitInput,
+  success: WorkspaceHomeGitInitPreview,
+  error: Schema.Union([WorkspaceRepositoriesError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceInitializeHomeGitRpc = Rpc.make(WS_METHODS.workspaceInitializeHomeGit, {
+  payload: WorkspaceHomeGitInitInput,
+  success: WorkspaceInitializeHomeGitResult,
+  error: Schema.Union([WorkspaceRepositoriesError, EnvironmentAuthorizationError]),
+});
+
 const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
   payload: ReviewDiffPreviewInput,
   success: ReviewDiffPreviewResult,
@@ -2120,6 +2159,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsWorkspaceListRepositoriesRpc,
+  WsWorkspaceScanFoldersRpc,
+  WsWorkspacePreviewHomeGitInitRpc,
+  WsWorkspaceInitializeHomeGitRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

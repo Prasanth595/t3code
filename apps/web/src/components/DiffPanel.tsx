@@ -1,12 +1,18 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  threadRelativeFilePath,
+  turnDiffRepositoryPatches,
+} from "@t3tools/client-runtime/state/thread-repositories";
 import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import { fileBasename } from "@t3tools/shared/path";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -19,6 +25,8 @@ import {
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -30,6 +38,7 @@ import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  type DiffPanelRepository,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -42,6 +51,7 @@ import {
   buildFileDiffIdentityKey,
   getDiffLineStat,
   getRenderablePatch,
+  type RenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
@@ -57,6 +67,11 @@ import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
+import {
+  diffPanelRepositoryOptions,
+  placeRepositoryFiles,
+  repositoryDiffPreviewsAtom,
+} from "./diffs/repositoryDiffs";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -86,6 +101,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
+import { useThreadWorkspaceRepositories } from "../state/threadRepositories";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
@@ -93,9 +109,19 @@ import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
+import { useRightPanelStore } from "../rightPanelStore";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
+const ALL_REPOSITORIES = "__all_repositories__";
+
+/** Where a listed diff file lives: its path within its repo, and that repo's folder. */
+interface DiffFileTarget {
+  readonly filePath: string;
+  readonly cwd: string | undefined;
+  readonly home: boolean;
+}
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
@@ -253,6 +279,27 @@ export default function DiffPanel({
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const workspaceRepositories = useThreadWorkspaceRepositories(routeThreadRef);
+  const storedRepository = useDiffPanelStore((state) =>
+    routeThreadRef ? state.repositoryByThreadKey[scopedThreadKey(routeThreadRef)] : undefined,
+  );
+  const repositoryOptions = diffPanelRepositoryOptions(
+    workspaceRepositories,
+    storedRepository,
+    isGitRepo && activeCwd != null
+      ? { name: activeProject?.title ?? "home", cwd: activeCwd }
+      : null,
+  );
+  const showRepositoryFilter = repositoryOptions.length > 1;
+  // A lone repo beside a plain home folder shows without a filter.
+  const shownRepository = showRepositoryFilter
+    ? (repositoryOptions.find((option) => option.cwd === storedRepository?.cwd) ?? null)
+    : repositoryOptions[0]?.key === "home"
+      ? null
+      : (repositoryOptions[0] ?? null);
+  const allRepositories = showRepositoryFilter && shownRepository === null;
+  const hasGitSurfaces = isGitRepo || repositoryOptions.length > 0;
+  const diffFilesCwd = shownRepository?.cwd ?? activeCwd;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
     if (left.checkpointTurnCount !== right.checkpointTurnCount) {
@@ -292,15 +339,18 @@ export default function DiffPanel({
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.runId}` : selectedGitScope;
+  const repositoryScopeKey = showRepositoryFilter ? `:${shownRepository?.cwd ?? "all"}` : "";
   const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}${repositoryScopeKey}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
-  const reviewSectionTitle = selectedTurn
-    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : selectedGitScope === "unstaged"
-      ? "Uncommitted"
-      : "Changes";
+  const reviewSectionTitle = `${
+    selectedTurn
+      ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+      : selectedGitScope === "unstaged"
+        ? "Uncommitted"
+        : "Changes"
+  }${showRepositoryFilter ? ` in ${shownRepository?.name ?? "all repos"}` : ""}`;
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -317,18 +367,33 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    { enabled: hasGitSurfaces && selectedTurn !== undefined },
   );
   const branchDiffPreviewInput =
-    canReadFiles && selectedRunId === null && activeThread && activeCwd
+    canReadFiles && selectedRunId === null && !allRepositories && activeThread && diffFilesCwd
       ? {
-          cwd: activeCwd,
+          cwd: diffFilesCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
         }
       : undefined;
   const canRefreshGitDiff =
-    isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
+    hasGitSurfaces && selectedRunId === null && activeThread != null && diffFilesCwd != null;
+  // A base branch picked for one repo may not exist in another, so All repos uses each default.
+  const allRepositoryPreviewsAtom = repositoryDiffPreviewsAtom(
+    canReadFiles && selectedRunId === null && allRepositories && activeThread
+      ? {
+          environmentId: activeThread.environmentId,
+          inputs: repositoryOptions.map((option) => ({
+            cwd: option.cwd,
+            ignoreWhitespace: diffIgnoreWhitespace,
+          })),
+          revision: workspaceMutationId,
+        }
+      : null,
+  );
+  const allRepositoryPreviews = useAtomValue(allRepositoryPreviewsAtom);
+  const refreshAllRepositoryPreviews = useAtomRefresh(allRepositoryPreviewsAtom);
   // Read under the workspace mutation id, so each mutation refetches the diff; the panel stays
   // mounted while hidden, so a mutation made then is already reflected when it shows.
   const branchDiffPreview = useEnvironmentQuery(
@@ -350,27 +415,114 @@ export default function DiffPanel({
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const refreshDiffFromUserAction = allRepositories
+    ? refreshAllRepositoryPreviews
+    : refreshPreviewQuery;
 
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
-  const selectedPatch = selectedTurn ? activeCheckpointDiff.data?.diff : gitDiff;
-  const isSelectedPatchTruncated = !selectedTurn && selectedGitSource?.truncated === true;
+  const homeRepositoryName =
+    workspaceRepositories?.repositories.find((repository) => repository.kind === "home")?.name ??
+    fileBasename(activeProject?.workspaceRoot ?? activeCwd ?? "");
+  const turnRepositoryPatches = activeCheckpointDiff.data
+    ? turnDiffRepositoryPatches(activeCheckpointDiff.data, homeRepositoryName)
+    : [];
+  const shownTurnPatch =
+    shownRepository === null || activeCheckpointDiff.data === null
+      ? activeCheckpointDiff.data?.diff
+      : (turnRepositoryPatches.find((patch) => patch.key === shownRepository.key)?.patch ?? "");
+  const gitSourceKind = selectedGitScope === "unstaged" ? "working-tree" : "branch-range";
+  // All repos lists each repo's patch under its path from the thread's cwd; a repo too large to
+  // load at once is named instead, to open on its own.
+  const allRepositoryParts = !allRepositories
+    ? null
+    : selectedTurn
+      ? activeCheckpointDiff.data === null
+        ? null
+        : turnRepositoryPatches.map((patch) => ({
+            ...patch,
+            cwd:
+              patch.key === "home"
+                ? activeCwd
+                : repositoryOptions.find((option) => option.key === patch.key)?.cwd,
+            truncated: false,
+            error: null,
+          }))
+      : allRepositoryPreviews.length === 0 ||
+          allRepositoryPreviews.some((result) => result._tag === "Initial")
+        ? null
+        : repositoryOptions.map((option, index) => {
+            const result = allRepositoryPreviews[index];
+            const source = (
+              result === undefined ? null : Option.getOrNull(AsyncResult.value(result))
+            )?.sources.find((candidate) => candidate.kind === gitSourceKind);
+            return {
+              key: option.key,
+              name: option.name,
+              cwd: option.cwd,
+              relativePath: option.relativePath ?? option.cwd,
+              patch: source && !source.truncated ? source.diff : "",
+              truncated: source?.truncated === true,
+              error: result?._tag === "Failure" ? `Could not load ${option.name}.` : null,
+            };
+          });
+  const allRepositoryNameByFile = new Map<FileDiffMetadata, string>();
+  // Placed paths can leave the thread's folder (`../api/...`), so actions use the repo's own.
+  const allRepositoryFileTargets = new Map<string, DiffFileTarget>();
+  const allRepositoriesFiles = (allRepositoryParts ?? []).flatMap((part) => {
+    const parsed = getRenderablePatch(part.patch, `diff-panel:${resolvedTheme}:${part.key}`, {
+      compactPartialHunkOffsets: selectedRunId === null,
+    });
+    if (parsed?.kind !== "files") return [];
+    const placed = placeRepositoryFiles(parsed.files, part.relativePath);
+    parsed.files.forEach((file, index) => {
+      const placedFile = placed[index]!;
+      if (part.key !== "home") allRepositoryNameByFile.set(placedFile, part.name);
+      allRepositoryFileTargets.set(resolveFileDiffPath(placedFile), {
+        filePath: resolveFileDiffPath(file),
+        cwd: part.cwd,
+        home: part.key === "home",
+      });
+    });
+    return placed;
+  });
+  const allRepositoriesPatch: RenderablePatch | null =
+    allRepositoriesFiles.length === 0
+      ? null
+      : { kind: "files", files: allRepositoriesFiles, sourceFiles: allRepositoriesFiles };
+  const truncatedRepositoryNames =
+    allRepositoryParts?.filter((part) => part.truncated).map((part) => part.name) ?? [];
+  const selectedPatch = selectedTurn ? shownTurnPatch : gitDiff;
+  const isSelectedPatchTruncated =
+    !selectedTurn && !allRepositories && selectedGitSource?.truncated === true;
   const selectedPatchQuery = selectedTurn ? activeCheckpointDiff : branchDiffPreview;
-  const isLoadingSelectedPatch = selectedPatchQuery.isPending && selectedPatchQuery.data === null;
-  const selectedPatchError = selectedTurn ? activeCheckpointDiff.error : branchDiffPreview.error;
+  const isLoadingSelectedPatch =
+    allRepositories && !selectedTurn
+      ? allRepositoryParts === null
+      : selectedPatchQuery.isPending && selectedPatchQuery.data === null;
+  const selectedPatchError = allRepositories
+    ? selectedTurn
+      ? activeCheckpointDiff.error
+      : allRepositoryParts
+          ?.flatMap((part) => (part.error === null ? [] : [part.error]))
+          .join(" ") || null
+    : selectedTurn
+      ? activeCheckpointDiff.error
+      : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
-  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const hasNoNetChanges = allRepositories
+    ? allRepositoryParts !== null && allRepositoriesPatch === null
+    : hasResolvedPatch && selectedPatch.trim().length === 0;
   const lazySource =
-    !selectedTurn && selectedGitSource?.truncated && selectedGitSource.files
+    !selectedTurn && !allRepositories && selectedGitSource?.truncated && selectedGitSource.files
       ? selectedGitSource
       : null;
-  const renderablePatch = getRenderablePatch(
-    lazySource ? undefined : selectedPatch,
-    `diff-panel:${resolvedTheme}`,
-    { compactPartialHunkOffsets: selectedRunId === null },
-  );
+  const renderablePatch = allRepositories
+    ? allRepositoriesPatch
+    : getRenderablePatch(lazySource ? undefined : selectedPatch, `diff-panel:${resolvedTheme}`, {
+        compactPartialHunkOffsets: selectedRunId === null,
+      });
   const fileStats = new Map(lazySource?.files?.map((file) => [file.path, file]));
   const sourceLineStat =
     !selectedTurn && selectedGitSource?.files
@@ -474,13 +626,23 @@ export default function DiffPanel({
   // showing it revalidates the diff; that also stands in for focus events missed while hidden.
   // A git diff is too costly to repeat on a timer nobody asked for. A diff read within the floor,
   // such as a mutation's refetch while hidden, already counts as that revalidation.
+  const allRepositoryPreviewsUpdatedAt = Math.min(
+    ...allRepositoryPreviews.map((result) => (result._tag === "Success" ? result.timestamp : 0)),
+  );
   useLiveRefresh(
-    branchDiffPreview.data !== null && !branchDiffPreview.isPending
-      ? () => {
-          if (Date.now() - branchDiffPreview.dataUpdatedAt < LIVE_REFRESH_MIN_INTERVAL_MS) return;
-          refreshBranchDiffPreview();
-        }
-      : null,
+    allRepositories
+      ? allRepositoryParts !== null && !allRepositoryPreviews.some((result) => result.waiting)
+        ? () => {
+            if (Date.now() - allRepositoryPreviewsUpdatedAt < LIVE_REFRESH_MIN_INTERVAL_MS) return;
+            refreshAllRepositoryPreviews();
+          }
+        : null
+      : branchDiffPreview.data !== null && !branchDiffPreview.isPending
+        ? () => {
+            if (Date.now() - branchDiffPreview.dataUpdatedAt < LIVE_REFRESH_MIN_INTERVAL_MS) return;
+            refreshBranchDiffPreview();
+          }
+        : null,
     {
       enabled: visible && canReadFiles && canRefreshGitDiff,
       key: diffRefreshKey,
@@ -489,7 +651,10 @@ export default function DiffPanel({
     },
   );
 
-  const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
+  const isRefreshingDiff =
+    branchDiffPreview.isPending ||
+    areFilePatchesPending ||
+    (allRepositories && allRepositoryPreviews.some((result) => result.waiting));
   const renderableFileEntries = renderableFiles.map(getCachedFileEntry);
   const diffFileKeys = renderableFileEntries.map((file) => file.fileKey);
   const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
@@ -550,27 +715,55 @@ export default function DiffPanel({
     return true;
   };
 
+  // All repos lists a repo's files under its path from the thread's cwd.
+  const revealFilePath =
+    selectedFilePath !== null && allRepositories
+      ? threadRelativeFilePath(
+          turnRepositoryPatches.find(
+            (patch) =>
+              patch.key ===
+              (diffSelection.kind === "turn" ? (diffSelection.repositoryKey ?? "home") : "home"),
+          )?.relativePath ?? "",
+          selectedFilePath,
+        )
+      : selectedFilePath;
   // A file another view asked to reveal (a chat diff link): retried as the diff loads until it
   // holds the file, then not again until a new request, so it does not undo what the user did since.
   const externalRevealRef = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally requested file in the diff viewer, retrying as the diff DOM loads
   useEffect(() => {
-    if (!selectedFilePath) {
+    if (!revealFilePath) {
       externalRevealRef.current = null;
       return;
     }
-    const key = JSON.stringify([collapseScopeKey, selectedFilePath, selectedFileRevealRequestId]);
+    const key = JSON.stringify([collapseScopeKey, revealFilePath, selectedFileRevealRequestId]);
     if (externalRevealRef.current === key) return;
-    if (revealDiffFile(selectedFilePath)) {
+    if (revealDiffFile(revealFilePath)) {
       externalRevealRef.current = key;
     }
-  }, [collapseScopeKey, selectedFilePath, selectedFileRevealRequestId, revealDiffFile]);
+  }, [collapseScopeKey, revealFilePath, selectedFileRevealRequestId, revealDiffFile]);
 
-  const openDiffFile = (filePath: string) => {
+  const diffFileTarget = (filePath: string): DiffFileTarget =>
+    allRepositoryFileTargets.get(filePath) ?? {
+      filePath,
+      cwd: diffFilesCwd,
+      home: shownRepository === null || shownRepository.key === "home",
+    };
+  const openDiffFile = (shownFilePath: string) => {
+    const { filePath, cwd, home } = diffFileTarget(shownFilePath);
+    // The file panel reads relative paths from the thread's folder, so other repos open by path.
+    if (!home) {
+      if (routeThreadRef && cwd) {
+        useRightPanelStore
+          .getState()
+          .openFile(routeThreadRef, resolvePathLinkTarget(filePath, cwd));
+      }
+      return;
+    }
     openDiffFilePrimaryAction({
       threadRef: routeThreadRef,
       filePath,
-      activeCwd,
+      activeCwd: cwd,
       repositoryRoot: activeRepositoryRoot,
       openInEditor: (targetPath) => {
         void (async () => {
@@ -628,6 +821,13 @@ export default function DiffPanel({
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+  };
+  const selectRepositoryValue = (value: string) => {
+    if (!routeThreadRef) return;
+    const option = repositoryOptions.find((candidate) => candidate.cwd === value);
+    const repository: DiffPanelRepository | null =
+      option === undefined ? null : { key: option.key, name: option.name, cwd: option.cwd };
+    useDiffPanelStore.getState().selectRepository(routeThreadRef, repository);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedScopeValue =
@@ -698,6 +898,35 @@ export default function DiffPanel({
             </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
+        {showRepositoryFilter && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button size="xs" variant="secondary" />}
+              className="max-w-full"
+              aria-label={`Repository: ${shownRepository?.name ?? "All repos"}`}
+            >
+              <span className="truncate">{shownRepository?.name ?? "All repos"}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={shownRepository?.cwd ?? ALL_REPOSITORIES}
+                onValueChange={selectRepositoryValue}
+              >
+                {workspaceRepositories !== null ? (
+                  <DropdownMenuRadioItem value={ALL_REPOSITORIES} closeOnClick>
+                    <span>All repos</span>
+                  </DropdownMenuRadioItem>
+                ) : null}
+                {repositoryOptions.map((option) => (
+                  <DropdownMenuRadioItem key={option.cwd} value={option.cwd} closeOnClick>
+                    <span>{option.name}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {selectedRunId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
@@ -973,7 +1202,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !hasGitSurfaces ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
@@ -996,6 +1225,13 @@ export default function DiffPanel({
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
                 {selectedGitSource?.files ? " Totals include all changes." : ""}
+              </p>
+            )}
+            {truncatedRepositoryNames.length > 0 && (
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+                {`Too large to show with the others: ${truncatedRepositoryNames.join(", ")}. Pick ${
+                  truncatedRepositoryNames.length === 1 ? "it" : "one"
+                } in the repo filter.`}
               </p>
             )}
             {selectedPatchError && !renderablePatch && (
@@ -1062,15 +1298,16 @@ export default function DiffPanel({
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-title"),
                     );
-                    const filePath = title?.textContent?.trim();
-                    if (!filePath) return;
+                    const shownFilePath = title?.textContent?.trim();
+                    if (!shownFilePath) return;
                     event.preventDefault();
+                    const { filePath, cwd, home } = diffFileTarget(shownFilePath);
                     onFileContextMenu(
                       {
                         environmentId: activeThread?.environmentId ?? null,
                         filePath,
-                        workspaceRoot: activeCwd,
-                        repositoryRoot: activeRepositoryRoot,
+                        workspaceRoot: cwd,
+                        repositoryRoot: home ? activeRepositoryRoot : undefined,
                       },
                       event,
                     );
@@ -1118,14 +1355,22 @@ export default function DiffPanel({
                     onRevealSearchMatch={unfoldDiffFile}
                     renderHeaderPrefix={(fileDiff, fileKey) => {
                       const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
+                      const repositoryName = allRepositoryNameByFile.get(fileDiff);
                       return (
-                        <DiffFileCollapseToggle
-                          filePath={resolveFileDiffPath(fileDiff)}
-                          fileKey={fileKey}
-                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
-                          unavailable={unavailable}
-                          onToggle={toggleDiffFileCollapsed}
-                        />
+                        <>
+                          <DiffFileCollapseToggle
+                            filePath={resolveFileDiffPath(fileDiff)}
+                            fileKey={fileKey}
+                            collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
+                            unavailable={unavailable}
+                            onToggle={toggleDiffFileCollapsed}
+                          />
+                          {repositoryName === undefined ? null : (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {repositoryName}
+                            </span>
+                          )}
+                        </>
                       );
                     }}
                     options={{
@@ -1146,7 +1391,7 @@ export default function DiffPanel({
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}
-                      selectedPath={selectedFilePath}
+                      selectedPath={revealFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
                     />

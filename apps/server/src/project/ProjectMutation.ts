@@ -23,6 +23,9 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
           ? {}
           : { defaultModelSelection: mutation.defaultModelSelection }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+        ...(mutation.trackedFolders === undefined
+          ? {}
+          : { trackedFolders: mutation.trackedFolders }),
       });
 
     case "project.update":
@@ -41,6 +44,9 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
           ? {}
           : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+        ...(mutation.trackedFolders === undefined
+          ? {}
+          : { trackedFolders: mutation.trackedFolders }),
       });
 
     case "project.delete":
