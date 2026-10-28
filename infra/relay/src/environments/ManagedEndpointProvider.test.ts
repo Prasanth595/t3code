@@ -1439,9 +1439,14 @@ describe("ManagedEndpointProvider", () => {
         expect(result.failure).toMatchObject({ stage: "remove-allocation" });
       }
       // The tunnel is gone; without the mark the tunnel limit would keep counting it.
+      const claim = allocationCalls.find((call) => call.operation === "claimDeprovision");
       expect(allocationCalls.at(-1)).toMatchObject({
         operation: "claimRelease",
-        input: { tunnelId: "tunnel-id", markReleased: true },
+        input: {
+          tunnelId: "tunnel-id",
+          generation: (claim?.input as { generation: number }).generation + 1,
+          markReleased: true,
+        },
       });
     }).pipe(Effect.provide(layer));
   });

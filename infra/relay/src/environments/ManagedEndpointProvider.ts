@@ -958,8 +958,9 @@ const make = Effect.gen(function* () {
                 }),
               ),
           }),
-          // The rollback keeps the deleted tunnel's id; mark it released so the tunnel limit stops counting it.
-          Effect.tapError(() =>
+          // The rollback keeps the deleted tunnel's id; mark it released so the tunnel limit stops
+          // counting it. onError also covers an interrupted unlink, which rolls back the same way.
+          Effect.onError(() =>
             tunnelDeleted
               ? allocations
                   .claimRelease({
@@ -969,7 +970,16 @@ const make = Effect.gen(function* () {
                     generation: claimedGeneration,
                     markReleased: true,
                   })
-                  .pipe(Effect.ignore)
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("Failed to mark a deleted managed tunnel released", {
+                        userId: input.userId,
+                        environmentId: input.environmentId,
+                        tunnelId,
+                        error: error.message,
+                      }),
+                    ),
+                  )
               : Effect.void,
           ),
         );
