@@ -1260,42 +1260,77 @@ it.effect("keeps a confirmed merge when a read that started before it answers la
   ),
 );
 
-it.effect("applies an action result another client's refresh event carries without a read", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
-      const applied = yield* Deferred.make<void>();
-      let reads = 0;
-      const client = actionResultClient({
-        [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => SubscriptionRef.changes(events),
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.sync(() => {
-            reads++;
-            return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+it.effect.each(["2026-10-27T10:00:00Z", "2026-10-27T10:00:01Z"])(
+  "keeps newer refresh state when an older action reply arrives with date %s",
+  (updatedAt) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* SubscriptionRef.make<PullRequestRefreshEvent>({ revision: 0 });
+        const applied = yield* Deferred.make<void>();
+        let reads = 0;
+        const newer = {
+          ...confirmedActionResult,
+          state: "open" as const,
+          isDraft: true,
+          updatedAt,
+          observedAt: 300,
+        };
+        const client = actionResultClient({
+          [WS_METHODS.pullRequestsRunActionWithResult]: () =>
+            Effect.succeed({
+              ...newer,
+              isDraft: false,
+              updatedAt: confirmedActionResult.updatedAt,
+              observedAt: 200,
+            }),
+          [WS_METHODS.pullRequestsPreview]: () =>
+            Effect.succeed({ ...actionReference, state: "open", isDraft: false }),
+          [WS_METHODS.pullRequestsSubscribeRefreshEvents]: () => SubscriptionRef.changes(events),
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.sync(() => {
+              reads++;
+              return { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          actionResult: () => Deferred.succeed(applied, undefined).pipe(Effect.asVoid),
+        });
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const refreshes = atoms.refreshes({ environmentId: target.environmentId, input: {} });
+        registry.mount(refreshes);
+        yield* AtomRegistry.getResult(registry, refreshes);
+        const detail = atoms.detail(target);
+        registry.mount(detail);
+        yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+
+        const previews = [atoms.preview(target), atoms.previewCard(target)];
+        for (const preview of previews) {
+          registry.mount(preview);
+          yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true });
+        }
+
+        yield* SubscriptionRef.set(events, {
+          revision: 1,
+          reference: actionReference,
+          result: newer,
+        });
+        yield* Deferred.await(applied);
+
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "ready" },
           }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-        actionResult: () => Deferred.succeed(applied, undefined).pipe(Effect.asVoid),
-      });
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const refreshes = atoms.refreshes({ environmentId: target.environmentId, input: {} });
-      registry.mount(refreshes);
-      yield* AtomRegistry.getResult(registry, refreshes);
-      const detail = atoms.detail(target);
-      registry.mount(detail);
-      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-
-      yield* SubscriptionRef.set(events, {
-        revision: 1,
-        reference: actionReference,
-        result: confirmedActionResult,
-      });
-      yield* Deferred.await(applied);
-
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
-      expect(reads).toBe(1);
-    }),
-  ),
+        );
+        for (const reader of [detail, ...previews]) {
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(reader)))).toMatchObject({
+            state: "open",
+            isDraft: true,
+          });
+        }
+        expect(reads).toBe(1);
+      }),
+    ),
 );
 
 it.effect("falls back to the plain action on a server without action results", () =>

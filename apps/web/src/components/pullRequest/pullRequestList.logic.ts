@@ -796,7 +796,7 @@ export interface PullRequestListOverride {
   readonly observedAt?: number;
 }
 
-export function pullRequestResultOverride(
+function pullRequestResultOverride(
   { state, isDraft, updatedAt, observedAt }: PullRequestActionResult,
   token: number,
   at: number,

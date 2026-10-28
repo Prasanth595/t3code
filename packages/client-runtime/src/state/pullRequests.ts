@@ -435,8 +435,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             (result.headSha !== undefined && result.headSha !== value.headSha)
           )
             return "refresh";
-          const { observedAt: _observedAt, ...state } = result;
-          return { ...value, ...state, autoMergeMethod: result.autoMergeMethod };
+          return { ...value, ...result, autoMergeMethod: result.autoMergeMethod };
         },
       },
     ),
@@ -447,8 +446,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     reference: PullRequestRef,
     result: PullRequestActionResult,
   ) =>
-    samePullRequest(input, reference) && (value.state !== "merged" || result.state === "merged")
-      ? { ...value, state: result.state, isDraft: result.isDraft }
+    samePullRequest(input, reference) && !isStaleResult(value, result)
+      ? {
+          ...value,
+          state: result.state,
+          isDraft: result.isDraft,
+          updatedAt: result.updatedAt,
+          observedAt: result.observedAt,
+        }
       : value;
   const previewPersistence = persistQuery(PullRequestPreview);
   const previewQuery = (label: string) =>
