@@ -78,8 +78,8 @@ const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
 // Parsed replies kept across guest media requests; each holds only a reply's image sources.
 const PARSED_REPLY_LIMIT = 2_000;
-// Shared threads whose replies stay read between guest media requests.
-const SHARED_THREAD_REPLIES_LIMIT = 16;
+// Shared threads whose sent image replies are kept for guest media requests.
+const SHARED_THREAD_REPLIES_LIMIT = 64;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
 // the host. Closing or replacing the link ends the main stream at once.
 const ACCESS_RECHECK_INTERVAL = Duration.seconds(30);
@@ -206,6 +206,8 @@ export class GuestShareService extends Context.Service<
     ) => Effect.Effect<{ readonly path: string; readonly mimeType: string }, GuestShareAccessError>;
   }
 >()("t3/guest/GuestShareService") {}
+
+type AssistantReply = Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>;
 
 /** The thread record an event carries, for the share and the view. */
 const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread | null => {
@@ -478,6 +480,26 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
+  // The image replies each shared thread's guest stream has sent, in its opening snapshot or
+  // live, so an image loads while the guest's page can show its reply, inherited ones included.
+  const sentImageReplies = new Map<ThreadId, Map<string, AssistantReply>>();
+  const rememberSent = (threadId: ThreadId, items: Iterable<OrchestrationV2TurnItem>) => {
+    for (const item of items) {
+      // Only replies with image syntax can show an image; the rest are not kept.
+      if (item.type !== "assistant_message") continue;
+      if (!item.text.includes("![") && !/<img/i.test(item.text)) continue;
+      let replies = sentImageReplies.get(threadId);
+      if (replies === undefined) {
+        replies = new Map();
+        sentImageReplies.set(threadId, replies);
+        if (sentImageReplies.size > SHARED_THREAD_REPLIES_LIMIT) {
+          sentImageReplies.delete(sentImageReplies.keys().next().value!);
+        }
+      }
+      replies.set(`${item.threadId}\u0000${item.id}`, item);
+    }
+  };
+
   /**
    * The thread as the owner's thread subscription sends it: a bounded snapshot, then the same
    * wire events, batched the same way. Only the share's own state is added.
@@ -525,6 +547,8 @@ const make = Effect.gen(function* () {
         Stream.map((item): ReadonlyArray<GuestStreamEvent> => {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
+          if (item.event.type === "turn-item.updated")
+            rememberSent(thread.id, [item.event.payload]);
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
@@ -542,15 +566,17 @@ const make = Effect.gen(function* () {
     const untilExpiry = Effect.sleep(
       Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
     );
+    const openingSnapshot = buildBoundedThreadStreamSnapshot({
+      snapshotSequence: snapshot.snapshotSequence,
+      projection: snapshot.projection,
+    });
+    rememberSent(
+      thread.id,
+      openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
+    );
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
-      {
-        type: "thread",
-        item: buildBoundedThreadStreamSnapshot({
-          snapshotSequence: snapshot.snapshotSequence,
-          projection: snapshot.projection,
-        }),
-      },
+      { type: "thread", item: openingSnapshot },
     ];
     return Stream.fromIterable(opening).pipe(
       Stream.concat(
@@ -647,9 +673,7 @@ const make = Effect.gen(function* () {
   // Each image on the guest page is its own request; a reply is parsed once per revision, not once
   // per request, so a guest cannot keep the server parsing.
   const parsedReplies = new Map<string, ReadonlyArray<string>>();
-  const imageSourcesOf = (
-    reply: Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>,
-  ) => {
+  const imageSourcesOf = (reply: AssistantReply) => {
     // Length too, so a streaming reply that grows within one timestamp is parsed again.
     const key = `${reply.threadId}\u0000${reply.id}\u0000${DateTime.toEpochMillis(reply.updatedAt)}\u0000${reply.text.length}`;
     let sources = parsedReplies.get(key);
@@ -663,55 +687,12 @@ const make = Effect.gen(function* () {
     return sources;
   };
 
-  // The replies in the rows the guest's stream opens with, so replies a fork inherits count too,
-  // plus those read before. Read again only when the thread changes, not for every image.
-  const repliesByThread = new Map<
-    ThreadId,
-    {
-      readonly sequence: number;
-      readonly replies: ReadonlyArray<Parameters<typeof imageSourcesOf>[0]>;
-    }
-  >();
-  const windowReplies = Effect.fn("GuestShareService.windowReplies")(
-    function* (threadId: ThreadId) {
-      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
-      const cached = repliesByThread.get(threadId);
-      if (cached?.sequence === sequence) return cached.replies;
-      const { projection } = yield* orchestrator.getThreadSnapshotWindow(threadId, {
-        rowLimit: SNAPSHOT_ROW_LIMIT,
-        userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
-      });
-      // Replies already read stay: an open guest page keeps rows that slide out of the window.
-      const kept = new Map(
-        (cached?.replies ?? []).map((reply) => [`${reply.threadId}\u0000${reply.id}`, reply]),
-      );
-      for (const { item } of projection.visibleTurnItems) {
-        // Only replies with image syntax can show an image; the rest are not kept.
-        if (
-          item.type === "assistant_message" &&
-          (item.text.includes("![") || /<img/i.test(item.text))
-        ) {
-          kept.set(`${item.threadId}\u0000${item.id}`, item);
-        }
-      }
-      const replies = [...kept.values()];
-      repliesByThread.delete(threadId);
-      repliesByThread.set(threadId, { sequence, replies });
-      if (repliesByThread.size > SHARED_THREAD_REPLIES_LIMIT) {
-        repliesByThread.delete(repliesByThread.keys().next().value!);
-      }
-      return replies;
-    },
-    Effect.mapError(() => unavailable),
-  );
-
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
     const { thread } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
     if (mimeType === null) return yield* unavailable;
-    if (!repliesShowImage(path, yield* windowReplies(thread.id), imageSourcesOf)) {
-      return yield* unavailable;
-    }
+    const sent = sentImageReplies.get(thread.id)?.values() ?? [];
+    if (!repliesShowImage(path, [...sent], imageSourcesOf)) return yield* unavailable;
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),

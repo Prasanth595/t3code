@@ -5,6 +5,7 @@ import {
   CommandId,
   EventId,
   GuestShareId,
+  type GuestStreamEvent,
   MessageId,
   type OrchestrationV2TurnItem,
   ProjectId,
@@ -22,6 +23,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -855,7 +857,10 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
     const page = `${directory}/page.png`;
     const fromUser = `${directory}/from-user.png`;
     const unnamed = `${directory}/unnamed.png`;
-    for (const path of [shot, fileUrl, fromUser, unnamed]) yield* fileSystem.writeFile(path, PNG);
+    const later = `${directory}/later.png`;
+    for (const path of [shot, fileUrl, fromUser, unnamed, later]) {
+      yield* fileSystem.writeFile(path, PNG);
+    }
     yield* fileSystem.writeFileString(page, "<script>alert(1)</script>");
     const eventSink = yield* EventSink.EventSinkV2;
     const now = yield* DateTime.now;
@@ -937,17 +942,27 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
       name: "Sam",
     });
 
-    for (const path of [shot, fileUrl]) {
-      assert.deepStrictEqual(yield* guestShares.media(session, path), {
-        path,
-        mimeType: "image/png",
-      });
-    }
-    for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
-      assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
-    }
+    // The guest's page opens, and its stream sends the replies the fork inherits.
+    const sent = yield* Queue.unbounded<GuestStreamEvent>();
+    yield* Stream.runForEach(yield* guestShares.stream(session), (event) =>
+      Queue.offer(sent, event),
+    ).pipe(Effect.forkScoped);
+    const sentItem = Effect.fn(function* (id: string) {
+      for (;;) {
+        const event = yield* Queue.take(sent);
+        if (
+          event.type === "thread" &&
+          event.item.kind === "event" &&
+          event.item.event.type === "turn-item.updated" &&
+          event.item.event.payload.id === id
+        ) {
+          return;
+        }
+      }
+    });
 
-    // A screenshot the agent shows after the page loaded serves too.
+    // The agent shows another screenshot live, then enough rows to push the first reply out of
+    // the window, before the page asks for any image.
     yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("fork-message"),
@@ -960,29 +975,36 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
       creationSource: "web",
     });
     const forkRun = (yield* orchestrator.getThreadRecords(forkId, ["runs"])).runs.at(-1)!;
+    const inFork = { threadId: forkId, runId: forkRun.id };
     yield* eventSink.write({
       events: [
         item(
           "item:later-image",
           1,
-          { type: "assistant_message", text: `Now: ![Later](${unnamed})` },
-          { threadId: forkId, runId: forkRun.id },
+          { type: "assistant_message", text: `![Later](${later})` },
+          inFork,
+        ),
+        ...Array.from({ length: 600 }, (_, index) =>
+          item(
+            `item:filler-${index}`,
+            index + 2,
+            { type: "assistant_message", text: "Working." },
+            inFork,
+          ),
         ),
       ],
     });
-    assert.equal((yield* guestShares.media(session, unnamed)).mimeType, "image/png");
+    yield* sentItem("item:later-image");
 
-    // Enough new rows push the first reply out of the window, but the open page still shows it.
-    yield* eventSink.write({
-      events: Array.from({ length: 600 }, (_, index) =>
-        item(
-          `item:filler-${index}`,
-          index + 2,
-          { type: "assistant_message", text: "Working." },
-          { threadId: forkId, runId: forkRun.id },
-        ),
-      ),
-    });
-    assert.equal((yield* guestShares.media(session, shot)).mimeType, "image/png");
+    // The page still shows every reply it was sent, so each image loads.
+    for (const path of [shot, fileUrl, later]) {
+      assert.deepStrictEqual(yield* guestShares.media(session, path), {
+        path,
+        mimeType: "image/png",
+      });
+    }
+    for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
+      assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
+    }
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
