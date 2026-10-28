@@ -23,8 +23,8 @@ import {
   listProjectOverrides,
   type ProjectOverrideEntry,
   scopedSettingsAreMixed,
-  scopedSettingsUnsupportedTargets,
   scopedSettingsSource,
+  targetStoresSettingKeys,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
@@ -326,18 +326,24 @@ export function SettingsRow({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryCanWrite = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
-  const permissionTargets = context
-    ? settingKeys.length > 0
-      ? context.targets.filter((target) =>
-          settingKeys.some((key) => !target.unsupportedSettingKeys?.has(key)),
-        )
-      : context.connectedEnvironments
-    : [];
+  const outdatedTargets =
+    context && serverScoped && settingKeys.length > 0
+      ? context.targets.filter((target) => !targetStoresSettingKeys(target, settingKeys))
+      : [];
+  // Writes skip environments that cannot store the row's keys, so permission does too.
+  const permissionTargets = (context?.connectedEnvironments ?? []).filter(
+    (environment) =>
+      !outdatedTargets.some((target) => target.environmentId === environment.environmentId),
+  );
   const writableIds = useEnvironmentsWithScope(permissionTargets, AuthSettingsWriteScope);
   const canWriteSettings = context
     ? permissionTargets.length > 0 &&
       permissionTargets.every((target) => writableIds.has(target.environmentId))
     : primaryCanWrite;
+  const updateMessage =
+    outdatedTargets.length > 0 && outdatedTargets.length === context?.targets.length
+      ? `Update T3 Code on ${[...new Set(outdatedTargets.map(({ label }) => label))].join(", ")} to use this setting.`
+      : null;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();
   const isProjectScope =
@@ -346,22 +352,12 @@ export function SettingsRow({
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
-  const unsupportedTargets =
-    context && serverScoped ? scopedSettingsUnsupportedTargets(context.targets, settingKeys) : [];
-  const unsupportedLabels = [...new Set(unsupportedTargets.map(({ label }) => label))].join(", ");
-  const unsupportedMessage = `Update T3 Code on ${unsupportedLabels} to use this setting.`;
-  const unsupportedEverywhere =
-    context !== null &&
-    context.targets.length > 0 &&
-    settingKeys.length > 0 &&
-    context.targets.every((target) =>
-      settingKeys.every((key) => target.unsupportedSettingKeys?.has(key)),
-    );
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
     serverScoped &&
-    (!canWriteSettings ||
+    (updateMessage !== null ||
+      !canWriteSettings ||
       !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable));
   const inheritedFrom =
     source === "environment" && context?.scope.environmentIds.length === 1
@@ -377,18 +373,17 @@ export function SettingsRow({
     ),
   );
   const overridingProjects = isProjectScope ? [] : projectOverrides(context, scopedKeys);
-  const renderedReset =
-    unavailable || unsupportedEverywhere ? null : isProjectScope && scopedKeys.length > 0 ? (
-      source === "project" || source === "mixed" ? (
-        <SettingResetButton
-          label={typeof title === "string" ? title : "override"}
-          tooltip="Reset to inherited value"
-          onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
-        />
-      ) : null
-    ) : (
-      resetAction
-    );
+  const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
+    source === "project" || source === "mixed" ? (
+      <SettingResetButton
+        label={typeof title === "string" ? title : "override"}
+        tooltip="Reset to inherited value"
+        onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
+      />
+    ) : null
+  ) : (
+    resetAction
+  );
   const inertControl = (message: string) => (
     <Tooltip>
       <TooltipTrigger
@@ -410,11 +405,11 @@ export function SettingsRow({
     </Tooltip>
   );
   const renderedControl =
-    unsupportedEverywhere && control
-      ? inertControl(unsupportedMessage)
-      : unavailable && control
-        ? inertControl(
-            !canWriteSettings
+    unavailable && control
+      ? inertControl(
+          updateMessage
+            ? updateMessage
+            : !canWriteSettings
               ? `This connection lacks permission to change settings on ${
                   context
                     ? permissionTargets
@@ -426,17 +421,16 @@ export function SettingsRow({
               : context
                 ? "Reconnect the selected environment to change this setting."
                 : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
-          )
-        : environmentWide && control
-          ? inertControl("Environment-wide setting. Select an environment to change it.")
-          : control;
+        )
+      : environmentWide && control
+        ? inertControl("Environment-wide setting. Select an environment to change it.")
+        : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
       context.targets.some((candidate) => {
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (
-          !candidate.unsupportedSettingKeys?.has(key) &&
           environmentSettings !== undefined &&
           !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
         );
@@ -457,13 +451,7 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
-        summary={
-          unsupportedEverywhere
-            ? `Not supported on ${unsupportedLabels}`
-            : unsupportedLabels
-              ? `${inheritance.summary} · Not supported on ${unsupportedLabels}`
-              : inheritance.summary
-        }
+        summary={inheritance.summary}
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
@@ -477,10 +465,10 @@ export function SettingsRow({
       />
     ) : null;
   const renderedStatus =
-    unsupportedEverywhere && children ? (
+    updateMessage && children ? (
       <>
         {status}
-        <div>{unsupportedMessage}</div>
+        <div>{updateMessage}</div>
       </>
     ) : (
       status
@@ -534,7 +522,7 @@ export function SettingsRow({
           </div>
         ) : null}
       </div>
-      {(unavailable || unsupportedEverywhere) && children ? (
+      {unavailable && children ? (
         <div inert className="opacity-50">
           {children}
         </div>

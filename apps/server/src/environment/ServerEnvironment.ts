@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  ServerSettings,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -234,6 +235,7 @@ export const make = Effect.gen(function* () {
       worktreesDirectory: true,
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,
+      settingsKeys: Object.keys(ServerSettings.fields),
       projectSettingsOverrides: true,
       projectProviderInstanceOverrides: true,
       threadSnooze: true,

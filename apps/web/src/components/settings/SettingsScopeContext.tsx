@@ -11,7 +11,7 @@ import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { droppedSettingKeysAtom, droppedSettingKeysFor } from "./droppedSettingKeys";
 import {
   resolveScopedSettingsTargets,
-  resolveUnsupportedSettingKeys,
+  scopedDisplaySettings,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
@@ -66,12 +66,12 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
   const { environments } = useEnvironments();
   const dropped = useAtomValue(droppedSettingKeysAtom);
   const availableEnvironments = environments.map((environment) => {
-    const descriptor = environment.serverConfig?.environment;
-    const unsupportedSettingKeys = resolveUnsupportedSettingKeys(
-      descriptor?.capabilities.settingsKeys,
-      droppedSettingKeysFor(dropped, environment.environmentId, descriptor?.serverVersion),
+    const unsupportedSettingKeys = droppedSettingKeysFor(
+      dropped,
+      environment.environmentId,
+      environment.serverConfig?.environment.serverVersion,
     );
-    return { ...environment, unsupportedSettingKeys };
+    return unsupportedSettingKeys ? { ...environment, unsupportedSettingKeys } : environment;
   });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const search = singleEnvironment
@@ -90,10 +90,12 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
     primaryEnvironmentId,
   );
   const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
-  const target =
+  const representative =
     targets.find((candidate) => candidate.environmentId === selected.environment?.environmentId) ??
-    targets[0] ??
-    null;
+    targets[0];
+  const target = representative
+    ? { ...representative, settings: scopedDisplaySettings(representative, targets) }
+    : null;
   return { scope, groups, search, ...selected, targets, target };
 }
 
