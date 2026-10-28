@@ -26,7 +26,7 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { taskPrompt } from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
+import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";
@@ -50,6 +50,7 @@ import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
@@ -307,18 +308,23 @@ const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   description: Tool.getDescription(tool) ?? "",
   input_schema: advertisedJsonSchema(tool),
 }));
+const enabledWhen = (predicate: () => boolean) =>
+  new Set(
+    t3SourceTools
+      .filter(
+        (tool) => Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) === predicate,
+      )
+      .map((tool) => `${T3_PREFIX}${tool.name}`),
+  );
 // T3 does not offer these to a delegated child, so its harness never lists them.
-const hiddenFromSubagents = new Set(
-  t3SourceTools
-    .filter(
-      (tool) =>
-        Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) ===
-        McpInvocationContext.hiddenFromSubagents,
-    )
-    .map((tool) => `${T3_PREFIX}${tool.name}`),
-);
+const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
+// The Linked environments beta starts off, and T3 lists its tools only while it is on.
+const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 const visibleT3Tools = (subagent: boolean) =>
-  subagent ? t3Tools.filter((tool) => !hiddenFromSubagents.has(tool.name)) : t3Tools;
+  t3Tools.filter(
+    (tool) =>
+      !hiddenWhileLinksOff.has(tool.name) && !(subagent && hiddenFromSubagents.has(tool.name)),
+  );
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
 export const t3SystemAppend = (model: Model) => {
@@ -1336,34 +1342,6 @@ const callCodex = Effect.fn("evaluateMcpToolUse.callCodex")(function* (
     },
   };
 });
-
-// Read credentials into memory only. Python's TOML parser avoids another runner dependency.
-const decodeProxyConfig = Schema.decodeUnknownSync(
-  Schema.Struct({ url: Schema.String, headers: Schema.Record(Schema.String, Schema.String) }),
-);
-const proxyConfig = () =>
-  decodeProxyConfig(
-    JSON.parse(
-      NodeChildProcess.execFileSync(
-        "python3",
-        [
-          "-c",
-          `
-import json, os, pathlib, tomllib
-home = pathlib.Path.home() / '.codex'
-p = tomllib.loads((home / 'config.toml').read_text())['model_providers']['vibeproxy']
-h = p.get('http_headers', {}).copy()
-h.update({k: os.environ[v] for k,v in p.get('env_http_headers', {}).items()})
-key = os.environ[p['env_key']] if p.get('env_key') else p.get('experimental_bearer_token')
-if not key and p.get('requires_openai_auth'): key = json.loads((home / 'auth.json').read_text()).get('OPENAI_API_KEY')
-if key: h['Authorization'] = 'Bearer ' + key
-print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
-`,
-        ],
-        { encoding: "utf8" },
-      ),
-    ),
-  );
 
 const postModel = Effect.fn("evaluateMcpToolUse.postModel")(function* (
   apiKey: string,
