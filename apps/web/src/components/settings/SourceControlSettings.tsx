@@ -135,21 +135,21 @@ function authPresentation(auth: SourceControlProviderAuth): {
   readonly badge: "warning" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: "Authenticated", badge: null };
+    return { label: "Autentificat", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Not authenticated", badge: "warning" };
+    return { label: "Neautentificat", badge: "warning" };
   }
-  return { label: "Status unknown", badge: null };
+  return { label: "Stare necunoscută", badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
   return (
     <RedactedSensitiveText
       value={props.account}
-      ariaLabel="Toggle source control account visibility"
-      revealTooltip="Click to reveal account"
-      hideTooltip="Click to hide account"
+      ariaLabel="Arată sau ascunde contul"
+      revealTooltip="Apasă ca să arăți contul"
+      hideTooltip="Apasă ca să ascunzi contul"
     />
   );
 }
@@ -219,10 +219,10 @@ function itemSummary({
       const authDetail = optionLabel(auth.detail);
       return (
         <>
-          <span>Authenticated</span>
+          <span>Autentificat</span>
           {authAccount ? (
             <>
-              <span aria-hidden>as</span>
+              <span aria-hidden>ca</span>
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
@@ -236,7 +236,7 @@ function itemSummary({
     }
 
     if (auth.status === "unauthenticated" && auth.accounts?.some((entry) => entry.authenticated)) {
-      return <span>{optionLabel(auth.detail) ?? `Every ${item.label} host is turned off.`}</span>;
+      return <span>{optionLabel(auth.detail) ?? `Toate gazdele ${item.label} sunt oprite.`}</span>;
     }
 
     if (auth.status === "unauthenticated") {
@@ -256,7 +256,7 @@ function itemSummary({
     );
   }
 
-  return <span>Available</span>;
+  return <span>Disponibil</span>;
 }
 
 function DiscoveryItemRow({
@@ -301,7 +301,7 @@ function DiscoveryItemRow({
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
-                  Coming Soon
+                  În curând
                 </Badge>
               ) : null}
               {authStatus?.badge ? (
@@ -321,7 +321,7 @@ function DiscoveryItemRow({
                 variant="ghost-muted"
                 onClick={() => setIsExpanded((open) => !open)}
                 aria-expanded={isExpanded}
-                aria-label={`Toggle ${item.label} details`}
+                aria-label={`Comută detaliile ${item.label}`}
               >
                 <ChevronDownIcon
                   className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
@@ -369,9 +369,9 @@ function GitFetchIntervalSettings() {
           <div className="flex min-w-0 items-center gap-1">
             <span className="text-xs font-medium text-foreground">{setting.title}</span>
             <PolicyTooltip>
-              This interval is configured for Git only. The shared Background activity policy still
-              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
-              Advanced in General settings.
+              Acest interval e configurat doar pentru Git. Politica de activitate în fundal decide
+              în continuare dacă reîmprospătările Git pot rula. Intervalele personalizate apar ca
+              Avansat în setările Generale.
             </PolicyTooltip>
             <span
               className={cn(
@@ -395,7 +395,8 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
+            Reîmprospătează branch-urile remote în fundal. Setează 0 ca să eviți solicitările Git
+            automate.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -414,9 +415,9 @@ function GitFetchIntervalSettings() {
             }
           >
             <NumberFieldGroup>
-              <NumberFieldDecrement aria-label="Decrease fetch interval" />
-              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-              <NumberFieldIncrement aria-label="Increase fetch interval" />
+              <NumberFieldDecrement aria-label="Scade intervalul" />
+              <NumberFieldInput aria-label="Interval git fetch automat în secunde" />
+              <NumberFieldIncrement aria-label="Crește intervalul" />
             </NumberFieldGroup>
           </NumberField>
           <span className="text-xs text-muted-foreground">seconds</span>
@@ -476,19 +477,19 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+    <SettingsSection id={searchableSetting("source-control").id} title="Mediul serverului">
       <Empty>
         <EmptyMedia variant="icon">
           <PullRequestGlyph.pullRequest />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
+            {hasError ? "Mediul serverului nu a putut fi scanat" : "Nimic detectat încă"}
           </EmptyTitle>
           <EmptyDescription>
             {hasError
               ? error
-              : "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."}
+              : "Instalează Git pe server, adaugă integrările sau credențialele de care ai nevoie, apoi scanează din nou."}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -573,13 +574,13 @@ export function SourceControlSettingsPanel() {
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label="Rescan server environment"
+            aria-label="Scanează din nou mediul serverului"
           >
             <RefreshIcon refreshing={discovery.isPending} />
           </Button>
         }
       />
-      <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
+      <TooltipPopup side="top">Scanează din nou Git și integrările</TooltipPopup>
     </Tooltip>
   );
 
@@ -587,25 +588,25 @@ export function SourceControlSettingsPanel() {
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
-        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+        <SettingsSection id={searchableSetting("source-control").id} title="Mediul serverului">
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to inspect its version control tools and hosting integrations.
+            Conectează un mediu ca să-i vezi instrumentele de control al versiunilor și integrările.
           </p>
         </SettingsSection>
       ) : isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton
-            title={`Version Control${environmentSuffix}`}
+            title={`Controlul versiunilor${environmentSuffix}`}
             headerAction={scanButton}
           />
-          <SourceControlSectionSkeleton title="Source control providers" />
+          <SourceControlSectionSkeleton title="Furnizori de control al versiunilor" />
         </>
       ) : hasDiscoveryItems ? (
         <>
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title={`Version Control${environmentSuffix}`}
+              title={`Controlul versiunilor${environmentSuffix}`}
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
@@ -621,8 +622,8 @@ export function SourceControlSettingsPanel() {
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title={
                 hasVersionControlSystems
-                  ? "Source control providers"
-                  : `Source control providers${environmentSuffix}`
+                  ? "Furnizori de control al versiunilor"
+                  : `Furnizori de control al versiunilor${environmentSuffix}`
               }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >

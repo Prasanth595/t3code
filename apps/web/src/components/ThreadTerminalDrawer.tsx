@@ -363,8 +363,10 @@ function terminalSelectionMenuItems(options?: {
   return [
     ...(options?.canAddToChat === false
       ? []
-      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
+      : ([
+          { id: "add-to-chat", label: "Adaugă în chat" },
+        ] satisfies ContextMenuItem<"add-to-chat">[])),
+    { id: "copy", label: "Copiază" },
   ];
 }
 

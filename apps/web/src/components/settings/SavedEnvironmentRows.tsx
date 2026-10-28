@@ -81,29 +81,29 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
   readonly tone: "muted" | "error";
 } {
   if (!environment.entry.enabled && environment.connection.phase !== "unsupported")
-    return { text: "Off", tone: "muted" };
+    return { text: "Oprit", tone: "muted" };
   const { connection } = environment;
   switch (connection.phase) {
     case "connected":
-      return { text: "Connected", tone: "muted" };
+      return { text: "Conectat", tone: "muted" };
     case "connecting":
-      return { text: "Connecting", tone: "muted" };
+      return { text: "Se conectează", tone: "muted" };
     case "reconnecting":
       return {
-        text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
+        text: connection.error ? `Se reconectează: ${connection.error}` : "Se reconectează",
         tone: "error",
       };
     case "unsupported":
-      return { text: "Client not supported", tone: "muted" };
+      return { text: "Client nesuportat", tone: "muted" };
     case "error":
       return {
-        text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",
+        text: connection.error ? `Conectarea a eșuat: ${connection.error}` : "Conectarea a eșuat",
         tone: "error",
       };
     case "offline":
       return { text: "Offline", tone: "muted" };
     case "available":
-      return { text: "Not connected", tone: "muted" };
+      return { text: "Neconectat", tone: "muted" };
   }
 }
 
@@ -129,7 +129,7 @@ export function SavedBackendListRow({
     onCopy: ({ traceId }) => {
       toastManager.add({
         type: "success",
-        title: "Trace ID copied",
+        title: "ID-ul de urmărire a fost copiat",
         description: traceId,
       });
     },
@@ -137,7 +137,7 @@ export function SavedBackendListRow({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy trace ID",
+          title: "ID-ul de urmărire nu a putut fi copiat",
           description: error.message,
         }),
       );
@@ -151,15 +151,15 @@ export function SavedBackendListRow({
     onCopy: ({ url }) => {
       toastManager.add({
         type: "success",
-        title: "MCP URL copied",
-        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
+        title: "Adresa MCP a fost copiată",
+        description: `Adaug-o la un agent, ex. claude mcp add --transport http t3 ${url}`,
       });
     },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy MCP URL",
+          title: "Adresa MCP nu a putut fi copiată",
           description: error.message,
         }),
       );
@@ -212,7 +212,7 @@ export function SavedBackendListRow({
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     // The headline below names the failure in full.
-    diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
+    diagnosis ? null : resumingServerUpdate ? "Se repornește" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)
@@ -229,10 +229,10 @@ export function SavedBackendListRow({
       ? (environment.connection.error ?? connectionStatusText(environment.connection))
       : enabled
         ? connectionStatusText(environment.connection)
-        : "Switched off"
+        : "Oprit"
   }${
     versionMismatch
-      ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
+      ? `\nActualizare disponibilă: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
       : ""
   }`;
 
@@ -276,7 +276,7 @@ export function SavedBackendListRow({
             onClick={() => setRoutesOpen((open) => !open)}
             className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
+            {routeCount === 1 ? "Rute" : `${routeCount} rute`}
             <ChevronRightIcon
               aria-hidden
               className={cn(
@@ -363,7 +363,7 @@ export function SavedBackendListRow({
           serverLabel={`${environment.label} server`}
           fromVersion={lastDescriptor?.serverVersion}
           targetVersion={APP_VERSION}
-          label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
+          label={serverUpdateState.status === "failed" ? "Reîncearcă actualizarea" : "Actualizează"}
         />
       ) : null}
       {showUpdateAction ? (
@@ -375,7 +375,7 @@ export function SavedBackendListRow({
           desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
           threadContinuation={supportsServerUpdateThreadContinuation(environment.serverConfig)}
           targetVersion={versionMismatch.clientVersion}
-          label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
+          label={serverUpdateState.status === "failed" ? "Reîncearcă actualizarea" : "Actualizează"}
           appearance="icon"
         />
       ) : null}
@@ -386,13 +386,13 @@ export function SavedBackendListRow({
               size="sm"
               checked={enabled}
               disabled={isRemoving || blocked}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
+              aria-label={`${enabled ? "Oprește" : "Pornește"} ${environment.label}`}
               onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
             />
           }
         />
         <TooltipPopup side="top">
-          {blocked ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
+          {blocked ? "Client nesuportat" : enabled ? "Oprește" : "Pornește"}
         </TooltipPopup>
       </Tooltip>
       <Menu>
@@ -403,7 +403,7 @@ export function SavedBackendListRow({
               variant="ghost-muted"
               size="icon-xs"
               disabled={isRemoving}
-              aria-label={`More actions for ${environment.label}`}
+              aria-label={`Mai multe acțiuni pentru ${environment.label}`}
             />
           }
         >
@@ -416,17 +416,19 @@ export function SavedBackendListRow({
           />
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
-            {routesOpen ? "Hide routes" : "Routes"}
+            {routesOpen ? "Ascunde rutele" : "Rute"}
           </MenuItem>
           {mcpUrl ? (
-            <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
+            <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
+              Copiază adresa MCP
+            </MenuItem>
           ) : null}
           {errorTraceId ? (
-            <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
+            <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copiază ID-ul de urmărire</MenuItem>
           ) : null}
           <MenuSeparator />
           <MenuItem variant="destructive" onClick={() => onRemove(environment)}>
-            {isRemoving ? "Removing…" : "Remove from this device…"}
+            {isRemoving ? "Se elimină…" : "Elimină de pe acest dispozitiv…"}
           </MenuItem>
         </MenuPopup>
       </Menu>
@@ -439,7 +441,7 @@ function CloudLinkSwitch({
   disabled,
   disabledReason,
   onCheckedChange,
-  ariaLabel = "Enable T3 Connect",
+  ariaLabel = "Activează T3 Connect",
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
@@ -484,7 +486,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
   const disabledReason = canManageRelay
     ? null
-    : "Your session does not have permission to manage T3 Connect access.";
+    : "Sesiunea ta nu are permisiunea de a gestiona accesul T3 Connect.";
   const isBusy = isUpdating || isUpdatingPreference;
   const switchDisabled =
     !canManageRelay ||
@@ -498,7 +500,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const signedOut = isSignedIn === false;
   const signInButton = (
     <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-      Sign in
+      Autentifică-te
     </Button>
   );
   const refreshLinkState = useEffectEvent(primaryCloudLinkState.refresh);
@@ -514,7 +516,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       formatConnectReachable(reachability)
     ) : reachability?.status === "unreachable" ? (
       <span className="block text-destructive">
-        {[reachability.reason, reachability.hint, `Fix: ${reachability.fix}`]
+        {[reachability.reason, reachability.hint, `Soluție: ${reachability.fix}`]
           .filter(Boolean)
           .join(" ")}{" "}
         <a
@@ -523,7 +525,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           rel="noreferrer"
           className="underline underline-offset-2"
         >
-          More info
+          Mai multe informații
         </a>
       </span>
     ) : null;
@@ -540,15 +542,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       toastManager.add({
         type: "success",
         title: enabled
-          ? "T3 Connect linked"
+          ? "T3 Connect conectat"
           : publishAgentActivity
-            ? "T3 Connect tunnel disabled"
-            : "T3 Connect unlinked",
+            ? "Tunelul T3 Connect a fost dezactivat"
+            : "T3 Connect deconectat",
         description: enabled
-          ? "This environment is available through T3 Connect."
+          ? "Acest mediu e disponibil prin T3 Connect."
           : publishAgentActivity
-            ? "The managed tunnel was removed. Agent activity publishing stays on."
-            : "This environment is no longer available through T3 Connect.",
+            ? "Tunelul gestionat a fost eliminat. Publicarea activității agentului rămâne activă."
+            : "Mediul nu mai e disponibil prin T3 Connect.",
       });
     }
     setIsUpdating(false);
@@ -565,10 +567,10 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     if (ok) {
       toastManager.add({
         type: "success",
-        title: enabled ? "Agent activity enabled" : "Agent activity disabled",
+        title: enabled ? "Activitatea agentului activată" : "Activitatea agentului dezactivată",
         description: enabled
-          ? "This environment publishes agent activity to your mobile clients."
-          : "This environment will stop publishing agent activity.",
+          ? "Acest mediu trimite activitatea agentului pe dispozitivele mobile."
+          : "Mediul nu va mai trimite activitatea agentului.",
       });
     }
     setIsUpdatingPreference(false);
@@ -584,10 +586,12 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     if (ok) {
       toastManager.add({
         type: "success",
-        title: enabled ? "Webhooks held while offline" : "Webhooks no longer held",
+        title: enabled
+          ? "Webhook-urile sunt păstrate cât ești offline"
+          : "Webhook-urile nu mai sunt păstrate",
         description: enabled
-          ? "T3 Connect keeps webhook requests for up to 24 hours while this environment is offline."
-          : "Requests to an offline environment now fail. Anything already held is still delivered.",
+          ? "T3 Connect păstrează cererile webhook până la 24 de ore cât timp mediul e offline."
+          : "Cererile către un mediu offline eșuează acum. Ce e deja păstrat se livrează în continuare.",
       });
     }
     setIsUpdatingPreference(false);

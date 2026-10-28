@@ -7,7 +7,7 @@ import { searchableSetting } from "./settingsSearch";
 
 const stores = [
   {
-    label: "iPhone and iPad",
+    label: "iPhone și iPad",
     store: "App Store",
     url: "https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824",
     Icon: AppleIcon,
@@ -24,7 +24,7 @@ export function MobileAppSettingsRow() {
   return (
     <SettingsRow
       {...searchableSetting("mobile-app")}
-      description="Connect to your server from your phone or tablet."
+      description="Conectează-te la server de pe telefon sau tabletă."
       control={
         <div className="flex items-center gap-2">
           {stores.map(({ label, store, url, Icon }) => (

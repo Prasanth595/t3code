@@ -125,13 +125,13 @@ export function agentControlledBrowserCloseConfirmation(
   if (activeBrowserCount === 0) return null;
   if (activeBrowserCount === 1) {
     return [
-      "Close browser while the agent is using it?",
-      "The agent is actively controlling this browser. Closing it may interrupt the current browser action.",
+      "Închizi browserul cât timp agentul îl folosește?",
+      "Agentul controlează acest browser. Închiderea poate întrerupe acțiunea curentă.",
     ].join("\n");
   }
   return [
-    `Close ${activeBrowserCount} browsers while the agent is using them?`,
-    "The agent is actively controlling these browsers. Closing them may interrupt the current browser actions.",
+    `Închizi ${activeBrowserCount} browsere cât timp agentul le folosește?`,
+    "Agentul controlează aceste browsere. Închiderea poate întrerupe acțiunile curente.",
   ].join("\n");
 }
 
@@ -696,7 +696,7 @@ export async function resolveFileAttachmentUrl(input: {
   });
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
-  if (url === null) throw new Error("The environment returned an invalid attachment URL.");
+  if (url === null) throw new Error("Mediul a returnat o adresă invalidă pentru atașament.");
   return url;
 }
 
@@ -709,7 +709,7 @@ export async function prepareRevertedMessageAttachments(input: {
   return Promise.all(
     (input.message.attachments ?? []).map(async (attachment) => {
       if (attachment.type !== "image" && attachment.type !== "file") {
-        throw new Error("This message has an attachment that cannot be restored.");
+        throw new Error("Mesajul are un atașament care nu poate fi restaurat.");
       }
       const result = await input.createAssetUrl({
         environmentId: input.environmentId,
@@ -724,9 +724,9 @@ export async function prepareRevertedMessageAttachments(input: {
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
-      if (url === null) throw new Error("The environment returned an invalid attachment URL.");
+      if (url === null) throw new Error("Mediul a returnat o adresă invalidă pentru atașament.");
       const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) throw new Error(`Could not restore attachment: ${attachment.name}`);
+      if (!response.ok) throw new Error(`Atașamentul nu a putut fi restaurat: ${attachment.name}`);
       return new File([await response.blob()], attachment.name, { type: attachment.mimeType });
     }),
   );
@@ -839,16 +839,16 @@ export function buildExpiredTerminalContextToastCopy(
   variant: "omitted" | "empty",
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
-  const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
+  const noun = count === 1 ? "Contextul de terminal expirat" : "Contextele de terminal expirate";
   if (variant === "empty") {
     return {
-      title: `${noun} won't be sent`,
-      description: "Remove it or re-add it to include terminal output.",
+      title: `${noun} nu va fi trimis`,
+      description: "Elimină-l sau readaugă-l ca să incluzi rezultatul terminalului.",
     };
   }
   return {
-    title: `${noun} omitted from message`,
-    description: "Re-add it if you want that terminal output included.",
+    title: `${noun} a fost omis din mesaj`,
+    description: "Readaugă-l dacă vrei să incluzi acel rezultat.",
   };
 }
 
@@ -999,8 +999,8 @@ export function getStartedThreadModelChangeBlockReason(input: {
       return null;
     }
     return {
-      title: "Start a new chat to switch providers",
-      description: "This thread does not support switching providers after it has started.",
+      title: "Pornește o conversație nouă ca să schimbi furnizorul",
+      description: "Conversația nu permite schimbarea furnizorului după ce a pornit.",
     };
   }
   const currentProvider = input.providers.find(
@@ -1016,8 +1016,8 @@ export function getStartedThreadModelChangeBlockReason(input: {
     return null;
   }
   return {
-    title: "Start a new chat to change models",
-    description: "This provider does not allow switching models after a conversation has started.",
+    title: "Pornește o conversație nouă ca să schimbi modelul",
+    description: "Furnizorul nu permite schimbarea modelului după ce a pornit conversația.",
   };
 }
 
@@ -1062,7 +1062,7 @@ export async function waitForRevertedMessage(
     return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
   }, undefined);
   if (witness === undefined) {
-    throw new Error("The thread has changed. Select a message to rewind again.");
+    throw new Error("Conversația s-a schimbat. Alege din nou un mesaj la care să revii.");
   }
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -1104,7 +1104,7 @@ export async function waitForRevertedMessage(
     };
     unsubscribe = appAtomRegistry.subscribe(threadAtom, inspect);
     timeout = globalThis.setTimeout(() => {
-      finish(new Error("Timed out waiting for the thread to rewind."));
+      finish(new Error("Revenirea conversației a durat prea mult."));
     }, timeoutMs);
     Promise.resolve()
       .then(revert)
@@ -1347,7 +1347,7 @@ export type LocalThreadErrorEntry = {
 };
 
 export function chatActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : "A apărut o eroare.";
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
@@ -1416,7 +1416,9 @@ export function makeModelDisabledReason(
       ...context,
       nextModelSelection: { instanceId, model },
     });
-    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+    return reason
+      ? `${reason.description} Pornește o conversație nouă ca să folosești acest model.`
+      : null;
   };
 }
 
@@ -1554,7 +1556,7 @@ export function sendTitleFallbackLabels(snapshot: ComposerSendSnapshot) {
   const previewAnnotation = snapshot.previewAnnotations[0];
   return [
     terminalContext ? formatTerminalContextLabel(terminalContext) : undefined,
-    reviewComment ? `Review: ${reviewCommentContextLabel(reviewComment)}` : undefined,
+    reviewComment ? `Revizuire: ${reviewCommentContextLabel(reviewComment)}` : undefined,
     previewAnnotation ? previewAnnotationContextLabel(previewAnnotation) : undefined,
   ];
 }

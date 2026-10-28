@@ -223,16 +223,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         type: "success",
         title:
           kind === "hosted-link"
-            ? "Hosted app link copied"
+            ? "Link-ul aplicației găzduite a fost copiat"
             : kind === "link"
-              ? "Pairing URL copied"
-              : "Pairing code copied",
+              ? "Adresa de asociere a fost copiată"
+              : "Codul de asociere a fost copiat",
         description:
           kind === "hosted-link"
-            ? "Open it in the browser on the device you want to connect."
+            ? "Deschide-l în browser pe dispozitivul pe care vrei să-l conectezi."
             : kind === "link"
-              ? "Open it in the client you want to pair to this environment."
-              : "Paste it into another client to finish pairing.",
+              ? "Deschide-l în clientul pe care vrei să-l asociezi cu acest mediu."
+              : "Lipește-l în alt client ca să termini asocierea.",
       });
     },
     onError: (error, { value, kind }) => {
@@ -245,12 +245,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           type: "error",
           title: canCopyToClipboard
             ? kind === "hosted-link"
-              ? "Could not copy hosted app link"
+              ? "Link-ul aplicației găzduite nu a putut fi copiat"
               : kind === "link"
-                ? "Could not copy pairing URL"
-                : "Could not copy pairing code"
-            : "Clipboard copy unavailable",
-          description: canCopyToClipboard ? error.message : "Showing the full value instead.",
+                ? "Adresa de asociere nu a putut fi copiată"
+                : "Codul de asociere nu a putut fi copiat"
+            : "Copierea în clipboard nu e disponibilă",
+          description: canCopyToClipboard ? error.message : "Se arată valoarea completă.",
         }),
       );
     },
@@ -269,7 +269,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
-  const primaryLabel = pairingLink.label ?? "Pairing link";
+  const primaryLabel = pairingLink.label ?? "Link de asociere";
   const selectedQrOption = selectQrEndpointOption(
     endpointCopyOptions,
     qrEndpointId,
@@ -287,7 +287,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
-              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
+              tooltipText={`Link creat la ${formatAccessTimestamp(pairingLink.createdAt)}`}
               dotClassName="bg-warning"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
@@ -300,11 +300,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
             </Tooltip>
             <span aria-hidden> · </span>
-            <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+            <AccessScopeSummary scopes={pairingLink.scopes} label="Permisiunile link-ului" />
           </p>
           {!credential ? (
             <p className="text-2xs text-muted-foreground/70">
-              Create a new link to share from this client.
+              Creează un link nou de partajat din acest client.
             </p>
           ) : shareablePairingUrl === null ? (
             <p className="text-2xs text-muted-foreground/70">
@@ -335,12 +335,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             {!credential ? null : canCopyToClipboard ? (
               shareablePairingUrl ? null : (
                 <Button size="xs" variant="outline" onClick={handleCopyCode}>
-                  Copy code
+                  Copiază codul
                 </Button>
               )
             ) : (
               <DialogTrigger render={<Button size="xs" variant="outline" />}>
-                {shareablePairingUrl ? "Show link" : "Show code"}
+                {shareablePairingUrl ? "Arată link-ul" : "Arată codul"}
               </DialogTrigger>
             )}
             <DialogPopup className="max-w-md">
@@ -348,16 +348,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 <DialogTitle>
                   {isRevealValueUrl
                     ? isRevealValueHostedAppPairingUrl
-                      ? "Hosted app pairing link"
-                      : "Pairing link"
-                    : "Pairing code"}
+                      ? "Link de asociere pentru aplicația găzduită"
+                      : "Link de asociere"
+                    : "Cod de asociere"}
                 </DialogTitle>
                 <DialogDescription>
                   {isRevealValueUrl
                     ? isRevealValueHostedAppPairingUrl
-                      ? "Clipboard copy is unavailable here. Open or manually copy this hosted app link on the device you want to connect."
-                      : "Clipboard copy is unavailable here. Open or manually copy this full pairing URL on the device you want to connect."
-                    : "Clipboard copy is unavailable here. Manually copy this code into another client."}
+                      ? "Copierea în clipboard nu e disponibilă aici. Deschide sau copiază manual acest link pe dispozitivul pe care vrei să-l conectezi."
+                      : "Copierea în clipboard nu e disponibilă aici. Deschide sau copiază manual adresa completă pe dispozitivul pe care vrei să-l conectezi."
+                    : "Copierea în clipboard nu e disponibilă aici. Copiază manual codul în alt client."}
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel>
@@ -375,7 +375,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       size={132}
                       level="M"
                       marginSize={2}
-                      title="Pairing link. Scan to open on another device"
+                      title="Link de asociere. Scanează ca să-l deschizi pe alt dispozitiv"
                     />
                   </div>
                 ) : null}
@@ -386,7 +386,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 </Button>
                 {canCopyToClipboard ? (
                   <Button variant="outline" onClick={handleCopyCode}>
-                    Copy code
+                    Copiază codul
                   </Button>
                 ) : null}
               </DialogFooter>
@@ -398,7 +398,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             disabled={!canRevoke || revokingPairingLinkId === pairingLink.id}
             onClick={() => void onRevoke(pairingLink.id)}
           >
-            {revokingPairingLinkId === pairingLink.id ? "Revoking…" : "Revoke"}
+            {revokingPairingLinkId === pairingLink.id ? "Se revocă…" : "Revocă"}
           </Button>
         </div>
       </div>
@@ -412,7 +412,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <div
                 className="space-y-1.5"
                 role="radiogroup"
-                aria-label="Endpoint the pairing QR code and URL use"
+                aria-label="Adresa folosită de codul QR și link"
               >
                 <p className="text-2xs text-muted-foreground/70">Reach this machine via</p>
                 {endpointCopyOptions.map((option) => {
@@ -464,11 +464,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 className="shrink-0"
                 onClick={() => copyPairingValue(qrPairingUrl, copyKindForUrl(qrPairingUrl))}
               >
-                Copy link
+                Copiază link-ul
               </Button>
             </div>
             <Button size="xs" variant="ghost" onClick={handleCopyCode}>
-              Copy code only
+              Copiază doar codul
             </Button>
           </div>
           {canRenderQrForSelection ? (
@@ -478,7 +478,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 size={168}
                 level="M"
                 marginSize={1}
-                title="Pairing link. Scan to open on another device"
+                title="Link de asociere. Scanează ca să-l deschizi pe alt dispozitiv"
               />
             </div>
           ) : (
@@ -515,11 +515,11 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   const lastConnectedAt = clientSession.lastConnectedAt;
   const statusTooltip = isLive
     ? lastConnectedAt
-      ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
-      : "Connected"
+      ? `Conectat de ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
+      : "Conectat"
     : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
-      : "Not connected yet.";
+      ? `Ultima conectare la ${formatAccessTimestamp(lastConnectedAt)}`
+      : "Nu s-a conectat încă.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
       ? clientSession.client.deviceType[0]?.toUpperCase() + clientSession.client.deviceType.slice(1)
@@ -546,7 +546,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
             {clientSession.current ? (
               <span className="text-3xs text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
-                This device
+                Acest dispozitiv
               </span>
             ) : null}
           </div>
@@ -557,7 +557,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
                 <span aria-hidden> · </span>
               </>
             ) : null}
-            <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
+            <AccessScopeSummary scopes={clientSession.scopes} label="Permisiunile clientului" />
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -568,7 +568,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               disabled={!canRevoke || revokingClientSessionId === clientSession.sessionId}
               onClick={() => void onRevokeSession(clientSession.sessionId)}
             >
-              {revokingClientSessionId === clientSession.sessionId ? "Revoking…" : "Revoke"}
+              {revokingClientSessionId === clientSession.sessionId ? "Se revocă…" : "Revocă"}
             </Button>
           ) : null}
         </div>
@@ -624,11 +624,12 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
+      const message =
+        error instanceof Error ? error.message : "Adresa de asociere nu a putut fi creată.";
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not create pairing URL",
+          title: "Adresa de asociere nu a putut fi creată",
           description: message,
         }),
       );
@@ -648,7 +649,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
         onClick={() => void onRevokeOtherClients()}
       >
-        {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
+        {isRevokingOtherClients ? "Se revocă…" : "Revocă-i pe ceilalți"}
       </Button>
       <Dialog
         open={dialogOpen}
@@ -666,16 +667,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           render={
             <Button size="xs" variant="default">
               <PlusIcon className="size-3" />
-              Create link
+              Creează link
             </Button>
           }
         />
         <DialogPopup className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Create pairing link</DialogTitle>
+            <DialogTitle>Creează link de asociere</DialogTitle>
             <DialogDescription>
-              Generate a one-time link that another device can use to pair with this backend as an
-              authorized client.
+              Generează un link unic pe care alt dispozitiv îl poate folosi ca să se asocieze cu
+              acest server ca și client autorizat.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -686,7 +687,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               <Input
                 value={pairingLabel}
                 onChange={(event) => setPairingLabel(event.target.value)}
-                placeholder="e.g. Living room iPad"
+                placeholder="ex. iPad-ul din sufragerie"
                 disabled={isCreatingPairingLink}
                 autoFocus
               />
@@ -696,7 +697,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 <div>
                   <h3 className="text-xs font-medium text-foreground">Permissions</h3>
                   <p className="text-xs text-muted-foreground">
-                    Limit what the paired client can do.
+                    Limitează ce poate face clientul asociat.
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -715,7 +716,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                       )
                     }
                   >
-                    Read only
+                    Doar citire
                   </Button>
                   <Button
                     size="xs"
@@ -760,7 +761,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 <p className="text-xs text-destructive">Select at least one permission.</p>
               ) : selectedScopes.includes(AuthAccessWriteScope) ? (
                 <p className="text-xs text-warning">
-                  This client can create or revoke access for other devices.
+                  Acest client poate crea sau revoca accesul altor dispozitive.
                 </p>
               ) : null}
             </section>
@@ -777,7 +778,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >
-              {isCreatingPairingLink ? "Creating…" : "Create link"}
+              {isCreatingPairingLink ? "Se creează…" : "Creează link"}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -903,7 +904,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
           ) : null}
           {!isAvailable ? (
             <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-3xs text-muted-foreground">
-              Setup required
+              Necesită configurare
             </span>
           ) : null}
         </div>
@@ -920,7 +921,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
               onClick={() => onSetupTailscaleServe(endpoint)}
               disabled={isUpdatingTailscaleServe}
             >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
+              {isUpdatingTailscaleServe ? "Se repornește…" : "Configurează"}
             </Button>
           ) : null}
           {canDisableTailscaleServe ? (
@@ -930,12 +931,12 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
               onClick={() => onDisableTailscaleServe(endpoint)}
               disabled={isUpdatingTailscaleServe}
             >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Disable"}
+              {isUpdatingTailscaleServe ? "Se repornește…" : "Dezactivează"}
             </Button>
           ) : null}
           {!needsTailscaleSetup && !isDefault ? (
             <Button size="xs" variant="outline" onClick={() => onSetDefault(endpoint)}>
-              Set as default
+              Setează ca implicit
             </Button>
           ) : null}
         </div>
@@ -966,7 +967,7 @@ export function NetworkAccessDescription({
       <span className="min-w-0 truncate">{endpoint.httpBaseUrl}</span>
       {hiddenEndpointCount > 0 ? (
         <span className="shrink-0 text-xs font-medium">
-          {expanded ? "Hide" : `+${hiddenEndpointCount}`}
+          {expanded ? "Ascunde" : `+${hiddenEndpointCount}`}
         </span>
       ) : null}
     </>

@@ -81,8 +81,8 @@ export function resolveGitActionProgressPresentation(input: {
       currentLabel && currentLabel !== "Running source control action"
         ? currentLabel
         : isPull
-          ? "Pulling latest changes..."
-          : "Starting source control action...",
+          ? "Se aduc ultimele modificări..."
+          : "Pornește acțiunea...",
     output: !isPull && output ? output : null,
     startedAtMs: isPull
       ? input.phaseStartedAtMs
@@ -165,7 +165,7 @@ export function buildMenuItems(
     pushItem,
     {
       id: "pr",
-      label: `Create ${terminology.shortLabel}`,
+      label: `Creează ${terminology.shortLabel}`,
       disabled: !canCreatePr,
       icon: "pr",
       kind: "open_dialog",
@@ -181,7 +181,7 @@ export function resolveQuickAction(
   hasPrimaryRemote = true,
 ): GitQuickAction {
   if (isBusy) {
-    return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
+    return { label: "Commit", disabled: true, kind: "show_hint", hint: "Acțiune Git în curs." };
   }
 
   if (!gitStatus) {
@@ -189,7 +189,7 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Git status is unavailable.",
+      hint: "Starea Git nu e disponibilă.",
     };
   }
 
@@ -207,7 +207,7 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
+      hint: `Creează și comută pe un branch înainte de push sau de a deschide un ${terminology.singular}.`,
     };
   }
 
@@ -216,10 +216,15 @@ export function resolveQuickAction(
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
     if (hasOpenPr || isDefaultRef) {
-      return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
+      return {
+        label: "Commit și push",
+        disabled: false,
+        kind: "run_action",
+        action: "commit_push",
+      };
     }
     return {
-      label: `Commit, push & ${terminology.shortLabel}`,
+      label: `Commit, push și ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -229,7 +234,7 @@ export function resolveQuickAction(
   if (!gitStatus.hasUpstream) {
     if (!hasPrimaryRemote) {
       return {
-        label: "Publish repository",
+        label: "Publică repository-ul",
         disabled: false,
         kind: "open_publish",
       };
@@ -240,14 +245,14 @@ export function resolveQuickAction(
           label: "Commit",
           disabled: true,
           kind: "show_hint",
-          hint: "Branch is up to date. No action needed.",
+          hint: "Branch-ul e la zi. Nu e nevoie de nicio acțiune.",
         };
       }
       return {
         label: "Push",
         disabled: true,
         kind: "show_hint",
-        hint: "No local commits to push.",
+        hint: "Niciun commit local pentru push.",
       };
     }
     if (hasOpenPr || isDefaultRef) {
@@ -259,7 +264,7 @@ export function resolveQuickAction(
       };
     }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: `Push și creează ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -268,10 +273,10 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: "Sync ref",
+      label: "Sincronizează branch-ul",
       disabled: true,
       kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
+      hint: "Branch-ul s-a despărțit de upstream. Fă mai întâi rebase/merge.",
     };
   }
 
@@ -293,7 +298,7 @@ export function resolveQuickAction(
       };
     }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: `Push și creează ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -305,13 +310,13 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Branch is up to date. No action needed.",
+      hint: "Branch-ul e la zi. Nu e nevoie de nicio acțiune.",
     };
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
     return {
-      label: `Create ${terminology.shortLabel}`,
+      label: `Creează ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -322,7 +327,7 @@ export function resolveQuickAction(
     label: "Commit",
     disabled: true,
     kind: "show_hint",
-    hint: "Branch is up to date. No action needed.",
+    hint: "Branch-ul e la zi. Nu e nevoie de nicio acțiune.",
   };
 }
 
@@ -333,35 +338,35 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   terminology: ChangeRequestTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
-  const suffix = ` on "${branchLabel}". You can continue on this ref or create a feature ref and run the same action there.`;
+  const suffix = ` pe „${branchLabel}”. Poți continua pe acest branch sau poți crea unul nou și rula aceeași acțiune acolo.`;
   const { terminology } = input;
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
       return {
-        title: "Commit & push to default ref?",
-        description: `This action will commit and push changes${suffix}`,
-        continueLabel: `Commit & push to ${branchLabel}`,
+        title: "Commit și push pe branch-ul implicit?",
+        description: `Această acțiune va face commit și push la modificări${suffix}`,
+        continueLabel: `Commit și push pe ${branchLabel}`,
       };
     }
     return {
-      title: "Push to default ref?",
-      description: `This action will push local commits${suffix}`,
-      continueLabel: `Push to ${branchLabel}`,
+      title: "Push pe branch-ul implicit?",
+      description: `Această acțiune va face push la commit-urile locale${suffix}`,
+      continueLabel: `Push pe ${branchLabel}`,
     };
   }
 
   if (input.includesCommit) {
     return {
       title: `Commit, push & create ${terminology.shortLabel} from default ref?`,
-      description: `This action will commit, push, and create a ${terminology.singular}${suffix}`,
-      continueLabel: `Commit, push & create ${terminology.shortLabel}`,
+      description: `Această acțiune va face commit, push și va crea un ${terminology.singular}${suffix}`,
+      continueLabel: `Commit, push și creează ${terminology.shortLabel}`,
     };
   }
   return {
     title: `Push & create ${terminology.shortLabel} from default ref?`,
-    description: `This action will push local commits and create a ${terminology.singular}${suffix}`,
-    continueLabel: `Push & create ${terminology.shortLabel}`,
+    description: `Această acțiune va face push la commit-urile locale și va crea un ${terminology.singular}${suffix}`,
+    continueLabel: `Push și creează ${terminology.shortLabel}`,
   };
 }
 
@@ -371,7 +376,7 @@ export function resolveFeatureBranchUnavailableReason(input: {
   hasWorkingTreeChanges: boolean;
 }): string | null {
   if (input.hasWorkingTreeChanges) return null;
-  return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  return `Nu există modificări de commit, așa că branch-ul nou nu poate fi denumit. Creează tu un branch sau continuă pe ${input.branchName}.`;
 }
 
 export function resolveThreadBranchUpdate(

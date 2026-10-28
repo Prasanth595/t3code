@@ -20,8 +20,8 @@ export function SecretInput({
     autoComplete: "off",
     spellCheck: false,
     placeholder: configured
-      ? "Stored secret, enter a new value to replace"
-      : (placeholder ?? "Not set"),
+      ? "Secret salvat, introdu o valoare nouă ca să-l înlocuiești"
+      : (placeholder ?? "Nesetat"),
   };
   if (onCommit) {
     return (

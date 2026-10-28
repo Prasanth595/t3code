@@ -186,7 +186,7 @@ function WorkspaceImagePreview(props: {
     return (
       <MediaActions source={actionsSource}>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
+          Imaginea nu a putut fi încărcată.
         </div>
       </MediaActions>
     );
@@ -236,7 +236,7 @@ function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
+        Previzualizarea fișierului nu a putut fi încărcată.
       </div>
     );
   }
@@ -351,7 +351,7 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        message="Unable to load audio."
+        message="Fișierul audio nu a putut fi încărcat."
         onRetry={() => {
           setFailedUrl(null);
           void refreshAssetUrl().catch(() => undefined);
@@ -955,9 +955,9 @@ function RenderedMarkdownSurface({
 }
 
 function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: boolean): string {
-  if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
-  if (mode === "table") return rendered ? "Show source" : "Show table";
-  return rendered ? "Show HTML source" : "Show rendered page";
+  if (mode === "markdown") return rendered ? "Arată sursa markdown" : "Arată markdown formatat";
+  if (mode === "table") return rendered ? "Arată sursa" : "Arată tabelul";
+  return rendered ? "Arată sursa HTML" : "Arată pagina";
 }
 
 function initialExplorerOpen(): boolean {
@@ -1175,8 +1175,8 @@ export default function FilePreviewPanel({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Fișierul nu a putut fi deschis în browser",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     })();
@@ -1187,13 +1187,13 @@ export default function FilePreviewPanel({
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
-          Checking file access...
+          Se verifică accesul la fișiere...
         </div>
       );
     }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        {fileAccess.error ?? "This connection cannot read host files."}
+        {fileAccess.error ?? "Această conexiune nu poate citi fișierele."}
       </div>
     );
   }
@@ -1258,7 +1258,7 @@ export default function FilePreviewPanel({
           ) : null}
           {showsRawText ? (
             <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              label={wordWrap ? "Dezactivează încadrarea" : "Activează încadrarea"}
               pressed={wordWrap}
               onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
             >
@@ -1266,13 +1266,13 @@ export default function FilePreviewPanel({
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+            <FileSurfaceAction label="Deschide fișierul în browser" onPress={handleOpenInBrowser}>
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
-              label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              label={explorerOpen ? "Ascunde exploratorul" : "Arată exploratorul"}
               pressed={explorerOpen}
               onPress={toggleExplorer}
             >
@@ -1283,7 +1283,8 @@ export default function FilePreviewPanel({
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
-          Read-only connection. Unsaved edits are kept until write access returns.
+          Conexiune doar pentru citire. Editările nesalvate se păstrează până revine dreptul de
+          scriere.
         </div>
       ) : null}
       {previewPath &&
@@ -1364,7 +1365,7 @@ export default function FilePreviewPanel({
                 </p>
                 {attemptedPath ? (
                   <p className="text-muted-foreground">
-                    Attempted path
+                    Calea încercată
                     <code className="block break-all font-mono text-foreground select-all">
                       {attemptedPath}
                     </code>

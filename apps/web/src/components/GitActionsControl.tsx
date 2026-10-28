@@ -205,7 +205,7 @@ function getPublishProviderReadiness(input: {
   if (!discovered) {
     return {
       ready: false,
-      hint: "Provider status unavailable. Open Settings -> Source control and rescan.",
+      hint: "Starea furnizorului nu e disponibilă. Deschide Setări -> Controlul versiunilor și scanează din nou.",
     };
   }
   if (discovered.status !== "available") {
@@ -216,7 +216,7 @@ function getPublishProviderReadiness(input: {
       ready: false,
       hint:
         Option.getOrNull(discovered.auth.detail) ??
-        `${discovered.label} is not authenticated. Open Settings -> Source control for setup guidance.`,
+        `${discovered.label} nu e autentificat. Deschide Setări -> Controlul versiunilor pentru instrucțiuni.`,
     };
   }
   return { ready: true, hint: null };
@@ -234,8 +234,8 @@ function getMenuActionDisabledReason({
   hasPrimaryRemote: boolean;
 }): string | null {
   if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
+  if (isBusy) return "Acțiune Git în curs.";
+  if (!gitStatus) return "Starea Git nu e disponibilă.";
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -245,48 +245,48 @@ function getMenuActionDisabledReason({
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
+      return "Worktree-ul e curat. Fă modificări înainte de commit.";
     }
-    return "Commit is currently unavailable.";
+    return "Commit-ul nu e disponibil momentan.";
   }
 
   if (item.id === "push") {
     if (!hasBranch) {
-      return "Detached HEAD: check out a branch before pushing.";
+      return "HEAD detașat: comută pe un branch înainte de push.";
     }
     if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
+      return "Fă commit sau stash la modificările locale înainte de push.";
     }
     if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
+      return "Branch-ul e în urma upstream. Fă pull/rebase înainte de push.";
     }
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-      return 'Add an "origin" remote before pushing.';
+      return "Adaugă un remote „origin” înainte de push.";
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return "Niciun commit local pentru push.";
     }
-    return "Push is currently unavailable.";
+    return "Push-ul nu e disponibil momentan.";
   }
 
   if (!hasBranch) {
-    return `Detached HEAD: check out a branch before creating a ${terminology.singular}.`;
+    return `HEAD detașat: comută pe un branch înainte de a crea un ${terminology.singular}.`;
   }
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-    return `Add an "origin" remote before creating a ${terminology.singular}.`;
+    return `Adaugă un remote „origin” înainte de a crea un ${terminology.singular}.`;
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `No local commits to include in a ${terminology.singular}.`;
+    return `Niciun commit local de inclus într-un ${terminology.singular}.`;
   }
   if (isBehind) {
-    return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+    return `Branch-ul e în urma upstream. Fă pull/rebase înainte de a crea un ${terminology.singular}.`;
   }
-  return `Create ${terminology.singular} is currently unavailable.`;
+  return `Crearea ${terminology.singular} nu e disponibilă momentan.`;
 }
 
-const COMMIT_DIALOG_TITLE = "Commit changes";
+const COMMIT_DIALOG_TITLE = "Commit modificări";
 const COMMIT_DIALOG_DESCRIPTION =
-  "Review and confirm your commit. Leave the message blank to auto-generate one.";
+  "Verifică și confirmă commit-ul. Lasă mesajul gol ca să fie generat automat.";
 
 function GitActionItemIcon({
   icon,
@@ -538,7 +538,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
-  const publishWizardSteps = ["Provider", "Repository", "Summary"] as const;
+  const publishWizardSteps = ["Furnizor", "Repository", "Rezumat"] as const;
   const publishWizardStepSummaries = [
     publishProviderLabel,
     publishResult?.repository.nameWithOwner ?? null,
@@ -574,7 +574,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          setPublishError(error instanceof Error ? error.message : "An error occurred.");
+          setPublishError(error instanceof Error ? error.message : "A apărut o eroare.");
         }
         return;
       }
@@ -611,8 +611,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     <Dialog open={props.open} onOpenChange={handleOpenChange}>
       <WizardPopup>
         <WizardHeader
-          title="Publish repository"
-          description="Pick where to host it, then point us at a repo to push to."
+          title="Publică repository-ul"
+          description="Alege unde să fie găzduit, apoi indică repository-ul pentru push."
         >
           <WizardSteps
             steps={publishWizardSteps}
@@ -667,13 +667,13 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                                 openSourceControlSettings();
                               }}
                             >
-                              Setup Required
+                              Necesită configurare
                             </Button>
                           }
                         />
                         <TooltipPopup side="top" align="end">
                           {readiness.hint ??
-                            "Open Settings -> Source control to configure this provider."}
+                            "Deschide Setări -> Controlul versiunilor ca să configurezi acest furnizor."}
                         </TooltipPopup>
                       </Tooltip>
                     </div>
@@ -754,14 +754,14 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 {[
                   {
                     value: "private" as const,
-                    label: "Private",
-                    description: "Only invited people",
+                    label: "Privat",
+                    description: "Doar persoanele invitate",
                     Icon: LockIcon,
                   },
                   {
                     value: "public" as const,
                     label: "Public",
-                    description: "Anyone on the web",
+                    description: "Oricine de pe internet",
                     Icon: GlobeIcon,
                   },
                 ].map((option) => {
@@ -875,14 +875,12 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     <CheckIcon className="size-4" aria-hidden />
                   </span>
                   <h3 className="text-sm font-semibold text-foreground">
-                    {publishResult.status === "pushed"
-                      ? "Repository published"
-                      : "Repository created"}
+                    {publishResult.status === "pushed" ? "Repository publicat" : "Repository creat"}
                   </h3>
                   <p className="max-w-xs text-pretty text-xs text-muted-foreground">
                     {publishResult.status === "pushed"
-                      ? `${publishResult.branch} is now live on ${publishProviderLabel}.`
-                      : `Remote "${publishResult.remoteName}" is set up. Make a commit and push it to share your code.`}
+                      ? `${publishResult.branch} e acum pe ${publishProviderLabel}.`
+                      : `Remote-ul „${publishResult.remoteName}” e configurat. Fă un commit și push ca să-ți partajezi codul.`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2 dark:border-transparent dark:bg-white/[0.035]">
@@ -904,7 +902,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               </>
             ) : (
               <div className="rounded-md border border-input bg-background px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]">
-                Publish result unavailable.
+                Rezultatul publicării nu e disponibil.
               </div>
             )}
           </div>
@@ -912,7 +910,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
         <WizardFooter>
           {publishWizardStep === 2 ? (
-            <Button onClick={() => handleOpenChange(false)}>Done</Button>
+            <Button onClick={() => handleOpenChange(false)}>Gata</Button>
           ) : (
             <>
               <Button
@@ -926,7 +924,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   setPublishWizardStep((step) => Math.max(0, step - 1));
                 }}
               >
-                {publishWizardStep === 0 ? "Cancel" : "Back"}
+                {publishWizardStep === 0 ? "Anulează" : "Înapoi"}
               </Button>
               {publishWizardStep < 1 ? (
                 <Button
@@ -943,7 +941,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       Publishing...
                     </>
                   ) : (
-                    "Publish"
+                    "Publică"
                   )}
                 </Button>
               )}
@@ -1147,9 +1145,9 @@ export default function GitActionsControl({
     hasPrimaryRemote,
   );
   const quickActionDisabledReason = !canWriteSourceControl
-    ? "This connection cannot change source control."
+    ? "Această conexiune nu poate modifica controlul versiunilor."
     : quickAction.disabled
-      ? (quickAction.hint ?? "This action is currently unavailable.")
+      ? (quickAction.hint ?? "Această acțiune nu e disponibilă momentan.")
       : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   // A fresh draft or a thread with no turns hides commit, push, and diff rows until there is work.
@@ -1285,8 +1283,8 @@ export default function GitActionsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Acțiunea a eșuat",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
@@ -1418,8 +1416,8 @@ export default function GitActionsControl({
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Pull failed",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Pull-ul a eșuat",
+              description: error instanceof Error ? error.message : "A apărut o eroare.",
               timeout: errorToastTiming.timeout,
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
             }),
@@ -1428,11 +1426,11 @@ export default function GitActionsControl({
         }
 
         const pullResult = result.value;
-        const title = pullResult.status === "pulled" ? "Pulled" : "Already up to date";
+        const title = pullResult.status === "pulled" ? "Pull reușit" : "Deja la zi";
         const description =
           pullResult.status === "pulled"
             ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
-            : `${pullResult.refName} is already synchronized.`;
+            : `${pullResult.refName} e deja sincronizat.`;
         if (isPanel) {
           setInlineSuccess({ title, description, scopeKey: successScopeKey });
           return;
@@ -1500,7 +1498,7 @@ export default function GitActionsControl({
     if (workingTreeRoot === null) {
       toastManager.add({
         type: "error",
-        title: "Editor opening is unavailable.",
+        title: "Deschiderea în editor nu e disponibilă.",
         data: threadToastData,
       });
       return;
@@ -1515,8 +1513,8 @@ export default function GitActionsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Fișierul nu a putut fi deschis",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1536,8 +1534,8 @@ export default function GitActionsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Git initialization failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Inițializarea Git a eșuat",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1610,7 +1608,7 @@ export default function GitActionsControl({
           }}
         >
           <CloudUploadIcon />
-          <MenuItemLabel>Publish repository...</MenuItemLabel>
+          <MenuItemLabel>Publică repository-ul...</MenuItemLabel>
         </MenuItem>
       ) : null}
       {gitStatusForActions?.refName === null && (
@@ -1644,7 +1642,7 @@ export default function GitActionsControl({
           >
             <GitBranchPlusIcon className="size-4" />
             <MenuItemLabel>
-              {initAction.isPending ? "Initializing..." : "Initialize Git"}
+              {initAction.isPending ? "Se inițializează..." : "Inițializează Git"}
             </MenuItemLabel>
           </MenuItem>
         ) : (
@@ -1674,7 +1672,7 @@ export default function GitActionsControl({
             >
               <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
                 <SourceControlIcon className="size-4" />
-                <MenuItemLabel>Git actions</MenuItemLabel>
+                <MenuItemLabel>Acțiuni Git</MenuItemLabel>
               </MenuSubTrigger>
               <MenuSubPopup>{gitItems}</MenuSubPopup>
             </MenuSub>
@@ -1691,13 +1689,13 @@ export default function GitActionsControl({
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
           <span className={cn("ml-0.5", isPanel && THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            {initAction.isPending ? "Initializing..." : "Initialize Git"}
+            {initAction.isPending ? "Se inițializează..." : "Inițializează Git"}
           </span>
         </ThreadDetailsControl>
       ) : quietEmptyDraft || (compact && !gitActionProgress && !visibleInlineSuccess) ? null : (
         <ActionGroup
           role="group"
-          aria-label="Git actions"
+          aria-label="Acțiuni Git"
           {...(isPanel ? { ref: panelAnchorRef } : {})}
           className={cn(
             "shrink-0",
@@ -1804,7 +1802,7 @@ export default function GitActionsControl({
                 <MenuTrigger
                   render={
                     <ThreadDetailsControl
-                      aria-label="Git action options"
+                      aria-label="Opțiuni acțiuni Git"
                       size={isPanel ? "sm" : "icon-xs"}
                       variant={isPanel ? "ghost" : "outline"}
                       part="secondary"
@@ -1917,7 +1915,7 @@ export default function GitActionsControl({
                       size="xs"
                       onClick={() => setIsEditingFiles((prev) => !prev)}
                     >
-                      {isEditingFiles ? "Done" : "Edit"}
+                      {isEditingFiles ? "Gata" : "Editează"}
                     </Button>
                   )}
                 </div>
@@ -1955,7 +1953,7 @@ export default function GitActionsControl({
                                   type="button"
                                   className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
                                   disabled={!canOperateThread || workingTreeRoot === null}
-                                  aria-label={`Open ${file.path} in editor`}
+                                  aria-label={`Deschide ${file.path} în editor`}
                                   onClick={() => openChangedFileInEditor(file.path)}
                                 >
                                   <StartTruncatedPath
@@ -2002,7 +2000,7 @@ export default function GitActionsControl({
               <Textarea
                 value={dialogCommitMessage}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
-                placeholder="Leave empty to auto-generate"
+                placeholder="Lasă gol pentru generare automată"
                 size="sm"
               />
             </div>
@@ -2026,7 +2024,7 @@ export default function GitActionsControl({
               disabled={!canChangeThreadBranch || noneSelected}
               onClick={runDialogActionOnNewBranch}
             >
-              Commit on new branch
+              Commit pe un branch nou
             </Button>
             <Button
               size="sm"
@@ -2056,7 +2054,7 @@ export default function GitActionsControl({
         <DialogPopup className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
-              {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
+              {pendingDefaultBranchActionCopy?.title ?? "Rulezi acțiunea pe branch-ul implicit?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
             {featureBranchUnavailableReason && (
@@ -2079,7 +2077,7 @@ export default function GitActionsControl({
               onClick={() => continuePendingDefaultBranchAction(false)}
               disabled={!canWriteSourceControl}
             >
-              {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
+              {pendingDefaultBranchActionCopy?.continueLabel ?? "Continuă"}
             </Button>
             <Button
               className="w-full max-w-full sm:w-auto"
@@ -2087,7 +2085,7 @@ export default function GitActionsControl({
               onClick={() => continuePendingDefaultBranchAction(true)}
               disabled={!canChangeThreadBranch || featureBranchUnavailableReason !== null}
             >
-              Check out feature branch & continue
+              Comută pe un branch nou și continuă
             </Button>
           </DialogFooter>
         </DialogPopup>
