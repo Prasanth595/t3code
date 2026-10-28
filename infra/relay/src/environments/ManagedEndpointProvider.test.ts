@@ -1440,11 +1440,12 @@ describe("ManagedEndpointProvider", () => {
       }
       // The tunnel is gone; without the mark the tunnel limit would keep counting it.
       const claim = allocationCalls.find((call) => call.operation === "claimDeprovision");
+      if (claim === undefined) return expect.unreachable("deprovision never claimed the row");
       expect(allocationCalls.at(-1)).toMatchObject({
         operation: "claimRelease",
         input: {
           tunnelId: "tunnel-id",
-          generation: (claim?.input as { generation: number }).generation + 1,
+          generation: (claim.input as { generation: number }).generation + 1,
           markReleased: true,
         },
       });
