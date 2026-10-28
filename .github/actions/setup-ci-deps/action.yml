@@ -92,13 +92,14 @@ runs:
       shell: bash
       run: vp install ${{ inputs.install-args }}
 
-    # A filtered install that started from a full store adds nothing worth a
-    # second copy of it.
+    # A filtered install that started from the current full store adds nothing
+    # worth a second copy of it.
     - name: Save pnpm store
       if: >-
         inputs.install == 'true' &&
         steps.pnpm_cache.outputs.cache-hit != 'true' &&
-        (steps.pnpm_store.outputs.namespace == 'full' || !startsWith(steps.pnpm_cache.outputs.cache-matched-key, 'pnpm-full-'))
+        (steps.pnpm_store.outputs.namespace == 'full' ||
+          steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.pnpm_store.outputs.path }}
