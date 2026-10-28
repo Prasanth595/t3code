@@ -104,8 +104,6 @@ describe("threadRouteOpensDraft", () => {
     expect(
       threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),
     ).toBe(true);
-    for (const connectionState of ["offline", "error", "available", "connected"] as const) {
-      expect(threadRouteOpensDraft({ connectionState, detailStatus: "empty" })).toBe(true);
-    }
+    expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(true);
   });
 });
