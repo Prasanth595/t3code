@@ -2242,7 +2242,7 @@ code {
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown td:has([data-markdown-math]) {
+.chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
 }
 
