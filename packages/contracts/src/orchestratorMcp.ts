@@ -330,9 +330,7 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
-  allProjects: Schema.optional(
-    Schema.Boolean.annotate({ description: "List every project's threads. Ignores `projectId`." }),
-  ),
+  allProjects: Schema.optional(Schema.Boolean),
   statuses: Schema.optional(
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
   ),
