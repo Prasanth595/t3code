@@ -39,9 +39,7 @@ it.effect("keeps the newer unsent draft and ignores a stale write", () =>
     });
     expect((yield* service.put(stale)).accepted).toEqual([]);
 
-    const events = Array.from(
-      yield* service.subscribe().pipe(Stream.take(1), Stream.runCollect),
-    );
+    const events = Array.from(yield* service.subscribe().pipe(Stream.take(1), Stream.runCollect));
     const snapshot = events[0];
     expect(snapshot?.type).toBe("snapshot");
     if (snapshot?.type === "snapshot") {

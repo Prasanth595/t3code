@@ -14,11 +14,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
-import {
-  composerDraftHasUserContent,
-  DraftId,
-  useComposerDraftStore,
-} from "./composerDraftStore";
+import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { serverEnvironment } from "./state/server";
 import { environmentSummaries } from "./state/presentation";
@@ -138,10 +134,14 @@ function applyDraft(environmentId: EnvironmentId, draft: SyncedComposerDraft): v
     if (draft.key.startsWith(NEW_TASK_COMPOSER_DRAFT_PREFIX)) {
       const draftId = DraftId.make(draft.key.slice(NEW_TASK_COMPOSER_DRAFT_PREFIX.length));
       if (draft.projectId && store.getDraftSession(draftId) === null && !draft.deleted) {
-        store.setProjectDraftThreadId({ environmentId, projectId: draft.projectId as ProjectId }, draftId, {
-          ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
-          ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
-        });
+        store.setProjectDraftThreadId(
+          { environmentId, projectId: draft.projectId as ProjectId },
+          draftId,
+          {
+            ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
+            ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+          },
+        );
       }
       store.setPrompt(draftId, draft.deleted ? "" : draft.prompt);
       if (draft.modelSelection) {
@@ -156,7 +156,9 @@ function applyDraft(environmentId: EnvironmentId, draft: SyncedComposerDraft): v
     const threadId = ThreadId.make(draft.key.slice(THREAD_COMPOSER_DRAFT_PREFIX.length));
     store.setPrompt({ environmentId, threadId }, draft.deleted ? "" : draft.prompt);
     if (draft.modelSelection && !draft.deleted) {
-      store.setModelSelection({ environmentId, threadId }, draft.modelSelection, { explicit: true });
+      store.setModelSelection({ environmentId, threadId }, draft.modelSelection, {
+        explicit: true,
+      });
     }
   } finally {
     applying = false;
@@ -210,7 +212,10 @@ function scheduleReconcile(environmentIds: ReadonlyArray<EnvironmentId>): void {
   }, 600);
 }
 
-function acceptEvent(environmentId: EnvironmentId, event: { type: string; drafts?: ReadonlyArray<SyncedComposerDraft>; draft?: SyncedComposerDraft }): void {
+function acceptEvent(
+  environmentId: EnvironmentId,
+  event: { type: string; drafts?: ReadonlyArray<SyncedComposerDraft>; draft?: SyncedComposerDraft },
+): void {
   const remote = remoteByEnvironment.get(environmentId) ?? new Map<string, SyncedComposerDraft>();
   if (event.type === "snapshot" && event.drafts) {
     remote.clear();

@@ -21,9 +21,10 @@ function remote(patch: Partial<SyncedComposerDraft> = {}): SyncedComposerDraft {
 
 describe("decideComposerDraftSync", () => {
   it("applies a draft that exists only on another device", () => {
-    expect(
-      decideComposerDraftSync({ key, local: null, remote: remote(), now }),
-    ).toMatchObject({ action: "apply", draft: { prompt: "remote" } });
+    expect(decideComposerDraftSync({ key, local: null, remote: remote(), now })).toMatchObject({
+      action: "apply",
+      draft: { prompt: "remote" },
+    });
   });
 
   it("keeps unsent text the user can see when this device has not synced it yet", () => {
