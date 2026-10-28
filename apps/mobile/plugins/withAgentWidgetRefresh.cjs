@@ -80,15 +80,16 @@ module.exports = function withAgentWidgetRefresh(config) {
       const source = fs.readFileSync(widget, "utf8");
       const provider = "WidgetsTimelineProvider(name: name)";
       if (!source.includes(provider)) throw new Error("AgentActivity provider generation changed");
+      const entryView = "WidgetsEntryView(entry: entry)";
+      const displayName = "    .configurationDisplayName";
+      if (!source.includes(entryView) || !source.includes(displayName))
+        throw new Error("AgentActivity widget generation changed");
       fs.writeFileSync(
         widget,
         source
           .replace(provider, "AgentWidgetTimelineProvider()")
-          .replace("WidgetsEntryView(entry: entry)", "AgentWidgetEntryView(entry: entry)")
-          .replace(
-            "    .configurationDisplayName",
-            "    .agentWidgetPushHandler()\n    .configurationDisplayName",
-          ),
+          .replace(entryView, "AgentWidgetEntryView(entry: entry)")
+          .replace(displayName, "    .agentWidgetPushHandler()\n    .configurationDisplayName"),
       );
       return cfg;
     },
