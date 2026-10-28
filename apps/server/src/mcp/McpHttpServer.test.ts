@@ -1375,8 +1375,8 @@ it.effect(
         ]);
         const serverLayer = Layer.mergeAll(...(registrations as [Layer.Layer<never>])).pipe(
           Layer.provideMerge(
-          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
-        ),
+            McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
+          ),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
               resolve: (token) => Effect.succeed(scopes.get(token)),

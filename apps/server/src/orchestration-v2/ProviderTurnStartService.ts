@@ -925,7 +925,10 @@ export const layer: Layer.Layer<
           return handoffBudget({
             tokenCap,
             modelContextWindow,
-            userText: restartNote === "" ? turnText : `${restartNote}
+            userText:
+              restartNote === ""
+                ? turnText
+                : `${restartNote}
 
 ${turnText}`,
             attachments: message.attachments,

@@ -147,10 +147,7 @@ import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
-import {
-  readStructuredResult,
-  resultSchemaOf,
-} from "./delegatedTaskResultFormat.ts";
+import { readStructuredResult, resultSchemaOf } from "./delegatedTaskResultFormat.ts";
 import { validateJsonSchema } from "./jsonSchemaValidation.ts";
 import { makeCheckerResults } from "./workflowCheckerResults.ts";
 import {
@@ -3304,7 +3301,9 @@ const make = Effect.gen(function* () {
   });
 
   /** A workflow agent always runs as a local child thread. */
-  const localChildOf = (task: Pick<OrchestratorMcpDelegateTaskResult, "taskId" | "childThreadId">) =>
+  const localChildOf = (
+    task: Pick<OrchestratorMcpDelegateTaskResult, "taskId" | "childThreadId">,
+  ) =>
     task.childThreadId === null
       ? Effect.fail(
           failure("orchestration_error", `Task ${task.taskId} runs in a linked environment.`),
