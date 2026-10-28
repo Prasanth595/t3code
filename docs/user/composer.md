@@ -6,6 +6,10 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+Unsent text syncs between desktop and mobile clients connected to the same
+environment. Typing on one device shows up in the composer on the other. The
+latest edit wins. Files and images stay on the device that attached them.
+
 Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
 the agent can inspect it without filling the model context. A smaller paste also
 becomes an attachment when inserting it would exceed the message limit. On a

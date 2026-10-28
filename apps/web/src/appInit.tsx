@@ -28,6 +28,7 @@ import {
   subscribeDraftThreadPromotion,
   useComposerDraftStore,
 } from "./composerDraftStore";
+import { startComposerDraftSync } from "./composerDraftSync";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
 import {
@@ -185,6 +186,7 @@ export function startAppServices(): AppRouter {
     threadShellAtom: environmentThreadShells.quietThreadShellAtom,
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
   });
+  startComposerDraftSync();
   subscribeComposerDraftModelReconciliation({
     registry: appAtomRegistry,
     threadShellAtom: environmentThreadShells.threadShellAtom,

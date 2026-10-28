@@ -348,6 +348,13 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  ComposerDraftSyncError,
+  ComposerDraftSyncEvent,
+  ComposerDraftSyncPutInput,
+  ComposerDraftSyncPutResult,
+  ComposerDraftSyncSubscribeInput,
+} from "./composerDraftSync.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -514,6 +521,9 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  composerDraftsSubscribe: "composerDrafts.subscribe",
+  composerDraftsPut: "composerDrafts.put",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1788,6 +1798,19 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsComposerDraftsSubscribeRpc = Rpc.make(WS_METHODS.composerDraftsSubscribe, {
+  payload: ComposerDraftSyncSubscribeInput,
+  success: ComposerDraftSyncEvent,
+  error: Schema.Union([ComposerDraftSyncError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsComposerDraftsPutRpc = Rpc.make(WS_METHODS.composerDraftsPut, {
+  payload: ComposerDraftSyncPutInput,
+  success: ComposerDraftSyncPutResult,
+  error: Schema.Union([ComposerDraftSyncError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1932,6 +1955,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsComposerDraftsSubscribeRpc,
+  WsComposerDraftsPutRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

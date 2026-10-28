@@ -1262,6 +1262,18 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
+    composerDraftsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:composer-drafts:live",
+      tag: WS_METHODS.composerDraftsSubscribe,
+    }),
+    putComposerDrafts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:composer-drafts:put",
+      tag: WS_METHODS.composerDraftsPut,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
