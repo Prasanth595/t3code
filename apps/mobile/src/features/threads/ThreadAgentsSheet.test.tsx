@@ -112,6 +112,27 @@ vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ presentationById: new Map() }),
 }));
 vi.mock("./thread-inspector-navigation", () => ({ useOpenThreadInspector: () => () => false }));
+// The workflow group upstream draws for a workflow row: its layout parts are not under test here,
+// only that it carries the Stop for a workflow T3 runs.
+vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
+vi.mock("../../components/ui/ListRowLayout", () => ({
+  ListRowLayout: ({ label }: { label: string }) => <span>{label}</span>,
+}));
+vi.mock("../../components/ui/ListSection", () => ({
+  ListSection: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("../../components/ui/RowPressable", () => ({
+  RowPressable: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("../../state/entities", () => ({
+  useEnvironmentServerConfig: () => undefined,
+  useThreadShell: () => undefined,
+}));
+vi.mock("./SubagentStatusDot", () => ({
+  SUBAGENT_TONE_TEXT_CLASS: {},
+  SubagentStatusDot: () => null,
+}));
+vi.mock("./SubagentStopButton", () => ({ SubagentStopButton: () => null }));
 vi.mock("./SubagentRow", () => ({
   SubagentRow: ({ subagent }: { subagent: { title: string; status: string } }) => (
     <span>{`${subagent.title} ${subagent.status}`}</span>
