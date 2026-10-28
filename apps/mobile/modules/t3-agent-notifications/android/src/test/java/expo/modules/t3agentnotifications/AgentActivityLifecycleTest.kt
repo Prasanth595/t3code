@@ -67,6 +67,7 @@ class AgentActivityLifecycleTest {
 
   @Test
   fun retainedUnreadResultHasNoTimeoutAndReadingItClearsTheCard() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
     AgentNotifications.receive(
       context,
       update("done", true) + mapOf(
