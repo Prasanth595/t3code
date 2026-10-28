@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -44,10 +45,21 @@ export function MarkdownThreadLink(props: {
       !decodedFamily.waiting &&
       !decodedFamily.value.threads.some((thread) => thread.id === decodedId));
   const local = written ?? decoded;
+  const lookupFailed =
+    threadFamilyRead(writtenFamily) === "failed" || threadFamilyRead(decodedFamily) === "failed";
   const guess =
-    local === null && writtenMissing && decodedMissing && props.link.environmentId === null;
+    local === null &&
+    (lookupFailed || (writtenMissing && decodedMissing)) &&
+    props.link.environmentId === null;
   const refs = useThreadRefs(guess);
-  const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
+  const remote = useThreadShell(
+    guess
+      ? guessThreadLinkRef(
+          props.link,
+          refs.filter((ref) => ref.environmentId !== environmentId),
+        )
+      : null,
+  );
   const thread = local ?? remote;
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);

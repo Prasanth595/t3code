@@ -15,6 +15,8 @@ import { threadFamilies } from "../../state/threads";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
+type FamilyResult = ReturnType<ReturnType<typeof threadFamilies.familyAtom>["read"]>;
+
 const mocks = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
@@ -22,9 +24,7 @@ const mocks = await vi.hoisted(async () => {
       Atom.keepAlive,
     ),
     reads: Atom.family((_key: string) =>
-      Atom.make<AsyncResult.AsyncResult<OrchestrationV2ThreadFamily, never>>(
-        AsyncResult.initial(),
-      ).pipe(Atom.keepAlive),
+      Atom.make<FamilyResult>(AsyncResult.initial()).pipe(Atom.keepAlive),
     ),
   };
 });
@@ -33,7 +33,15 @@ const key = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.thr
 
 vi.mock("../../state/entities", () => ({
   useProject: () => null,
-  useThreadRefs: () => [],
+  useThreadRefs: (enabled = true) => {
+    const rows = useAtomValue(mocks.shells);
+    return enabled
+      ? [...rows.keys()].map((key) => {
+          const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+          return { environmentId, threadId };
+        })
+      : [];
+  },
   useThreadShell: (ref: ScopedThreadRef | null) => {
     const rows = useAtomValue(mocks.shells);
     if (ref === null) return null;
@@ -106,6 +114,13 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
     });
   return {
     requested,
+    fail: (target: ScopedThreadRef, waiting = false) =>
+      act(() =>
+        appAtomRegistry.set(
+          mocks.reads(key(target)),
+          AsyncResult.fail(new Error("offline"), { waiting }),
+        ),
+      ),
     resolve: (target: ScopedThreadRef, threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
       act(() =>
         appAtomRegistry.set(
@@ -120,13 +135,17 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
   };
 }
 
-function view(target: ScopedThreadRef, kind: "context" | "markdown" = "markdown") {
+function view(target: ScopedThreadRef, kind: "context" | "markdown" = "markdown", legacy = false) {
   return (
     <AppAtomRegistryProvider>
       {kind === "context" ? (
         <ThreadContextChip record={{ ...target, title: "Saved title" }} />
       ) : (
-        <MarkdownThreadLink environmentId={ENV} link={target} label={null} />
+        <MarkdownThreadLink
+          environmentId={ENV}
+          link={{ ...target, environmentId: legacy ? null : target.environmentId }}
+          label={null}
+        />
       )}
     </AppAtomRegistryProvider>
   );
@@ -153,22 +172,47 @@ describe("thread link family lookups", () => {
     },
   );
 
-  it("prefers a literal percent escape to the decoded thread", async () => {
+  it.each([false, true])("prefers a literal percent escape, legacy link %s", async (legacy) => {
     const literal = ref("provider%3A1");
     const decoded = ref("provider:1");
     using fixture = setup(new Map([[key(decoded), row(decoded.threadId, "Decoded thread")]]));
-    await using screen = await render(view(literal));
+    await using screen = await render(view(literal, "markdown", legacy));
     await expect
       .element(screen.getByRole("link", { name: "Thread, Decoded thread" }))
       .not.toBeInTheDocument();
     expect(fixture.requested.has(key(literal))).toBe(true);
     expect(fixture.requested.has(key(decoded))).toBe(false);
+    await fixture.fail(literal);
+    await expect
+      .element(screen.getByRole("link", { name: "Thread, Decoded thread" }))
+      .not.toBeInTheDocument();
     await fixture.resolve(literal, [row(literal.threadId, "Literal thread")]);
     await expect
       .element(screen.getByRole("link", { name: "Thread, Literal thread" }))
       .toBeInTheDocument();
     expect(fixture.requested.has(key(decoded))).toBe(false);
   });
+
+  it.each(["written", "decoded"] as const)(
+    "resolves a legacy link remotely when the %s family read fails",
+    async (lookup) => {
+      const literal = ref("provider%3A1");
+      const decoded = ref("provider:1");
+      const failed = lookup === "written" ? literal : decoded;
+      const remote = ref(failed.threadId, EnvironmentId.make("remote-environment"));
+      using fixture = setup(new Map([[key(remote), row(remote.threadId, "Remote thread")]]));
+      await using screen = await render(view(literal, "markdown", true));
+      if (lookup === "decoded") await fixture.resolve(literal, []);
+      await fixture.fail(failed, true);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+        .not.toBeInTheDocument();
+      await fixture.fail(failed);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+        .toBeInTheDocument();
+    },
+  );
 
   it("tries the decoded ID only after a successful empty literal lookup", async () => {
     using fixture = setup();
