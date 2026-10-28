@@ -2247,6 +2247,14 @@ code {
   white-space: nowrap;
 }
 
+/* An ellipsis hides an overflowing atomic inline whole, so clip chips instead.
+   Matches the label because tooltip triggers replace the chip's own data-slot. */
+.chat-markdown
+  .chat-markdown-table-container[data-expanded="false"]
+  :is(th, td):has([data-slot="context-chip-label"]) {
+  text-overflow: clip;
+}
+
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
