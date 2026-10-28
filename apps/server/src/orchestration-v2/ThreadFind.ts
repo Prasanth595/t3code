@@ -120,7 +120,7 @@ interface WorkflowOpening {
  * The one rule every projection store follows for a workflow coordinator: the timeline draws the
  * opening in place of its first message, so find searches that drawn text and never the script.
  */
-export function workflowOpening(
+function workflowOpening(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
   first: Extract<OrchestrationV2TurnItem, { type: "user_message" }> | undefined,
 ): WorkflowOpening | undefined {
@@ -138,7 +138,7 @@ interface WorkflowOpeningText {
 }
 
 /** What the opening draws, from the coordinator's row on the parent thread (null until it arrives). */
-export function workflowOpeningText(
+function workflowOpeningText(
   opening: WorkflowOpening,
   coordinator: Parameters<typeof searchableWorkflowOpeningSegments>[0],
 ): WorkflowOpeningText {

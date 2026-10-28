@@ -23,7 +23,7 @@ const REASON_LINE_HEIGHT = 14;
 const REASON_BAND_PADDING = 6;
 /** One checker row; a node shows at most two, and further attempts scroll inside them. */
 export const WAVE_CHECKER_ROW_HEIGHT = 28;
-export const WAVE_CHECKER_ROWS_VISIBLE = 2;
+const WAVE_CHECKER_ROWS_VISIBLE = 2;
 export const WAVE_COLUMN_GAP = 24;
 /** Wide enough for a line that skips a wave to run between two cards. */
 export const WAVE_ROW_GAP = 12;
