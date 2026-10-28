@@ -588,6 +588,7 @@ const workflowRuns = (ids: ReadonlyArray<number>) => ({
     id,
     name: id === 10 ? "build" : `run ${id}`,
     html_url: `https://example.com/${id}`,
+    pull_requests: [{ number: id === 12 ? 8 : 7 }],
   })),
 });
 
@@ -2251,7 +2252,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         workflowApprovalRoutes(
           () => workflowApprovalDetail("abc123", isCrossRepository),
           heads([7], isCrossRepository),
-          workflowRuns([10, 11]),
+          workflowRuns([10, 11, 12]),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -2279,6 +2280,61 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect.each([
+    { label: "empty", pullRequests: [] },
+    { label: "missing", pullRequests: undefined },
+  ])("refuses approval when workflow PR association is $label", ({ pullRequests }) =>
+    Effect.gen(function* () {
+      workflowApprovalRoutes(() => workflowApprovalDetail(), heads([7]), {
+        workflow_runs: [{ ...workflowRuns([10]).workflow_runs[0], pull_requests: pullRequests }],
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const result = yield* Effect.result(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action: "approve-workflows",
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(restCallsTo("/approve")).toEqual([]);
+    }),
+  );
+
+  it.effect("rechecks workflow PR association before approving", () =>
+    Effect.gen(function* () {
+      let runReads = 0;
+      mockedExecute.mockImplementation((call) => {
+        const answer =
+          call.kind === "rest"
+            ? {
+                workflow_runs: [
+                  {
+                    ...workflowRuns([10]).workflow_runs[0],
+                    pull_requests: [{ number: ++runReads === 1 ? 7 : 8 }],
+                  },
+                ],
+              }
+            : call.operationName === "PullRequestHeads"
+              ? heads([7])
+              : workflowApprovalDetail();
+        return Effect.succeed(output(encodeJson(answer)));
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "approve-workflows",
+      });
+      expect(runReads).toBe(2);
+      expect(restCallsTo("/approve")).toEqual([]);
+    }),
+  );
+
   it.effect("counts revalidated runs that wait on a maintainer as GitHub reports them", () =>
     Effect.gen(function* () {
       workflowApprovalRoutes(() => workflowApprovalDetail(), heads([7]), workflowRuns([]));
@@ -2304,6 +2360,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 status: "completed",
                 conclusion: "action_required",
                 head_branch: "feat/page",
+                pull_requests: [{ number: 7 }],
+              },
+              {
+                id: 12,
+                status: "completed",
+                conclusion: "action_required",
+                head_branch: "feat/page",
+                pull_requests: [{ number: 8 }],
               },
               { id: 11, status: "completed", conclusion: "success", head_branch: "feat/page" },
             ],
@@ -2375,7 +2439,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         isCrossRepository: true,
       });
 
-      expect(runs).toEqual([{ id: 10, name: "build", url: "https://example.com/10" }]);
+      expect(runs).toEqual([
+        { pullRequestNumbers: [7], id: 10, name: "build", url: "https://example.com/10" },
+      ]);
     }),
   );
 

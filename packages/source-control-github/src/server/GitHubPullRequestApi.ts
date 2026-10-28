@@ -1491,6 +1491,7 @@ export const make = Effect.gen(function* () {
           run.head_branch === input.headBranch
             ? [
                 {
+                  pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
                   id: run.id,
                   name: run.name?.trim() || `Workflow run ${run.id}`,
                   url: run.html_url?.trim() || null,
@@ -1577,7 +1578,18 @@ export const make = Effect.gen(function* () {
           ),
         ],
         { concurrency: 2 },
-      ).pipe(Effect.map(([, runs]) => runs));
+      ).pipe(
+        Effect.flatMap(([, runs]) =>
+          runs.some((run) => run.pullRequestNumbers.length === 0)
+            ? Effect.fail(
+                workflowApprovalReadError(
+                  input.cwd,
+                  new Error("GitHub omitted workflow run pull-request associations."),
+                ),
+              )
+            : Effect.succeed(runs.filter((run) => run.pullRequestNumbers.includes(input.number))),
+        ),
+      );
 
   const simpleActionMutations = {
     "disable-auto-merge": (pullRequestId: string) =>

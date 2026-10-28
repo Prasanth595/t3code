@@ -376,6 +376,7 @@ describe("gitHubViewerPermissions", () => {
           listWorkflowRunsRequiringApproval: () =>
             Effect.succeed([
               {
+                pullRequestNumbers: [7],
                 id: 123,
                 name: "contributor tests",
                 url: "https://github.com/acme/web/actions/runs/123",
@@ -454,7 +455,12 @@ it.effect("discovers workflow approval for a same-repository bot pull request", 
         getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
         listWorkflowRunsRequiringApproval: () =>
           Effect.succeed([
-            { id: 123, name: "bot tests", url: "https://github.com/acme/web/actions/runs/123" },
+            {
+              pullRequestNumbers: [7],
+              id: 123,
+              name: "bot tests",
+              url: "https://github.com/acme/web/actions/runs/123",
+            },
           ]),
         getViewerAccess: () =>
           Effect.succeed({
