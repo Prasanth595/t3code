@@ -181,7 +181,7 @@ only appears when a Codex account signed in with ChatGPT is connected. Click it 
 end the call, and use the mic button to mute.
 
 With more than one ChatGPT-signed-in Codex account, a call starts on the account the thread
-runs on, or the first one otherwise. Right-click the wave button, or use the arrow that appears
+runs on, or the first one otherwise. Right-click the wave button (press and hold on a touch screen), or use the arrow that appears
 beside it on hover, to choose another account, a voice, or the model the call's chat runs on for the next call. The chat
 runs on the call's account unless you pick a model. Each account's default voice, extra instructions, and
 whether it offers calls at all are set under Settings → Providers.

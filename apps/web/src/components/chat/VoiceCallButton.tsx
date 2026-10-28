@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { MicIcon, MicOffIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { type PointerEvent, useRef, useState } from "react";
 
 import { IDLE_STATE } from "@t3tools/client-runtime/voice-call";
 import { useVoiceCall } from "~/hooks/useVoiceCall";
@@ -22,6 +22,8 @@ import {
   pickVoiceProvider,
   voiceCapableProviders,
 } from "./VoiceCallButton.logic";
+
+const LONG_PRESS_MS = 450;
 
 interface VoiceCallButtonProps {
   environmentId: EnvironmentId;
@@ -104,7 +106,25 @@ function VoiceCallControls({
   const [menuOpen, setMenuOpen] = useState(false);
 
   const starting = useRef(false);
+  const longPress = useRef({
+    timer: undefined as ReturnType<typeof setTimeout> | undefined,
+    fired: false,
+  });
+  const cancelLongPress = () => clearTimeout(longPress.current.timer);
+  // Touch has no right-click or hover, so holding the wave opens the options menu.
+  const startLongPress = (event: PointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse") return;
+    longPress.current.fired = false;
+    longPress.current.timer = setTimeout(() => {
+      longPress.current.fired = true;
+      setMenuOpen(true);
+    }, LONG_PRESS_MS);
+  };
   const toggle = async () => {
+    if (longPress.current.fired) {
+      longPress.current.fired = false;
+      return;
+    }
     if (active) return session?.call.hangUp();
     if (starting.current) return;
     starting.current = true;
@@ -151,6 +171,11 @@ function VoiceCallControls({
                 aria-pressed={active}
                 aria-label="Voice call"
                 onClick={toggle}
+                onPointerDown={startLongPress}
+                onPointerUp={cancelLongPress}
+                onPointerCancel={cancelLongPress}
+                onPointerLeave={cancelLongPress}
+                className="select-none [-webkit-touch-callout:none]"
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setMenuOpen(true);
@@ -162,7 +187,7 @@ function VoiceCallControls({
           </TooltipTrigger>
           <TooltipPopup side="top">{active ? "End voice call" : "Start voice call"}</TooltipPopup>
         </Tooltip>
-        <span className="absolute -top-1.5 -right-1.5 z-10 opacity-0 transition-opacity focus-within:opacity-100 group-hover/voice:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100">
+        <span className="absolute -top-1.5 -right-1.5 z-10 opacity-0 transition-opacity focus-within:opacity-100 group-hover/voice:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:pointer-events-none [@media(hover:none)]:pointer-events-none">
           <VoiceCallMenu
             open={menuOpen}
             onOpenChange={setMenuOpen}
