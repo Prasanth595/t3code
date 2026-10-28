@@ -144,7 +144,6 @@ export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: PullRequestCommentKind,
   author: Schema.NullOr(PullRequestActor),
-  /** The host says the author can write to the repository; absent where it cannot tell. */
   authorIsMaintainer: Schema.optional(Schema.Boolean),
   body: Schema.String,
   createdAt: IsoDateTime,

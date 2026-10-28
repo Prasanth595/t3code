@@ -1745,7 +1745,6 @@ const decodeNotifications = decodeJsonResult(
   ),
 );
 
-/** Pull requests named by a `GET /notifications` page; other subjects are dropped. */
 export function decodePullRequestNotificationsJson(raw: string): Result.Result<
   ReadonlyArray<{
     readonly repository: string;

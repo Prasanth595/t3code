@@ -46,7 +46,6 @@ const READ_FAILURE_LIMIT = 8;
 const QUIET_REREAD_MS = 10 * 60_000;
 /** Reread despite unchanged fingerprints; they miss review-thread comment edits. */
 const FINGERPRINT_REREAD_MS = 30 * 60_000;
-/** Reply snoozes poll notifications each tick and check every pull request at least this often. */
 const REPLY_TICK_SECONDS = 60;
 const REPLY_SWEEP_MS = 15 * 60_000;
 const NOTIFICATIONS_RETRY_MS = 5 * 60_000;
@@ -262,7 +261,6 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
-  /** The latest full read of each pull request, so a reply snooze reuses a watch's read. */
   const sharedReads = new Map<string, SharedRead>();
   const replyChecks = new Map<string, ReplyCheck>();
   const notified = new Map<string, number>();
@@ -698,7 +696,6 @@ export const make = Effect.gen(function* () {
           notificationPolls.set(host, { nextAt: now + NOTIFICATIONS_RETRY_MS, seen });
           return;
         }
-        // Without notifications the 15-minute sweep is the only check.
         if (read.value === null) {
           notificationPolls.set(host, { nextAt: now + NOTIFICATIONS_UNAVAILABLE_MS, seen });
           return;
@@ -789,7 +786,6 @@ export const make = Effect.gen(function* () {
     return Option.some(toReplyRead(read));
   });
 
-  /** Wakes threads snoozed until a reply once a reply, merge, or close lands on their pull requests. */
   const replySweep = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const threads = yield* projections.getReplySnoozedThreads(DateTime.makeUnsafe(now));

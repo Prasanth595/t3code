@@ -226,7 +226,6 @@ export class PullRequestService extends Context.Service<
     readonly watchFingerprint: (
       input: PullRequestRef,
     ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestError>;
-    /** Read through `input`'s project credential; null where the host or credential has none. */
     readonly notifications: (
       input: PullRequestRef & { readonly since: string },
     ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestError>;

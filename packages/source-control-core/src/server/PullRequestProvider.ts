@@ -119,15 +119,12 @@ export interface ProviderChangeRequestSummary {
   readonly stack?: PullRequestStackMembership | null | undefined;
 }
 
-/** Change requests the viewer takes part in that changed since `since`. */
 export interface ProviderChangeRequestNotifications {
-  /** Null when nothing changed since this credential's last read. */
   readonly changeRequests: ReadonlyArray<{
     readonly repository: string;
     readonly number: number;
     readonly updatedAt: string;
   }> | null;
-  /** The host's requested wait before the next read, when it names one. */
   readonly pollIntervalSeconds: number | null;
 }
 
@@ -373,7 +370,6 @@ export interface PullRequestProviderApi {
     PullRequestProviderError
   >;
 
-  /** Null when the credential cannot read notifications, such as a fine-grained token. */
   readonly getChangeRequestNotifications?: (input: {
     readonly cwd: string;
     readonly host: string;

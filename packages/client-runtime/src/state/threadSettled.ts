@@ -348,7 +348,6 @@ export interface SnoozeChoice {
   readonly wakeOn?: ThreadSnoozeWakeOn;
 }
 
-/** The command still needs a wake time, so a reply snooze carries the longest preset as a backstop. */
 export function pullRequestReplySnooze(now: Date): Required<SnoozeChoice> {
   return {
     snoozedUntil: new Date(now.getTime() + MAX_SNOOZE_PRESET_MINUTES * 60_000).toISOString(),

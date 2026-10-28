@@ -38,7 +38,6 @@ export interface GitHubRestInput {
   readonly accept?: string;
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
   readonly ifNoneMatch?: string;
-  /** Revalidates by date where the answer has no ETag; 304 is accepted the same way. */
   readonly ifModifiedSince?: string;
   readonly maxResponseBytes?: number;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */

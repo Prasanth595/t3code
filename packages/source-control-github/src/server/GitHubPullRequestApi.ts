@@ -506,10 +506,6 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly isCrossRepository: true;
     }) => Effect.Effect<ReadonlyArray<GitHubWorkflowRunApproval>, GitHubPullRequestApiError>;
 
-    /**
-     * Pull requests in the viewer's participating notifications updated since `since`, read
-     * without marking anything read. Null when the credential cannot read notifications.
-     */
     readonly getPullRequestNotifications: (input: {
       readonly cwd: string;
       readonly host: string;
@@ -1216,7 +1212,6 @@ export const make = Effect.gen(function* () {
     return decoded;
   });
 
-  // Notifications carry no ETag; `Last-Modified` per credential and query revalidates them free.
   const notificationDates = yield* Cache.make({
     capacity: 64,
     timeToLive: "1 hour",

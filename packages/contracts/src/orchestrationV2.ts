@@ -398,11 +398,9 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
-/** What besides its wake time ends a snooze. */
 export const ThreadSnoozeWakeOn = Schema.Literal("pull-request-reply");
 export type ThreadSnoozeWakeOn = typeof ThreadSnoozeWakeOn.Type;
 
-/** Why a `pull-request-reply` snooze woke, for the woken thread to show. */
 export const ThreadSnoozeWakeReason = Schema.Struct({
   kind: Schema.Literals(["reply", "merged", "closed"]),
   pullRequestNumber: PositiveInt,
@@ -3345,10 +3343,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
-  /**
-   * Wakes the `pull-request-reply` snooze started at `snoozedAt` as if its timer elapsed now,
-   * recording why. A later snooze or wake makes it a no-op.
-   */
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
     commandId: CommandId,
