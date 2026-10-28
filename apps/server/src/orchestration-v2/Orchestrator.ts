@@ -2835,6 +2835,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (
+      (command.type === "thread.settle" || command.type === "thread.unsettle") &&
+      command.expectedUpdatedAt !== undefined &&
+      DateTime.toEpochMillis(command.expectedUpdatedAt) !== DateTime.toEpochMillis(thread.updatedAt)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} changed since the action was requested.`,
+      });
+    }
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

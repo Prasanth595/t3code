@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3WatchBridgeModule"],
+    "appDelegateSubscribers": ["T3WatchBridgeSubscriber"]
+  }
+}

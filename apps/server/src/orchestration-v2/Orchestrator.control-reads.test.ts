@@ -1374,6 +1374,100 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect(
+  "settle and reopen reject stale snapshots while matching snapshots remain idempotent",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:conditional-settle");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-conditional-settle"),
+        threadId,
+        projectId: ProjectId.make("project:conditional-settle"),
+        title: "Conditional settle",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const initial = yield* projections.getThreadShell(threadId);
+      assert.ok(initial);
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-before-conditional-settle"),
+        threadId,
+        title: "Updated while idle",
+      });
+      const current = yield* projections.getThreadShell(threadId);
+      assert.ok(current);
+      assert.notEqual(
+        DateTime.toEpochMillis(initial.updatedAt),
+        DateTime.toEpochMillis(current.updatedAt),
+      );
+
+      const staleSettle = {
+        type: "thread.settle",
+        commandId: CommandId.make("stale-conditional-settle"),
+        threadId,
+        expectedUpdatedAt: initial.updatedAt,
+      } as const;
+      const rejectedSettle = yield* orchestrator.dispatch(staleSettle).pipe(Effect.flip);
+      assert.equal(rejectedSettle._tag, "OrchestratorDispatchError");
+      assert.deepEqual(yield* projections.getThreadShell(threadId), current);
+
+      const settleCommand = {
+        type: "thread.settle",
+        commandId: CommandId.make("current-conditional-settle"),
+        threadId,
+        expectedUpdatedAt: current.updatedAt,
+      } as const;
+      const settled = yield* orchestrator.dispatch(settleCommand);
+      const settledThread = yield* projections.getThreadShell(threadId);
+      assert.ok(settledThread);
+      assert.equal(settledThread.settledOverride, "settled");
+      const settledRetry = yield* orchestrator.dispatch(settleCommand);
+      assert.deepEqual(settledRetry, { ...settled, replayed: true });
+      assert.deepEqual(yield* projections.getThreadShell(threadId), settledThread);
+
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-before-conditional-unsettle"),
+        threadId,
+        title: "Updated while done",
+      });
+      const beforeUnsettle = yield* projections.getThreadShell(threadId);
+      assert.ok(beforeUnsettle);
+      const staleUnsettle = yield* orchestrator
+        .dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("stale-conditional-unsettle"),
+          threadId,
+          reason: "user",
+          expectedUpdatedAt: settledThread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.equal(staleUnsettle._tag, "OrchestratorDispatchError");
+      assert.deepEqual(yield* projections.getThreadShell(threadId), beforeUnsettle);
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("current-conditional-unsettle"),
+        threadId,
+        reason: "user",
+        expectedUpdatedAt: beforeUnsettle.updatedAt,
+      });
+      const reopenedThread = yield* projections.getThreadShell(threadId);
+      assert.ok(reopenedThread);
+      assert.equal(reopenedThread.settledOverride, "active");
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("dispatch records the command outcome and its duration", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

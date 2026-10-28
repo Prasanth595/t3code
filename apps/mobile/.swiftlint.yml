@@ -5,6 +5,8 @@ included:
   - modules/t3-native-controls/ios
   - modules/t3-terminal/ios
   - modules/t3-review-diff/ios
+  - modules/t3-watch-bridge/ios
+  - watch
 
 excluded:
   - ios/Pods

@@ -2905,6 +2905,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    expectedUpdatedAt: Schema.optional(Schema.DateTimeUtc),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
@@ -2919,6 +2920,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.unsettle"),
     commandId: CommandId,
     threadId: ThreadId,
+    expectedUpdatedAt: Schema.optional(Schema.DateTimeUtc),
     reason: Schema.Literal("user"),
   }),
   Schema.Struct({

@@ -305,6 +305,7 @@ const config: ExpoConfig = {
     favicon: variant.assets.appIcon,
   },
   plugins: [
+    ...(process.env.T3_WATCH_COMPANION === "1" ? ["./plugins/withWatchCompanion.cjs"] : []),
     "expo-asset",
     "react-native-pdf-jsi",
     [

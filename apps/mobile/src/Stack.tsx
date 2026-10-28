@@ -118,6 +118,7 @@ import {
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
+import { WatchInboxScreen } from "./features/watch-companion/WatchInboxScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
@@ -372,6 +373,11 @@ const SETTINGS_SCREENS = {
       ...SETTINGS_PAGE_OPTIONS,
       title: "Microphone",
     },
+  }),
+  SettingsWatchCompanion: createNativeStackScreen({
+    screen: WatchInboxScreen,
+    linking: "settings/watch-companion",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Watch companion" },
   }),
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
