@@ -691,16 +691,23 @@ function permissionRuleEquals(
   );
 }
 
-/** Children inherit only deny/external-directory rules; restore parent policy while retaining agent restrictions. */
+/**
+ * Children inherit only deny/external-directory rules; restore parent policy while retaining agent restrictions.
+ * `previousParentRules` are the parent rules already written into `childRules` by an earlier call.
+ */
 export function openCodeChildPermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  nativeChildRules: PermissionRuleset,
+  childRules: PermissionRuleset,
+  previousParentRules: PermissionRuleset = [],
 ): PermissionRuleset {
   const parentRules = openCodePermissionRules(runtimePolicy);
-  const inheritedRules = parentRules.filter(
-    (rule) => rule.permission === "external_directory" || rule.action === "deny",
-  );
-  const childSpecificRules = nativeChildRules.filter(
+  const inheritedRules = [
+    ...parentRules.filter(
+      (rule) => rule.permission === "external_directory" || rule.action === "deny",
+    ),
+    ...previousParentRules,
+  ];
+  const childSpecificRules = childRules.filter(
     (childRule) =>
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
@@ -2795,21 +2802,38 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           return state;
         };
 
+        // OpenCode copies parent rules into a child only at creation, so children are updated here too.
         const applyPermissionRules = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
-          const permission = openCodePermissionRules(policy);
-          if (
-            permission.length === state.permission.length &&
-            permission.every((rule, index) => permissionRuleEquals(rule, state.permission[index]!))
-          ) {
-            return;
+          const pending = [
+            { state, previousParentRules: state.parentSubagent?.parentState.permission ?? [] },
+          ];
+          for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+            const target = next.state;
+            const previous = target.permission;
+            const permission =
+              target.parentSubagent === null
+                ? openCodePermissionRules(policy)
+                : openCodeChildPermissionRules(policy, previous, next.previousParentRules);
+            if (
+              permission.length !== previous.length ||
+              !permission.every((rule, index) => permissionRuleEquals(rule, previous[index]!))
+            ) {
+              yield* sdkCall(
+                "session.update",
+                { sessionID: target.nativeSessionId, permission },
+                () => client.session.update({ sessionID: target.nativeSessionId, permission }),
+              );
+              target.permission = permission;
+            }
+            for (const child of threads.values()) {
+              if (child.parentSubagent?.parentState === target) {
+                pending.push({ state: child, previousParentRules: previous });
+              }
+            }
           }
-          yield* sdkCall("session.update", { sessionID: state.nativeSessionId, permission }, () =>
-            client.session.update({ sessionID: state.nativeSessionId, permission }),
-          );
-          state.permission = permission;
         });
 
         const resolvePromptParts = Effect.fnUntraced(function* (
