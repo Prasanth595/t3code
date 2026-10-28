@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -192,6 +193,26 @@ const remoteChild = {
   threadId: ThreadId.make("thread:on-the-box"),
   label: "Box",
 };
+
+/** A live parent with one task delegated to a linked environment, still running there. */
+const delegateRemotely = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parent = yield* seedLiveParent(name);
+    yield* orchestrator.dispatch({
+      type: "delegated_task.remote.request",
+      commandId: CommandId.make(`command:remote-delegate:${name}`),
+      parentThreadId: parent.threadId,
+      parentRunId: parent.runId,
+      parentNodeId: parent.rootNodeId,
+      task: "Run a check.",
+      driver: ProviderDriverKind.make("remote"),
+      modelSelection,
+      remoteChild,
+    });
+    const taskId = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents[0]!.id;
+    return { parent, taskId };
+  });
 
 it.layer(layerTest)("a delegated task in a linked environment", (it) => {
   it.effect("is recorded on its parent without a child thread here, once", () =>
@@ -406,6 +427,146 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const offered = yield* Ref.get(offers);
       assert.equal(offered.length, 1);
       assert.equal(offered[0]?.threadId, parent.threadId);
+    }),
+  );
+  it.effect("shows its thread's questions and approvals there on the parent, answered here", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { parent, taskId } = yield* delegateRemotely("mirrors");
+      const now = yield* DateTime.now;
+      const approval = {
+        requestId: RuntimeRequestId.make("request:there:approval"),
+        kind: "command" as const,
+        createdAt: now,
+        detail: "rm -rf build",
+      };
+      const question = {
+        requestId: RuntimeRequestId.make("request:there:question"),
+        kind: "user_input" as const,
+        createdAt: DateTime.add(now, { seconds: 1 }),
+        questions: [{ id: "size", header: "Size", question: "Which size?", options: [] }],
+      };
+      const mirror = (name: string, requests: ReadonlyArray<typeof approval | typeof question>) =>
+        orchestrator.dispatch({
+          type: "delegated_task.remote.requests",
+          commandId: CommandId.make(`command:mirror:${name}`),
+          parentThreadId: parent.threadId,
+          taskId,
+          requests,
+        });
+      const pending = orchestrator
+        .getThreadShell(parent.threadId)
+        .pipe(Effect.map((shell) => shell?.pendingRuntimeRequest?.id ?? null));
+
+      yield* mirror("both", [approval, question]);
+      assert.equal(yield* pending, question.requestId);
+
+      const wrongAnswer = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("command:answer-approval-with-text"),
+          threadId: parent.threadId,
+          requestId: approval.requestId,
+          answers: { size: "Large" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(wrongAnswer._tag, "OrchestratorDispatchError");
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("command:answer-question"),
+        threadId: parent.threadId,
+        requestId: question.requestId,
+        answers: { size: "Large" },
+      });
+      // Answered here, the question waits on the relay, and the approval is what is left.
+      assert.equal(yield* pending, approval.requestId);
+      const answeredTwice = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("command:answer-question-again"),
+          threadId: parent.threadId,
+          requestId: question.requestId,
+          answers: { size: "Small" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(answeredTwice._tag, "OrchestratorDispatchError");
+
+      // The follower reads both still waiting there; the answer given here stands.
+      yield* mirror("both-again", [approval, question]);
+      const requests = (yield* orchestrator.getThreadProjection(parent.threadId)).thread
+        .remoteTaskRequests;
+      assert.deepEqual(
+        requests?.map((request) => [request.requestId, request.response]),
+        [
+          [approval.requestId, undefined],
+          [question.requestId, { answers: { size: "Large" } }],
+        ],
+      );
+
+      // The question left the thread there once it got the answer.
+      yield* mirror("approval", [approval]);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(parent.threadId)).thread.remoteTaskRequests?.map(
+          (request) => request.requestId,
+        ),
+        [approval.requestId],
+      );
+
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.complete",
+        commandId: CommandId.make("command:complete:mirrors"),
+        parentThreadId: parent.threadId,
+        taskId,
+        status: "completed",
+        result: "Done there.",
+        stoppedThere: "ran-out",
+      });
+      assert.equal(yield* pending, null);
+      // A late report from the follower mirrors nothing for a task that has its result.
+      yield* mirror("late", [approval]);
+      assert.equal(yield* pending, null);
+    }),
+  );
+
+  it.effect("asks again here for an answer that could not reach its thread there", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { parent, taskId } = yield* delegateRemotely("respond-fails");
+      const requestId = RuntimeRequestId.make("request:there:refused");
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.requests",
+        commandId: CommandId.make("command:mirror:respond-fails"),
+        parentThreadId: parent.threadId,
+        taskId,
+        requests: [{ requestId, kind: "command", createdAt: yield* DateTime.now }],
+      });
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("command:approve:respond-fails"),
+        threadId: parent.threadId,
+        requestId,
+        decision: "accept",
+      });
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.respond.fail",
+        commandId: CommandId.make("command:refused:respond-fails"),
+        parentThreadId: parent.threadId,
+        taskId,
+        requestId,
+        message: "This link is read-only.",
+      });
+
+      const projection = yield* orchestrator.getThreadProjection(parent.threadId);
+      assert.equal(projection.thread.remoteTaskRequests?.[0]?.response, undefined);
+      assert.equal(
+        (yield* orchestrator.getThreadShell(parent.threadId))?.pendingRuntimeRequest?.id,
+        requestId,
+      );
+      const failure = projection.turnItems.find((item) => item.type === "error");
+      assert.equal(
+        failure?.type === "error" ? failure.failure.message : undefined,
+        "This link is read-only.",
+      );
     }),
   );
 });

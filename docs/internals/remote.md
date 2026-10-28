@@ -133,6 +133,15 @@ internal command reuses the parent half of a local finalize, so the parent
 wakes the same way. Open remote tasks are followed again at startup, which is
 also what keeps restart recovery from treating them as abandoned provider work.
 
+The user's phone or browser may reach only the parent's environment, so the
+follower also mirrors what the task's thread there waits on onto the parent's
+record (`remoteTaskRequests`, through `t3_link_requests`). The parent's shell
+reports it as its pending request, and an answer there takes the normal
+`runtime-request.respond` path; the follower relays it through the link, which
+holds it to the link's access and fence like any other write. An answer refused
+there while the request still waits is asked for again on the parent. A peer
+without `t3_link_requests` keeps its requests to itself, as before.
+
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user. **A full-access link is therefore not fenced**:
 its agents can already do anything that user can, so the fence would only stop

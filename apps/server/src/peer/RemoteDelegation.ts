@@ -6,12 +6,15 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpThreadTimelineItem,
+  type OrchestrationV2LinkedRequest,
   type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2RemoteTaskRequest,
   type OrchestrationV2Subagent,
   type ProjectId,
   type ProviderInstanceId,
   ProviderDriverKind,
   type RunId,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -27,6 +30,7 @@ import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import { LINK_REQUESTS_MAX_WAIT_MS } from "../mcp/toolkits/thread/tools.ts";
 import {
   resolveInteractionMode,
   resolveRuntimeMode,
@@ -45,17 +49,15 @@ import * as PeerLinks from "./PeerLinks.ts";
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
 /** A linked environment that stops answering is retried, backing off to this. */
 const FOLLOW_MAX_BACKOFF = Duration.minutes(5);
+const followBackoff = Schedule.exponential(Duration.seconds(2)).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, FOLLOW_MAX_BACKOFF)),
+  ),
+);
 /** How a follower retries; tests step it by hand. */
 export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
   "t3/peer/RemoteDelegation/FollowRetrySchedule",
-  {
-    defaultValue: () =>
-      Schedule.exponential(Duration.seconds(2)).pipe(
-        Schedule.modifyDelay(({ duration }) =>
-          Effect.succeed(Duration.min(duration, FOLLOW_MAX_BACKOFF)),
-        ),
-      ),
-  },
+  { defaultValue: () => followBackoff },
 );
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
@@ -505,6 +507,160 @@ const make = Effect.gen(function* () {
   /** A task's thread there that ended without a reply. */
   const noReply = "(The thread in the linked environment ended without a reply.)";
 
+  /** Records on the parent what the task's thread there waits on, when that changed. */
+  const mirrorRequests = Effect.fn("RemoteDelegation.mirrorRequests")(function* (
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    known: ReadonlyArray<RuntimeRequestId>,
+    requests: ReadonlyArray<OrchestrationV2LinkedRequest>,
+  ) {
+    if (
+      requests.length === known.length &&
+      requests.every((request) => known.includes(request.requestId))
+    )
+      return;
+    const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    yield* threads.dispatch({
+      type: "delegated_task.remote.requests",
+      commandId: CommandId.make(`command:remote-task-requests:${taskId}:${attempt}`),
+      parentThreadId,
+      taskId,
+      requests,
+    });
+  });
+
+  /**
+   * Sends an answer the user gave here to the task's thread there; true once it is there. An
+   * answer refused there while the thread still waits on its request is asked for again here;
+   * one refused because the request was answered there is left for the mirror to drop.
+   */
+  const relayAnswer = Effect.fn("RemoteDelegation.relayAnswer")(function* (
+    parentThreadId: ThreadId,
+    scope: ThreadScope,
+    remote: OrchestrationV2RemoteTaskChild,
+    request: OrchestrationV2RemoteTaskRequest,
+  ) {
+    // A request is answered at most once there, so every attempt can be its own call.
+    const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const refusal = yield* forwarding
+      .linkRequests(scope, remote.environmentId, {
+        action: "respond",
+        threadId: remote.threadId,
+        requestId: request.requestId,
+        ...request.response,
+        clientRequestId: `answer:${attempt}`,
+      })
+      .pipe(
+        Effect.as(undefined),
+        Effect.catch((error) => Effect.succeed(error)),
+      );
+    if (refusal === undefined) return true;
+    const there = yield* forwarding.linkRequests(scope, remote.environmentId, {
+      action: "watch",
+      threadId: remote.threadId,
+      timeoutMs: 1,
+    });
+    const stillWaits =
+      "requests" in there && there.requests.some((open) => open.requestId === request.requestId);
+    if (stillWaits) {
+      yield* threads.dispatch({
+        type: "delegated_task.remote.respond.fail",
+        commandId: CommandId.make(
+          `command:remote-task-answer-refused:${request.requestId}:${attempt}`,
+        ),
+        parentThreadId,
+        taskId: request.taskId,
+        requestId: request.requestId,
+        message: refusal.message,
+      });
+    }
+    return false;
+  });
+
+  /**
+   * One pass of relaying requests for a task still running there: sends the answers given here
+   * that have not reached it, then waits until its thread there waits on something else or the
+   * user answers here. A peer from before `t3_link_requests` keeps its requests to itself.
+   */
+  const relayRequestsOnce = Effect.fn("RemoteDelegation.relayRequestsOnce")(function* (
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    relayed: Set<RuntimeRequestId>,
+  ) {
+    const sequence = yield* threads.getThreadEventSequence(parentThreadId);
+    const { thread, task } = yield* readTask(parentThreadId, taskId);
+    if (task?.remoteChild === undefined || task.result !== null) return yield* Effect.never;
+    const remote = task.remoteChild;
+    const scope = followScope(
+      { threadId: parentThreadId, providerInstanceId: thread.providerInstanceId },
+      remote,
+    );
+    const mirrored = (thread.remoteTaskRequests ?? []).filter(
+      (request) => request.taskId === taskId,
+    );
+    for (const request of mirrored) {
+      if (request.response === undefined || relayed.has(request.requestId)) continue;
+      if (yield* relayAnswer(parentThreadId, scope, remote, request)) {
+        relayed.add(request.requestId);
+      }
+    }
+    const answeredHere = threads
+      .streamStoredEventsFrom({
+        threadId: parentThreadId,
+        afterSequence: sequence,
+        eventType: "thread.metadata-updated",
+      })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "thread.metadata-updated" &&
+            (stored.event.payload.remoteTaskRequests ?? []).some(
+              (request) =>
+                request.taskId === taskId &&
+                request.response !== undefined &&
+                !relayed.has(request.requestId),
+            ),
+        ),
+        Stream.runHead,
+        Effect.flatMap((answered) => (Option.isSome(answered) ? Effect.void : Effect.never)),
+      );
+    const known = mirrored.map((request) => request.requestId);
+    const watched = yield* forwarding
+      .linkRequests(scope, remote.environmentId, {
+        action: "watch",
+        threadId: remote.threadId,
+        knownRequestIds: known,
+        timeoutMs: LINK_REQUESTS_MAX_WAIT_MS,
+      })
+      .pipe(
+        Effect.catchIf(
+          (error) => error.code === "invalid_request",
+          () => Effect.never,
+        ),
+        Effect.raceFirst(answeredHere),
+      );
+    if (watched === undefined || !("requests" in watched)) return;
+    yield* mirrorRequests(parentThreadId, taskId, known, watched.requests);
+  });
+
+  /**
+   * Shows on the parent the questions and approvals the task's thread there waits on, and
+   * relays the user's answers given here, for as long as its follower runs.
+   */
+  const relayRequests = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<never> => {
+    const relayed = new Set<RuntimeRequestId>();
+    return relayRequestsOnce(parentThreadId, taskId, relayed).pipe(
+      Effect.forever,
+      // Its own back-off, so stepping the follower's retries never steps this one.
+      Effect.retry(followBackoff),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("remote-delegation.relay-requests-failed", { taskId, cause }).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      ),
+    );
+  };
+
   /**
    * Waits for the task's run there to end, completes the task here, and stops it there if it
    * ended here first. A revoked, expired or forgotten link, or a thread or run gone there,
@@ -527,6 +683,7 @@ const make = Effect.gen(function* () {
       }),
       Effect.retry(followRetry),
       Effect.ignoreCause({ log: true }),
+      Effect.raceFirst(relayRequests(parentThreadId, taskId)),
     );
 
   /**

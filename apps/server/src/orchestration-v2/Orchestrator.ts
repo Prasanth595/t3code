@@ -48,6 +48,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2RemoteTaskRequest,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadShell,
@@ -516,6 +517,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "delegated_task.remote.request":
     case "delegated_task.remote.complete":
     case "delegated_task.remote.stop":
+    case "delegated_task.remote.requests":
+    case "delegated_task.remote.respond.fail":
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
     case "delegated_task.completion-delivery.dispose":
@@ -7838,6 +7841,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } as OrchestrationV2TurnItem,
       });
     }
+    yield* emitRemoteTaskRequests(events, command, parentProjection.thread, task.id, []);
   });
 
   /**
@@ -7876,6 +7880,218 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     yield* emitRemoteStopOwed(events, command, task, task.remoteChild);
+  });
+
+  /**
+   * Replaces what the parent mirrors of one remote task's requests. A request
+   * answered here keeps its answer for as long as the thread there still waits on it.
+   */
+  const emitRemoteTaskRequests = Effect.fn("orchestrationV2.dispatch.remoteTaskRequests")(
+    function* (
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      command: OrchestrationV2InternalCommand | OrchestrationV2Command,
+      thread: OrchestrationV2AppThread,
+      taskId: NodeId,
+      requests: ReadonlyArray<OrchestrationV2RemoteTaskRequest>,
+    ) {
+      const { remoteTaskRequests: current = [], ...rest } = thread;
+      const next = [...current.filter((request) => request.taskId !== taskId), ...requests];
+      const fingerprint = (entries: ReadonlyArray<OrchestrationV2RemoteTaskRequest>) =>
+        JSON.stringify(entries.map((request) => [request.requestId, request.response]));
+      if (fingerprint(next) === fingerprint(current)) return;
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: {
+          ...rest,
+          ...(next.length === 0 ? {} : { remoteTaskRequests: next }),
+          updatedAt: now,
+        },
+      });
+    },
+  );
+
+  const dispatchRemoteDelegatedTaskRequests = Effect.fn(
+    "orchestrationV2.dispatch.remoteDelegatedTaskRequests",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "delegated_task.remote.requests" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { thread, subagents } = yield* projectionStore
+      .getThreadRecords(command.parentThreadId, ["subagents"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+        ),
+      );
+    const task = subagents.find(
+      (candidate) =>
+        candidate.id === command.taskId &&
+        candidate.origin === "app_owned" &&
+        candidate.remoteChild !== undefined,
+    );
+    if (task === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegated task ${command.taskId} is not a remote task of thread ${command.parentThreadId}.`,
+      });
+    }
+    const answers = new Map(
+      (thread.remoteTaskRequests ?? [])
+        .filter((request) => request.taskId === task.id)
+        .map((request) => [request.requestId, request.response]),
+    );
+    const mirrored =
+      task.result !== null
+        ? []
+        : command.requests.map((request) => {
+            const response = answers.get(request.requestId);
+            return { ...request, taskId: task.id, ...(response === undefined ? {} : { response }) };
+          });
+    yield* emitRemoteTaskRequests(events, command, thread, task.id, mirrored);
+  });
+
+  /**
+   * Records the user's answer to a request a remote task's thread waits on; its
+   * follower relays it there. False when `command` answers no such request.
+   */
+  const dispatchRemoteTaskRequestRespond = Effect.fn(
+    "orchestrationV2.dispatch.remoteTaskRequestRespond",
+  )(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    const request = thread.remoteTaskRequests?.find(
+      (candidate) => candidate.requestId === command.requestId,
+    );
+    if (request === undefined) return false;
+    const fail = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    if (request.response !== undefined) {
+      return yield* fail(`Runtime request ${command.requestId} is resolved.`);
+    }
+    if (Object.keys(command.attachmentsByQuestionId ?? {}).length > 0) {
+      return yield* fail("Attachments cannot reach a task in another environment.");
+    }
+    const dismissed = command.decision === "cancel" || command.decision === "decline";
+    const response =
+      command.feedback !== undefined
+        ? undefined
+        : request.kind === "user_input"
+          ? command.answers !== undefined && command.decision === undefined
+            ? { answers: command.answers }
+            : command.answers === undefined && dismissed
+              ? { decision: command.decision! }
+              : undefined
+          : command.decision !== undefined && command.answers === undefined
+            ? { decision: command.decision }
+            : undefined;
+    if (response === undefined) {
+      return yield* fail("Answer an approval with a decision or a question with answers.");
+    }
+    yield* emitRemoteTaskRequests(
+      events,
+      command,
+      thread,
+      request.taskId,
+      (thread.remoteTaskRequests ?? [])
+        .filter((candidate) => candidate.taskId === request.taskId)
+        .map((candidate) =>
+          candidate.requestId === request.requestId ? { ...candidate, response } : candidate,
+        ),
+    );
+    return true;
+  });
+
+  const dispatchRemoteDelegatedTaskRespondFail = Effect.fn(
+    "orchestrationV2.dispatch.remoteDelegatedTaskRespondFail",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "delegated_task.remote.respond.fail" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { thread, nodes } = yield* projectionStore
+      .getThreadRecords(command.parentThreadId, ["nodes"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+        ),
+      );
+    const requests = (thread.remoteTaskRequests ?? []).filter(
+      (request) => request.taskId === command.taskId,
+    );
+    if (
+      !requests.some(
+        (request) => request.requestId === command.requestId && request.response !== undefined,
+      )
+    )
+      return;
+    yield* emitRemoteTaskRequests(
+      events,
+      command,
+      thread,
+      command.taskId,
+      requests.map((request) => {
+        if (request.requestId !== command.requestId) return request;
+        const { response: _answerThatFailed, ...unanswered } = request;
+        return unanswered;
+      }),
+    );
+    const node = nodes.find((candidate) => candidate.id === command.taskId);
+    if (node === undefined) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.parentThreadId,
+      ...(node.runId === null ? {} : { runId: node.runId }),
+      nodeId: node.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`turn-item:remote-request-answer-failure:${command.requestId}`),
+        threadId: command.parentThreadId,
+        runId: node.runId,
+        nodeId: node.id,
+        providerThreadId: node.providerThreadId,
+        providerTurnId: node.providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread }),
+        status: "failed",
+        title: "Answer not delivered",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error",
+        failure: {
+          class: "transport_error",
+          message: command.message,
+          code: null,
+          retryable: null,
+        },
+      },
+    });
   });
 
   const emitRemoteStopOwed = Effect.fn("orchestrationV2.dispatch.remoteStopOwed")(function* (
@@ -8419,6 +8635,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       const runtimeRequest = context.request;
       if (runtimeRequest === undefined) {
+        if (yield* dispatchRemoteTaskRequestRespond(command, events)) return;
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -12694,6 +12911,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "delegated_task.remote.stop":
         yield* dispatchRemoteDelegatedTaskStop(command, events);
         break;
+      case "delegated_task.remote.requests":
+        yield* dispatchRemoteDelegatedTaskRequests(command, events);
+        break;
+      case "delegated_task.remote.respond.fail":
+        yield* dispatchRemoteDelegatedTaskRespondFail(command, events);
+        break;
       case "delegated_task.wake-policy":
         yield* dispatchDelegatedTaskWakePolicy(command, events);
         break;
@@ -12809,7 +13032,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
-          command.type === "thread.guest-share.close",
+          command.type === "thread.guest-share.close" ||
+          // A follower's report repeats what the parent already shows.
+          command.type === "delegated_task.remote.requests" ||
+          command.type === "delegated_task.remote.respond.fail",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

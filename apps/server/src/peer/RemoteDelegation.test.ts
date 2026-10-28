@@ -7,14 +7,19 @@ import {
   EventId,
   MessageId,
   NodeId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
   ProjectId,
+  ProviderSessionId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
   type Project,
   type RepositoryIdentity,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -46,6 +51,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -127,6 +133,12 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** The questions and approvals the thread there has asked, answered or not. */
+  readonly requests: SubscriptionRef.SubscriptionRef<ReadonlyArray<OrchestrationV2RuntimeRequest>>;
+  /** The answers the thread there was given, in order. */
+  readonly answers: Ref.Ref<ReadonlyArray<string | undefined>>;
+  /** While set, the thread there refuses an answer with this. */
+  readonly refuseAnswers: Ref.Ref<string | null>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -161,6 +173,9 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    requests: yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2RuntimeRequest>>([]),
+    answers: yield* Ref.make<ReadonlyArray<string | undefined>>([]),
+    refuseAnswers: yield* Ref.make<string | null>(null),
   } satisfies BoxThread;
 });
 
@@ -204,6 +219,39 @@ const serveBox = (thread: BoxThread) => {
 const boxRunId = RunId.make("run:box");
 const boxLaterRunId = RunId.make("run:box-later");
 
+const boxApprovalId = RuntimeRequestId.make("request:box-approval");
+const boxApproval: OrchestrationV2RuntimeRequest = {
+  id: boxApprovalId,
+  nodeId: NodeId.make("node:box"),
+  providerTurnId: null,
+  nativeRequestRef: null,
+  kind: "command",
+  status: "pending",
+  responseCapability: { type: "live", providerSessionId: ProviderSessionId.make("session:box") },
+  createdAt: DateTime.makeUnsafe(0),
+  resolvedAt: null,
+};
+const boxApprovalItem: OrchestrationV2TurnItem = {
+  id: TurnItemId.make("item:box-approval"),
+  threadId: ThreadId.make("thread:box"),
+  runId: boxRunId,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 0,
+  status: "waiting",
+  title: null,
+  startedAt: DateTime.makeUnsafe(0),
+  completedAt: null,
+  updatedAt: DateTime.makeUnsafe(0),
+  type: "approval_request",
+  requestId: boxApprovalId,
+  requestKind: "command",
+  prompt: "pnpm test --update-snapshots",
+};
+
 const boxToolkitLayer = (thread: BoxThread) => {
   const runId = boxRunId;
   const interrupts = new Set<string>();
@@ -235,7 +283,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const runless = yield* Ref.get(thread.runless);
       return shell === null
         ? (null as never)
-        : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
+        : {
+            ...idleThreadProjection(shell),
+            runs: runless ? [] : [runOf(status)],
+            runtimeRequests: yield* SubscriptionRef.get(thread.requests),
+            turnItems: [boxApprovalItem],
+          };
     });
   // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
@@ -250,6 +303,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
     });
   const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
+    getThreadEventSequence: () => Effect.succeed(0),
+    streamStoredEventsFrom: () =>
+      SubscriptionRef.changes(thread.requests).pipe(Stream.drop(1)) as never,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     waitForThread: (input) =>
@@ -396,18 +452,36 @@ const boxToolkitLayer = (thread: BoxThread) => {
         Effect.as({ type: "interrupt_requested", run: runOf("running") } as never),
       ),
     dispatch: (command) =>
-      command.type === "thread.stop"
-        ? recordStop(command.commandId, "thread.stop").pipe(
-            Effect.tap(() =>
-              Effect.gen(function* () {
-                if (!(yield* Ref.getAndSet(thread.holdFirstStop, false))) return;
-                yield* Deferred.succeed(thread.stopStarted, undefined);
-                yield* Deferred.await(thread.releaseStop);
-              }),
-            ),
-            Effect.as({ sequence: 0, storedEvents: [] } as never),
-          )
-        : Effect.die(`The box does not expect ${command.type}`),
+      command.type === "runtime-request.respond"
+        ? Effect.gen(function* () {
+            const refusal = yield* Ref.get(thread.refuseAnswers);
+            if (refusal !== null) {
+              return yield* new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: refusal,
+              });
+            }
+            yield* Ref.update(thread.answers, (seen) => [...seen, command.decision]);
+            yield* SubscriptionRef.update(thread.requests, (requests) =>
+              requests.map((request) =>
+                request.id === command.requestId ? { ...request, status: "resolved" } : request,
+              ),
+            );
+            return { sequence: 0, storedEvents: [] } as never;
+          })
+        : command.type === "thread.stop"
+          ? recordStop(command.commandId, "thread.stop").pipe(
+              Effect.tap(() =>
+                Effect.gen(function* () {
+                  if (!(yield* Ref.getAndSet(thread.holdFirstStop, false))) return;
+                  yield* Deferred.succeed(thread.stopStarted, undefined);
+                  yield* Deferred.await(thread.releaseStop);
+                }),
+              ),
+              Effect.as({ sequence: 0, storedEvents: [] } as never),
+            )
+          : Effect.die(`The box does not expect ${command.type}`),
     stopDelegatedTasks: (input) => recordStop(input.commandId, "delegated-tasks"),
     sendToThread: (input) =>
       Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
@@ -459,10 +533,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ),
       ),
   });
-  return Layer.merge(
+  return Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
     McpHttpServer.layerProjectRegistration,
+    McpHttpServer.layerThreadToolkit,
   ).pipe(
+    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(layerBoxThreads),
@@ -1750,4 +1826,128 @@ it.effect("a local task runs in this thread's project", () =>
       expect(JSON.stringify(result.content)).toContain("invalid_request");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("the laptop's parent shows an approval the task waits on there, and answers it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      yield* SubscriptionRef.set(thread.requests, [boxApproval]);
+      yield* Ref.set(thread.refuseAnswers, "The approval's provider session ended.");
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      /** The parent's record once `ready` holds for it. */
+      const parentWhen = (ready: (thread: OrchestrationV2AppThread) => boolean) =>
+        a.orchestrator
+          .streamStoredEventsFrom({
+            threadId: parentThreadId,
+            afterSequence: 0,
+            eventType: "thread.metadata-updated",
+          })
+          .pipe(
+            Stream.map((stored) => stored.event.payload as OrchestrationV2AppThread),
+            Stream.filter(ready),
+            Stream.runHead,
+          );
+      const approve = (attempt: string) =>
+        a.orchestrator.dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`command:approve-on-laptop:${attempt}`),
+          threadId: parentThreadId,
+          requestId: boxApprovalId,
+          decision: "accept",
+        });
+
+      yield* parentWhen((parent) => parent.remoteTaskRequests?.length === 1);
+      expect(
+        (yield* a.orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+      ).toMatchObject({ id: boxApprovalId, kind: "command", blocking: true });
+      expect(
+        (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+      ).toMatchObject({
+        status: "running",
+        pendingApproval: { requestId: boxApprovalId, runId: boxRunId },
+      });
+
+      // The box refuses the first answer while it still waits, so the laptop asks again.
+      yield* approve("refused");
+      const failure = yield* a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "turn-item.updated",
+        })
+        .pipe(
+          Stream.map((stored) => stored.event.payload as OrchestrationV2TurnItem),
+          Stream.filter((item) => item.type === "error"),
+          Stream.runHead,
+        );
+      expect(
+        Option.getOrUndefined(failure)?.type === "error" ? failure.pipe(Option.getOrThrow) : null,
+      ).toMatchObject({ failure: { message: "The approval's provider session ended." } });
+      expect(
+        (yield* a.orchestrator.getThreadProjection(parentThreadId)).thread.remoteTaskRequests?.[0]
+          ?.response,
+      ).toBeUndefined();
+
+      yield* Ref.set(thread.refuseAnswers, null);
+      yield* approve("accepted");
+      yield* parentWhen((parent) => (parent.remoteTaskRequests ?? []).length === 0);
+      expect(yield* Ref.get(thread.answers)).toEqual(["accept"]);
+      expect(
+        (yield* a.orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+      ).toBeNull();
+
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a wait on a task there ends on its approval, and its result still wakes the parent",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        yield* SubscriptionRef.set(thread.requests, [boxApproval]);
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+
+        const waited = yield* a.call("delegate_task", {
+          task: "Run the full suite on the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.4",
+          },
+          mode: "wait",
+          clientRequestId: "suite-on-box-waited",
+        });
+        expect(waited.structuredContent).toMatchObject({
+          status: "running",
+          waitTimedOut: false,
+          pendingApproval: { requestId: boxApprovalId },
+        });
+        const taskId = (waited.structuredContent as { taskId: NodeId }).taskId;
+        const task = (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (candidate) => candidate.id === taskId,
+        );
+        expect(task?.completionWake).toBe("always");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

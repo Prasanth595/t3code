@@ -1,0 +1,168 @@
+import {
+  CommandId,
+  type OrchestrationV2LinkedRequest,
+  type OrchestrationV2ThreadProjection,
+  OrchestratorMcpFailure,
+  type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
+  type RuntimeRequestId,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+
+import { assertNotLinked } from "../../linkOrigin.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { dispatchFailure, loadCaller, threadNotFound, unavailable } from "../../threadAccess.ts";
+import { LINK_REQUESTS_MAX_WAIT_MS } from "./tools.ts";
+
+const requireLinkSession = McpInvocationContext.McpInvocationContext.pipe(
+  Effect.flatMap((scope) =>
+    McpInvocationContext.isLinkSession(scope)
+      ? Effect.void
+      : Effect.fail(
+          new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Only a linked T3 Code environment answers here for its user.",
+          }),
+        ),
+  ),
+);
+
+/** The questions and approvals `projection` waits on that an answer can still reach. */
+const linkedRequestsOf = (
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
+): ReadonlyArray<OrchestrationV2LinkedRequest> =>
+  projection.runtimeRequests.flatMap((request): ReadonlyArray<OrchestrationV2LinkedRequest> => {
+    if (request.status !== "pending" || request.responseCapability.type !== "live") return [];
+    const common = { requestId: request.id, createdAt: request.createdAt };
+    if (request.kind === "user_input") {
+      const item = projection.turnItems.findLast(
+        (candidate) =>
+          candidate.type === "user_input_request" && candidate.requestId === request.id,
+      );
+      if (item?.type !== "user_input_request") return [];
+      return [
+        {
+          ...common,
+          kind: "user_input",
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          questions: item.questions,
+        },
+      ];
+    }
+    if (request.kind === "auth_refresh" || request.kind === "dynamic_tool_call") return [];
+    const item = projection.turnItems.findLast(
+      (candidate) => candidate.type === "approval_request" && candidate.requestId === request.id,
+    );
+    const approval = item?.type === "approval_request" ? item : undefined;
+    return [
+      {
+        ...common,
+        kind: request.kind,
+        ...(approval?.runId == null ? {} : { runId: approval.runId }),
+        ...(approval?.prompt === undefined ? {} : { detail: approval.prompt }),
+        ...(approval?.reason === undefined ? {} : { reason: approval.reason }),
+        ...(approval?.options === undefined ? {} : { options: approval.options }),
+      },
+    ];
+  });
+
+const linkedThread = Effect.fn("mcp.linkedThread")(function* (threadId: ThreadId) {
+  yield* requireLinkSession;
+  const caller = yield* loadCaller();
+  const shell = yield* caller.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
+  if (shell === null || shell.deletedAt !== null) {
+    return yield* threadNotFound(caller.threads, threadId, "The thread was not found.");
+  }
+  const readRequests = caller.threads
+    .getProjectThreadRecords(
+      { projectId: shell.projectId, threadId },
+      ["runtimeRequests", "turnItems"],
+      {
+        turnItemTypes: ["user_input_request", "approval_request"],
+      },
+    )
+    .pipe(Effect.map(linkedRequestsOf), Effect.mapError(unavailable));
+  return { caller, readRequests };
+});
+
+/**
+ * The thread's live requests once they differ from `knownRequestIds`, or as they are when
+ * `timeoutMs` passes. One wait answers within a forwarded call's idle limit.
+ */
+export const watchLinkedRequests = Effect.fn("mcp.watchLinkedRequests")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly knownRequestIds?: ReadonlyArray<RuntimeRequestId> | undefined;
+  readonly timeoutMs?: number | undefined;
+}) {
+  const { caller, readRequests } = yield* linkedThread(input.threadId);
+  const known = new Set(input.knownRequestIds ?? []);
+  const differs = (requests: ReadonlyArray<OrchestrationV2LinkedRequest>) =>
+    requests.length !== known.size || requests.some((request) => !known.has(request.requestId));
+  // Taken before the read, so a request recorded between the two still wakes the wait.
+  const afterSequence = yield* caller.threads
+    .getThreadEventSequence(input.threadId)
+    .pipe(Effect.mapError(unavailable));
+  const current = yield* readRequests;
+  if (differs(current)) return { requests: current };
+  const changed = yield* caller.threads
+    .streamStoredEventsFrom({
+      threadId: input.threadId,
+      afterSequence,
+      eventType: "runtime-request.updated",
+    })
+    .pipe(
+      Stream.mapError(unavailable),
+      Stream.mapEffect(() => readRequests),
+      Stream.filter(differs),
+      Stream.runHead,
+      Effect.timeoutOption(input.timeoutMs ?? LINK_REQUESTS_MAX_WAIT_MS),
+      Effect.map(Option.flatten),
+    );
+  return { requests: Option.getOrElse(changed, () => current) };
+});
+
+/**
+ * Answers a request for the user of the environment the link belongs to. The caller's
+ * declaration has already held the link to its access and fence for this thread; a link
+ * paired below full access may not also accept the request for every later session here.
+ */
+export const respondToLinkedRequest = Effect.fn("mcp.respondToLinkedRequest")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly requestId: RuntimeRequestId;
+  readonly decision?: ProviderApprovalDecision | undefined;
+  readonly answers?: ProviderUserInputAnswers | undefined;
+  readonly clientRequestId: string;
+}) {
+  const { caller } = yield* linkedThread(input.threadId);
+  if (input.decision === "acceptAlways") {
+    yield* assertNotLinked(caller, "accept a request for every later session here");
+  }
+  const answer =
+    input.decision !== undefined && input.answers === undefined
+      ? { decision: input.decision }
+      : input.answers !== undefined && input.decision === undefined
+        ? { answers: input.answers }
+        : undefined;
+  if (answer === undefined) {
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "Answer an approval with `decision` or a question with `answers`.",
+    });
+  }
+  const result = yield* caller.threads
+    .dispatch({
+      type: "runtime-request.respond",
+      // A repeat replays the first answer's receipt, so a resent answer is answered once.
+      commandId: CommandId.make(
+        `mcp:link-respond:${encodeURIComponent(caller.scope.requestNamespace)}:${encodeURIComponent(input.clientRequestId)}`,
+      ),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      ...answer,
+    })
+    .pipe(Effect.mapError(dispatchFailure));
+  return { sequence: result.sequence };
+});

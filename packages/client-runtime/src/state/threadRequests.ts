@@ -1,14 +1,16 @@
-import type {
-  EnvironmentId,
-  ThreadId,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2UserInputQuestion,
-  ProviderApprovalFullAccessOverride,
-  ProviderApprovalOption,
-  ProviderApprovalDecision,
-  ProviderRequestKind,
-  RuntimeRequestId,
+import {
+  unansweredRemoteTaskRequests,
+  type EnvironmentId,
+  type ThreadId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalFullAccessOverride,
+  type ProviderApprovalOption,
+  type ProviderApprovalDecision,
+  type ProviderRequestKind,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
@@ -213,16 +215,27 @@ export function makeThreadRequestsResolvedAnnouncer(
   };
 }
 
+/** The questions and approvals of the thread's tasks in linked environments, mirrored on it. */
+type WithRemoteTaskRequests = {
+  readonly thread?: Pick<OrchestrationV2AppThread, "remoteTaskRequests">;
+};
+
 export function pendingRuntimeRequestIds(
-  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests"> & WithRemoteTaskRequests,
 ): RuntimeRequestId[] {
-  return projection.runtimeRequests.flatMap((request) =>
-    request.status === "pending" ? [request.id] : [],
-  );
+  return [
+    ...projection.runtimeRequests.flatMap((request) =>
+      request.status === "pending" ? [request.id] : [],
+    ),
+    ...remoteTaskRequestsOf(projection).map((request) => request.requestId),
+  ];
 }
 
+const remoteTaskRequestsOf = (projection: WithRemoteTaskRequests) =>
+  projection.thread === undefined ? [] : unansweredRemoteTaskRequests(projection.thread);
+
 export function derivePendingThreadRequests(
-  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems">,
+  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems"> & WithRemoteTaskRequests,
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
@@ -273,6 +286,32 @@ export function derivePendingThreadRequests(
       ...(request.responseCapability.type === "live" && request.responseCapability.supportsFeedback
         ? { supportsFeedback: true }
         : {}),
+    });
+  }
+
+  for (const request of remoteTaskRequestsOf(projection)) {
+    const createdAt = DateTime.formatIso(request.createdAt);
+    if (request.kind === "user_input") {
+      userInputs.push({
+        requestId: request.requestId,
+        createdAt,
+        questions: (request.questions ?? []).map((question) => ({
+          ...question,
+          multiSelect: question.multiSelect ?? false,
+        })),
+        responseCapability: "live",
+        dismissible: false,
+      });
+      continue;
+    }
+    approvals.push({
+      requestId: request.requestId,
+      requestKind: request.kind,
+      createdAt,
+      ...(request.detail ? { detail: request.detail } : {}),
+      ...(request.reason ? { reason: request.reason } : {}),
+      ...(request.options === undefined ? {} : { options: request.options }),
+      responseCapability: "live",
     });
   }
 

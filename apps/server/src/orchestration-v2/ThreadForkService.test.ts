@@ -3,6 +3,7 @@ import {
   ContextTransferId,
   MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -10,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -156,6 +158,29 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
+  }),
+);
+
+it.effect("leaves the questions of the source's tasks in linked environments to the source", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const result = yield* planFork(sourceRun, {
+      ...sourceProjection,
+      thread: {
+        ...sourceProjection.thread,
+        remoteTaskRequests: [
+          {
+            requestId: RuntimeRequestId.make("request:remote-question"),
+            taskId: NodeId.make("node:remote-task"),
+            kind: "user_input",
+            createdAt: forkCreatedAt,
+          },
+        ],
+      },
+    });
+
+    assert.isUndefined(result.targetThread.remoteTaskRequests);
   }),
 );
 

@@ -297,7 +297,9 @@ there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it
 ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
-fails with that reason.
+fails with that reason. When the task asks a question or needs an approval,
+this thread shows it, so you can answer from any device connected to this
+machine.
 
 ## Manage or revoke access
 

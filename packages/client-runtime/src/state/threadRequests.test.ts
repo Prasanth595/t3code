@@ -316,6 +316,58 @@ describe("pending v2 questions", () => {
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
+  it("lists what a task in a linked environment waits on until the user answers it here", () => {
+    const remote = {
+      runtimeRequests: [],
+      turnItems: [],
+      thread: {
+        remoteTaskRequests: [
+          {
+            requestId: RuntimeRequestId.make("remote-approval"),
+            taskId: NodeId.make("remote-task"),
+            kind: "command" as const,
+            createdAt: v2Now,
+            detail: "pnpm test",
+          },
+          {
+            requestId: RuntimeRequestId.make("remote-question"),
+            taskId: NodeId.make("remote-task"),
+            kind: "user_input" as const,
+            createdAt: v2Now,
+            questions: [{ id: "size", header: "Size", question: "Which size?", options: [] }],
+          },
+          {
+            requestId: RuntimeRequestId.make("remote-answered"),
+            taskId: NodeId.make("remote-task"),
+            kind: "command" as const,
+            createdAt: v2Now,
+            response: { decision: "accept" as const },
+          },
+        ],
+      },
+    };
+    const pending = derivePendingThreadRequests(remote);
+    expect(pending.approvals).toEqual([
+      {
+        requestId: "remote-approval",
+        requestKind: "command",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        detail: "pnpm test",
+        responseCapability: "live",
+      },
+    ]);
+    expect(pending.userInputs).toEqual([
+      {
+        requestId: "remote-question",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        questions: [
+          { id: "size", header: "Size", question: "Which size?", options: [], multiSelect: false },
+        ],
+        responseCapability: "live",
+        dismissible: false,
+      },
+    ]);
+  });
 });
 
 it("restores old text answers without mutating history or replacing unchanged rows", () => {

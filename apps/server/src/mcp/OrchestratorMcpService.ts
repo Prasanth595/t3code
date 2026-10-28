@@ -8,6 +8,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   TurnItemId,
+  type OrchestrationV2RemoteTaskRequest,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -63,6 +64,7 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  unansweredRemoteTaskRequests,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -130,6 +132,10 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "subagent.updated" },
   { thread: "child", eventType: "provider-thread.updated" },
   { thread: "child", eventType: "runtime-request.updated" },
+] as const;
+const REMOTE_TASK_WAKE_EVENTS = [
+  { thread: "parent", eventType: "subagent.updated" },
+  { thread: "parent", eventType: "thread.metadata-updated" },
 ] as const;
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
@@ -508,6 +514,23 @@ function pendingTaskApproval(
     }
   }
   return approval;
+}
+
+/** The oldest approval a remote task's thread there waits on that the user has not answered here. */
+function remoteTaskApproval(
+  task: OrchestrationV2Subagent,
+  unanswered: ReadonlyArray<OrchestrationV2RemoteTaskRequest>,
+): OrchestratorMcpDelegateTaskResult["pendingApproval"] {
+  for (const request of unanswered.toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
+  )) {
+    const runId = request.runId ?? task.remoteChild?.runId;
+    if (request.kind !== "user_input" && runId !== undefined) {
+      return { requestId: request.requestId, kind: request.kind, runId };
+    }
+  }
+  return null;
 }
 
 function directAppOwnedChildTasks(
@@ -1411,7 +1434,15 @@ const make = Effect.gen(function* () {
       );
     }
     if (task.childThreadId === null) {
-      return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
+      return yield* readRemoteTask(
+        scope,
+        task,
+        unansweredRemoteTaskRequests(parentProjection.thread).filter(
+          (request) => request.taskId === task.id,
+        ),
+        waitTimedOut,
+        acknowledgeTerminal,
+      );
     }
     const childControls = yield* threadManagement
       .getThreadRecords(
@@ -1607,8 +1638,8 @@ const make = Effect.gen(function* () {
       Math.max(1, requestedTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
     const waited = yield* waitForTask(scope, taskId, timeoutMs);
-    if (Option.isSome(waited)) return waited.value;
-    // As for a local task: once the blocking wait ends, a later result wakes the parent.
+    if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) return waited.value;
+    // As for a local task: once the blocking wait ends without a result, a later one wakes the parent.
     yield* threadManagement
       .dispatch({
         type: "delegated_task.wake-policy",
@@ -1622,7 +1653,7 @@ const make = Effect.gen(function* () {
         completionWake: "always",
       })
       .pipe(Effect.ignoreCause({ log: true }));
-    return yield* readTask(scope, taskId, true, true);
+    return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 
   /**
@@ -1632,6 +1663,7 @@ const make = Effect.gen(function* () {
   const readRemoteTask = Effect.fn("OrchestratorMcpService.readRemoteTask")(function* (
     scope: McpThreadInvocationScope,
     task: OrchestrationV2Subagent,
+    unanswered: ReadonlyArray<OrchestrationV2RemoteTaskRequest>,
     waitTimedOut: boolean,
     acknowledgeTerminal: boolean,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
@@ -1698,9 +1730,8 @@ const make = Effect.gen(function* () {
         : null,
       latestTerminalSummary: terminal ? task.result : null,
       latestTerminalResultContextTransferId: null,
-      // Its questions and approvals are answered in the environment it runs in.
-      hasPendingQuestion: false,
-      pendingApproval: null,
+      hasPendingQuestion: !terminal && unanswered.some((request) => request.kind === "user_input"),
+      pendingApproval: terminal ? null : remoteTaskApproval(task, unanswered),
       waitTimedOut,
     } satisfies OrchestratorMcpDelegateTaskResult;
   });
@@ -1721,12 +1752,10 @@ const make = Effect.gen(function* () {
         return Option.some(initial);
       }
       // One stream per event type, so transcript events never fill a buffer.
-      // A remote task has no child here; its completion lands on the parent.
+      // A remote task has no child here; its completion lands on the parent, and so
+      // does the mirror of what its thread there waits on.
       const childThreadId = initial.childThreadId;
-      const wakeEvents =
-        childThreadId === null
-          ? TASK_WAKE_EVENTS.filter(({ thread }) => thread === "parent")
-          : TASK_WAKE_EVENTS;
+      const wakeEvents = childThreadId === null ? REMOTE_TASK_WAKE_EVENTS : TASK_WAKE_EVENTS;
       return yield* Stream.mergeAll(
         wakeEvents.map(({ thread, eventType }) =>
           threadManagement.streamStoredEventsFrom({
