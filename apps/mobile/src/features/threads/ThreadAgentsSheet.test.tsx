@@ -116,7 +116,9 @@ vi.mock("./thread-inspector-navigation", () => ({ useOpenThreadInspector: () => 
 // only that it carries the Stop for a workflow T3 runs.
 vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
-  ListRowLayout: ({ label }: { label: string }) => <span>{label}</span>,
+  ListRowLayout: ({ label, description }: { label: string; description?: string }) => (
+    <span>{`${label} ${description ?? ""}`}</span>
+  ),
 }));
 vi.mock("../../components/ui/ListSection", () => ({
   ListSection: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
@@ -160,7 +162,8 @@ function agent(overrides: Record<string, unknown> = {}) {
     startedAt: null,
     completedAt: null,
     result: null,
-    workflow: { name: "ship", phases: [], agents: [] },
+    workflow: { name: "Ship the release", phases: [], agents: [] },
+    updatedAt: DateTime.makeUnsafe(Date.UTC(2026, 9, 27, 12, 0, 0)),
     ...overrides,
   };
 }
@@ -329,7 +332,7 @@ describe("ThreadAgentsSheet workflow Stop", () => {
 
     show();
 
-    expect(container.textContent).toContain("Ship the release completed");
+    expect(container.textContent).toMatch(/Ship the release\s+completed/i);
     expect(stopButton()).toBeNull();
   });
 
