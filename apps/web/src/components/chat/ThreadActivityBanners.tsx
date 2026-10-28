@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
+  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -31,9 +32,12 @@ import type { ThreadNowItem } from "./ThreadNow";
 export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Children can live in a linked environment, so they open by full ref. */
+  readonly onOpenThread: (ref: ScopedThreadRef) => void;
 }): ThreadNowItem | null {
-  const { childThreadInputs, onOpenThread } = input;
+  const { childThreadInputs } = input;
+  const onOpenThread = (child: EnvironmentThreadShell) =>
+    input.onOpenThread({ environmentId: child.environmentId, threadId: child.id });
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
   return {
@@ -49,7 +53,7 @@ export function childInputNowItem(input: {
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
         <span className="whitespace-nowrap">
-          <InlineButton tone="muted" onClick={() => onOpenThread(child.id)}>
+          <InlineButton tone="muted" onClick={() => onOpenThread(child)}>
             {child.title}
           </InlineButton>
           {index < childThreadInputs.length - 1 ? "," : null}
@@ -57,7 +61,7 @@ export function childInputNowItem(input: {
       </Fragment>
     )),
     actions: (
-      <InlineButton onClick={() => onOpenThread(first.id)}>
+      <InlineButton onClick={() => onOpenThread(first)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
       </InlineButton>
     ),
