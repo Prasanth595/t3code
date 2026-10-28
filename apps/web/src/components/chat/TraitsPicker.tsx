@@ -718,7 +718,7 @@ export const TraitsPicker = memo(function TraitsPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerDescription}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
+      <MenuPopup align="start" animated {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
           provider={provider}
           {...(instanceId ? { instanceId } : {})}

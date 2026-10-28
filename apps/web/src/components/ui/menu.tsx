@@ -27,6 +27,7 @@ function MenuPopup({
   anchor,
   keepMounted = false,
   width = "default",
+  animated = false,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -36,6 +37,7 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
   width?: "default" | "content";
+  animated?: boolean;
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -56,6 +58,8 @@ function MenuPopup({
             "[-webkit-app-region:no-drag]",
             "max-w-[calc(100vw-2rem)]",
             width === "content" ? "w-max min-w-0" : "min-w-[min(10rem,calc(100vw-2rem))]",
+            animated &&
+              "transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
             className,
           )}
           data-slot="menu-popup"
