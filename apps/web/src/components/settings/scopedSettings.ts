@@ -57,12 +57,24 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 const NO_UNSUPPORTED_KEYS: ReadonlySet<string> = new Set();
 
+/** How a dropped project override is learned, apart from the environment-wide key. */
+export const projectOverrideSettingKey = (key: string) => `projectSettingsOverrides.${key}`;
+
 // Settings decode with defaults, so an unknown key looks like an unset one; an advertised list wins.
 function resolveUnsupportedSettingKeys(
   environment: ScopedSettingsEnvironment,
+  projectOverrides: boolean,
 ): ReadonlySet<string> {
   const advertised = environment.serverConfig?.environment?.capabilities.settingsKeys;
-  if (advertised === undefined) return environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS;
+  if (advertised === undefined) {
+    const learned = environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS;
+    if (!projectOverrides) return learned;
+    return new Set(
+      [...SERVER_KEYS].filter(
+        (key) => learned.has(key) || learned.has(projectOverrideSettingKey(key)),
+      ),
+    );
+  }
   const stored = new Set(advertised);
   return new Set([...SERVER_KEYS].filter((key) => !stored.has(key)));
 }
@@ -166,7 +178,7 @@ export function resolveScopedSettingsTargets(
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,
-          unsupportedSettingKeys: resolveUnsupportedSettingKeys(environment),
+          unsupportedSettingKeys: resolveUnsupportedSettingKeys(environment, true),
         },
       ];
     });
@@ -180,7 +192,7 @@ export function resolveScopedSettingsTargets(
             projectId: null,
             settings: environment.serverConfig.settings,
             sources: resolveProjectSettings(environment.serverConfig.settings, null).sources,
-            unsupportedSettingKeys: resolveUnsupportedSettingKeys(environment),
+            unsupportedSettingKeys: resolveUnsupportedSettingKeys(environment, false),
           },
         ]
       : [],
@@ -325,7 +337,7 @@ export function planScopedSettingsPatch(
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
   const patchFor = (environment: ScopedSettingsEnvironment) =>
-    supportedPatch(resolveUnsupportedSettingKeys(environment), serverPatch);
+    supportedPatch(resolveUnsupportedSettingKeys(environment, isProjectScope), serverPatch);
   const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
@@ -547,14 +559,33 @@ function droppedSettingPaths(
 /** Older servers silently drop unknown keys; report them so rows cannot stay mixed forever. */
 function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | undefined) {
   if (saved === undefined) return [];
-  return Object.entries(write.patch).flatMap(([key, value]) =>
-    droppedSettingPaths(
-      key,
-      value,
-      write.previous[key as keyof ServerSettings],
-      saved[key as keyof ServerSettings],
+  const { projectSettingsOverrides, ...patch } = write.patch;
+  // Override fields are reported per key, without the project, even when the whole entry is new.
+  const overrides = Object.entries(projectSettingsOverrides ?? {}).flatMap(([projectId, entry]) => {
+    const before = write.previous.projectSettingsOverrides[projectId as ProjectId];
+    const after = saved.projectSettingsOverrides[projectId as ProjectId];
+    return entry === null
+      ? droppedSettingPaths(`projectSettingsOverrides.${projectId}`, entry, before, after)
+      : Object.entries(entry).flatMap(([key, value]) =>
+          droppedSettingPaths(
+            projectOverrideSettingKey(key),
+            value,
+            before?.[key as keyof ProjectSettingsOverrides],
+            after?.[key as keyof ProjectSettingsOverrides],
+          ),
+        );
+  });
+  return [
+    ...Object.entries(patch).flatMap(([key, value]) =>
+      droppedSettingPaths(
+        key,
+        value,
+        write.previous[key as keyof ServerSettings],
+        saved[key as keyof ServerSettings],
+      ),
     ),
-  );
+    ...overrides,
+  ];
 }
 
 export async function persistScopedSettingsPatch(

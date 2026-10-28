@@ -2,6 +2,7 @@ import { ServerSettings, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { projectOverrideSettingKey } from "./scopedSettings";
 
 interface DroppedSettingKeys {
   readonly serverVersion: string;
@@ -13,13 +14,17 @@ export const droppedSettingKeysAtom = Atom.make<ReadonlyMap<EnvironmentId, Dropp
   new Map(),
 ).pipe(Atom.keepAlive, Atom.withLabel("settings:dropped-setting-keys"));
 
-/** Only whole top-level settings count; a dropped sub-field or project override does not. */
+const RECORDABLE_KEYS = new Set(
+  Object.keys(ServerSettings.fields).flatMap((key) => [key, projectOverrideSettingKey(key)]),
+);
+
+/** Only whole settings and whole project overrides count; a dropped sub-field does not. */
 export function recordDroppedSettingKeys(
   environmentId: EnvironmentId,
   serverVersion: string,
   paths: readonly string[],
 ) {
-  const keys = paths.filter((path) => Object.hasOwn(ServerSettings.fields, path));
+  const keys = paths.filter((path) => RECORDABLE_KEYS.has(path));
   if (keys.length === 0) return;
   appAtomRegistry.update(droppedSettingKeysAtom, (current) => {
     const existing = current.get(environmentId);
