@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
@@ -46,7 +46,19 @@ import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments, targets: scopeTargets } = useSettingsScope();
-  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
+  // Same eligibility as the row's permission check: skip environments that cannot store hosts.
+  const hostDestinations = environmentsStoringSettingKeys(environments, scopeTargets, [
+    "deviceHosts",
+  ]);
+  const configurableEnvironments = environmentsStoringSettingKeys(
+    connectedEnvironments,
+    scopeTargets,
+    ["deviceHosts"],
+  );
+  const writableIds = useEnvironmentsWithScope(configurableEnvironments, AuthSettingsWriteScope);
+  const canConfigure =
+    configurableEnvironments.length > 0 &&
+    configurableEnvironments.every((environment) => writableIds.has(environment.environmentId));
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
@@ -65,10 +77,6 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
     hosts: environment.serverConfig?.settings.deviceHosts ?? [],
   }));
   const groupedHosts = groupDeviceHosts(hostEnvironments);
-  // Same eligibility as the row's permission check: skip environments that cannot store hosts.
-  const hostDestinations = environmentsStoringSettingKeys(environments, scopeTargets, [
-    "deviceHosts",
-  ]);
   const save = async (host: SshDeviceHostConfig, remove = false, original = host) => {
     if (!props.environmentId || projectScope || hostDestinations.length === 0) return;
     setBusy(true);

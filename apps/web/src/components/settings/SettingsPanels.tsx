@@ -49,7 +49,10 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import {
+  useScopedModelDisabledReason,
+  useScopedModelProviders,
+} from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -67,8 +70,6 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { useEnvironmentProviders } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -1489,15 +1490,11 @@ export function ThreadsSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, target } = useSettingsScope();
-  const environmentId = environment?.environmentId ?? null;
+  const { connectedEnvironments } = useSettingsScope();
   const hasServerTargets = connectedEnvironments.length > 0;
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
-  const providersByEnvironment = useEnvironmentProviders();
-  const serverProviders =
-    (environment?.serverConfig
-      ? providersByEnvironment.get(environment.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const textGenerationModel = useScopedModelProviders("textGenerationModelSelection");
+  const environmentId = textGenerationModel.environmentId;
   const supportsAutoSettlement =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
@@ -1507,11 +1504,11 @@ export function ThreadsSettingsPanel() {
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
 
-  const textGenerationProviders = serverProviders.filter(
+  const textGenerationProviders = textGenerationModel.providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(
-    settings,
+    textGenerationModel.settings,
     textGenerationProviders,
   );
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -1520,8 +1517,8 @@ export function ThreadsSettingsPanel() {
   const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      target?.projectId ?? null,
+      textGenerationModel.settings,
+      textGenerationModel.projectId,
     ),
   );
   const hasTextGenerationProvider = textGenerationModelInstanceEntries.some(
@@ -1533,7 +1530,7 @@ export function ThreadsSettingsPanel() {
   const textGenProvider: ProviderDriverKind =
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
+    textGenerationModel.settings,
     textGenerationProviders,
     textGenInstanceId,
     textGenModel,
@@ -1784,7 +1781,7 @@ export function ThreadsSettingsPanel() {
                     updateSettings({
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {
-                          ...settings,
+                          ...textGenerationModel.settings,
                           textGenerationModelSelection: createModelSelection(instanceId, model),
                         },
                         textGenerationProviders,
@@ -1807,7 +1804,7 @@ export function ThreadsSettingsPanel() {
                       updateSettings({
                         textGenerationModelSelection: resolveAppModelSelectionState(
                           {
-                            ...settings,
+                            ...textGenerationModel.settings,
                             textGenerationModelSelection: createModelSelection(
                               textGenInstanceId,
                               textGenModel,

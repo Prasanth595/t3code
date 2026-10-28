@@ -1,6 +1,11 @@
-import type { ProviderInstanceId, ServerSettings, UnifiedSettings } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ProviderInstanceId,
+  type ServerSettings,
+  type UnifiedSettings,
+} from "@t3tools/contracts";
 
-import { mergeEnvironmentSettings } from "../../hooks/useSettings";
+import { mergeEnvironmentSettings, useMergedSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -12,14 +17,16 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { settingKeyRepresentative, targetStoresSettingKeys } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 
-/** Providers of a selected environment that can store `key`, so its picker lists real choices. */
+/** Catalog and settings from one selected environment that can store `key`, so they agree. */
 export function useScopedModelProviders(key: keyof ServerSettings) {
   const { target, targets } = useSettingsScope();
   const providersByEnvironment = useEnvironmentProviders();
   const source = settingKeyRepresentative(target, targets, key);
+  const settings = useMergedSettings(source?.settings ?? DEFAULT_SERVER_SETTINGS);
   return {
     environmentId: source?.environmentId ?? null,
     projectId: source?.projectId ?? null,
+    settings,
     providers:
       (source ? providersByEnvironment.get(source.environmentId) : undefined) ??
       EMPTY_SERVER_PROVIDERS,

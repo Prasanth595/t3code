@@ -55,19 +55,28 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environmentId, providers, projectId } = useScopedModelProviders("defaultModelSelection");
+  const {
+    environmentId,
+    providers,
+    projectId,
+    settings: modelSettings,
+  } = useScopedModelProviders("defaultModelSelection");
   const storedSelection = resolveDefaultProviderModelSelection(
     providers,
-    settings.defaultModelSelection,
+    modelSettings.defaultModelSelection,
   );
   const selection = storedSelection
-    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
+    ? resolveEffectiveDefaultModelSelection(modelSettings, providers, storedSelection)
     : null;
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, projectId),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      modelSettings,
+      projectId,
+    ),
   );
   const modelOptions = getCustomModelOptionsByInstance(
-    settings,
+    modelSettings,
     providers,
     selection?.instanceId,
     selection?.model,
