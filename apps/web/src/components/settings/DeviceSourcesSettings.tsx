@@ -37,7 +37,7 @@ import {
   updateEasDeviceHosts,
 } from "./easDeviceHostsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SimlockDeviceHostEditor } from "./SimlockDeviceHostEditor";
 import {
@@ -160,8 +160,10 @@ export function DeviceSourcesSettings(props: {
   // Environments with devices off are left out: the switch above already says so.
   const active = members.filter((member) => member.settings?.enableDeviceSupport);
   const simlockEnabled = members.some((member) => member.settings?.simlockDeviceHostsEnabled);
-  const disconnected = environments.length > connectedEnvironments.length;
-  const disabled = projectScope || busy || members.length === 0 || disconnected;
+  const offline = environments.filter(
+    (environment) => environment.connection.phase !== "connected",
+  );
+  const disabled = projectScope || busy || members.length === 0 || offline.length > 0;
 
   /** Writes one settings patch per environment; reports the environments it could not change. */
   const write = async (
@@ -540,13 +542,15 @@ export function DeviceSourcesSettings(props: {
   return (
     <SettingsSection id="device-sources" title="Device sources" headerAction={addMenu}>
       {projectScope ? (
-        <p className="px-4 pt-3 text-xs text-muted-foreground sm:px-5">
-          Device sources belong to environments. Select an environment to change them.
-        </p>
-      ) : disconnected ? (
-        <p className="px-4 pt-3 text-xs text-muted-foreground sm:px-5">
-          Connect every selected environment to change device sources.
-        </p>
+        <SettingsRow
+          title="Set per environment"
+          description="Device sources belong to environments. Choose one above to change them."
+        />
+      ) : offline.length > 0 ? (
+        <SettingsRow
+          title={offline.length === 1 ? "Environment disconnected" : "Environments disconnected"}
+          description={`Reconnect ${offline.map(label).join(", ")} to change device sources.`}
+        />
       ) : null}
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
@@ -731,7 +735,7 @@ function DeviceSourceRow(props: { row: SourceRow }) {
   const problems = issues.filter((environment) => environment.status.tone !== "pending");
   const pending = issues.find((environment) => environment.status.tone === "pending");
   return (
-    <div className="flex items-center gap-3 border-t border-border/60 px-4 py-3 first:border-t-0 sm:px-5">
+    <div className="flex items-center gap-3 border-t border-border/60 px-3 py-3 first:border-t-0 sm:px-4">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <p className="truncate text-sm font-medium">{row.title}</p>
