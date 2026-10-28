@@ -22,7 +22,7 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useDeferredValue, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -64,6 +64,7 @@ import {
   buildToolCallExpandedBody,
   workEntryIconName,
   remarkThoughtPreview,
+  thoughtPreviewSource,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -122,21 +123,33 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
   return (
     <WorkLogDetails followLive={entries.some(isStreaming)}>
       {entries.map((entry) => (
-        <ChatMarkdown
+        <ReasoningTraceMarkdown
           key={entry.id}
-          className="text-foreground"
           text={entry.detail ?? ""}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          skills={ctx.skills}
           isStreaming={isStreaming(entry)}
-          headingLevelOffset={MESSAGE_HEADING_LEVEL}
-          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onImageExpand={ctx.onImageExpand}
-          lineBreaks
         />
       ))}
     </WorkLogDetails>
+  );
+}
+
+function ReasoningTraceMarkdown({ text, isStreaming }: { text: string; isStreaming: boolean }) {
+  const ctx = use(TimelineRowCtx);
+  // Long traces re-parse on every delta; deferring lets newer deltas interrupt a stale render.
+  const deferredText = useDeferredValue(text);
+  return (
+    <ChatMarkdown
+      className="text-foreground"
+      text={deferredText}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      skills={ctx.skills}
+      isStreaming={isStreaming}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onImageExpand={ctx.onImageExpand}
+      lineBreaks
+    />
   );
 }
 
@@ -411,7 +424,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {isReasoning && !expanded ? (
                 <ChatMarkdown
                   inline
-                  text={workEntry.detail ?? previewText}
+                  text={thoughtPreviewSource(workEntry.detail ?? previewText)}
                   cwd={ctx.markdownCwd}
                   parseRawHtml={false}
                   extraRemarkPlugins={[

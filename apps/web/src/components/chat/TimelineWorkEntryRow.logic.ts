@@ -189,19 +189,34 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   return workToneIcon(workEntry.tone).iconName;
 }
 
+const THOUGHT_PREVIEW_MAX_CHARS = 2000;
+
+/** The preview is a single truncated line; parsing a long trace on every streamed delta stalls the UI. */
+export function thoughtPreviewSource(text: string): string {
+  if (text.length <= THOUGHT_PREVIEW_MAX_CHARS) return text;
+  const head = text.slice(0, THOUGHT_PREVIEW_MAX_CHARS);
+  const boundary = head.search(/\s\S*$/);
+  return boundary > 0 ? head.slice(0, boundary) : head;
+}
+
 /** Compact reasoning keeps formulas while flattening other Markdown into label text. */
 export function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const children: RootContent[] = [];
+    // Collapse each text run once; re-collapsing the accumulated run per node is quadratic.
+    let pending: string[] = [];
+    const flush = () => {
+      if (pending.length === 0) return;
+      children.push({ type: "text", value: pending.join("").replace(/\s+/g, " ") });
+      pending = [];
+    };
     const append = (value: string) => {
-      const last = children.at(-1);
-      const text = value.replace(/\s+/g, " ");
-      if (last?.type === "text") last.value = (last.value + text).replace(/\s+/g, " ");
-      else children.push({ type: "text", value: text });
+      pending.push(value);
     };
     const visit = (node: Root | RootContent) => {
       if (node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
+        flush();
         children.push({
           type: "inlineMath",
           value: node.value,
@@ -226,6 +241,7 @@ export function remarkThoughtPreview(fallback: string) {
       } else if (node.type === "break") append(" ");
     };
     visit(tree);
+    flush();
     const first = children[0];
     const last = children.at(-1);
     if (first?.type === "text") first.value = first.value.trimStart();
