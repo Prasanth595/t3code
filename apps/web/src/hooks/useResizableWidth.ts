@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
@@ -24,12 +29,14 @@ export interface ResizableWidthHandlers {
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onDoubleClick?: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
 /** Persist on drag end to avoid a storage write on every animation frame. */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
   readonly handlers: ResizableWidthHandlers;
+  readonly setWidth: (width: number) => void;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
 
@@ -55,6 +62,15 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   const clampedWidth = clamp(widthState.width);
 
+  const commitWidth = (key: string, width: number) => {
+    setWidthState({ storageKey: key, width });
+    try {
+      setLocalStorageItem(key, width, WidthSchema);
+    } catch (error) {
+      console.error("Could not persist panel width.", error);
+    }
+  };
+
   const drag = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
     // Disable drag transitions through transition-property; the host renders transition-duration.
@@ -72,12 +88,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         return nextWidth;
       },
       finish(finalWidth) {
-        setWidthState({ storageKey: startStorageKey, width: finalWidth });
-        try {
-          setLocalStorageItem(startStorageKey, finalWidth, WidthSchema);
-        } catch (error) {
-          console.error("Could not persist panel width.", error);
-        }
+        commitWidth(startStorageKey, finalWidth);
       },
       cleanup(committed) {
         host?.style.removeProperty("transition-property");
@@ -102,5 +113,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       onPointerCancel: drag.onPointerCancel,
       onLostPointerCapture: drag.onLostPointerCapture,
     },
+    setWidth: (width) => commitWidth(storageKey, clamp(width)),
   };
 }
