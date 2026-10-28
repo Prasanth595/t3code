@@ -905,6 +905,50 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("searches retry the network after a refresh falls back within the reuse window", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let requests = 0;
+    let online = true;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-refresh-fallback-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      yield* resolver.search({ query: "example" });
+      expect(requests).toBe(1);
+
+      // Prepare always refreshes; an unknown agent stops it right after the refresh.
+      online = false;
+      const missing = yield* resolver.prepare({ agentId: "missing-agent" }).pipe(Effect.flip);
+      expect(missing.reason).toBe("agent_not_found");
+      expect(requests).toBe(2);
+
+      online = true;
+      yield* resolver.search({ query: "example" });
+      expect(requests).toBe(3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              online
+                ? new Response(makeRegistry(agent))
+                : new Response("unavailable", { status: 503 }),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect("filters runner recipes that the environment cannot prepare", () => {
     const runnerAgent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     const binaryAgent = {
