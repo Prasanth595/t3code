@@ -8,9 +8,7 @@
 #                                                 # ~200 MB standalone server build)
 #
 # makepkg leaves src/, pkg/, and the package itself beside the PKGBUILD, where
-# this repo ignores them. Building through a symlinked copy elsewhere keeps even
-# that out of the checkout and keeps the artifacts where `yay -Bi` was pointed;
-# the stamped rebuild command records whichever directory was used.
+# this repo ignores them.
 #
 # The checkout must be a git clone, because pkgver() reads its HEAD. The PKGBUILD
 # assumes this file sits two levels below that checkout; elsewhere, point it:
