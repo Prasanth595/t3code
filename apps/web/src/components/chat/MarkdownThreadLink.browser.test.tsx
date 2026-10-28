@@ -42,6 +42,12 @@ vi.mock("../../state/entities", () => ({
   },
 }));
 
+vi.mock("../contextChipParts", () => ({
+  UnresolvedChip: ({ label }: { label: string }) => <span>{label}</span>,
+}));
+
+vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+
 const ENV = EnvironmentId.make("thread-links-test");
 const ref = (id: string, environmentId = ENV): ScopedThreadRef => ({
   environmentId,
