@@ -229,6 +229,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
+import { CheckboxMark } from "./ui/checkbox";
 import {
   Combobox,
   ComboboxEmpty,
@@ -3028,7 +3029,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               if (project) handleProjectSettings(event, project);
                             }}
                           >
-                            <ProjectScopeRowIcon isSelected={isSelected}>
+                            {shortcutModifiers.shiftKey ? (
+                              <CheckboxMark checked={isSelected} />
+                            ) : null}
+                            <ProjectScopeRowIcon
+                              isSelected={isSelected && !shortcutModifiers.shiftKey}
+                            >
                               {project ? (
                                 <ProjectFavicon project={project} className="size-4 shrink-0" />
                               ) : (
