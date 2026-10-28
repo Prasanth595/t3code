@@ -93,6 +93,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
+  /** The merge queue removal last seen, so each one is reported once. */
+  mergeQueueRemovalId: Schema.optional(TrimmedNonEmptyString),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
   /**
