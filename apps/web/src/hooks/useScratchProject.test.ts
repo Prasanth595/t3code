@@ -16,10 +16,14 @@ function scratchEnvironment(environmentId: EnvironmentId, scratchWorkspaceRoot: 
   } as never;
 }
 
-function actions(primary: EnvironmentId | null, localRoot: string | null) {
+function actions(
+  primary: EnvironmentId | null,
+  localRoot: string | null,
+  remoteRoot: string | null = "/remote/scratch",
+) {
   const environments = [
     scratchEnvironment(local, localRoot),
-    scratchEnvironment(remote, "/remote/scratch"),
+    scratchEnvironment(remote, remoteRoot),
     scratchEnvironment(other, "/other/scratch"),
   ];
   return createScratchProjectActions({
@@ -39,6 +43,7 @@ describe("scratchEnvironmentId", () => {
   it("falls back when the primary environment offers no scratch root", () => {
     expect(actions(local, null).scratchEnvironmentId(remote)).toBe(remote);
     expect(actions(null, null).scratchEnvironmentId(remote)).toBe(remote);
+    expect(actions(null, null, null).scratchEnvironmentId(remote)).toBe(other);
     expect(actions(local, null).scratchEnvironmentId(null)).toBeNull();
   });
 });
