@@ -92,52 +92,57 @@ export const discoverCopilotSkills = Effect.fn("discoverCopilotSkills")(function
   const seenRoots = new Set<string>();
   let remainingEntries = MAX_SCAN_ENTRIES;
 
-  const visit = (
+  // Untraced: this recurses once per scanned directory; discoverCopilotSkills is the span.
+  const visit: (
     directory: string,
     scope: "project" | "user",
     depth: number,
-  ): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      if (depth > MAX_SCAN_DEPTH || remainingEntries <= 0) return;
-      const resolved = yield* fileSystem.realPath(directory).pipe(Effect.option);
-      if (Option.isNone(resolved) || seenRoots.has(resolved.value)) return;
-      seenRoots.add(resolved.value);
+  ) => Effect.Effect<void> = Effect.fnUntraced(function* (directory, scope, depth) {
+    if (depth > MAX_SCAN_DEPTH || remainingEntries <= 0) return;
+    const resolved = yield* fileSystem.realPath(directory).pipe(Effect.option);
+    if (Option.isNone(resolved) || seenRoots.has(resolved.value)) return;
+    seenRoots.add(resolved.value);
 
-      const skillPath = path.join(directory, "SKILL.md");
-      const skillInfo = yield* fileSystem.stat(skillPath).pipe(Effect.option);
-      // The scan root is a folder of skills, not a skill named "skills".
-      if (depth > 0 && Option.isSome(skillInfo) && skillInfo.value.type === "File") {
-        const folderName = path.basename(directory);
-        let metadata: { readonly name: string; readonly description?: string } | undefined =
-          isSkillToken(folderName) ? { name: folderName } : undefined;
-        if (Number(skillInfo.value.size) <= MAX_FRONTMATTER_BYTES) {
-          const contents = yield* fileSystem.readFileString(skillPath).pipe(Effect.option);
-          if (Option.isSome(contents)) metadata = skillMetadata(contents.value, folderName);
-        }
-        if (metadata) {
-          skills.set(metadata.name.toLowerCase(), {
-            name: metadata.name,
-            path: skillPath,
-            scope,
-            enabled: true,
-            ...(metadata.description ? { description: metadata.description } : {}),
-          });
-        }
-        return;
+    const skillPath = path.join(directory, "SKILL.md");
+    const skillInfo = yield* fileSystem.stat(skillPath).pipe(Effect.option);
+    // The scan root is a folder of skills, not a skill named "skills".
+    if (depth > 0 && Option.isSome(skillInfo) && skillInfo.value.type === "File") {
+      const folderName = path.basename(directory);
+      const head = yield* fileSystem.open(skillPath).pipe(
+        Effect.flatMap((file) => file.readAlloc(MAX_FRONTMATTER_BYTES)),
+        Effect.scoped,
+        Effect.option,
+        Effect.map(Option.flatten),
+      );
+      const metadata = Option.isSome(head)
+        ? skillMetadata(new TextDecoder().decode(head.value), folderName)
+        : isSkillToken(folderName)
+          ? { name: folderName }
+          : undefined;
+      if (metadata) {
+        skills.set(metadata.name.toLowerCase(), {
+          name: metadata.name,
+          path: skillPath,
+          scope,
+          enabled: true,
+          ...(metadata.description ? { description: metadata.description } : {}),
+        });
       }
+      return;
+    }
 
-      const listed = yield* fileSystem.readDirectory(directory).pipe(Effect.option);
-      if (Option.isNone(listed)) return;
-      for (const entry of listed.value) {
-        if (remainingEntries <= 0) return;
-        if (SKIPPED_DIRECTORIES.has(entry)) continue;
-        remainingEntries -= 1;
-        const child = path.join(directory, entry);
-        const info = yield* fileSystem.stat(child).pipe(Effect.option);
-        if (Option.isNone(info) || info.value.type !== "Directory") continue;
-        yield* visit(child, scope, depth + 1);
-      }
-    });
+    const listed = yield* fileSystem.readDirectory(directory).pipe(Effect.option);
+    if (Option.isNone(listed)) return;
+    for (const entry of listed.value) {
+      if (remainingEntries <= 0) return;
+      if (SKIPPED_DIRECTORIES.has(entry)) continue;
+      remainingEntries -= 1;
+      const child = path.join(directory, entry);
+      const info = yield* fileSystem.stat(child).pipe(Effect.option);
+      if (Option.isNone(info) || info.value.type !== "Directory") continue;
+      yield* visit(child, scope, depth + 1);
+    }
+  });
 
   for (const root of roots) {
     yield* visit(root.directory, root.scope, 0);
@@ -150,9 +155,11 @@ export function rewriteCopilotSkillMentions(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): string {
+  const known = new Set([...skillNames].map((name) => name.toLowerCase()));
   return prompt.replace(
     new RegExp(SKILL_MENTION_PATTERN.source, "gu"),
-    (match, prefix: string, name: string) => (skillNames.has(name) ? `${prefix}/${name}` : match),
+    (match, prefix: string, name: string) =>
+      known.has(name.toLowerCase()) ? `${prefix}/${name}` : match,
   );
 }
 

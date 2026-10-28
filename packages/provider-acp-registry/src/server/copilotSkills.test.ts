@@ -46,6 +46,10 @@ describe("Copilot skills", () => {
         "---\nname: renamed\ndescription: Renamed skill\n---\n",
       );
       yield* writeSkill(
+        path.join(workspace, ".agents", "skills", "large-folder"),
+        `---\nname: large-renamed\ndescription: Large skill\n---\n${"body\n".repeat(8_000)}`,
+      );
+      yield* writeSkill(
         path.join(home, ".copilot", "installed-plugins", "acme", "skills", "plugin-skill"),
         "---\ndescription: Plugin skill\n---\n",
       );
@@ -75,6 +79,8 @@ describe("Copilot skills", () => {
         scope: "project",
       });
       expect(byName.get("folder-name")).toBeUndefined();
+      expect(byName.get("large-renamed")).toMatchObject({ description: "Large skill" });
+      expect(byName.has("large-folder")).toBe(false);
       expect(byName.get("plugin-skill")).toMatchObject({
         path: path.join(
           home,
@@ -99,6 +105,7 @@ describe("Copilot skills", () => {
       "use /review and keep $HOME",
     );
     expect(rewriteCopilotSkillMentions("$unknown", names)).toBe("$unknown");
+    expect(rewriteCopilotSkillMentions("$review", new Set(["Review"]))).toBe("/review");
     expect(hasCopilotSkillMention("$5 later")).toBe(false);
     expect(hasCopilotSkillMention("run $review")).toBe(true);
   });
