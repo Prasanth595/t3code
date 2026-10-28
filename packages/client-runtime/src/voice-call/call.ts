@@ -140,11 +140,11 @@ export class VoiceCall {
     const generation = ++this.generation;
     this.set({ ...IDLE_STATE, phase: "connecting" });
     try {
-      const teardown = await this.negotiate(generation);
-      if (generation !== this.generation) return void (await teardown());
-      this.teardown = teardown;
+      await this.negotiate(generation);
     } catch (cause) {
-      if (generation === this.generation) this.set({ phase: "error", error: messageOf(cause) });
+      if (generation !== this.generation) return;
+      this.teardown = null;
+      this.set({ phase: "error", error: messageOf(cause) });
     }
   }
 
@@ -163,8 +163,11 @@ export class VoiceCall {
     this.set({ muted });
   };
 
-  private async negotiate(generation: number): Promise<() => Promise<void>> {
+  /** Registers its teardown as soon as it holds resources, so a hang-up can end a call mid-connect. */
+  private async negotiate(generation: number): Promise<void> {
     const microphone = await this.platform.getUserMedia();
+    if (generation !== this.generation)
+      return microphone.getTracks().forEach((track) => track.stop());
     this.microphone = microphone;
     const connection = this.platform.createPeerConnection();
     let sessionId: string | null = null;
@@ -183,8 +186,11 @@ export class VoiceCall {
       microphone.getTracks().forEach((track) => track.stop());
       connection.close();
       this.microphone = null;
-      if (sessionId) await this.signaling.stop(sessionId).catch(() => {});
+      const ended = sessionId;
+      sessionId = null;
+      if (ended) await this.signaling.stop(ended).catch(() => {});
     };
+    this.teardown = teardown;
     try {
       microphone.getTracks().forEach((track) => connection.addTrack(track, microphone));
       connection.createDataChannel(EVENTS_CHANNEL);
@@ -204,13 +210,15 @@ export class VoiceCall {
 
       await connection.setLocalDescription(await connection.createOffer());
       await waitForIceGathering(connection);
+      if (generation !== this.generation) return;
       const offer = connection.localDescription?.sdp;
       if (!offer) throw new Error("Could not create a voice call offer.");
       const started = await this.signaling.start(offer);
       sessionId = started.sessionId;
-      if (generation === this.generation) this.set({ chatThreadId: started.chatThreadId ?? null });
+      // Hung up while the server was opening the call: it exists now, so end it.
+      if (generation !== this.generation) return await teardown();
+      this.set({ chatThreadId: started.chatThreadId ?? null });
       await connection.setRemoteDescription({ type: "answer", sdp: started.answerSdp });
-      return teardown;
     } catch (cause) {
       await teardown();
       throw cause;

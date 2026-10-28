@@ -17,6 +17,7 @@ export interface VoiceCallSession {
 /** The one live call, kept here so it outlives whichever chat started it. */
 let session: VoiceCallSession | null = null;
 let unsubscribe = () => {};
+let pending: Promise<unknown> = Promise.resolve();
 const listeners = new Set<() => void>();
 
 const publish = (next: VoiceCallSession | null) => {
@@ -31,30 +32,39 @@ export const voiceCallSession = {
   },
   getSnapshot: () => session,
   /** Starts a call, ending any other call first so only one runs at a time. */
-  begin: async (input: {
-    readonly environmentId: EnvironmentId;
-    readonly originThreadId: ThreadId | undefined;
-    readonly signaling: VoiceCallSignaling;
-    readonly platform?: VoiceCallPlatform;
-  }) => {
-    await session?.call.hangUp();
-    unsubscribe();
-    const call = new VoiceCall(input.signaling, input.platform);
-    const update = () =>
-      publish({
-        call,
-        environmentId: input.environmentId,
-        originThreadId: input.originThreadId,
-        state: call.getSnapshot(),
-      });
-    unsubscribe = call.subscribe(() => {
-      update();
-      if (call.getSnapshot().phase === "idle" && session?.call === call) publish(null);
-    });
-    update();
-    await call.start();
-    return call;
+  begin: (input: BeginInput) => {
+    // Queued, so a call started while another is being replaced is never discarded unended.
+    const started = pending.then(() => startCall(input));
+    pending = started.catch(() => {});
+    return started;
   },
+};
+
+interface BeginInput {
+  readonly environmentId: EnvironmentId;
+  readonly originThreadId: ThreadId | undefined;
+  readonly signaling: VoiceCallSignaling;
+  readonly platform?: VoiceCallPlatform;
+}
+
+const startCall = async (input: BeginInput) => {
+  await session?.call.hangUp();
+  unsubscribe();
+  const call = new VoiceCall(input.signaling, input.platform);
+  const update = () =>
+    publish({
+      call,
+      environmentId: input.environmentId,
+      originThreadId: input.originThreadId,
+      state: call.getSnapshot(),
+    });
+  unsubscribe = call.subscribe(() => {
+    update();
+    if (call.getSnapshot().phase === "idle" && session?.call === call) publish(null);
+  });
+  update();
+  await call.start();
+  return call;
 };
 
 /** Whether the session belongs to this thread: it started there, or the call's chat is this thread. */
@@ -65,5 +75,5 @@ export const voiceCallBelongsTo = (
 ) =>
   active !== null &&
   active.environmentId === environmentId &&
-  threadId !== undefined &&
-  (active.originThreadId === threadId || active.state.chatThreadId === threadId);
+  (active.originThreadId === threadId ||
+    (threadId !== undefined && active.state.chatThreadId === threadId));

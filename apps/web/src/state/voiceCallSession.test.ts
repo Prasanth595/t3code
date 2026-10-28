@@ -45,8 +45,31 @@ describe("voice call session", () => {
     expect(voiceCallBelongsTo(active, environmentId, origin)).toBe(true);
     expect(voiceCallBelongsTo(active, environmentId, chat)).toBe(true);
     expect(voiceCallBelongsTo(active, environmentId, ThreadId.make("thread-other"))).toBe(false);
+    expect(voiceCallBelongsTo(active, environmentId, undefined)).toBe(false);
     await active?.call.hangUp();
     expect(voiceCallSession.getSnapshot()).toBeNull();
+  });
+
+  it("belongs to the composer that started it without a thread", async () => {
+    const call = await voiceCallSession.begin({
+      environmentId,
+      originThreadId: undefined,
+      signaling: signaling(),
+      platform,
+    });
+    expect(voiceCallBelongsTo(voiceCallSession.getSnapshot(), environmentId, undefined)).toBe(true);
+    await call.hangUp();
+  });
+
+  it("ends every call it starts when several begin at once", async () => {
+    const [a, b, c] = [signaling(), signaling(), signaling()];
+    const begin = (s: ReturnType<typeof signaling>) =>
+      voiceCallSession.begin({ environmentId, originThreadId: origin, signaling: s, platform });
+    const calls = await Promise.all([begin(a), begin(b), begin(c)]);
+    expect(a.stop).toHaveBeenCalled();
+    expect(b.stop).toHaveBeenCalled();
+    expect(voiceCallSession.getSnapshot()?.call).toBe(calls[2]);
+    await calls[2].hangUp();
   });
 
   it("ends the live call when another chat starts one", async () => {

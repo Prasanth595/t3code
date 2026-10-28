@@ -83,11 +83,11 @@ const run = <A, E>(
                   return { threadId: chatId } as never;
                 }),
             }),
+            NodeServices.layer,
           ),
         ),
       ),
     ),
-    Effect.provide(NodeServices.layer),
   );
 
 describe("RealtimeVoice", () => {

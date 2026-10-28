@@ -53,6 +53,25 @@ const setup = () => {
 };
 
 describe("VoiceCall", () => {
+  it("ends the server's call and the microphone when hung up while connecting", async () => {
+    const { call, track, signaling } = setup();
+    let opened!: () => void;
+    signaling.start.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          opened = () => resolve({ sessionId: "session-1", answerSdp: "answer-sdp" });
+        }),
+    );
+    const starting = call.start();
+    await vi.waitFor(() => expect(signaling.start).toHaveBeenCalled());
+    await call.hangUp();
+    expect(track.stop).toHaveBeenCalled();
+    opened();
+    await starting;
+    expect(signaling.stop).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect(call.getSnapshot().phase).toBe("idle");
+  });
+
   it("relays the offer, applies the answer and goes live once connected", async () => {
     const { call, connection, signaling } = setup();
     await call.start();

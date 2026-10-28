@@ -147,12 +147,7 @@ export const makeCodexRealtimeVoice = Effect.fn("CodexRealtimeVoice.make")(funct
       ...(instructions && { realtimeStartInstructions: instructions }),
       transport: { type: "webrtc", sdp: request.sdp },
     });
-    return yield* Deferred.await(answer).pipe(
-      Effect.timeoutOrElse({
-        duration: ANSWER_TIMEOUT,
-        orElse: () => Effect.fail(fail("timeout")),
-      }),
-    );
+    return yield* Deferred.await(answer);
   });
 
   /** Claims a slot atomically so concurrent starts cannot exceed the cap. */
@@ -185,6 +180,11 @@ export const makeCodexRealtimeVoice = Effect.fn("CodexRealtimeVoice.make")(funct
         return yield* fail("busy");
       }
       const answerSdp = yield* negotiate(session, request).pipe(
+        // Bounds the whole handshake: an unresponsive app-server must not hold the slot.
+        Effect.timeoutOrElse({
+          duration: ANSWER_TIMEOUT,
+          orElse: () => Effect.fail(fail("timeout")),
+        }),
         Effect.mapError((error) => (isRealtimeVoiceError(error) ? error : fail("failed", error))),
         Effect.onError(() => endSession(session)),
       );
