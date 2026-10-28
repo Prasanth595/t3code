@@ -348,6 +348,15 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  ScheduledMessageCancelInput,
+  ScheduledMessageCancelResult,
+  ScheduledMessageCreateInput,
+  ScheduledMessageCreateResult,
+  ScheduledMessageError,
+  ScheduledMessageListInput,
+  ScheduledMessageListResult,
+} from "./scheduledMessage.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -514,6 +523,10 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  scheduledMessagesSubscribe: "scheduledMessages.subscribe",
+  scheduledMessagesCreate: "scheduledMessages.create",
+  scheduledMessagesCancel: "scheduledMessages.cancel",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1788,6 +1801,25 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsScheduledMessagesSubscribeRpc = Rpc.make(WS_METHODS.scheduledMessagesSubscribe, {
+  payload: ScheduledMessageListInput,
+  success: ScheduledMessageListResult,
+  error: Schema.Union([ScheduledMessageError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsScheduledMessagesCreateRpc = Rpc.make(WS_METHODS.scheduledMessagesCreate, {
+  payload: ScheduledMessageCreateInput,
+  success: ScheduledMessageCreateResult,
+  error: Schema.Union([ScheduledMessageError, EnvironmentAuthorizationError]),
+});
+
+const WsScheduledMessagesCancelRpc = Rpc.make(WS_METHODS.scheduledMessagesCancel, {
+  payload: ScheduledMessageCancelInput,
+  success: ScheduledMessageCancelResult,
+  error: Schema.Union([ScheduledMessageError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1932,6 +1964,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsScheduledMessagesSubscribeRpc,
+  WsScheduledMessagesCreateRpc,
+  WsScheduledMessagesCancelRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

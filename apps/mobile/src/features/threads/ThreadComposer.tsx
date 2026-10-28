@@ -91,6 +91,7 @@ import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/u
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { Menu } from "../../components/ui/Menu";
+import { ScheduleSendMenu } from "./ScheduleSendMenu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
@@ -962,13 +963,28 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     onPress={() => void handleResumeQueue()}
                   />
                 ) : (
-                  <SendActionButton
-                    size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel={sendBlockedReason ?? sendLabel}
-                    presentation={sendPresentation}
-                    disabled={!canSend}
-                    onSend={handleSend}
-                  />
+                  <>
+                    {draftMessage.trim().length > 0 && props.canOperateThread ? (
+                      <ScheduleSendMenu
+                        environmentId={props.environmentId}
+                        projectId={props.selectedThread.projectId}
+                        threadId={props.isDraft ? null : props.selectedThread.id}
+                        draftKey={composerDraftKey}
+                        modelSelection={props.selectedThread.modelSelection}
+                        runtimeMode={props.selectedThread.runtimeMode}
+                        interactionMode={props.selectedThread.interactionMode}
+                        disabled={isSubmissionLocked}
+                        size={usesLargeControls ? "large" : "regular"}
+                      />
+                    ) : null}
+                    <SendActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={sendBlockedReason ?? sendLabel}
+                      presentation={sendPresentation}
+                      disabled={!canSend}
+                      onSend={handleSend}
+                    />
+                  </>
                 )}
               </View>
             </ComposerDictationDraftContent>
@@ -1165,13 +1181,28 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       onPress={() => void handleResumeQueue()}
                     />
                   ) : voicePresentation.showsSend ? (
-                    <SendActionButton
-                      size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel={sendBlockedReason ?? sendLabel}
-                      presentation={sendPresentation}
-                      disabled={!canSend}
-                      onSend={handleSend}
-                    />
+                    <>
+                      {draftMessage.trim().length > 0 && props.canOperateThread ? (
+                        <ScheduleSendMenu
+                          environmentId={props.environmentId}
+                          projectId={props.selectedThread.projectId}
+                          threadId={props.isDraft ? null : props.selectedThread.id}
+                          draftKey={composerDraftKey}
+                          modelSelection={props.selectedThread.modelSelection}
+                          runtimeMode={props.selectedThread.runtimeMode}
+                          interactionMode={props.selectedThread.interactionMode}
+                          disabled={isSubmissionLocked}
+                          size={usesLargeControls ? "large" : "regular"}
+                        />
+                      ) : null}
+                      <SendActionButton
+                        size={usesLargeControls ? "large" : "regular"}
+                        accessibilityLabel={sendBlockedReason ?? sendLabel}
+                        presentation={sendPresentation}
+                        disabled={!canSend}
+                        onSend={handleSend}
+                      />
+                    </>
                   ) : null}
                 </View>
               </ComposerToolbarRow>

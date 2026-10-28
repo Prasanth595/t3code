@@ -1262,6 +1262,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
+    scheduledMessagesLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-messages:live",
+      tag: WS_METHODS.scheduledMessagesSubscribe,
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1479,6 +1483,14 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    scheduleMessageCreate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-message:create",
+      tag: WS_METHODS.scheduledMessagesCreate,
+    }),
+    scheduleMessageCancel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-message:cancel",
+      tag: WS_METHODS.scheduledMessagesCancel,
     }),
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",

@@ -77,6 +77,18 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
+## Send later
+
+Schedule the current message for a clock time. On web and desktop, use the clock
+beside Send and pick a time at least 30 seconds ahead. On mobile, open the same
+clock and choose one hour, three hours, or 9:00 tomorrow.
+
+The message text is what gets sent. Files and images stay on the device, so
+remove them or send those now. A message for an open task waits in that task's
+queue if the agent is still working. A message from a new task starts a new
+task. Cancel a pending time from the same clock. A send that fails stays listed
+there with the reason.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

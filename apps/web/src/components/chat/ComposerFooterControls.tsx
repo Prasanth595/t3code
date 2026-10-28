@@ -176,6 +176,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
+  scheduleSend?: React.ReactNode;
 }) {
   return (
     <>
@@ -190,6 +191,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.scheduleSend}
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}

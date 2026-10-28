@@ -65,6 +65,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
     use("pull_request.action", literal(payload, "action")),
   [WS_METHODS.pullRequestsSubmitReview]: () => ({ feature: "pull_request.review" }),
   [WS_METHODS.pullRequestsComment]: () => ({ feature: "pull_request.comment" }),
+  [WS_METHODS.scheduledMessagesCreate]: () => ({ feature: "scheduled_message.create" }),
   [WS_METHODS.scheduledTasksUpsert]: () => ({ feature: "scheduled_task.save" }),
   [WS_METHODS.scheduledTasksRunNow]: () => ({ feature: "scheduled_task.run_now" }),
   [WS_METHODS.agentSessionsImport]: () => ({ feature: "agent_session.import" }),

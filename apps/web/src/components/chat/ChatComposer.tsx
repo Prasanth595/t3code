@@ -198,6 +198,7 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { ScheduleSendControl } from "./ScheduleSendControl";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -3812,6 +3813,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 >
                   {composerAttachButton}
                   <ComposerFooterPrimaryActions
+                    scheduleSend={
+                      !isComposerResting &&
+                      activeProjectId !== null &&
+                      canOperateThread &&
+                      !isEditingQueuedMessage ? (
+                        <ScheduleSendControl
+                          environmentId={environmentId}
+                          projectId={activeProjectId}
+                          threadId={routeKind === "server" ? activeThreadId : null}
+                          draftId={draftId}
+                          composerTarget={composerDraftTarget}
+                          prompt={prompt}
+                          modelSelection={selectedModelSelection}
+                          runtimeMode={compatibleRuntimeMode}
+                          interactionMode={interactionMode}
+                          hasAttachments={composerImages.length + composerFiles.length > 0}
+                        />
+                      ) : null
+                    }
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={
