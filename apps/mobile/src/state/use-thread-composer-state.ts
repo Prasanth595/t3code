@@ -13,7 +13,7 @@ import {
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  EMPTY_THREAD_HISTORY_META,
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -47,7 +48,10 @@ import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
-import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+import {
+  acknowledgedThreadMessagesAtom,
+  unsettledAcknowledgedThreadMessages,
+} from "./acknowledged-thread-messages";
 import {
   appendPendingThreadMessages,
   selectPendingAcknowledgedMessages,
@@ -110,6 +114,7 @@ const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
+const EMPTY_THREAD_HISTORY_ATOM = Atom.make(EMPTY_THREAD_HISTORY_META);
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -227,6 +232,16 @@ export function useThreadComposerState() {
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
+  const selectedThreadHistory = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_THREAD_HISTORY_ATOM
+      : environmentThreadDetails.historyAtom(selectedThreadDetailRef),
+  );
+  const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
+  const acknowledgmentHistory =
+    selectedThreadDetailRef === null
+      ? undefined
+      : { ...selectedThreadDetailRef, ...selectedThreadHistory };
   const checkpointSummaries = useAtomValue(
     selectedThreadDetailRef === null
       ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
@@ -251,16 +266,39 @@ export function useThreadComposerState() {
       checkpointSummaries,
       cache: feedCache,
     });
-    const pendingAcknowledgments = selectPendingAcknowledgedMessages(acknowledgedMessages, {
-      threadKey: selectedThreadKey,
-      queuedMessages: selectedThreadQueuedMessages,
-      projectedMessages: selectedThreadMessages,
-    });
+    const pendingAcknowledgments = selectPendingAcknowledgedMessages(
+      unsettledAcknowledgedThreadMessages(acknowledgedMessages, echoedIds, acknowledgmentHistory),
+      {
+        threadKey: selectedThreadKey,
+        queuedMessages: selectedThreadQueuedMessages,
+        projectedMessages: selectedThreadMessages,
+      },
+    );
     if (pendingAcknowledgments.length === 0) return feed;
     return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
       entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
     );
   })();
+  // oxlint-disable-next-line t3code/react-effect-budget -- Retire acknowledged rows when the subscribed history window advances.
+  useEffect(() => {
+    if (acknowledgedMessages.length === 0) return;
+    const current = appAtomRegistry.get(acknowledgedThreadMessagesAtom);
+    const unsettled = unsettledAcknowledgedThreadMessages(
+      current,
+      new Set(selectedThreadMessages?.map((message) => message.id)),
+      selectedThreadDetailRef === null
+        ? undefined
+        : { ...selectedThreadDetailRef, ...selectedThreadHistory },
+    );
+    if (unsettled.length !== current.length) {
+      appAtomRegistry.set(acknowledgedThreadMessagesAtom, unsettled);
+    }
+  }, [
+    acknowledgedMessages,
+    selectedThreadMessages,
+    selectedThreadDetailRef,
+    selectedThreadHistory,
+  ]);
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)

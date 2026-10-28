@@ -81,6 +81,7 @@ function historyMetaFromCachedSnapshot(
   const historyCursor = snapshot.historyCursor ?? null;
   const hasMoreHistory = snapshot.hasMoreHistory ?? false;
   return {
+    snapshotSequence: snapshot.snapshotSequence,
     historyCursor,
     hasMoreHistory,
     loading: false,
@@ -616,6 +617,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         hasProgressiveHistory
           ? {
               history: {
+                snapshotSequence: item.snapshotSequence,
                 historyCursor: item.historyCursor ?? null,
                 hasMoreHistory: item.hasMoreHistory ?? false,
                 loading: false,
@@ -976,6 +978,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   const history: ThreadHistoryMeta =
                     httpResult.history !== undefined
                       ? {
+                          snapshotSequence: httpResult.snapshot.snapshotSequence,
                           historyCursor: httpResult.history.historyCursor,
                           hasMoreHistory: httpResult.history.hasMoreHistory,
                           loading: false,

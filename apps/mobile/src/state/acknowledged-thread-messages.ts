@@ -1,12 +1,44 @@
+import type { MessageId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import { environmentThreadDetails } from "./threads";
 
+interface AcknowledgedThreadMessage extends QueuedThreadMessage {
+  readonly acknowledgedSequence?: number;
+}
+
+export function unsettledAcknowledgedThreadMessages(
+  messages: ReadonlyArray<AcknowledgedThreadMessage>,
+  echoedIds: ReadonlySet<MessageId>,
+  history?: ScopedThreadRef & {
+    readonly hasMoreHistory: boolean;
+    readonly snapshotSequence?: number;
+  },
+): ReadonlyArray<AcknowledgedThreadMessage> {
+  return messages.filter((message) => {
+    if (
+      history !== undefined &&
+      (message.environmentId !== history.environmentId || message.threadId !== history.threadId)
+    ) {
+      return true;
+    }
+    if (echoedIds.has(message.messageId)) return false;
+    // A bounded snapshot taken after the send committed can omit its echo.
+    // Client timestamps cannot establish this ordering, especially after offline sends.
+    return !(
+      history?.hasMoreHistory &&
+      history.snapshotSequence !== undefined &&
+      message.acknowledgedSequence !== undefined &&
+      message.acknowledgedSequence <= history.snapshotSequence
+    );
+  });
+}
+
 // Keep acknowledged rows until their subscribed projection arrives; command receipts can precede messages.
 // Render hides rows the projection has echoed, so dropping them here only frees memory.
-export const acknowledgedThreadMessagesAtom = Atom.make<ReadonlyArray<QueuedThreadMessage>>(
+export const acknowledgedThreadMessagesAtom = Atom.make<ReadonlyArray<AcknowledgedThreadMessage>>(
   [],
 ).pipe(Atom.keepAlive);
 
@@ -25,7 +57,9 @@ function isEchoedInMountedThread(message: QueuedThreadMessage): boolean {
 }
 
 function writeAcknowledgedThreadMessages(
-  update: (current: ReadonlyArray<QueuedThreadMessage>) => ReadonlyArray<QueuedThreadMessage>,
+  update: (
+    current: ReadonlyArray<AcknowledgedThreadMessage>,
+  ) => ReadonlyArray<AcknowledgedThreadMessage>,
 ) {
   const current = appAtomRegistry.get(acknowledgedThreadMessagesAtom);
   const next = update(current).filter((entry) => !isEchoedInMountedThread(entry));
@@ -35,11 +69,16 @@ function writeAcknowledgedThreadMessages(
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, next);
 }
 
-export function retainAcknowledgedThreadMessage(message: QueuedThreadMessage) {
+export function retainAcknowledgedThreadMessage(
+  message: QueuedThreadMessage,
+  acknowledgedSequence?: number,
+) {
+  const acknowledgedMessage =
+    acknowledgedSequence === undefined ? message : { ...message, acknowledgedSequence };
   writeAcknowledgedThreadMessages((current) =>
     current.some((entry) => entry.messageId === message.messageId)
       ? current
-      : [...current, message],
+      : [...current, acknowledgedMessage],
   );
 }
 
