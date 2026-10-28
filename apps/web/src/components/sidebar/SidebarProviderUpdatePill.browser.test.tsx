@@ -70,7 +70,7 @@ describe("SidebarProviderUpdatePill exit", () => {
 
     await act(() =>
       screen.container
-        .querySelector<HTMLButtonElement>('[aria-label="Dismiss provider update notice"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Închide notificarea de actualizare"]')
         ?.click(),
     );
     await advance(180);

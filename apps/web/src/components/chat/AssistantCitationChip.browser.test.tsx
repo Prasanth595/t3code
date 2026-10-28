@@ -109,7 +109,7 @@ describe("citation comment source disappearance", () => {
     expect(mocks.observeSource).toHaveBeenCalledTimes(1);
 
     await typeComment("shortened comment");
-    await clickButton("Save");
+    await clickButton("Salvează");
     expect(onSave).toHaveBeenCalledWith("shortened comment");
     expect(textarea()).toBeNull();
   });
@@ -124,7 +124,7 @@ describe("citation comment source disappearance", () => {
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");
     onSave.mockReturnValue(true);
-    await clickButton("Save");
+    await clickButton("Salvează");
     expect(onSave).toHaveBeenLastCalledWith("keep this draft");
     expect(textarea()).toBeNull();
   });

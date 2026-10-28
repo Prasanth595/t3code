@@ -165,7 +165,7 @@ describe("ServerUpdateAction", () => {
 
       await using screen = await renderAction();
       expect(button(screen, "Actualizează")!.disabled).toBe(!allowed);
-      await click(screen, "Update");
+      await click(screen, "Actualizează");
 
       expect(testState.updateServer).toHaveBeenCalledTimes(allowed ? 1 : 0);
     },
@@ -176,7 +176,7 @@ describe("ServerUpdateAction", () => {
     await using screen = await renderAction();
     await act(() => setSession(AsyncResult.success({ ...currentSession, scopes: [] })));
     expect(button(screen, "Actualizează")!.disabled).toBe(true);
-    await click(screen, "Update");
+    await click(screen, "Actualizează");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 });
@@ -215,12 +215,12 @@ describe("ServerUpdatesAction", () => {
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Download failed"))))
       .mockResolvedValueOnce(success());
     await using screen = await mount();
-    await click(screen, "Update all");
+    await click(screen, "Actualizează tot");
 
     expect(testState.updateServer).toHaveBeenCalledTimes(2);
     expect(testState.toast).toHaveBeenCalledWith({
       type: "error",
-      title: "Laptop update failed",
+      title: "Actualizarea Laptop a eșuat",
       description: "Download failed",
     });
     expect(testState.toast).toHaveBeenCalledWith(

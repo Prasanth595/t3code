@@ -62,7 +62,7 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
   );
 }
 
-const editor = () => page.getByRole("textbox", { name: "Mesaj" });
+const editor = () => page.getByRole("textbox", { name: "Message" });
 const stash = () => page.getByRole("list", { name: "Prompturi puse deoparte" });
 const press = (keys: string) => userEvent.keyboard(keys);
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());

@@ -230,7 +230,7 @@ describe("PreviewView", () => {
         }),
     );
     await using screen = await render(view(onSendAnnotation));
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
+    await userEvent.click(page.getByRole("button", { name: "Adnotează previzualizarea" }));
     await vi.waitFor(() => expect(submitPick).toBeDefined());
     expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
 
@@ -248,7 +248,7 @@ describe("PreviewView", () => {
     mocks.readEnvironmentScope.mockReturnValue(true);
     mocks.pickElement.mockResolvedValue({ annotation: picked, submission: "send" });
     await screen.rerender(view(onSendAnnotation));
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
+    await userEvent.click(page.getByRole("button", { name: "Adnotează previzualizarea" }));
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(picked, null));
     expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
   });
@@ -264,7 +264,7 @@ describe("PreviewView", () => {
     const onSendAnnotation = vi.fn();
     mocks.pickElement.mockResolvedValue({ annotation: picked, submission: "send" });
     await using _screen = await render(view(onSendAnnotation));
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
+    await userEvent.click(page.getByRole("button", { name: "Adnotează previzualizarea" }));
 
     const sent = { ...picked, screenshot: null };
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));

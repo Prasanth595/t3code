@@ -239,7 +239,7 @@ describe("MessagesTimeline automation prompts", () => {
       (anchor) => anchor.textContent === "Deschide automatizarea",
     );
     expect(link?.getAttribute("href")).toContain(`taskId=${TASK_ID}`);
-    expect(screen.buttons(/copy/i)).not.toHaveLength(0);
+    expect(screen.buttons(/copiază/i)).not.toHaveLength(0);
   });
 
   it("falls back to the prompt's first line without a task title", async () => {
@@ -306,9 +306,9 @@ describe("MessagesTimeline automation prompts", () => {
         ],
       },
     );
-    expect(screen.buttons("Edit from here")).toHaveLength(0);
+    expect(screen.buttons("Editează de aici")).toHaveLength(0);
     await click(screen.button(/^Automatizare/));
-    expect(screen.buttons("Edit from here")).toHaveLength(1);
+    expect(screen.buttons("Editează de aici")).toHaveLength(1);
   });
 });
 
@@ -456,7 +456,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context compactat automat înainte să expire cache-ul 899K → 19K tokens",
+        name: "Context compactat automat înainte să expire cache-ul 899K → 19K tokeni",
       }),
     )
     .toBeVisible();
