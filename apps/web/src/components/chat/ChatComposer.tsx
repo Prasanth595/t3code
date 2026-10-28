@@ -627,8 +627,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...pendingApprovals.map((request) => request.requestId),
     ...incomingPendingUserInputs.map((request) => request.requestId),
   ]);
+  // A layout effect so the timeline never paints a held approval as answerable.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes held requests to the timeline without lifting per-keystroke typing state
-  useEffect(() => {
+  useLayoutEffect(() => {
     onHeldRequestIdsChange(heldRequestIds);
   }, [heldRequestIds, onHeldRequestIdsChange]);
   const activePendingApproval =
