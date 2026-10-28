@@ -1,3 +1,5 @@
+import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useDiffPanelSessionStore, useDiffPanelStore } from "./diffPanelStore";
@@ -9,6 +11,27 @@ describe("diffPanelStore", () => {
       branchBaseRefByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+  });
+
+  it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const target = {
+      threadId: ThreadId.make("child"),
+      itemId: TurnItemId.make("edit"),
+      revision: "1",
+    };
+    const store = useDiffPanelStore.getState();
+    store.selectToolCall(ref, target);
+    store.reconcileTurnSelection(ref, []);
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toEqual({
+      kind: "tool-call",
+      ...target,
+    });
+    store.selectGitScope(ref, "branch");
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
   });
 
   it("retains fold choices when a panel consumer returns with fresh defaults", () => {

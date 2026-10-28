@@ -200,8 +200,14 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         result:
           item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
       };
-    case "handoff":
     case "file_change":
+      return {
+        ...projectTurnItemForWire(item),
+        ...(item.diffStr === undefined
+          ? {}
+          : { diffStr: truncateDetail(item.diffStr, MAX_ON_DEMAND_BYTES) }),
+      };
+    case "handoff":
       return projectTurnItemForWire(item);
     default:
       return item;

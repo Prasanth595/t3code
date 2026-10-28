@@ -1,3 +1,4 @@
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
@@ -232,6 +233,7 @@ interface MessagesTimelineProps {
   displayThreadKey?: string;
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
+  onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
   onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
@@ -336,6 +338,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   routeThreadKey,
   displayThreadKey,
   announceTurnStatus = true,
+  onOpenToolDiff,
   onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
@@ -1024,6 +1027,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onAppFullscreenChange,
     onFileDownload,
     openPullRequest,
+    onOpenToolDiff,
     onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,

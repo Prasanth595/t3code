@@ -1,3 +1,4 @@
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   type EnvironmentId,
@@ -56,6 +57,7 @@ export interface TimelineRowSharedState {
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
+  onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
   onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
   /**

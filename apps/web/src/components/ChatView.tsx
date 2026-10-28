@@ -2316,6 +2316,7 @@ export default function ChatView(props: ChatViewProps) {
     createBrowserSurface,
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
+    onOpenToolDiffStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
@@ -3297,6 +3298,7 @@ export default function ChatView(props: ChatViewProps) {
                 routeThreadKey={displayedTimelineKey}
                 displayThreadKey={displayedTimelineKey}
                 announceTurnStatus={!isProviderSubagent}
+                onOpenToolDiff={onOpenToolDiffStable}
                 onOpenTurnDiff={onOpenTurnDiffStable}
                 onOpenThread={onOpenRelatedThreadStable}
                 parentThreadLink={parentThreadLink}
