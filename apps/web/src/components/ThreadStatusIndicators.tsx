@@ -69,7 +69,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: "Proces de terminal în curs";
   colorClass: string;
   pulse: boolean;
 }
