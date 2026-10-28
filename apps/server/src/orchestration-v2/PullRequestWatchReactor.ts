@@ -164,7 +164,6 @@ function planRead(
   };
 }
 
-/** Notifications reach a PR only through a thread the viewer takes part in; authors always do. */
 const gatesReread = (
   group: WatchGroup,
   last: LastRead | undefined,
