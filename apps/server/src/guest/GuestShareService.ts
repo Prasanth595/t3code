@@ -62,8 +62,10 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
+  embeddedHostImageType,
   GUEST_UPLOAD_HEADER_BYTES,
   type GuestUpload,
+  matchesImageSignature,
 } from "./guestAttachments.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
@@ -190,6 +192,11 @@ export class GuestShareService extends Context.Service<
       { readonly path: string; readonly attachment: ChatAttachment },
       GuestShareAccessError
     >;
+    /** An image on the host that an agent message in the shared thread embeds, and its type. */
+    readonly media: (
+      session: string,
+      path: string,
+    ) => Effect.Effect<{ readonly path: string; readonly mimeType: string }, GuestShareAccessError>;
   }
 >()("t3/guest/GuestShareService") {}
 
@@ -630,6 +637,28 @@ const make = Effect.gen(function* () {
     return exists ? { path, attachment: found } : yield* unavailable;
   });
 
+  const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
+    const { thread } = yield* authorize(session, "session");
+    const { messages } = yield* orchestrator
+      .getThreadRecords(thread.id, ["messages"], { messageRoles: ["assistant"] })
+      .pipe(Effect.mapError(() => unavailable));
+    const mimeType = embeddedHostImageType(
+      path,
+      messages.map((message) => message.text),
+    );
+    if (mimeType === null) return yield* unavailable;
+    // The bytes must be the image the name says, as for a guest's own upload.
+    const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
+      Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),
+      Effect.scoped,
+      Effect.mapError(() => unavailable),
+    );
+    if (Option.isNone(header) || !matchesImageSignature(mimeType, header.value)) {
+      return yield* unavailable;
+    }
+    return { path, mimeType };
+  });
+
   return GuestShareService.of({
     create,
     redeem,
@@ -640,6 +669,7 @@ const make = Effect.gen(function* () {
     item,
     commandOutput,
     attachment,
+    media,
   });
 });
 

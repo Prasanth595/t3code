@@ -3,6 +3,12 @@ import {
   GUEST_MESSAGE_MAX_ATTACHMENTS,
   isProviderSendTurnSupportedImageMimeType,
 } from "@t3tools/contracts";
+import {
+  extractMarkdownLinkHrefs,
+  markdownDestinationHostPath,
+  normalizeMarkdownLinkDestination,
+} from "@t3tools/shared/markdownLinks";
+import { isAbsolutePath, isNetworkPath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 /** A file from a guest's message request, saved by the multipart parser to a temporary path. */
 export interface GuestUpload {
@@ -46,6 +52,42 @@ const IMAGE_SIGNATURES: Readonly<Record<string, (header: Uint8Array) => boolean>
     startsWith(header, ascii("RIFF")) && startsWith(header, ascii("WEBP"), 8),
 };
 
+export const matchesImageSignature = (mimeType: string, header: Uint8Array) =>
+  IMAGE_SIGNATURES[mimeType]?.(header) === true;
+
+const IMAGE_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+/**
+ * The type of the host image at `path` when an agent message links or embeds it, or null when the
+ * guest may not load it. Only files the guest can already see named in the thread qualify, never a
+ * network path, which would make the host reach out to another machine.
+ */
+export function embeddedHostImageType(
+  path: string,
+  agentMessages: ReadonlyArray<string>,
+): string | null {
+  if (!isAbsolutePath(path) || isNetworkPath(path)) return null;
+  const mimeType = IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()];
+  if (mimeType === undefined) return null;
+  // The guest page sends Windows drive paths with forward slashes, as the markdown renderer does.
+  const names = (hostPath: string) =>
+    hostPath === path ||
+    (isWindowsAbsolutePath(hostPath) && hostPath.replaceAll("\\", "/") === path);
+  const embedded = agentMessages.some((text) =>
+    extractMarkdownLinkHrefs(text).some((href) => {
+      const hostPath = markdownDestinationHostPath(normalizeMarkdownLinkDestination(href));
+      return hostPath !== null && names(hostPath);
+    }),
+  );
+  return embedded ? mimeType : null;
+}
+
 /**
  * Control characters and separators would break the name in headers and on disk, and direction
  * overrides would let `invoice\u202Efdp.exe` show as a PDF.
@@ -76,11 +118,9 @@ export function classifyGuestUploads(
       upload.contentType.split(";", 1)[0]!.trim().toLowerCase() || "application/octet-stream";
     if (upload.sizeBytes === 0) return { ok: false, reason: "unsupported_file" };
     if (mimeType.startsWith("image/")) {
-      const signatureMatches = IMAGE_SIGNATURES[mimeType];
       if (
         !isProviderSendTurnSupportedImageMimeType(mimeType) ||
-        signatureMatches === undefined ||
-        !signatureMatches(upload.header)
+        !matchesImageSignature(mimeType, upload.header)
       ) {
         return { ok: false, reason: "unsupported_file" };
       }

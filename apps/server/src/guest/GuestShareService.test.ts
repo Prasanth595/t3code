@@ -842,3 +842,63 @@ it.effect("serves the shared thread's files to its guest, never another thread's
     assert.isDefined(shareId);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
+
+it.effect("serves an image on the host only when an agent message embeds it", () =>
+  Effect.gen(function* () {
+    const { guestShares, session } = yield* joinedGuest;
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/my shot.png`;
+    const linked = `${directory}/linked.png`;
+    const page = `${directory}/page.png`;
+    const fromUser = `${directory}/from-user.png`;
+    const unnamed = `${directory}/unnamed.png`;
+    for (const path of [shot, linked, fromUser, unnamed]) yield* fileSystem.writeFile(path, PNG);
+    yield* fileSystem.writeFileString(page, "<script>alert(1)</script>");
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const message = (id: string, role: "user" | "assistant", text: string) => ({
+      id: EventId.make(`event:${id}`),
+      type: "message.updated" as const,
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: {
+        id: MessageId.make(id),
+        threadId,
+        runId,
+        nodeId: null,
+        role,
+        text,
+        attachments: [],
+        streaming: false,
+        createdBy: role === "user" ? ("user" as const) : ("agent" as const),
+        creationSource: "server" as const,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    yield* eventSink.write({
+      events: [
+        message(
+          "message:agent-images",
+          "assistant",
+          `Done: ![Shot](<${shot}>) and [the other](file://${encodeURI(linked)}) ![Page](${page})`,
+        ),
+        // A guest's sent message is a user message; it must not open files on the host.
+        message("message:guest-image", "user", `![Mine](${fromUser})`),
+      ],
+    });
+
+    for (const path of [shot, linked]) {
+      assert.deepStrictEqual(yield* guestShares.media(session, path), {
+        path,
+        mimeType: "image/png",
+      });
+    }
+    for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
+      assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
