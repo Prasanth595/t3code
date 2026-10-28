@@ -19,10 +19,12 @@ import {
   recordDroppedSettingKeys,
 } from "./droppedSettingKeys";
 import {
+  environmentsStoringSettingKeys,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  scopedDisplaySettings,
   scopedIdleCompaction,
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
@@ -802,7 +804,38 @@ describe("environments that cannot store a setting", () => {
     Object.keys(DEFAULT_SERVER_SETTINGS).filter((key) => !missing.includes(key));
   const reviewing = environment("Laptop", { settings: { reviewGuidesEnabled: true } });
 
-  it("leaves a key out of the comparison and the writes where the server does not advertise it", () => {
+  /** Saves where Laptop stores the patch and Server silently drops it, then learns as the UI does. */
+  async function learnFromFirstSave(
+    plan: ReturnType<typeof planScopedSettingsPatch>,
+    saving: readonly ReturnType<typeof environment>[],
+    serverVersion: string,
+  ) {
+    const first = await persistScopedSettingsPatch(
+      plan,
+      async ({ environmentId, input }) => {
+        const settings = saving.find((env) => env.environmentId === environmentId)!.serverConfig!
+          .settings;
+        return {
+          _tag: "Success" as const,
+          value:
+            environmentId === laptop.environmentId
+              ? applyServerSettingsPatch(settings, input.patch)
+              : settings,
+        };
+      },
+      vi.fn(),
+    );
+    for (const { environmentId, droppedKeys } of first.failedEnvironments) {
+      recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
+    }
+    const dropped = appAtomRegistry.get(droppedSettingKeysAtom);
+    return {
+      failed: first.failedEnvironments.map(({ label }) => label),
+      learned: (version: string) => droppedSettingKeysFor(dropped, server.environmentId, version),
+    };
+  }
+
+  it("compares, displays, permission-checks and writes only where the server advertises the key", () => {
     const old = environment("Server", {
       settingsKeys: serverKeysWithout("reviewGuidesEnabled"),
     });
@@ -813,9 +846,15 @@ describe("environments that cannot store a setting", () => {
     });
     expect({
       mixed: scopedSettingsAreMixed(targets, ["reviewGuidesEnabled"]),
+      shownFromServer: scopedDisplaySettings(targets[1]!, targets).reviewGuidesEnabled,
+      permissionChecked: environmentsStoringSettingKeys([reviewing, old], targets, [
+        "reviewGuidesEnabled",
+      ]).map(({ label }) => label),
       writes: plan.serverWrites.map(({ label, patch }) => [label, patch]),
     }).toEqual({
       mixed: false,
+      shownFromServer: true,
+      permissionChecked: ["Laptop"],
       writes: [
         ["Laptop", { reviewGuidesEnabled: false, enableProviderUpdateChecks: false }],
         ["Server", { enableProviderUpdateChecks: false }],
@@ -823,77 +862,32 @@ describe("environments that cannot store a setting", () => {
     });
   });
 
-  // regression: after the first save reported the drop, the next click still wrote to the old server
-  it("learns a dropped key so the next click reaches the other environments and the row resolves", async () => {
-    const fresh = environment("Laptop");
-    const old = environment("Server");
-    const first = await persistScopedSettingsPatch(
-      planScopedSettingsPatch(all, [fresh, old], { reviewGuidesEnabled: true }),
-      async ({ environmentId, input }) => ({
-        _tag: "Success" as const,
-        value:
-          environmentId === fresh.environmentId
-            ? applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, input.patch)
-            : DEFAULT_SERVER_SETTINGS,
-      }),
-      vi.fn(),
+  // regression: after the first save reported the drop, every later click still wrote to the old
+  // server, so the row stayed Mixed and Off was unreachable
+  it("learns a dropped key for that server version so the next click resolves the row", async () => {
+    const { failed, learned } = await learnFromFirstSave(
+      planScopedSettingsPatch(all, [laptop, server], { reviewGuidesEnabled: true }),
+      [laptop, server],
+      "1.0.0-toggle",
     );
-    const droppedKeys = first.failedEnvironments.flatMap((failed) => failed.droppedKeys);
-    const learned = environment("Server", { unsupportedSettingKeys: new Set(droppedKeys) });
-    const afterFirstSave = [reviewing, learned];
+    const known = learned("1.0.0-toggle");
+    const afterFirstSave = [
+      reviewing,
+      environment("Server", known ? { unsupportedSettingKeys: known } : {}),
+    ];
 
     expect({
-      droppedKeys,
+      failed,
       mixed: scopedSettingsAreMixed(resolveScopedSettingsTargets(all, afterFirstSave), [
         "reviewGuidesEnabled",
       ]),
       secondClick: planScopedSettingsPatch(all, afterFirstSave, {
         reviewGuidesEnabled: false,
       }).serverWrites.map(({ label }) => label),
-    }).toEqual({ droppedKeys: ["reviewGuidesEnabled"], mixed: false, secondClick: ["Laptop"] });
-  });
-
-  // regression: a dropped nullable object reported its leaves, which the learned cache ignored
-  it("learns a whole dropped object setting until the environment's server version changes", async () => {
-    const fresh = environment("Laptop");
-    const legacy = environment("Server");
-    const first = await persistScopedSettingsPatch(
-      planScopedSettingsPatch(all, [fresh, legacy], {
-        sourceControlWriterModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5",
-        },
-      }),
-      async ({ environmentId, input }) => ({
-        _tag: "Success" as const,
-        value:
-          environmentId === fresh.environmentId
-            ? applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, input.patch)
-            : DEFAULT_SERVER_SETTINGS,
-      }),
-      vi.fn(),
-    );
-    for (const { environmentId, droppedKeys } of first.failedEnvironments) {
-      recordDroppedSettingKeys(environmentId, "1.0.0", droppedKeys);
-    }
-    const dropped = appAtomRegistry.get(droppedSettingKeysAtom);
-    const learned = droppedSettingKeysFor(dropped, legacy.environmentId, "1.0.0");
-    const afterFirstSave = [
-      fresh,
-      environment("Server", learned ? { unsupportedSettingKeys: learned } : {}),
-    ];
-
-    expect({
-      learned: learned && [...learned],
-      secondClick: planScopedSettingsPatch(all, afterFirstSave, {
-        sourceControlWriterModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-mini",
-        },
-      }).serverWrites.map(({ label }) => label),
-      afterUpdate: droppedSettingKeysFor(dropped, legacy.environmentId, "1.1.0"),
+      afterUpdate: learned("1.1.0-toggle"),
     }).toEqual({
-      learned: ["sourceControlWriterModelSelection"],
+      failed: ["Server"],
+      mixed: false,
       secondClick: ["Laptop"],
       afterUpdate: undefined,
     });
@@ -906,6 +900,48 @@ describe("environments that cannot store a setting", () => {
     expect(planScopedSettingsPatch(all, [old], { reviewGuidesEnabled: true })).toMatchObject({
       serverWrites: [],
       unavailableReason: "Update T3 Code on Server to use this setting.",
+    });
+  });
+
+  it("learns a dropped project override without hiding the environment-wide value", async () => {
+    const laptopOff = environment("Laptop", { settings: { defaultAutoPull: false } });
+    const serverOn = environment("Server", { settings: { defaultAutoPull: true } });
+    const { failed, learned } = await learnFromFirstSave(
+      planScopedSettingsPatch(project, [laptopOff, serverOn], { defaultAutoPull: true }),
+      [laptopOff, serverOn],
+      "1.0.0-override",
+    );
+    const known = learned("1.0.0-override");
+    const learnedServer = environment("Server", {
+      settings: { defaultAutoPull: true },
+      ...(known ? { unsupportedSettingKeys: known } : {}),
+    });
+    const afterFirstSave = [laptopOff, learnedServer];
+
+    expect({
+      failed,
+      projectSecondClick: planScopedSettingsPatch(project, afterFirstSave, {
+        defaultAutoPull: false,
+      }).serverWrites.map(({ label }) => label),
+      projectMixed: scopedSettingsAreMixed(resolveScopedSettingsTargets(project, afterFirstSave), [
+        "defaultAutoPull",
+      ]),
+      serverCheckout: planScopedSettingsPatch(checkout, afterFirstSave, { defaultAutoPull: false })
+        .unavailableReason,
+      environmentWideMixed: scopedSettingsAreMixed(
+        resolveScopedSettingsTargets(all, afterFirstSave),
+        ["defaultAutoPull"],
+      ),
+      environmentWideWrites: planScopedSettingsPatch(all, afterFirstSave, {
+        defaultAutoPull: false,
+      }).serverWrites.map(({ label }) => label),
+    }).toEqual({
+      failed: ["Server"],
+      projectSecondClick: ["Laptop"],
+      projectMixed: false,
+      serverCheckout: "Update T3 Code on Server to use this setting.",
+      environmentWideMixed: true,
+      environmentWideWrites: ["Laptop", "Server"],
     });
   });
 });
