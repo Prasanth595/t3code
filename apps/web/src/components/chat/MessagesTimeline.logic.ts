@@ -705,8 +705,8 @@ interface TurnFold {
   anchorEntryId: string;
   createdAt: string;
   hiddenEntryIds: ReadonlySet<string>;
-  /** Every entry in the segment, including the cards a fold never hides. */
-  entryIds: ReadonlySet<string>;
+  /** Every entry in the segment in timeline order, including the cards a fold never hides. */
+  entries: ReadonlyArray<TimelineEntry>;
   label: string;
 }
 
@@ -1167,7 +1167,7 @@ function deriveTurnFolds(input: {
       anchorEntryId: group.anchorEntryId,
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds: segmentHiddenIds(firstSegment),
-      entryIds: new Set(firstSegment.map((entry) => entry.id)),
+      entries: firstSegment,
       label,
     });
     for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
@@ -1184,7 +1184,7 @@ function deriveTurnFolds(input: {
         anchorEntryId: anchorEntry.id,
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
-        entryIds: new Set(entries.map((entry) => entry.id)),
+        entries,
         label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
       });
     }
@@ -1443,8 +1443,8 @@ export function deriveMessagesTimelineRows(input: {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
-      for (const entryId of fold.entryIds) {
-        collapsedFoldMemberIds.add(entryId);
+      for (const entry of fold.entries) {
+        collapsedFoldMemberIds.add(entry.id);
       }
     }
   }
@@ -1681,8 +1681,7 @@ export function deriveMessagesTimelineRows(input: {
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
-      const deferredWorkItemIds = timelineEntries.flatMap((entry) =>
-        turnFold.entryIds.has(entry.id) &&
+      const deferredWorkItemIds = turnFold.entries.flatMap((entry) =>
         entry.kind === "work" &&
         entry.entry.projectedItem?.item.deferredWork &&
         !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
