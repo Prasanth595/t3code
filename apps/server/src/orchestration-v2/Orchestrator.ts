@@ -3248,6 +3248,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeWakeOn: null,
             updatedAt:
               alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
                 ? thread.updatedAt
@@ -3271,15 +3272,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
+            snoozeWakeOn: command.wakeOn ?? null,
+            snoozeWakeReason: null,
             updatedAt: now,
           };
         }
         case "thread.unsnooze": {
+          if (command.reason === "pull-request-reply") {
+            const sameSnooze =
+              thread.snoozeWakeOn === "pull-request-reply" &&
+              thread.snoozedAt != null &&
+              DateTime.toEpochMillis(thread.snoozedAt) === Date.parse(command.snoozedAt) &&
+              thread.snoozedUntil != null &&
+              DateTime.toEpochMillis(thread.snoozedUntil) > DateTime.toEpochMillis(now);
+            if (!sameSnooze) return thread;
+            // Clients read an elapsed snoozedUntil as a wake, so this looks like the timer firing now.
+            return {
+              ...thread,
+              snoozedUntil: now,
+              snoozeWakeOn: null,
+              snoozeWakeReason: command.wakeReason,
+              updatedAt: now,
+            };
+          }
           const alreadyAwake = thread.snoozedUntil == null;
           return {
             ...thread,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeWakeOn: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
@@ -3306,6 +3327,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeWakeOn: null,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
@@ -3365,13 +3387,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
+                  snoozeWakeOn: null,
+                  snoozeWakeReason: null,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
                   thread.snoozedUntil != null &&
                   DateTime.toEpochMillis(thread.snoozedUntil) ===
                     Date.parse(thread.limitRecovery.resetAt)
-                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+                ? { snoozedUntil: null, snoozedAt: null, snoozeWakeOn: null, lastSnoozeWakeAt: now }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
@@ -3649,6 +3673,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (updatedThread === thread && command.type === "thread.unsnooze") return;
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"
@@ -5122,6 +5147,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...projection.thread,
         snoozedUntil: null,
         snoozedAt: null,
+        snoozeWakeOn: null,
         updatedAt: now,
       };
       yield* emit(
@@ -12809,7 +12835,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
-          command.type === "thread.guest-share.close",
+          command.type === "thread.guest-share.close" ||
+          // A reply read can land after the snooze it saw already ended.
+          (command.type === "thread.unsnooze" && command.reason === "pull-request-reply"),
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

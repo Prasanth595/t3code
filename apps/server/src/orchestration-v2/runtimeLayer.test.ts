@@ -5852,6 +5852,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
         threadId,
         snoozedUntil,
+        wakeOn: "pull-request-reply",
       });
 
       const shell = yield* orchestrator.getShellSnapshot();
@@ -5863,6 +5864,47 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         DateTime.toEpochMillis(firstSnoozedAt!) + 1_000,
       );
       assert.deepEqual(thread.updatedAt, thread.snoozedAt);
+      assert.equal(thread.snoozeWakeOn, "pull-request-reply");
+
+      const wakeReason = {
+        kind: "reply",
+        pullRequestNumber: 7,
+        pullRequestUrl: "https://github.com/acme/app/pull/7",
+        actor: "maria",
+        reviewState: "approved",
+        url: "https://github.com/acme/app/pull/7#pullrequestreview-1",
+      } as const;
+      // A wake read for an earlier snooze must not end this one.
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-stale-reply"),
+        threadId,
+        reason: "pull-request-reply",
+        snoozedAt: DateTime.formatIso(firstSnoozedAt!),
+        wakeReason,
+      });
+      assert.deepInclude((yield* orchestrator.getThreadProjection(threadId)).thread, {
+        snoozeWakeOn: "pull-request-reply",
+        snoozedUntil: thread.snoozedUntil,
+      });
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-reply"),
+        threadId,
+        reason: "pull-request-reply",
+        snoozedAt: DateTime.formatIso(thread.snoozedAt!),
+        wakeReason,
+      });
+      const replied = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.deepInclude(replied, {
+        snoozedUntil: yield* DateTime.now,
+        snoozedAt: thread.snoozedAt,
+        snoozeWakeOn: null,
+        snoozeWakeReason: wakeReason,
+      });
 
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",
@@ -5880,6 +5922,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
         threadId,
         snoozedUntil,
+        wakeOn: "pull-request-reply",
+      });
+      assert.deepInclude((yield* orchestrator.getThreadProjection(threadId)).thread, {
+        snoozeWakeOn: "pull-request-reply",
+        snoozeWakeReason: null,
       });
 
       yield* orchestrator.dispatch({
@@ -5898,6 +5945,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+      assert.isNull(awakened.thread.snoozeWakeOn);
     }),
   );
 });

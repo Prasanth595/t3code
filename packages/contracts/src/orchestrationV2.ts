@@ -3345,6 +3345,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
+  /**
+   * Wakes the `pull-request-reply` snooze started at `snoozedAt` as if its timer elapsed now,
+   * recording why. A later snooze or wake makes it a no-op.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.unsnooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("pull-request-reply"),
+    snoozedAt: IsoDateTime,
+    wakeReason: ThreadSnoozeWakeReason,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

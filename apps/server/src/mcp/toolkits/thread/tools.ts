@@ -19,6 +19,7 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  ThreadSnoozeWakeOn,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -47,6 +48,10 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    wakeOn: Schema.optional(ThreadSnoozeWakeOn).annotate({
+      description:
+        "With `snooze`: also wake when a maintainer comments on or reviews, merges, or closes an open linked PR the user authored. `snoozedUntil` stays the backstop.",
+    }),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
