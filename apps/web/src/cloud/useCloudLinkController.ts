@@ -7,18 +7,21 @@ import {
   AuthRelayWriteScope,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
@@ -46,6 +49,18 @@ function isManagedTunnelActive(
   );
 }
 
+const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
+
+/** The account's tunnel cap when the relay refused a new tunnel for being at it. */
+export function tunnelLimitFromLinkFailure(cause: unknown): number | null {
+  if (!(cause instanceof CloudEnvironmentLinkError)) return null;
+  const relayCause = cause.cause;
+  if (!isManagedRelayRequestFailedError(relayCause)) return null;
+  return relayCause.relayError?._tag === "RelayEnvironmentLinkLimitExceededError"
+    ? relayCause.relayError.maxTunnels
+    : null;
+}
+
 export function useCloudLinkController() {
   const { getToken, isSignedIn } = useAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
@@ -68,6 +83,7 @@ export function useCloudLinkController() {
     ? relayEnvironments.get(primaryEnvironmentId)?.environment.endpoint.providerKind
     : undefined;
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
@@ -100,6 +116,7 @@ export function useCloudLinkController() {
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
+    setTunnelLimit(null);
     const target = primaryCloudLinkState.target;
     if (!target) {
       reportUpdateFailure(new Error("Local environment is not ready yet."));
@@ -170,7 +187,11 @@ export function useCloudLinkController() {
         });
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {
-            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+            const cause = squashAtomCommandFailure(linkResult);
+            // The caller shows an upgrade prompt instead of an error.
+            const limit = tunnelLimitFromLinkFailure(cause);
+            if (limit === null) reportUpdateFailure(cause);
+            else setTunnelLimit(limit);
           }
           primaryCloudLinkState.refresh();
           return false;
@@ -215,6 +236,7 @@ export function useCloudLinkController() {
     publishAgentActivity,
     holdWebhooksWhileOffline,
     operationError,
+    tunnelLimit,
     reconcileCloudState,
   };
 }

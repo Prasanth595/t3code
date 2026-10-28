@@ -9,6 +9,7 @@ import {
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
+import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -19,7 +20,12 @@ import {
   usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  type T3ConnectAccountPageUrl,
+  useT3ConnectAccountPage,
+} from "../clerk/T3ConnectAccountPages";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
+import { TunnelLimitAlert } from "./TunnelUsage";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Dialog } from "../ui/dialog";
@@ -63,6 +69,7 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
+  const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
     ? ["publish", "devices"]
@@ -180,101 +187,115 @@ function ConfiguredConnectOnboardingDialog() {
     setStep("devices");
   };
 
+  const openAccountPage = accountPage.open;
+  // The account page is a Clerk modal, so close this dialog before it opens.
+  const leaveForAccountPage = openAccountPage
+    ? (page: T3ConnectAccountPageUrl) => {
+        complete();
+        openAccountPage(page);
+      }
+    : null;
+
   return (
-    <Dialog
-      open={openForAccount !== null}
-      onOpenChange={(open) => {
-        if (!open && !isApplying) complete();
-      }}
-    >
-      <WizardPopup>
-        <WizardHeader
-          title="Set up T3 Connect"
-          description={
-            <>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
-            </>
-          }
-        >
-          {steps.length > 1 ? (
-            <WizardSteps
-              steps={steps.map((id) => STEP_LABELS[id])}
-              currentStep={steps.indexOf(step)}
-              isStepDisabled={() => isApplying}
-              onStepChange={(index) => {
-                const next = steps[index];
-                if (
-                  next === "publish" &&
-                  (primaryEnvironmentId === null ||
-                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
-                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
-                )
-                  return;
-                if (next) setStep(next);
-              }}
-            />
-          ) : null}
-        </WizardHeader>
-        <WizardPanel>
-          {step === "publish" ? (
-            <PublishStep
-              exposeEnvironment={exposeEnvironment}
-              publishAgentActivity={publishAgentActivity}
-              disabled={isApplying || !canManageRelay || linkStateData === null}
-              operationError={controller.operationError ?? controller.linkState.error}
-              onExposeEnvironmentChange={(enabled) => {
-                if (
-                  primaryEnvironmentId !== null &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                )
-                  setExposeEnvironment(enabled);
-              }}
-              onPublishAgentActivityChange={(enabled) => {
-                if (
-                  primaryEnvironmentId !== null &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                )
-                  setPublishAgentActivity(enabled);
-              }}
-            />
-          ) : (
-            <DevicesStep />
-          )}
-        </WizardPanel>
-        <WizardFooter
-          leading={
-            <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
-              <Checkbox
-                checked={dontShowAgain}
-                onCheckedChange={(checked) => setDontShowAgain(checked === true)}
+    <>
+      <Dialog
+        open={openForAccount !== null}
+        onOpenChange={(open) => {
+          if (!open && !isApplying) complete();
+        }}
+      >
+        <WizardPopup>
+          <WizardHeader
+            title="Set up T3 Connect"
+            description={
+              <>
+                Mesh your devices together. Publish this environment and connect the rest, all in
+                one place.
+              </>
+            }
+          >
+            {steps.length > 1 ? (
+              <WizardSteps
+                steps={steps.map((id) => STEP_LABELS[id])}
+                currentStep={steps.indexOf(step)}
+                isStepDisabled={() => isApplying}
+                onStepChange={(index) => {
+                  const next = steps[index];
+                  if (
+                    next === "publish" &&
+                    (primaryEnvironmentId === null ||
+                      !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
+                      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
+                  )
+                    return;
+                  if (next) setStep(next);
+                }}
               />
-              Don&apos;t show this again
-            </label>
-          }
-        >
-          {step === "publish" ? (
-            <>
-              <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
-              </Button>
-              <Button
+            ) : null}
+          </WizardHeader>
+          <WizardPanel>
+            {step === "publish" ? (
+              <PublishStep
+                exposeEnvironment={exposeEnvironment}
+                publishAgentActivity={publishAgentActivity}
                 disabled={isApplying || !canManageRelay || linkStateData === null}
-                onClick={() => void applyPublishSelection()}
-              >
-                {isApplying ? "Enabling…" : "Continue"}
+                operationError={controller.operationError ?? controller.linkState.error}
+                tunnelLimit={controller.tunnelLimit}
+                onOpenAccountPage={leaveForAccountPage}
+                onExposeEnvironmentChange={(enabled) => {
+                  if (
+                    primaryEnvironmentId !== null &&
+                    readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
+                    readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                  )
+                    setExposeEnvironment(enabled);
+                }}
+                onPublishAgentActivityChange={(enabled) => {
+                  if (
+                    primaryEnvironmentId !== null &&
+                    readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
+                    readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                  )
+                    setPublishAgentActivity(enabled);
+                }}
+              />
+            ) : (
+              <DevicesStep />
+            )}
+          </WizardPanel>
+          <WizardFooter
+            leading={
+              <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
+                <Checkbox
+                  checked={dontShowAgain}
+                  onCheckedChange={(checked) => setDontShowAgain(checked === true)}
+                />
+                Don&apos;t show this again
+              </label>
+            }
+          >
+            {step === "publish" ? (
+              <>
+                <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
+                  Not now
+                </Button>
+                <Button
+                  disabled={isApplying || !canManageRelay || linkStateData === null}
+                  onClick={() => void applyPublishSelection()}
+                >
+                  {isApplying ? "Enabling…" : "Continue"}
+                </Button>
+              </>
+            ) : (
+              <Button disabled={isApplying} onClick={complete}>
+                Done
               </Button>
-            </>
-          ) : (
-            <Button disabled={isApplying} onClick={complete}>
-              Done
-            </Button>
-          )}
-        </WizardFooter>
-      </WizardPopup>
-    </Dialog>
+            )}
+          </WizardFooter>
+        </WizardPopup>
+      </Dialog>
+      {accountPage.portals}
+    </>
   );
 }
 
@@ -288,6 +309,8 @@ function PublishStep({
   publishAgentActivity,
   disabled,
   operationError,
+  tunnelLimit,
+  onOpenAccountPage,
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
@@ -295,6 +318,8 @@ function PublishStep({
   readonly publishAgentActivity: boolean;
   readonly disabled: boolean;
   readonly operationError: string | null;
+  readonly tunnelLimit: number | null;
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
@@ -317,7 +342,28 @@ function PublishStep({
         />
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {tunnelLimit !== null ? (
+        <OnboardingTunnelLimitAlert limit={tunnelLimit} onOpenAccountPage={onOpenAccountPage} />
+      ) : null}
     </div>
+  );
+}
+
+function OnboardingTunnelLimitAlert({
+  limit,
+  onOpenAccountPage,
+}: {
+  readonly limit: number;
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
+}) {
+  const { upgrade } = useManagedTunnelUsage();
+  return (
+    <TunnelLimitAlert
+      limit={limit}
+      upgrade={upgrade}
+      onLinkT3Chat={onOpenAccountPage ? () => onOpenAccountPage("t3-chat") : null}
+      onManageTunnels={onOpenAccountPage ? () => onOpenAccountPage("t3-connect") : null}
+    />
   );
 }
 
