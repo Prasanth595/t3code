@@ -7863,7 +7863,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
-            const toolUseIds = yield* Ref.get(toolUseIdsByTaskId);
+            const toolUseIds = new Map(yield* Ref.get(toolUseIdsByTaskId));
+            // A live task keeps its tool call after the bounded map evicts it.
+            const current = rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              input.nativeThreadId,
+            );
+            for (const [taskId, task] of current) {
+              if (task.nativeItemId !== undefined && !toolUseIds.has(taskId)) {
+                toolUseIds.set(taskId, task.nativeItemId);
+              }
+            }
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks, toolUseIds);
               if (task !== null) {
