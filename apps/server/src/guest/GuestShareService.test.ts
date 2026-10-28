@@ -1008,3 +1008,73 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
     }
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
+
+it.effect("keeps a connected guest's images while other shares come and go", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/shot.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    /** A shared thread whose agent reply shows the screenshot, and its guest's session. */
+    const sharedWithImage = Effect.fn(function* (id: ThreadId) {
+      const { orchestrator, guestShares, credential } = yield* shareThreadFor(id);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`message:${id}`),
+        threadId: id,
+        messageId: MessageId.make(`message:${id}`),
+        text: "Show me",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const runId = (yield* orchestrator.getThreadRecords(id, ["runs"])).runs[0]!.id;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:reply:${id}`),
+            type: "turn-item.updated",
+            threadId: id,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`item:reply:${id}`),
+              threadId: id,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              title: null,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make(`item:reply:${id}`),
+              text: `![Shot](${shot})`,
+              streaming: false,
+            },
+          },
+        ],
+      });
+      const { token } = yield* guestShares.redeem({ credential, name: "Sam" });
+      return { guestShares, token };
+    });
+
+    // This guest's page stays open while more guests than the record keeps open and close theirs.
+    const { guestShares, token } = yield* sharedWithImage(threadId);
+    yield* Stream.runDrain(yield* guestShares.stream(token)).pipe(Effect.forkScoped);
+    for (let index = 0; index < 65; index++) {
+      const other = yield* sharedWithImage(ThreadId.make(`thread:other-${index}`));
+      yield* Stream.runDrain(Stream.take(yield* guestShares.stream(other.token), 2));
+    }
+    assert.equal((yield* guestShares.media(token, shot)).mimeType, "image/png");
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
