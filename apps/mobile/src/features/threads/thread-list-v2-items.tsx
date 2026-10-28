@@ -162,6 +162,7 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 
 function ThreadListV2Section(props: {
   readonly label: string;
+  readonly count?: number;
   readonly pane?: "screen" | "sidebar";
   readonly tone?: "default" | "snoozed";
   readonly disclosure?: {
@@ -196,8 +197,23 @@ function ThreadListV2Section(props: {
         className={cn(
           "h-px flex-1",
           snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
+          props.count !== undefined && "opacity-0",
         )}
       />
+      {props.count !== undefined ? (
+        <Text
+          className={cn(
+            "text-xs font-t3-medium tabular-nums",
+            sidebarPane
+              ? "text-drawer-foreground-muted"
+              : snoozed
+                ? "text-foreground-secondary"
+                : "text-foreground-tertiary",
+          )}
+        >
+          {props.count}
+        </Text>
+      ) : null}
       {props.disclosure ? (
         <SymbolView
           name="chevron.down"
@@ -257,10 +273,10 @@ const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled"
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
 ) {
-  const label = SHELF_LABEL[props.kind];
   return (
     <ThreadListV2Section
-      label={props.expanded ? label : `${label} (${props.count})`}
+      label={SHELF_LABEL[props.kind]}
+      count={props.count}
       pane={props.pane}
       tone={props.kind === "snoozed" ? "snoozed" : "default"}
       disclosure={{
