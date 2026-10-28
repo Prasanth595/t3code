@@ -132,15 +132,15 @@ export function SnoozePresetsRow() {
   // Edits build on a local draft, so a second edit before the first save echoes back
   // does not restore what the first one changed. Echoes of our own writes keep the draft.
   // Row keys survive removals and sorts, so a row's in-progress field state stays with it.
-  const [initial] = useState(() =>
+  // One state, so a sort queued in the same event as an edit applies on top of it.
+  const [rows, setRows] = useState(() =>
     sortSnoozeRows(
       saved,
       saved.map((_, index) => index),
       now,
     ),
   );
-  const [presets, setPresets] = useState(initial.presets);
-  const [keys, setKeys] = useState(initial.keys);
+  const { presets, keys } = rows;
   const [nextKey, setNextKey] = useState(saved.length);
   // Null forces the next render to adopt the saved value, as after a failed write.
   const [savedSource, setSavedSource] = useState<ReadonlyArray<SnoozePresetSetting> | null>(saved);
@@ -155,10 +155,8 @@ export function SnoozePresetsRow() {
     setSavedSource(saved);
     const reconciled = reconcileSnoozeDraft(written, saved);
     if (reconciled.adopt) {
-      const sorted = sortSnoozeRows(saved, freshKeys(saved.length), now);
       setWritten([]);
-      setPresets(sorted.presets);
-      setKeys(sorted.keys);
+      setRows(sortSnoozeRows(saved, freshKeys(saved.length), now));
     } else {
       setWritten(reconciled.pending);
     }
@@ -168,8 +166,7 @@ export function SnoozePresetsRow() {
     nextKeys: ReadonlyArray<number> = keys,
   ) => {
     if (!mixed && Equal.equals(snoozePresets, presets)) return;
-    setPresets(snoozePresets);
-    setKeys(nextKeys);
+    setRows({ presets: snoozePresets, keys: nextKeys });
     setWritten((previous) => [...previous, snoozePresets]);
     updateSettings(
       { snoozePresets },
@@ -218,11 +215,7 @@ export function SnoozePresetsRow() {
           )
         }
         onAdd={() => save([...presets, nextCandidate(presets)], [...keys, ...freshKeys(1)])}
-        onSettle={() => {
-          const sorted = sortSnoozeRows(presets, keys, now);
-          setPresets(sorted.presets);
-          setKeys(sorted.keys);
-        }}
+        onSettle={() => setRows((current) => sortSnoozeRows(current.presets, current.keys, now))}
       />
     </SettingsRow>
   );
@@ -271,11 +264,15 @@ function SnoozePresetList(props: {
     <div
       className="flex flex-col gap-1.5 pt-3 pb-2"
       onBlur={(event) => {
+        const list = event.currentTarget;
         const next = event.relatedTarget;
-        if (event.currentTarget.contains(next)) return;
+        if (list.contains(next)) return;
         // Select popups portal out of the list, so focus moving into one is not leaving it.
         if (next instanceof Element && next.closest('[data-slot="select-popup"]')) return;
-        props.onSettle();
+        // Waits for the amount field's blur commit, and skips its Enter blur-and-refocus.
+        queueMicrotask(() => {
+          if (!list.contains(document.activeElement)) props.onSettle();
+        });
       }}
     >
       {props.presets.map((preset, index) => {
