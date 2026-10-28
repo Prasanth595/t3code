@@ -204,8 +204,15 @@ function PoolWindowCard({
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-sm text-foreground-muted">
+              {pool.members.length > 1 ? "average left" : "left"}
+            </Text>
           </View>
+          {pool.members.length > 1 ? (
+            <Text className="text-xs text-foreground-muted">
+              Across {pool.members.length} accounts
+            </Text>
+          ) : null}
         </View>
         {pool.pace ? (
           <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
@@ -214,7 +221,7 @@ function PoolWindowCard({
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
+          Next account reset{" "}
           {formatResetsIn(nextRefill.member.window, now)
             ?.replace("resets in ", "in ")
             .replace("resets now", "now")}
@@ -604,7 +611,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               ) : null}
               {reset && reset.restoresPercent > 0 ? (
                 <Text className="text-sm text-foreground-muted">
-                  Restores {reset.restoresPercent}% of the pool
+                  After reset:{" "}
+                  {Math.round(Math.min(100, remainingPercent(window) + reset.member.refillPercent))}
+                  % left on this account
                 </Text>
               ) : null}
             </View>
