@@ -52,7 +52,7 @@ function isManagedTunnelActive(
 const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
 
 /** The account's tunnel cap when the relay refused a new tunnel for being at it. */
-export function tunnelLimitFromLinkFailure(cause: unknown): number | null {
+function tunnelLimitFromLinkFailure(cause: unknown): number | null {
   if (!(cause instanceof CloudEnvironmentLinkError)) return null;
   const relayCause = cause.cause;
   if (!isManagedRelayRequestFailedError(relayCause)) return null;
