@@ -298,6 +298,38 @@ const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
+      let deliveryBaseline = aggregate;
+      if (job.replay && job.state) {
+        const replayedAggregate = makeAggregateState({
+          activeStates: states.filter(
+            (state) =>
+              state.environmentId === job.state?.environmentId &&
+              state.threadId === job.state.threadId &&
+              state.phase === job.state.phase &&
+              state.updatedAt === job.state.updatedAt,
+          ),
+          terminalState: null,
+          nowMs: now.epochMilliseconds,
+        });
+        const replayedRow = replayedAggregate?.activities[0];
+        if (replayedAggregate && replayedRow) {
+          // A silent thread replay acknowledges only itself, preserving other pending transitions.
+          const previousRows = previousAggregate?.activities ?? [];
+          const index = previousRows.findIndex(
+            (row) =>
+              row.environmentId === replayedRow.environmentId &&
+              row.threadId === replayedRow.threadId,
+          );
+          deliveryBaseline = {
+            ...(previousAggregate ?? replayedAggregate),
+            activities:
+              index === -1
+                ? [...previousRows, replayedRow]
+                : previousRows.toSpliced(index, 1, replayedRow),
+          };
+          acknowledgeAggregate = true;
+        }
+      }
       const displayedAggregate =
         preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
           ? aggregate
@@ -349,7 +381,7 @@ const make = Effect.gen(function* () {
           deviceId: job.deviceId,
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
-          aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          aggregate: preferences.value.liveActivitiesEnabled ? deliveryBaseline : null,
           deliveredAt: DateTime.formatIso(now),
         });
       }

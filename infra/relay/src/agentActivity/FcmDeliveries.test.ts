@@ -26,6 +26,7 @@ const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const state: RelayAgentActivityState = {
   environmentId: EnvironmentId.make("env"),
   threadId: ThreadId.make("thread"),
@@ -261,9 +262,50 @@ describe("Android delivery routing", () => {
         h.current.otherStates = [{ ...secondState, phase: "completed", unread: true }];
         const baseline = h.current.target.last_aggregate_json;
         yield* delivery.process({ ...h.job, replay: true });
-        expect(h.current.target.last_aggregate_json).toBe(baseline);
+        expect(decodeJson(h.current.target.last_aggregate_json)).toEqual(decodeJson(baseline));
         yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
         expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect(
+    "a replay adds a missing baseline row without acknowledging another pending result",
+    () => {
+      const h = harness();
+      h.current.target.last_aggregate_json = encodeJson(aggregateFor([secondState]));
+      h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+      h.current.otherStates = [
+        { ...secondState, phase: "completed", unread: true, retained: true },
+      ];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        const alerts = h.sent.filter((message) => message.alert);
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]?.data.alert_title).toBe(secondState.threadTitle);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect.each(["completed", "waiting_for_approval"] as const)(
+    "a replayed %s row does not alert on the next ordinary job",
+    (phase) => {
+      const h = harness();
+      h.current.otherStates = [secondState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.state = { ...state, phase, unread: true, retained: true };
+        yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+        yield* delivery.process({ ...h.job, state: secondState });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(0);
+        h.current.otherStates = [{ ...secondState, phase: "completed", unread: true }];
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        const alerts = h.sent.filter((message) => message.alert);
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]?.data.alert_title).toBe(secondState.threadTitle);
       }).pipe(Effect.provide(h.layer));
     },
   );

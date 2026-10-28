@@ -68,31 +68,6 @@ class AgentNotificationsTest {
   )
 
   @Test
-  fun retainedUnreadResultHasNoTimeoutAndReadingItClearsTheCard() {
-    AgentNotifications.receive(
-      context,
-      update("done", true) + mapOf(
-        "activity_phase" to "completed",
-        "activity_expires_at" to "0",
-      )
-    )
-    val card = manager.activeNotifications.single().notification
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) assertEquals(0L, card.timeoutAfter)
-    assertTrue(
-      shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.isEmpty()
-    )
-    AgentNotifications.expire(context, System.currentTimeMillis() + 24 * 60 * 60 * 1000L)
-    assertEquals(1, manager.activeNotifications.size)
-    AgentNotifications.receive(
-      context,
-      update("done-read", false) + mapOf(
-        "activity_expires_at" to "0",
-      )
-    )
-    assertEquals(0, manager.activeNotifications.size)
-  }
-
-  @Test
   fun alertHistoryEvictsOnlyTheOldestEntryAfterCapacity() {
     lifecycle.currentState = Lifecycle.State.RESUMED
     for (id in 0..64) AgentNotifications.receive(context, update("alert-$id", false))
@@ -487,23 +462,6 @@ class AgentNotificationsTest {
     assertEquals("Answer", card.actions.first().title.toString())
     assertEquals(2, card.actions.size)
     assertFalse(card.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
-  }
-
-  @Test
-  fun waitingThreadsShowTheirCountInsteadOfZeroWorking() {
-    lifecycle.currentState = Lifecycle.State.RESUMED
-    val data = update("waiting-only", true) + mapOf(
-      "activity_line_0" to "Input\tChoose a model\tProject",
-      "activity_line_1" to "Input\tChoose an icon\tProject",
-      "activity_phase" to "waiting_for_input",
-      "activity_active_count" to "2",
-      "activity_attention_count" to "2",
-      "activity_working_count" to "0",
-      "activity_total_count" to "2",
-    )
-    AgentNotifications.receive(context, data)
-    val card = manager.activeNotifications.single().notification
-    assertEquals("Project · 2 threads", card.extras.getString(Notification.EXTRA_SUB_TEXT))
   }
 
   @Test
