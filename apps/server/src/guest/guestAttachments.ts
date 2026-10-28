@@ -71,11 +71,12 @@ export function guestHostImageType(path: string): string | null {
 
 /** Whether an agent message shows the image at `path`, so the guest already sees it. */
 export function agentMessagesShowImage(path: string, agentMessages: ReadonlyArray<string>) {
-  // Parsing is the slow part, so only messages with a run of the file's name are parsed. Not the
-  // whole name: markdown can escape or encode it (`shot\_1.png`, `caf%C3%A9.png`).
+  // Parsing is the slow part, so only messages with an image and a run of the file's name are
+  // parsed. Not the whole name: markdown can escape or encode it (`shot\_1.png`, `caf%C3%A9.png`).
   const key = /[A-Za-z0-9]+/.exec(fileBasename(path))?.[0] ?? "";
   return agentMessages.some(
     (text) =>
+      (text.includes("![") || /<img/i.test(text)) &&
       text.includes(key) &&
       chatMarkdownImageSources(text).some((source) => markdownDestinationHostPath(source) === path),
   );
