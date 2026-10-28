@@ -173,7 +173,8 @@ export function useComposerRestingTransition(
     const nextActionTop = action?.getBoundingClientRect().top ?? null;
     const nextControlsRect = controls?.getBoundingClientRect() ?? null;
     const nextControlsTop = nextControlsRect?.top ?? null;
-    const footerBottom = footer ? nextRect.bottom - footer.getBoundingClientRect().bottom : 1;
+    const nextFooterRect = footer?.getBoundingClientRect();
+    const footerBottom = nextFooterRect ? nextRect.bottom - nextFooterRect.bottom : 1;
     const previousHeight = interruptedHeight ?? previousHeightRef.current;
     const targetChanged =
       interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
@@ -214,11 +215,11 @@ export function useComposerRestingTransition(
         pinnedOverlayRef.current = overlay;
       }
 
-      if (footer) {
+      if (footer && nextFooterRect) {
         footer.style.position = "absolute";
         footer.style.top = "auto";
         footer.style.bottom = `${String(footerBottom)}px`;
-        footer.style.height = "3rem";
+        footer.style.height = `${nextFooterRect.height}px`;
         if (nextIsCollapsed) {
           footer.style.left = "auto";
           footer.style.right = "1px";
