@@ -112,6 +112,13 @@ describe("thread links", () => {
     expect(
       relabelThreadLinks("See (t3-thread://v1/t1), then t3-thread://v2/there/t1.", local, title),
     ).toBe("See ([Here](t3-thread://v1/t1)), then [There](t3-thread://v2/there/t1).");
+    for (const marker of ["*", "**", "_", "__"]) {
+      const emphasized = `${marker}t3-thread://v2/there/t1${marker}`;
+      expect(threadLinkRefs(emphasized, local)).toEqual([ref("there", "t1")]);
+      expect(relabelThreadLinks(emphasized, local, title)).toBe(
+        `${marker}[There](t3-thread://v2/there/t1)${marker}`,
+      );
+    }
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
