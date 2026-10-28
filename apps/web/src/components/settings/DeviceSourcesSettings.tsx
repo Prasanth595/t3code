@@ -14,15 +14,7 @@ import {
   type SimlockDeviceHostConfig,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
-import {
-  ChevronDownIcon,
-  CloudIcon,
-  ContainerIcon,
-  HardDriveIcon,
-  MoreVertical,
-  PlusIcon,
-  ServerIcon,
-} from "lucide-react";
+import { ChevronDownIcon, MoreVertical, PlusIcon } from "lucide-react";
 
 import { cn, randomUUID } from "../../lib/utils";
 import { deviceEnvironment } from "../../state/device";
@@ -86,7 +78,6 @@ interface SourceEnvironment {
 
 interface SourceRow {
   readonly key: string;
-  readonly icon: ReactNode;
   readonly title: string;
   readonly kind?: string;
   readonly description: ReactNode;
@@ -347,7 +338,6 @@ export function DeviceSourcesSettings(props: {
   rows.push({
     key: "local",
     shared: false,
-    icon: <HardDriveIcon className="size-3.5" />,
     title: "Local simulators",
     description:
       members.length > 1
@@ -395,7 +385,6 @@ export function DeviceSourcesSettings(props: {
     rows.push({
       key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
-      icon: <ServerIcon className="size-3.5" />,
       title: host.label,
       kind: "SSH",
       description: host.target,
@@ -440,7 +429,6 @@ export function DeviceSourcesSettings(props: {
       rows.push({
         key: `eas:${host.id}`,
         shared: true,
-        icon: <CloudIcon className="size-3.5" />,
         title: host.label,
         kind: "EAS",
         description: easSessionLimits(host),
@@ -478,7 +466,6 @@ export function DeviceSourcesSettings(props: {
       rows.push({
         key: `simlock:${host.id}`,
         shared: true,
-        icon: <ContainerIcon className="size-3.5" />,
         title: host.label,
         kind: "Simlock",
         description: `${host.gatewayUrl.replace(/^https?:\/\//, "")} · ${simlockLeaseLimits(host)}`,
@@ -626,10 +613,17 @@ function PlatformIcon(props: {
     environment.platforms?.find((candidate) => candidate.platform === props.platform);
   const availableOn = props.known.filter((environment) => availability(environment)?.available);
   const several = props.row.environments.length > 1;
-  // A shared source answers the same everywhere; any environment that reached it speaks for all.
+  const available = availableOn.length > 0;
+  const partial = available && availableOn.length < props.known.length;
+  // A shared source usually answers the same everywhere, so its answer is given once. Each
+  // environment still signs in to it on its own, which is where they can differ.
   const sharedAnswer = props.known.map(availability).find(Boolean);
-  const available = props.row.shared ? sharedAnswer?.available === true : availableOn.length > 0;
-  const partial = !props.row.shared && available && availableOn.length < props.known.length;
+  const uniform = props.known.every(
+    (environment) =>
+      availability(environment)?.available === sharedAnswer?.available &&
+      availability(environment)?.reason === sharedAnswer?.reason,
+  );
+  const unavailableOn = props.known.filter((environment) => !availability(environment)?.available);
   const connected = props.row.environments.filter((environment) => environment.added);
   const notAdded = props.row.environments.filter((environment) => !environment.added);
   return (
@@ -664,25 +658,39 @@ function PlatformIcon(props: {
         </p>
         {props.row.shared ? (
           <>
-            {!available && sharedAnswer?.reason ? (
+            {uniform && !available && sharedAnswer?.reason ? (
               <p className="mt-1 text-xs text-muted-foreground">{sharedAnswer.reason}</p>
             ) : null}
             {several ? (
               <dl className="mt-2 space-y-1.5 text-xs">
                 {(
                   [
-                    ["Connected", connected],
+                    ...(uniform
+                      ? ([["Connected", connected]] as const)
+                      : ([
+                          ["Available", availableOn],
+                          ["Not available", unavailableOn],
+                        ] as const)),
                     ["Not added", notAdded],
                   ] as const
                 ).map(([heading, environments]) =>
                   environments.length > 0 ? (
                     <div key={heading}>
                       <dt className="text-muted-foreground">{heading}</dt>
-                      {environments.map((environment) => (
-                        <dd key={environment.environmentId} className="truncate">
-                          {environment.label}
-                        </dd>
-                      ))}
+                      {environments.map((environment) => {
+                        const reason =
+                          heading === "Not available"
+                            ? availability(environment)?.reason
+                            : undefined;
+                        return (
+                          <dd key={environment.environmentId}>
+                            <span className="block truncate">{environment.label}</span>
+                            {reason ? (
+                              <span className="block text-muted-foreground">{reason}</span>
+                            ) : null}
+                          </dd>
+                        );
+                      })}
                     </div>
                   ) : null,
                 )}
@@ -724,9 +732,6 @@ function DeviceSourceRow(props: { row: SourceRow }) {
   const pending = issues.find((environment) => environment.status.tone === "pending");
   return (
     <div className="flex items-center gap-3 border-t border-border/60 px-4 py-3 first:border-t-0 sm:px-5">
-      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-muted-foreground">
-        {row.icon}
-      </span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <p className="truncate text-sm font-medium">{row.title}</p>
