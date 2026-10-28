@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -152,6 +152,14 @@ function makeFile(id: string): ComposerFileAttachment {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 const connectionStates = Atom.family((_environmentId: EnvironmentId) =>
   Atom.make(AsyncResult.success({ phase: "connected" })),
 );
@@ -164,6 +172,269 @@ function setConnected(environmentId: EnvironmentId, connected: boolean) {
 }
 
 describe("attachmentUploadQueue", () => {
+  it.each(["project", "scratch"])(
+    "sends explicit normal provenance for a first %s draft",
+    async (project) => {
+      const draftId = DraftId.make(`new-${project}-draft`);
+      const threadId = ThreadId.make(`reserved-${project}-thread`);
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(
+          { environmentId: firstEnvironment, projectId: ProjectId.make(project) },
+          draftId,
+          { threadId },
+        );
+      const image = makeImage(`first-${project}-image`);
+      startAttachmentUpload({ environmentId: firstEnvironment, image, draftTarget: draftId });
+      await Promise.resolve();
+      const settled = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+      expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        mocks.createUploadUrl,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            owner: { _tag: "draft", draftId, threadId, temporary: false },
+          }),
+        }),
+        expect.anything(),
+      );
+      useComposerDraftStore.getState().clearDraftThread(draftId);
+    },
+  );
+
+  it("requires Keep before a temporary draft can upload an attachment", () => {
+    const draftId = DraftId.make("temporary-upload-draft");
+    useComposerDraftStore
+      .getState()
+      .setProjectDraftThreadId(
+        { environmentId: firstEnvironment, projectId: ProjectId.make("temporary-upload-project") },
+        draftId,
+        { threadId: ThreadId.make("temporary-upload-thread"), temporary: true },
+      );
+    const image = makeImage("temporary-upload-image");
+    startAttachmentUpload({ environmentId: firstEnvironment, image, draftTarget: draftId });
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "failed",
+      reason: "Keep this thread before attaching files.",
+    });
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    useComposerDraftStore.getState().clearDraftThread(draftId);
+  });
+
+  it.each(
+    [
+      { phase: "mint", restart: true, staleOwner: false },
+      { phase: "mint", restart: false, staleOwner: false },
+      { phase: "transfer", restart: true, staleOwner: false },
+      { phase: "completion", restart: false, staleOwner: false },
+      { phase: "mint", restart: true, staleOwner: true },
+      { phase: "transfer", restart: true, staleOwner: true },
+    ].flatMap((scenario) => [
+      { ...scenario, type: "file" as const },
+      { ...scenario, type: "image" as const },
+    ]),
+  )(
+    "blocks moved temporary $type attachments during $phase with restart=$restart staleOwner=$staleOwner",
+    async ({ phase, restart, staleOwner, type }) => {
+      const source = DraftId.make("move-upload-source");
+      const destination = DraftId.make("move-upload-temporary");
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(
+        { environmentId: firstEnvironment, projectId: ProjectId.make("move-upload-saved-project") },
+        source,
+        { threadId: ThreadId.make("move-upload-saved-thread") },
+      );
+      store.setProjectDraftThreadId(
+        { environmentId: firstEnvironment, projectId: ProjectId.make("move-upload-project") },
+        destination,
+        { threadId: ThreadId.make("move-upload-thread"), temporary: true },
+      );
+      const file = type === "file" ? makeFile("moving-file") : makeImage("moving-image");
+      if (file.type === "file") store.addFiles(source, [file]);
+      else store.addImages(source, [file]);
+      const minted = {
+        _tag: "Success" as const,
+        value: {
+          attachmentId: "pending-moved-file",
+          relativeUrl: "/api/attachments/upload/moved-file",
+          expiresAt: 1,
+        },
+      };
+      const mint = deferred<typeof minted>();
+      const started = deferred<void>();
+      using _send = vi.spyOn(TestXmlHttpRequest.prototype, "send").mockImplementation(() => {
+        started.resolve();
+      });
+      using abort = vi.spyOn(TestXmlHttpRequest.prototype, "abort");
+      mocks.runAtomCommand.mockImplementation((_registry: unknown, command: unknown) =>
+        command === mocks.createUploadUrl
+          ? mint.promise
+          : Promise.resolve({ _tag: "Success", value: undefined }),
+      );
+      try {
+        startAttachmentUpload({
+          environmentId: firstEnvironment,
+          image: file,
+          draftTarget: source,
+        });
+        const settled = awaitAttachmentUploads([file.id]);
+        if (phase !== "mint") {
+          mint.resolve(minted);
+          await started.promise;
+        }
+        if (staleOwner) {
+          if (file.type === "file") store.addFiles(destination, [file]);
+          else store.addImages(destination, [file]);
+        } else {
+          store.moveComposerPromptAndImages(source, destination);
+        }
+        const collection = type === "file" ? "files" : "images";
+        expect(
+          store.getComposerDraft(source)?.[collection].map((attachment) => attachment.id) ?? [],
+        ).toEqual(staleOwner ? [file.id] : []);
+        expect(store.getComposerDraft(destination)?.[collection][0]?.id).toBe(file.id);
+        if (restart) {
+          startAttachmentUpload({
+            environmentId: firstEnvironment,
+            image: file,
+            draftTarget: destination,
+          });
+        }
+        if (phase === "transfer") expect(abort).toHaveBeenCalledOnce();
+        if (phase === "mint") {
+          mint.resolve(minted);
+          await mint.promise;
+          expect(TestXmlHttpRequest.requests).toHaveLength(0);
+        } else {
+          TestXmlHttpRequest.requests[0]!.complete();
+        }
+        await settled;
+        expect(readAttachmentUpload(file.id)).toMatchObject({
+          status: "failed",
+          reason: "Keep this thread before attaching files.",
+        });
+        expect(store.getComposerDraft(destination)?.[collection][0]).not.toHaveProperty(
+          "uploadedAttachmentId",
+        );
+        if (staleOwner)
+          expect(store.getComposerDraft(source)?.[collection][0]).not.toHaveProperty(
+            "uploadedAttachmentId",
+          );
+        expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+          expect.anything(),
+          mocks.removeUpload,
+          { environmentId: firstEnvironment, input: { attachmentId: "pending-moved-file" } },
+          expect.anything(),
+        );
+      } finally {
+        store.clearComposerContent(source);
+        store.clearComposerContent(destination);
+        store.clearDraftThread(source);
+        store.clearDraftThread(destination);
+      }
+    },
+  );
+
+  it("keeps a saved no-project upload active beside a rejected temporary attachment", async () => {
+    const saved = DraftId.make("saved-no-project-upload");
+    const temporary = DraftId.make("unrelated-temporary-upload");
+    const file = makeFile("saved-no-project-file");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(
+      { environmentId: firstEnvironment, projectId: ProjectId.make("unrelated-temporary-project") },
+      temporary,
+      { threadId: ThreadId.make("unrelated-temporary-thread"), temporary: true },
+    );
+    store.addFiles(saved, [file]);
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: saved });
+      startAttachmentUpload({
+        environmentId: firstEnvironment,
+        image: makeImage("unrelated-temporary-image"),
+        draftTarget: temporary,
+      });
+      await Promise.resolve();
+      const settled = awaitAttachmentUploads([file.id]);
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+      expect(readAttachmentUpload(file.id)).toMatchObject({ status: "ready" });
+      expect(store.getComposerDraft(saved)?.files[0]).toMatchObject({
+        uploadedAttachmentId: "pending-environment-1-saved-no-project-file.pdf",
+        uploadEnvironmentId: firstEnvironment,
+      });
+      expect(
+        mocks.runAtomCommand.mock.calls.filter(([, command]) => command === mocks.removeUpload),
+      ).toEqual([]);
+    } finally {
+      store.clearComposerContent(saved);
+      store.clearDraftThread(temporary);
+    }
+  });
+
+  it("does not let a cancelled late mint replace a new upload with the same file ID", async () => {
+    const saved = DraftId.make("reused-file-saved-draft");
+    const temporary = DraftId.make("reused-file-temporary-draft");
+    const file = makeFile("reused-file");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(
+      { environmentId: firstEnvironment, projectId: ProjectId.make("reused-file-project") },
+      temporary,
+      { threadId: ThreadId.make("reused-file-thread"), temporary: true },
+    );
+    const minted = {
+      _tag: "Success" as const,
+      value: {
+        attachmentId: "pending-old-reused-file",
+        relativeUrl: "/api/attachments/upload/old-reused-file",
+        expiresAt: 1,
+      },
+    };
+    const mint = deferred<typeof minted>();
+    mocks.runAtomCommand.mockReturnValueOnce(mint.promise);
+    store.addFiles(saved, [file]);
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: saved });
+      store.moveComposerPromptAndImages(saved, temporary);
+      startAttachmentUpload({
+        environmentId: firstEnvironment,
+        image: file,
+        draftTarget: temporary,
+      });
+      store.moveComposerPromptAndImages(temporary, saved);
+      retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: saved });
+      await Promise.resolve();
+      const settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+      mint.resolve(minted);
+      await mint.promise;
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(readAttachmentUpload(file.id)).toMatchObject({
+        status: "ready",
+        attachmentId: "pending-environment-1-reused-file.pdf",
+      });
+      expect(store.getComposerDraft(saved)?.files[0]?.uploadedAttachmentId).toBe(
+        "pending-environment-1-reused-file.pdf",
+      );
+      expect(
+        mocks.runAtomCommand.mock.calls.filter(([, command]) => command === mocks.removeUpload),
+      ).toEqual([
+        [
+          expect.anything(),
+          mocks.removeUpload,
+          { environmentId: firstEnvironment, input: { attachmentId: "pending-old-reused-file" } },
+          expect.anything(),
+        ],
+      ]);
+    } finally {
+      store.clearComposerContent(saved);
+      store.clearDraftThread(temporary);
+    }
+  });
+
   beforeEach(() => {
     mocks.connectionStateAtom.mockImplementation(connectionStates);
     setConnected(firstEnvironment, true);
@@ -208,6 +479,46 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("sends the saved thread owner when it mints an upload", async () => {
+    const image = makeImage("saved-owner");
+    const threadId = ThreadId.make("saved-thread");
+    startAttachmentUpload({
+      environmentId: firstEnvironment,
+      image,
+      draftTarget: { environmentId: firstEnvironment, threadId },
+    });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([image.id]);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await settled;
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.createUploadUrl,
+      expect.objectContaining({
+        input: expect.objectContaining({ owner: { _tag: "thread", threadId } }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("sends the draft owner when it mints an upload", async () => {
+    const image = makeImage("draft-owner");
+    const draftId = DraftId.make("saved-draft");
+    startAttachmentUpload({ environmentId: firstEnvironment, image, draftTarget: draftId });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([image.id]);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await settled;
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.createUploadUrl,
+      expect.objectContaining({
+        input: expect.objectContaining({ owner: { _tag: "draft", draftId } }),
+      }),
+      expect.anything(),
+    );
   });
 
   it("keeps an attachment local until its own environment grants write access", async () => {

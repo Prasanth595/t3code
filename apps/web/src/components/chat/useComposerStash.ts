@@ -1,3 +1,4 @@
+import { isTemporaryComposerTarget } from "../../temporaryChat";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ComposerContextRecord,
@@ -444,6 +445,10 @@ export function useComposerStash(input: {
   const deleteStashEntryStable = useStableCallback(deleteStashEntry);
 
   const stashCurrentPrompt = async () => {
+    if (isTemporaryComposerTarget(composerDraftTarget)) {
+      toastManager.add({ type: "info", title: "Keep this thread before stashing a prompt." });
+      return;
+    }
     // Stashing clears the draft. A pasted attachment still downloading would then land in the
     // emptied composer instead of travelling with the entry it belongs to.
     if (pendingDraftWork.has(attachmentTargetKey)) {

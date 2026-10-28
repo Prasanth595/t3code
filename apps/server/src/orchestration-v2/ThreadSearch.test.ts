@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   EventId,
   MessageId,
   ProjectId,
@@ -18,11 +19,19 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
+import * as PubSub from "effect/PubSub";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import { subscribeOrchestrationV2Shell } from "../ws.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
@@ -1028,4 +1037,188 @@ it.effect("searches on the reader worker while the writer is busy", () =>
       );
     }).pipe(Effect.provide(layerFile));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("searches memory threads only when the client opts in", () =>
+  Effect.gen(function* () {
+    const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const project = ProjectId.make("project:temporary-search");
+    const saved = ThreadId.make("saved-search");
+    const temporary = ThreadId.make("temporary-search");
+    yield* createProject(project);
+    yield* storage.register({ threadId: temporary });
+    for (const id of [saved, temporary]) {
+      yield* projections.apply(thread(id, project));
+      yield* projections.apply(message(id, `message:${id}`, "user", "needle"));
+    }
+    const legacy = yield* search.search({ query: "needle" });
+    assert.deepEqual(
+      legacy.matches.map((match) => match.threadId),
+      [saved],
+    );
+    const optedIn = yield* search.search({ query: "needle", acceptTemporaryThreads: true });
+    assert.deepEqual(
+      optedIn.matches.map((match) => match.threadId).sort(),
+      [saved, temporary].sort(),
+    );
+  }).pipe(
+    Effect.provide(
+      ThreadSearch.layerRouted.pipe(
+        Layer.provideMerge(TemporaryThreadStorage.layer),
+        Layer.provideMerge(ProjectStore.layer),
+        Layer.provide(SqlitePersistence.layerMemory),
+      ),
+    ),
+  ),
+);
+
+it.effect("routes agent search to saved threads and finds imported messages after Keep", () =>
+  Effect.gen(function* () {
+    const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const project = ProjectId.make("project:agent-search");
+    const otherProject = ProjectId.make("project:agent-search-other");
+    const titled = ThreadId.make("saved-title");
+    const messageOnly = ThreadId.make("saved-message");
+    const elsewhere = ThreadId.make("saved-elsewhere");
+    const temporary = ThreadId.make("temporary-agent-search");
+    yield* createProject(project);
+    yield* createProject(otherProject);
+    yield* storage.register({ threadId: temporary });
+    yield* Effect.forEach(
+      [
+        thread(titled, project, { title: "Needle", settledAt: at(1) }),
+        thread(messageOnly, project),
+        message(messageOnly, "saved-needle", "user", "needle in saved message"),
+        thread(elsewhere, otherProject, { title: "Needle elsewhere" }),
+        thread(temporary, project, { title: "Needle temporary", settledAt: at(1) }),
+        message(temporary, "temporary-needle", "user", "needle in imported message"),
+      ],
+      projections.apply,
+      { discard: true },
+    );
+    const all = yield* search.searchThreads({ query: "needle" });
+    assert.sameMembers(
+      all.matches.map((match) => match.threadId),
+      [titled, messageOnly, elsewhere],
+    );
+    const scoped = yield* search.searchThreads({
+      query: "needle",
+      projectId: project,
+      acceptTemporaryThreads: true,
+    });
+    assert.deepEqual(
+      scoped.matches.map((match) => [match.threadId, match.source]),
+      [
+        [titled, "title"],
+        [messageOnly, "user"],
+      ],
+    );
+    const olderRequest = {
+      query: "needle",
+      before: DateTime.formatIso(at(30)),
+      projectIds: [project],
+      messageThreadIds: [temporary],
+    };
+    assert.deepEqual(yield* search.searchOlderSettled(olderRequest), [titled]);
+    yield* storage.keep({ threadId: temporary, commandId: CommandId.make("keep-agent-search") });
+    assert.sameMembers([...(yield* search.searchOlderSettled(olderRequest))], [titled, temporary]);
+    const kept = yield* search.searchThreads({ query: "imported", projectId: project });
+    assert.deepEqual(
+      kept.matches.map((match) => [match.threadId, match.source, match.snippet]),
+      [[temporary, "user", "needle in imported message"]],
+    );
+  }).pipe(
+    Effect.provide(
+      ThreadSearch.layerRouted.pipe(
+        Layer.provideMerge(TemporaryThreadStorage.layer),
+        Layer.provideMerge(ProjectStore.layer),
+        Layer.provide(SqlitePersistence.layerMemory),
+      ),
+    ),
+  ),
+);
+
+it.effect.each(["active", "archive"] as const)(
+  "excludes retained %s memory rows from overlays and search after Keep",
+  (location) =>
+    Effect.gen(function* () {
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make(`project:retirement-search:${location}`);
+      const kept = ThreadId.make(`retirement-kept:${location}`);
+      const live = ThreadId.make(`retirement-live:${location}`);
+      yield* createProject(project);
+      for (const id of [kept, live]) {
+        yield* storage.register({ threadId: id });
+        yield* projections.apply(
+          thread(id, project, id === kept && location === "archive" ? { archivedAt: at(1) } : {}),
+        );
+        yield* projections.apply(message(id, `message:${id}`, "user", "needle"));
+      }
+      const commandId = CommandId.make(`keep-retirement:${location}`);
+      yield* outbox.enqueue([
+        {
+          id: `retirement:${location}`,
+          threadId: kept,
+          commandId,
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      yield* stores.volatile
+        .sql`CREATE TRIGGER fail_retirement BEFORE DELETE ON orchestration_v2_effect_outbox BEGIN SELECT RAISE(ABORT, 'retirement failed'); END`;
+      yield* storage.keep({ threadId: kept, commandId });
+      assert.isFalse(yield* storage.isTemporary(kept));
+      assert.isNotNull(yield* stores.volatile.projectionStore.getThreadShell(kept));
+      assert.isNotNull(yield* stores.durable.projectionStore.getThreadShell(kept));
+      const shell = yield* subscribeOrchestrationV2Shell({ acceptTemporaryThreads: true });
+      const [overlay] = yield* shell.pipe(
+        Stream.filter((item) => item.kind === "temporary.snapshot"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        overlay?.threads.map((row) => row.id),
+        [live],
+      );
+      const matches = yield* search.search({ query: "needle", acceptTemporaryThreads: true });
+      assert.deepEqual(
+        matches.matches.map((match) => match.threadId).sort(),
+        (location === "active" ? [kept, live] : [live]).sort(),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ThreadSearch.layerRouted.pipe(
+          Layer.provideMerge(TemporaryThreadStorage.layer),
+          Layer.provideMerge(ProjectStore.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+                subscribeChanges: Effect.acquireRelease(
+                  PubSub.unbounded<ProjectEnrichmentService.ProjectEnrichmentChange>(),
+                  PubSub.shutdown,
+                ).pipe(Effect.flatMap(PubSub.subscribe)),
+                getAvailable: () =>
+                  Effect.succeed({
+                    repositoryIdentity: null,
+                    faviconPath: null,
+                    repositoryIdentityResolved: false,
+                  }),
+              }),
+            ),
+          ),
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
 );

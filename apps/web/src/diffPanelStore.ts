@@ -1,3 +1,4 @@
+import { persistentThreadEntries } from "./temporaryChat";
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -140,8 +141,8 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({
-        byThreadKey: state.byThreadKey,
-        branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        byThreadKey: persistentThreadEntries(state.byThreadKey),
+        branchBaseRefByThreadKey: persistentThreadEntries(state.branchBaseRefByThreadKey),
       }),
     },
   ),

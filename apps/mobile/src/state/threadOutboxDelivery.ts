@@ -1,4 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { temporaryThreadSendBlockReason } from "../lib/temporaryThreadPolicy";
+import { startThreadTurnWithTemporaryView } from "./use-temporary-thread-views";
 import * as Dialog from "../components/ui/Dialog";
 import {
   type EnvironmentProject,
@@ -142,6 +144,7 @@ function logThreadOutboxDeliveryFailure(input: {
 }
 
 function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error: unknown): void {
+  if (queuedMessage.temporary) return;
   const context = {
     environmentId: queuedMessage.environmentId,
     threadId: queuedMessage.threadId,
@@ -209,8 +212,11 @@ export async function prepareQueuedMessageAttachments(queuedMessage: QueuedThrea
   }
   let persistedMessage = queuedMessage;
   let deliveryRevision = revision;
+  if (queuedMessage.temporary && queuedMessage.attachments.length > 0)
+    throw new Error("Keep this thread before using attachments.");
   const result = await prepareTurnAttachments({
     environmentId: queuedMessage.environmentId,
+    owner: { _tag: "thread", threadId: queuedMessage.threadId },
     attachments: queuedMessage.attachments,
     supportsImageUploads: true,
     persistUploadedReferences: async (draftAttachments) => {
@@ -337,6 +343,7 @@ export async function recoverEditedCreationAfterDelivery(
   const draftKey = scopedThreadKey(kept.environmentId, kept.threadId);
   try {
     // Merge before removal to retain file ownership; allow overflow and let send guards require trimming.
+    updateComposerDraftSettings(draftKey, { temporary: kept.temporary === true });
     await mergeComposerDraftContent(draftKey, {
       text: kept.text,
       context: kept.context,
@@ -403,6 +410,7 @@ export async function restoreRejectedQueuedMessage(
     if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
       return "deferred";
     }
+    updateComposerDraftSettings(draftKey, { temporary: queuedMessage.temporary === true });
     const originalDraft = getComposerDraftSnapshot(draftKey);
     const existingAttachmentIds = new Set(
       originalDraft.attachments.map((attachment) => attachment.id),
@@ -631,17 +639,23 @@ function reportCommandFailure(
     return null;
   }
   const error = Cause.squash(commandResult.cause);
-  const action = logThreadOutboxDeliveryFailure({
-    stage,
-    error,
-    interrupted: Cause.hasInterruptsOnly(commandResult.cause),
-    context: {
-      environmentId: queuedMessage.environmentId,
-      threadId: queuedMessage.threadId,
-      messageId: queuedMessage.messageId,
-      cause: commandResult.cause,
-    },
-  });
+  const action = queuedMessage.temporary
+    ? resolveThreadOutboxFailureAction({
+        stage,
+        error,
+        interrupted: Cause.hasInterruptsOnly(commandResult.cause),
+      })
+    : logThreadOutboxDeliveryFailure({
+        stage,
+        error,
+        interrupted: Cause.hasInterruptsOnly(commandResult.cause),
+        context: {
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
+          cause: commandResult.cause,
+        },
+      });
   return {
     action,
     message: error instanceof Error ? error.message : "The message could not be sent.",
@@ -701,12 +715,14 @@ export function createThreadOutboxDelivery(): {
 
   // A delivery that throws backs off like any failure. Releasing the slot
   // without a retry would re-run the drain straight into the same message.
-  const settle = (messageId: MessageId, delivery: Promise<boolean>): void => {
+  const settle = (queuedMessage: QueuedThreadMessage, delivery: Promise<boolean>): void => {
+    const { messageId } = queuedMessage;
     void delivery
       .then(
         (sent) => (sent ? clearRetry(messageId) : scheduleRetry(messageId)),
         (error: unknown) => {
-          console.warn("[thread-outbox] queued message delivery threw", { messageId, error });
+          if (!queuedMessage.temporary)
+            console.warn("[thread-outbox] queued message delivery threw", { messageId, error });
           scheduleRetry(messageId);
         },
       )
@@ -765,6 +781,10 @@ export function createThreadOutboxDelivery(): {
     );
     if (!serverConfig) return false;
     const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
+    if (thread.temporary || queuedMessage.temporary) {
+      const reason = temporaryThreadSendBlockReason(serverConfig, settings.modelSelection);
+      if (reason) return restoreQueuedMessage(queuedMessage, reason);
+    }
     if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
@@ -856,36 +876,41 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return true;
-    const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
-      environmentId: queuedMessage.environmentId,
-      input: {
-        commandId: queuedMessage.commandId,
-        creationSource: "mobile",
-        threadId: queuedMessage.threadId,
-        message: {
-          messageId: queuedMessage.messageId,
-          role: "user",
-          ...serializeComposerMessageForServer(
-            queuedMessage.text,
-            uploadedComposerContext(
-              queuedMessage.context,
-              queuedMessage.attachments,
-              prepared.attachments,
+    const delivery = await startThreadTurnWithTemporaryView(queuedMessage, () =>
+      runDeliveryCommand(threadEnvironment.startTurn, {
+        environmentId: queuedMessage.environmentId,
+        input: {
+          commandId: queuedMessage.commandId,
+          creationSource: "mobile",
+          threadId: queuedMessage.threadId,
+          message: {
+            messageId: queuedMessage.messageId,
+            role: "user",
+            ...serializeComposerMessageForServer(
+              queuedMessage.text,
+              uploadedComposerContext(
+                queuedMessage.context,
+                queuedMessage.attachments,
+                prepared.attachments,
+              ),
             ),
-          ),
-          attachments: prepared.attachments,
+            attachments: prepared.attachments,
+          },
+          modelSelection: sendSettings.modelSelection,
+          titleSeed: deriveThreadTitleSeed({
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          }),
+          runtimeMode: sendSettings.runtimeMode,
+          interactionMode: sendSettings.interactionMode,
+          createdAt: queuedMessage.createdAt,
+          dispatchMode: queuedMessage.dispatchMode ?? "start",
         },
-        modelSelection: sendSettings.modelSelection,
-        titleSeed: deriveThreadTitleSeed({
-          text: queuedMessage.text,
-          attachments: queuedMessage.attachments,
-        }),
-        runtimeMode: sendSettings.runtimeMode,
-        interactionMode: sendSettings.interactionMode,
-        createdAt: queuedMessage.createdAt,
-        dispatchMode: queuedMessage.dispatchMode ?? "start",
-      },
-    });
+      }),
+    );
+    if (delivery.status === "left") return true;
+    if (delivery.status === "retry") return false;
+    const deliveryResult = delivery.result;
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
     const failure = reportCommandFailure(queuedMessage, deliveryResult, "start-turn");
     if (failure?.action === "retry") {
@@ -928,6 +953,10 @@ export function createThreadOutboxDelivery(): {
       },
       serverConfig.providers,
     );
+    if (queuedMessage.temporary) {
+      const reason = temporaryThreadSendBlockReason(serverConfig, settings.modelSelection);
+      if (reason) return restoreQueuedMessage(queuedMessage, reason);
+    }
     if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
@@ -1014,35 +1043,41 @@ export function createThreadOutboxDelivery(): {
         startFromOrigin: false,
       };
     }
-    const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
-      environmentId: queuedMessage.environmentId,
-      input: buildProjectThreadStartTurnInput({
-        projectId: creation.projectId,
-        projectCwd,
-        threadId: queuedMessage.threadId,
-        commandId: queuedMessage.commandId,
-        messageId: queuedMessage.messageId,
-        createdAt: queuedMessage.createdAt,
-        titleText: queuedMessage.text,
-        ...serializeComposerMessageForServer(
-          queuedMessage.text.trim(),
-          uploadedComposerContext(
-            queuedMessage.context,
-            queuedMessage.attachments,
-            prepared.attachments,
+    const delivery = await startThreadTurnWithTemporaryView(queuedMessage, () =>
+      runDeliveryCommand(threadEnvironment.startTurn, {
+        environmentId: queuedMessage.environmentId,
+        input: buildProjectThreadStartTurnInput({
+          projectId: creation.projectId,
+          temporary: queuedMessage.temporary,
+          projectCwd,
+          threadId: queuedMessage.threadId,
+          commandId: queuedMessage.commandId,
+          messageId: queuedMessage.messageId,
+          createdAt: queuedMessage.createdAt,
+          titleText: queuedMessage.text,
+          ...serializeComposerMessageForServer(
+            queuedMessage.text.trim(),
+            uploadedComposerContext(
+              queuedMessage.context,
+              queuedMessage.attachments,
+              prepared.attachments,
+            ),
           ),
-        ),
-        uploadedAttachments: prepared.attachments,
-        modelSelection: sendSettings.modelSelection,
-        runtimeMode: sendSettings.runtimeMode,
-        interactionMode: sendSettings.interactionMode,
-        workspaceMode: workspace.workspaceMode,
-        branch: workspace.branch,
-        worktreePath: workspace.worktreePath,
-        startFromOrigin: workspace.startFromOrigin ?? false,
-        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          uploadedAttachments: prepared.attachments,
+          modelSelection: sendSettings.modelSelection,
+          runtimeMode: sendSettings.runtimeMode,
+          interactionMode: sendSettings.interactionMode,
+          workspaceMode: workspace.workspaceMode,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+          startFromOrigin: workspace.startFromOrigin ?? false,
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        }),
       }),
-    });
+    );
+    if (delivery.status === "left") return true;
+    if (delivery.status === "retry") return false;
+    const deliveryResult = delivery.result;
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
     const failure = reportCommandFailure(queuedMessage, deliveryResult, "start-turn");
     if (failure?.action === "retry") {
@@ -1134,7 +1169,7 @@ export function createThreadOutboxDelivery(): {
         }
         beginDispatchingQueuedMessage(messageId);
         settle(
-          messageId,
+          nextQueuedMessage,
           removeAcknowledgedExistingThreadMessage(
             nextQueuedMessage,
             acknowledgedExistingThreadMessageIds,
@@ -1249,7 +1284,7 @@ export function createThreadOutboxDelivery(): {
         const attachmentError = dispatchStep.reason;
         beginDispatchingQueuedMessage(messageId);
         settle(
-          messageId,
+          nextQueuedMessage,
           confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) =>
             !queued || appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId]
               ? true
@@ -1324,7 +1359,7 @@ export function createThreadOutboxDelivery(): {
               ? sendQueuedMessage(nextQueuedMessage, thread)
               : Promise.resolve(false);
       });
-      settle(messageId, delivery);
+      settle(nextQueuedMessage, delivery);
       return;
     }
   }

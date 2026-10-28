@@ -38,6 +38,8 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import { agentDeviceSession } from "./AgentDeviceTarget.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
@@ -1361,6 +1363,60 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     ),
     Effect.scoped,
   ),
+);
+
+it.effect("temporary device open fails before host startup", () =>
+  Effect.gen(function* () {
+    const devices = yield* DeviceService.makeWithHosts(new Map());
+    const result = yield* Effect.result(
+      devices.open({
+        threadId: ThreadId.make("private-device"),
+        deviceId: DeviceId.make("private"),
+        platform: "ios",
+      }),
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") expect(result.failure.message).toContain("Keep this thread");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        temporaryResourceStorage,
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("temporary agent target fails before host startup or status changes", () =>
+  Effect.gen(function* () {
+    const { service, settings, starts, agentStarts } = yield* fixture();
+    yield* Ref.update(settings, (current) => ({
+      ...current,
+      enableDeviceSupport: true,
+      enableAgentDeviceAccess: true,
+    }));
+    const initialState = yield* service.state;
+    const error = yield* service
+      .agentTarget({
+        threadId: ThreadId.make("private-device"),
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("private"),
+      })
+      .pipe(Effect.flip);
+    expect({ starts, agentStarts, state: yield* service.state }).toEqual({
+      starts: [],
+      agentStarts: [],
+      state: initialState,
+    });
+    expect(error).toMatchObject({
+      _tag: "DeviceHostUnavailableError",
+      hostId: LOCAL_DEVICE_HOST_ID,
+    });
+    expect(error.message).toContain("Keep this thread");
+  }).pipe(Effect.provide(temporaryResourceStorage)),
 );
 
 describe("locating a device id across hosts", () => {

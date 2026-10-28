@@ -1,3 +1,4 @@
+import { TemporaryResourceError } from "@t3tools/contracts";
 import {
   type PreviewCloseInput,
   type PreviewEvent,
@@ -29,6 +30,8 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { PreviewControlRequiredError } from "@t3tools/contracts";
 
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
+
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
@@ -38,7 +41,7 @@ export class PreviewManager extends Context.Service<
         /** Runs before the `opened` event publishes, so subscribers find state keyed by the tab. */
         readonly beforePublish?: (snapshot: PreviewSessionSnapshot) => void;
       },
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError | TemporaryResourceError>;
     readonly reportStatus: (
       input: PreviewReportStatusInput & { readonly serverControlled?: boolean },
     ) => Effect.Effect<void, PreviewError>;
@@ -51,10 +54,10 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, PreviewError>;
     readonly resize: (
       input: PreviewResizeInput,
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError | TemporaryResourceError>;
     readonly adjust: (
       input: PreviewAdjustInput,
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError | TemporaryResourceError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
@@ -120,6 +123,7 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 /** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const crypto = yield* Crypto.Crypto;
+  const policy = yield* TemporaryResourcePolicy.make;
   const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
@@ -174,6 +178,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
     function* (input) {
+      yield* policy.assertDurable(input.threadId, "browser preview");
       const runtime = input.runtime;
       // Persisted client surfaces must not bind to a different tab after a server restart.
       const tabId = `${newPreviewTabId()}${runtime === "server" ? `_${serverEpoch}` : ""}`;

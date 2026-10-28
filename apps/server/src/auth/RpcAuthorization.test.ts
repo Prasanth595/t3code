@@ -12,6 +12,8 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  CommandId,
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -130,6 +132,55 @@ describe("RPC scope middleware", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("permits temporary views with read scope and rejects Keep before its handler", () =>
+  Effect.gen(function* () {
+    const tested = [
+      ORCHESTRATION_V2_WS_METHODS.keepThread,
+      ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews,
+    ] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+          !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    const handled: Array<string> = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews, () =>
+            Effect.sync(() => {
+              handled.push("view");
+            }),
+          ),
+          group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.keepThread, (input) =>
+            Effect.sync(() => {
+              handled.push("keep");
+              return { threadId: input.threadId };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    yield* client[ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews]({
+      viewId: "view",
+      generation: 1,
+      threadIds: [],
+      background: true,
+    });
+    const denied = yield* client[ORCHESTRATION_V2_WS_METHODS.keepThread]({
+      threadId: ThreadId.make("temporary"),
+      commandId: CommandId.make("keep"),
+    }).pipe(Effect.flip);
+    expect(denied).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(handled).toEqual(["view"]);
+  }),
+);
 
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(

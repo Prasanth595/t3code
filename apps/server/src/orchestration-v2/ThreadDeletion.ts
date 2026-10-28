@@ -209,6 +209,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     });
   }
   effects.push({
+    id: `effect:${command.commandId}:provider-session.release-temporary`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "provider-session.release-temporary", detail: "Thread deleted." },
+  });
+  effects.push({
     id: `effect:${command.commandId}:scheduled-tasks.cleanup`,
     commandId: command.commandId,
     threadId: command.threadId,

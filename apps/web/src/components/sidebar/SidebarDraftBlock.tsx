@@ -20,10 +20,12 @@ import {
   type DraftSessionState,
 } from "../../composerDraftStore";
 import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import { SidebarTemporaryIndicator } from "./SidebarTemporaryIndicator";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
+  temporary: boolean;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   isActive: boolean;
@@ -53,6 +55,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     statusLabel: "Unsent draft",
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
+    temporary: props.temporary,
   });
   const handleActivate = () => onNavigate(draftId);
   const handleKeyDown = (event: ReactKeyboardEvent) => {
@@ -105,6 +108,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
             </span>
+            {props.temporary ? <SidebarTemporaryIndicator /> : null}
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <Tooltip>
                 <TooltipTrigger
@@ -204,6 +208,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             key={draftId}
             draftId={draftId}
             composer={composer}
+            temporary={draftThreadsByThreadKey[draftId]?.temporary === true}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}

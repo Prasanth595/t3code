@@ -1,7 +1,7 @@
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { DraftComposerAttachment } from "../../lib/composerImages";
-import type { ComposerDraft } from "../../state/use-composer-drafts";
+import { isTemporaryComposerDraft, type ComposerDraft } from "../../state/use-composer-drafts";
 import type {
   IncomingShareDestination,
   IncomingShareDraft,
@@ -194,6 +194,13 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
   async function runImport(key: string, entry: Entry): Promise<void> {
     const { signal } = entry.controller;
     const { shareId, destination, draftKey } = entry.target;
+    const ensureSavedDraft = () => {
+      if (isTemporaryComposerDraft(draftKey, deps.readDraft(draftKey))) {
+        throw new Error(
+          "Your temporary draft stays private. The shared content stays in the inbox for a saved draft.",
+        );
+      }
+    };
     // A phase atom node of a superseded import may still be cached; rebuilding
     // it lets a route that switches back start over instead of showing the
     // abandoned import's last phase.
@@ -203,6 +210,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
       return true;
     };
     try {
+      ensureSavedDraft();
       await deps.reserve(shareId, destination);
       entry.reservedFor = destination;
       // The durable reservation makes an interrupted transfer resume only in
@@ -215,6 +223,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
       if (selected.status === "pending") {
         throw new Error("Server attachment support is still loading.");
       }
+      ensureSavedDraft();
       entry.needsRestore = true;
       let skippedAttachmentCount: number;
       try {
@@ -229,6 +238,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
         entry.merged = deps.readDraft(draftKey);
       }
       if (stopped()) return;
+      ensureSavedDraft();
       advance(entry, "attached");
       await deps.consume(shareId);
       entry.consumed = true;
@@ -257,6 +267,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
       }
       if (warnings.length > 0) deps.onWarnings(warnings);
     } catch (error) {
+      await Promise.resolve();
       if (stopped()) return;
       advance(entry, "failed");
       deps.onImportFailure(entry.target, error);

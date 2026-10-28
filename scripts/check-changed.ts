@@ -10,7 +10,7 @@
 //
 // Uncommitted and untracked files count. Affected packages come from
 // .github/scripts/ci-changes.cjs, the same mapping CI uses to gate its jobs.
-// The steps run side by side; each prints its output when it finishes. A
+// Browser tests run after the parallel checks. Each step prints when it finishes. A
 // rerun on exactly the files of the last passing run prints that run's summary.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -138,6 +138,8 @@ for (const file of code) {
     if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(NodePath.join(dir, entry));
   }
 }
+const browserTests = [...tests].filter((file) => /\.browser\.test\./.test(file));
+const nodeTests = [...tests].filter((file) => !browserTests.includes(file));
 
 // knip:check cannot be scoped to a package. Any code change can leave a file,
 // export, or dependency unused (removing the last import of a helper does), so
@@ -251,38 +253,43 @@ const steps = [
     ],
   },
   // From the repo root, the root vite.config.ts hands each file to its package's config.
-  tests.size > 0 && {
-    name: `test (${tests.size} files)`,
-    args: ["test", "run", "--passWithNoTests", ...tests],
+  nodeTests.length > 0 && {
+    name: `test (${nodeTests.length} files)`,
+    args: ["test", "run", "--passWithNoTests", ...nodeTests],
   },
 ].filter((step) => step !== false);
 
 // Output is piped, so keep the colors a terminal would get.
 const env = process.stdout.isTTY ? { ...process.env, FORCE_COLOR: "1" } : process.env;
-const results = await Promise.all(
-  steps.map(
-    (step) =>
-      new Promise<{ name: string; ok: boolean; seconds: string }>((resolve) => {
-        const started = performance.now();
-        const finish = (ok: boolean, output?: Buffer) => {
-          const seconds = ((performance.now() - started) / 1000).toFixed(1);
-          console.log(`\n> vp ${step.name}  ${ok ? "pass" : "FAIL"}  ${seconds}s`);
-          if (output) process.stdout.write(output);
-          resolve({ name: step.name, ok, seconds });
-        };
-        // In-process steps print their own output. The patch check is first and
-        // takes about a second, so the commands start right after it.
-        if ("run" in step) return finish(step.run());
-        const output: Array<Buffer> = [];
-        const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env });
-        child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
-        child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
-        // A failed spawn emits "error", then "close" with a nonzero code.
-        child.on("error", (error) => output.push(Buffer.from(`${error.message}\n`)));
-        child.on("close", (status) => finish(status === 0, Buffer.concat(output)));
-      }),
-  ),
-);
+const runStep = (step: (typeof steps)[number]) =>
+  new Promise<{ name: string; ok: boolean; seconds: string }>((resolve) => {
+    const started = performance.now();
+    const finish = (ok: boolean, output?: Buffer) => {
+      const seconds = ((performance.now() - started) / 1000).toFixed(1);
+      console.log(`\n> vp ${step.name}  ${ok ? "pass" : "FAIL"}  ${seconds}s`);
+      if (output) process.stdout.write(output);
+      resolve({ name: step.name, ok, seconds });
+    };
+    // In-process steps print their own output. The patch check is first and
+    // takes about a second, so the commands start right after it.
+    if ("run" in step) return finish(step.run());
+    const output: Array<Buffer> = [];
+    const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env });
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
+    // A failed spawn emits "error", then "close" with a nonzero code.
+    child.on("error", (error) => output.push(Buffer.from(`${error.message}\n`)));
+    child.on("close", (status) => finish(status === 0, Buffer.concat(output)));
+  });
+const results = await Promise.all(steps.map(runStep));
+if (browserTests.length > 0) {
+  results.push(
+    await runStep({
+      name: `test browser (${browserTests.length} files)`,
+      args: ["test", "run", "--passWithNoTests", ...browserTests, "--project", "*browser*"],
+    }),
+  );
+}
 
 const summary = ["check:changed summary"];
 for (const result of results) {

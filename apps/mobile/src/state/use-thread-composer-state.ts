@@ -410,6 +410,10 @@ export function useThreadComposerState() {
       );
       return;
     }
+    if (thread.temporary && draft.attachments.length > 0) {
+      Dialog.alert("Keep thread first", "Keep this thread before using attachments.");
+      return;
+    }
     const finishSave = startQueuedRunEditSave(threadKey);
     if (finishSave === null) return;
     savingQueuedEditRef.current = true;
@@ -418,6 +422,7 @@ export function useThreadComposerState() {
     const prepared = await settlePromise(() =>
       prepareTurnAttachments({
         environmentId: thread.environmentId,
+        owner: { _tag: "thread", threadId: thread.id },
         attachments: draft.attachments,
         supportsImageUploads: capabilities !== undefined,
       }),
@@ -647,6 +652,7 @@ export function useThreadComposerState() {
     clearThreadComposerError(threadKey);
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
+      temporary: selectedThreadShell.temporary,
       threadId: selectedThreadShell.id,
       messageId,
       commandId: CommandId.make(metadata.commandId),

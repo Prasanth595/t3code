@@ -37,6 +37,7 @@ import {
 } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as TemporaryThreadStorage from "../orchestration-v2/TemporaryThreadStorage.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -109,6 +110,13 @@ describe("startup agent activity", () => {
       projects: [{ id: PROJECT_ID, title: "Project" }],
       threads: [
         shell(),
+        shell({ id: ThreadId.make("temporary-running"), temporary: true }),
+        shell({
+          id: ThreadId.make("temporary-completed"),
+          temporary: true,
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
+        }),
         shell({
           id: oldCompleted,
           status: "completed",
@@ -144,6 +152,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly discarded?: boolean;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -257,6 +266,18 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const relay = yield* AgentAwarenessRelay.make.pipe(
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+    Effect.provideService(TemporaryThreadStorage.TemporaryThreadStorage, {
+      register: unused,
+      isTemporary: () => Effect.succeed(false),
+      isDiscarded: () => Effect.succeed(options.discarded === true),
+      family: unused,
+      markDiscarding: unused,
+      keep: unused,
+      discard: unused,
+      generation: unused,
+      subscribeThreadRunUpdates: () => Effect.succeed(Stream.empty),
+      changes: Stream.empty,
+    }),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
@@ -290,6 +311,66 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect.each([false, true])(
+    "filters a missing thread only when it was discarded as temporary: %s",
+    (discarded) =>
+      Effect.gen(function* () {
+        const { relay, publications } = yield* makeTestRelay({
+          discarded,
+          readShell: () => Effect.succeed(null),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state),
+          discarded ? [] : [null],
+        );
+      }),
+  );
+
+  it.effect("does not publish temporary IDs or content before Keep", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      const temporary = shell({ temporary: true, title: "Private temporary title" });
+      yield* Ref.set(currentShell, temporary);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(publications, []);
+
+      yield* Ref.set(currentShell, { ...temporary, temporary: false });
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.threadId, THREAD_ID);
+      assert.equal(publications[0]?.state?.threadTitle, temporary.title);
+    }),
+  );
+
+  it.effect("clears saved activity immediately when it becomes temporary", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+
+      yield* Ref.set(currentShell, shell({ temporary: true, title: "Private temporary title" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state, null);
+      assert.isFalse(JSON.stringify(publications).includes("Private temporary title"));
+
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+
+      yield* Ref.set(currentShell, shell({ temporary: false, title: "Saved again" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 3);
+      assert.equal(publications[2]?.state?.threadTitle, "Saved again");
+    }),
+  );
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

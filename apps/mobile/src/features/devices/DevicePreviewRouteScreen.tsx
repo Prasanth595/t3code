@@ -1,3 +1,5 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { SheetCloseButton } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -53,7 +55,16 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly deviceKey?: string;
 }>;
 
-export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
+export function DevicePreviewRouteScreen(props: DevicePreviewRouteScreenProps) {
+  const { environmentId, threadId } = props.route.params;
+  if (isTemporaryThread(environmentId, threadId))
+    return (
+      <EmptyState title="Keep thread first" detail="Keep this thread before opening a preview." />
+    );
+  return <SavedDevicePreviewRouteScreen {...props} />;
+}
+
+function SavedDevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = () => navigation.goBack();
   const { environmentId, threadId } = route.params;

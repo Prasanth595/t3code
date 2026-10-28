@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -20,7 +21,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironmentScope } from "../../state/session";
-import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  threadEnvironment,
+} from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { GUEST_PENDING_BUBBLE_CLASS_NAME, GuestMessageName } from "./guestMessageStyle";
 
@@ -29,6 +34,9 @@ const NO_GUEST_SHARE_ATOM = Atom.make<ThreadGuestShare | null>(null);
 function guestShareAtom(ref: ScopedThreadRef) {
   let previous: ThreadGuestShare | null = null;
   return Atom.make((get) => {
+    const shell = get(environmentThreadShells.quietThreadShellAtom(ref));
+    if (shell?.temporary === true || isTemporaryThread(ref.environmentId, ref.threadId))
+      return null;
     const next =
       get(environmentThreadDetails.threadAtom(ref))?.projection.thread.guestShare ?? null;
     // The thread record is replaced on unrelated updates; only share changes matter here.

@@ -25,6 +25,8 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { filterTemporaryShellSnapshot } from "../platform/orchestrationCache.ts";
+import { setTemporaryThread } from "../temporaryThreads.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -138,15 +140,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         lastPersisted = snapshot;
         return;
       }
-      const saved = yield* cache.saveShell(environmentId, snapshot).pipe(
-        Effect.as(true),
-        Effect.catch((error) =>
-          Effect.logWarning("Could not persist environment shell cache.").pipe(
-            Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
-            Effect.as(false),
+      const saved = yield* cache
+        .saveShell(environmentId, filterTemporaryShellSnapshot(snapshot, environmentId))
+        .pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("Could not persist environment shell cache.").pipe(
+              Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
+              Effect.as(false),
+            ),
           ),
-        ),
-      );
+        );
       if (!saved) return;
       lastPersisted = snapshot;
       if (!flush) return;
@@ -205,6 +209,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // time, so neither can overwrite what the other wrote in between.
   const snapshotWriteLock = yield* Semaphore.make(1);
 
+  let temporaryOverlay:
+    | Extract<OrchestrationV2ShellStreamItem, { kind: "temporary.snapshot" }>
+    | undefined;
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
@@ -215,6 +222,18 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     let next = initial;
     let receivedSnapshot = false;
     for (const item of items) {
+      if (item.kind === "temporary.snapshot") {
+        if (temporaryOverlay?.epoch === item.epoch && temporaryOverlay.revision >= item.revision)
+          continue;
+        temporaryOverlay = item;
+        if (Option.isSome(next.snapshot)) {
+          next = {
+            ...next,
+            snapshot: Option.some(applyShellStreamEvent(next.snapshot.value, item)),
+          };
+        }
+        continue;
+      }
       if (item.kind === "synchronized") {
         waiting = false;
         if (Option.isSome(next.snapshot)) {
@@ -250,7 +269,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ? item
           : null;
       next = {
-        snapshot: Option.some(nextSnapshot),
+        snapshot: Option.some(
+          item.kind === "snapshot" && temporaryOverlay !== undefined
+            ? applyShellStreamEvent(nextSnapshot, temporaryOverlay)
+            : nextSnapshot,
+        ),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),
         generation: authoritative ? ++lastShellGeneration : next.generation,
@@ -270,6 +293,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       );
     }
     if (Option.isSome(next.snapshot)) {
+      for (const thread of [
+        ...next.snapshot.value.threads,
+        ...next.snapshot.value.archivedThreads,
+      ]) {
+        setTemporaryThread(environmentId, thread.id, thread.temporary === true);
+      }
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
     }
     yield* SubscriptionRef.set(state, next);
@@ -426,9 +455,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
         if (!canResume || Option.isNone(current.snapshot)) {
-          return { ...omission, requestCompletionMarker: true as const };
+          return {
+            acceptTemporaryThreads: true,
+            ...omission,
+            requestCompletionMarker: true as const,
+          };
         }
         return {
+          acceptTemporaryThreads: true,
           afterSequence: current.snapshot.value.snapshotSequence,
           ...omission,
           requestCompletionMarker: true as const,

@@ -1,9 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Diagnostics from "./observability/TemporaryThreadDiagnostics.ts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 
-import { ExternalLauncherBrowserSpawnError } from "@t3tools/contracts";
+import { ExternalLauncherBrowserSpawnError, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -297,3 +299,85 @@ describe("ServerLoggerLive", () => {
     );
   });
 });
+
+it.effect("temporary server log payloads never reach console output", () => {
+  const output: unknown[] = [];
+  const capture = (...args: readonly unknown[]) => {
+    output.push(...args);
+  };
+  const recordingConsole = {
+    ...console,
+    log: capture,
+    error: capture,
+    warn: capture,
+    info: capture,
+    debug: capture,
+  };
+  const diagnosticLayer = Diagnostics.layer;
+  const layer = ServerLogger.layer.pipe(
+    Layer.provideMerge(layerCollector([])),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-private-logger-" })),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(diagnosticLayer),
+  );
+  return Effect.gen(function* () {
+    const diagnostics = yield* Diagnostics.TemporaryThreadDiagnostics;
+    yield* Effect.logError("normal-sentinel");
+    assert.isAbove(output.length, 0);
+    const before = output.length;
+    diagnostics.enter(ThreadId.make("private-thread"));
+    yield* Effect.logError("temporary-sentinel");
+    assert.equal(output.length, before);
+    diagnostics.leave(ThreadId.make("private-thread"), true);
+    yield* Effect.logError("kept-sentinel");
+    assert.equal(output.length, before + 1);
+  }).pipe(Effect.provide(layer), Effect.provideService(Console.Console, recordingConsole));
+});
+
+it.effect.each([undefined, "https://collector.example/v1/logs"])(
+  "discard permits payload-free operational logs through %s and console",
+  (otlpLogsUrl) =>
+    Effect.gen(function* () {
+      const diagnostics = yield* Diagnostics.TemporaryThreadDiagnostics;
+      const output: string[] = [];
+      const capture = (...args: readonly unknown[]) => {
+        output.push(NodeUtil.format(...args));
+      };
+      const { requests, spans } = yield* logInSpanThrough(
+        { otlpLogsUrl },
+        Effect.gen(function* () {
+          diagnostics.enter(ThreadId.make("private-discard"));
+          diagnostics.leave(ThreadId.make("private-discard"));
+          yield* Effect.logInfo("delayed-private-sentinel");
+          yield* Effect.logError(
+            "delayed-private-sentinel",
+            { text: "field-private-sentinel" },
+            Cause.fail("cause-private-sentinel"),
+          ).pipe(
+            Effect.annotateLogs({ "annotation-private-sentinel": "private-value" }),
+            Effect.withLogSpan("log-span-private-sentinel"),
+          );
+        }).pipe(
+          Effect.provideService(Console.Console, {
+            ...console,
+            log: capture,
+            warn: capture,
+            error: capture,
+          }),
+        ),
+      );
+      const printed = output.join("\n");
+      const exported = requests.map((request) => request.body).join("\n");
+      const events = JSON.stringify(
+        spans.flatMap((span) => span.events.map(([name, , fields]) => [name, fields])),
+      );
+      assert.include(printed, "Server error");
+      assert.include(otlpLogsUrl ? exported : events, "Server error");
+      for (const sink of [printed, exported, events]) assert.notInclude(sink, "private-sentinel");
+      assert.isFalse(diagnostics.canSnapshot());
+      assert.isFalse(diagnostics.canRecord());
+      diagnostics.enter(ThreadId.make("later-kept"));
+      diagnostics.leave(ThreadId.make("later-kept"), true);
+      assert.isFalse(diagnostics.canSnapshot());
+    }).pipe(Effect.provide(Diagnostics.layer)),
+);

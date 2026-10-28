@@ -41,8 +41,8 @@ const state = vi.hoisted(() => ({
   },
   config: {
     shellThreadFamilies: false,
-    providers: [{ instanceId: "codex", driver: "codex" }],
-    environment: { capabilities: {} },
+    providers: [{ instanceId: "codex", driver: "codex", temporaryThreads: true }],
+    environment: { capabilities: { temporaryThreads: true } },
   },
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
@@ -77,6 +77,11 @@ vi.mock("./workspace", async () => {
     },
   };
 });
+vi.mock("./entities", () => ({
+  useProjects: () => [],
+  useThreadShells: () => [state.thread],
+  useServerConfigs: () => new Map([["secondary", state.config]]),
+}));
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
@@ -107,6 +112,12 @@ vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.chec
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
+vi.mock("./use-remote-environment-registry", () => ({
+  setPendingConnectionError: vi.fn(),
+  useRemoteConnectionStatus: () => ({
+    connectedEnvironments: [{ environmentId: "secondary", connectionState: "connected" }],
+  }),
+}));
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
   const { appAtomRegistry } = await import("./atom-registry");
@@ -338,22 +349,27 @@ describe("queued task operation access", () => {
     expect(remaining()).toEqual([]);
   });
 
-  it("backs off instead of redelivering at once when a delivery hits a defect", async () => {
-    setOperateGrant("secondary", true);
-    const queued = message();
-    await state.manager.enqueue(queued);
-    // Awaited steps catch their own failures, so a defect in the delivery's own code is what
-    // rejects a delivery.
-    state.modelUnavailable.mockImplementationOnce(() => {
-      throw new TypeError("Cannot read properties of undefined");
-    });
-    await runDrain();
-    expect(state.modelUnavailable).toHaveBeenCalledOnce();
-    expect(state.prepare).not.toHaveBeenCalled();
-    expect(state.start).not.toHaveBeenCalled();
-    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
-    expect(remaining()).toEqual([queued]);
-  });
+  it.each([false, true])(
+    "backs off instead of redelivering at once when a delivery hits a defect (temporary: %s)",
+    async (temporary) => {
+      using warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      setOperateGrant("secondary", true);
+      const queued = message({ temporary });
+      await state.manager.enqueue(queued);
+      // Awaited steps catch their own failures, so a defect in the delivery's own code is what
+      // rejects a delivery.
+      state.modelUnavailable.mockImplementationOnce(() => {
+        throw new TypeError("Cannot read properties of undefined");
+      });
+      await runDrain();
+      expect(state.modelUnavailable).toHaveBeenCalledOnce();
+      expect(state.prepare).not.toHaveBeenCalled();
+      expect(state.start).not.toHaveBeenCalled();
+      expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+      expect(remaining()).toEqual([queued]);
+      expect(warn).toHaveBeenCalledTimes(temporary ? 0 : 1);
+    },
+  );
 
   it("starts one delivery when mounting a thread family changes the rows mid-pass", async () => {
     setOperateGrant("secondary", true);

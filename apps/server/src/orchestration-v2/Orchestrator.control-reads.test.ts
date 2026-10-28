@@ -18,10 +18,14 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -31,11 +35,22 @@ import {
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CheckpointService from "./CheckpointService.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as CommandPolicy from "./CommandPolicy.ts";
+import * as ContextHandoffService from "./ContextHandoffService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderSwitchService from "./ProviderSwitchService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadForkService from "./ThreadForkService.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as TemporaryThreadService from "./TemporaryThreadService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -61,6 +76,51 @@ const layerTest = Layer.mergeAll(
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
+
+const layerTemporaryTest = Orchestrator.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      ProviderContinuationRequests.layer,
+      CommandPolicy.layer,
+      RuntimePolicy.layer,
+      ThreadForkService.layer,
+      ServerSettings.layerTest(),
+      CheckpointService.layer.pipe(
+        Layer.provide(Layer.mock(CheckpointStore.CheckpointStore)({})),
+        Layer.provide(NodeServices.layer),
+      ),
+      Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+      Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({}),
+      ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    ),
+  ),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(TemporaryThreadService.layerState),
+  Layer.provideMerge(TemporaryThreadStorage.layer.pipe(Layer.provide(layerDatabase))),
+);
+
+const createTemporaryParent = Effect.gen(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threadId = ThreadId.make("thread:temporary-parent");
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    temporary: true,
+    threadId,
+    commandId: CommandId.make("temporary-parent-create"),
+    projectId: ProjectId.make("project:temporary-parent"),
+    title: "Temporary parent",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return threadId;
+});
 
 it.effect(
   "records approval feedback and targets only its runtime request without dispatching a parent turn",
@@ -1372,6 +1432,440 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("commits temporary roots with storage ownership and preserves the temporary flag", () => {
+  const threadId = ThreadId.make("thread:temporary-root");
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      temporary: true,
+      threadId,
+      commandId: CommandId.make("temporary-root-create"),
+      projectId: ProjectId.make("project:temporary"),
+      title: "Temporary",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+    assert.isTrue(yield* storage.isTemporary(threadId));
+    assert.isTrue((yield* orchestrator.getThreadRecords(threadId, [])).thread.temporary);
+  }).pipe(Effect.provide(layerTemporaryTest));
+});
+
+it.effect.each(["missing", "accepted", "rejected"] as const)(
+  "temporary fork rejects a %s receipt without registering its target",
+  (receipt) =>
+    Effect.gen(function* () {
+      const parentThreadId = yield* createTemporaryParent;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const targetThreadId = ThreadId.make("thread:temporary-fork-target");
+      const commandId = CommandId.make("temporary-fork");
+      if (receipt !== "missing") {
+        yield* stores.durable.commandReceipts.insertIfAbsent({
+          commandId,
+          threadId: targetThreadId,
+          commandType: "thread.fork",
+          acceptedAt: yield* DateTime.now,
+          resultSequence: 0,
+          status: receipt,
+          error: receipt === "rejected" ? "Earlier failure" : null,
+        });
+      }
+      const before = yield* stores.durable.commandReceipts.getByCommandId(commandId);
+      const error = yield* Effect.flip(
+        orchestrator.dispatch({
+          type: "thread.fork",
+          commandId,
+          sourceThreadId: parentThreadId,
+          targetThreadId,
+          sourcePoint: { type: "latest_stable" },
+          createdBy: "user",
+          creationSource: "web",
+        }),
+      );
+      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+      if (error._tag === "OrchestratorDispatchError") {
+        assert.equal(error.cause, "Keep this thread before using this operation.");
+      }
+      assert.deepEqual(yield* storage.family(parentThreadId), [parentThreadId]);
+      assert.isFalse(yield* storage.isTemporary(targetThreadId));
+      assert.isNull(yield* stores.volatile.projectionStore.getThreadShell(targetThreadId));
+      assert.isNull(yield* stores.durable.projectionStore.getThreadShell(targetThreadId));
+      assert.deepEqual(yield* stores.durable.commandReceipts.getByCommandId(commandId), before);
+      assert.isTrue(
+        Option.isNone(yield* stores.volatile.commandReceipts.getByCommandId(commandId)),
+      );
+    }).pipe(Effect.provide(layerTemporaryTest)),
+);
+
+it.effect.each(["invalid-parent", "accepted-replay", "rejected-replay"] as const)(
+  "temporary delegated request with %s leaves no phantom child",
+  (scenario) =>
+    Effect.gen(function* () {
+      const parentThreadId = yield* createTemporaryParent;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const command = {
+        type: "delegated_task.request",
+        commandId: CommandId.make("temporary-invalid-delegate"),
+        parentThreadId,
+        parentRunId: RunId.make("missing-run"),
+        parentNodeId: NodeId.make("missing-node"),
+        task: "Child task",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      } as const;
+      if (scenario === "accepted-replay") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: command.commandId,
+          threadId: parentThreadId,
+          title: "Accepted earlier",
+        });
+      } else if (scenario === "rejected-replay") {
+        const sink = yield* EventSink.EventSinkV2;
+        yield* sink.commitRejectedCommand({
+          commandId: command.commandId,
+          threadId: parentThreadId,
+          commandType: command.type,
+          rejectedAt: yield* DateTime.now,
+          error: "Earlier failure",
+        });
+      }
+      const result = yield* Effect.result(orchestrator.dispatch(command));
+      if (scenario === "accepted-replay") {
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) assert.isTrue(result.success.replayed);
+      } else {
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(
+            result.failure._tag,
+            scenario === "invalid-parent"
+              ? "OrchestratorDispatchError"
+              : "OrchestratorCommandPreviouslyRejectedError",
+          );
+          if (result.failure._tag === "OrchestratorDispatchError") {
+            assert.equal(result.failure.cause, "Parent run missing-run is not active.");
+          }
+        }
+      }
+      const childId = allocator.derive.delegatedTaskThread({ commandId: command.commandId });
+      assert.deepEqual(yield* storage.family(parentThreadId), [parentThreadId]);
+      assert.isFalse(yield* storage.isTemporary(childId));
+      assert.isNull(yield* stores.volatile.projectionStore.getThreadShell(childId));
+      assert.isNull(yield* stores.durable.projectionStore.getThreadShell(childId));
+      assert.isTrue(
+        Option.isNone(yield* stores.durable.commandReceipts.getByCommandId(command.commandId)),
+      );
+      const receipt = Option.getOrThrow(
+        yield* stores.volatile.commandReceipts.getByCommandId(command.commandId),
+      );
+      assert.equal(receipt.status, scenario === "accepted-replay" ? "accepted" : "rejected");
+    }).pipe(Effect.provide(layerTemporaryTest)),
+);
+
+it.effect.each([false, true])(
+  "temporary child creation inherits ownership after transaction failure=%s and closed families reject new work",
+  (failFirst) =>
+    Effect.gen(function* () {
+      const parentThreadId = yield* createTemporaryParent;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const state = yield* TemporaryThreadService.TemporaryThreadLifecycleState;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("temporary-parent-start"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("temporary-parent-message"),
+        text: "Run a child",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parent = yield* orchestrator.getThreadRecords(parentThreadId, ["runs"]);
+      const run = parent.runs[0]!;
+      const command = {
+        type: "delegated_task.request",
+        commandId: CommandId.make("temporary-parent-delegate"),
+        parentThreadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Child task",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      } as const;
+      if (failFirst) {
+        const eventsBefore = yield* stores.volatile.sql`SELECT * FROM orchestration_events`;
+        yield* stores.volatile
+          .sql`CREATE TRIGGER reject_child BEFORE INSERT ON orchestration_v2_projection_threads BEGIN SELECT RAISE(ABORT, 'test child failure'); END`;
+        const error = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.deepEqual(yield* storage.family(parentThreadId), [parentThreadId]);
+        assert.deepEqual(
+          yield* stores.volatile.sql`SELECT * FROM orchestration_events`,
+          eventsBefore,
+        );
+        assert.isTrue(
+          Option.isNone(yield* stores.volatile.commandReceipts.getByCommandId(command.commandId)),
+        );
+        yield* stores.volatile.sql`DROP TRIGGER reject_child`;
+      }
+      const accepted = yield* orchestrator.dispatch(command);
+      const updated = yield* orchestrator.getThreadRecords(parentThreadId, ["subagents"]);
+      const childId = updated.subagents[0]!.childThreadId!;
+      assert.deepEqual(yield* storage.family(parentThreadId), [parentThreadId, childId]);
+      const child = yield* orchestrator.getThreadRecords(childId, ["providerThreads"]);
+      assert.isTrue(child.thread.temporary);
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      assert.isNotEmpty(child.providerThreads);
+      assert.notEqual(
+        child.providerThreads[0]!.providerSessionId,
+        allocator.derive.providerSession({ providerInstanceId: instanceId }),
+      );
+      assert.isNotNull(yield* stores.volatile.projectionStore.getThreadShell(childId));
+      assert.isNull(yield* stores.durable.projectionStore.getThreadShell(childId));
+      const effectsBefore = yield* stores.volatile
+        .sql`SELECT * FROM orchestration_v2_effect_outbox`;
+      assert.isAbove(effectsBefore.length, 0);
+      const replayed = yield* orchestrator.dispatch(command);
+      assert.isTrue(replayed.replayed);
+      assert.equal(replayed.sequence, accepted.sequence);
+      assert.deepEqual(
+        replayed.storedEvents.map((stored) => stored.event.id),
+        accepted.storedEvents.map((stored) => stored.event.id),
+      );
+      assert.deepEqual(
+        yield* stores.volatile.sql`SELECT * FROM orchestration_v2_effect_outbox`,
+        effectsBefore,
+      );
+      for (const table of [
+        "orchestration_events",
+        "orchestration_command_receipts",
+        "orchestration_v2_projection_threads",
+        "orchestration_v2_effect_outbox",
+      ]) {
+        assert.isEmpty(yield* stores.durable.sql.unsafe(`SELECT * FROM ${table}`));
+      }
+      state.discarding.add(parentThreadId);
+      assert.isTrue(
+        Result.isFailure(
+          yield* Effect.result(
+            orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("temporary-late-update"),
+              threadId: childId,
+              title: "Late work",
+            }),
+          ),
+        ),
+      );
+      assert.notEqual(
+        (yield* orchestrator.getThreadRecords(childId, [])).thread.title,
+        "Late work",
+      );
+      const closed = yield* Effect.flip(orchestrator.dispatch(command));
+      assert.instanceOf(closed, Orchestrator.OrchestratorDispatchError);
+      if (closed._tag === "OrchestratorDispatchError") {
+        assert.equal(closed.cause, "Temporary thread is closed.");
+      }
+      yield* storage.discard(parentThreadId);
+      state.discarding.delete(parentThreadId);
+      const discarded = yield* Effect.flip(orchestrator.dispatch(command));
+      assert.instanceOf(discarded, Orchestrator.OrchestratorDispatchError);
+      if (discarded._tag === "OrchestratorDispatchError") {
+        assert.equal(discarded.cause, "Temporary thread is closed.");
+      }
+    }).pipe(Effect.provide(layerTemporaryTest)),
+);
+
+it.effect.each([
+  ["selection", "other-codex", true, true],
+  ["message", "other-codex", true, true],
+  ["switch", "other-codex", true, true],
+  ["selection", "other-claude", true, true],
+  ["message", "other-claude", true, true],
+  ["switch", "other-claude", true, true],
+  ["switch", "codex", true, false],
+  ["switch", "other-codex", false, false],
+  ["runtime-mode", "codex", true, true, false],
+  ["runtime-mode", "codex", true, false, true],
+  ["runtime-mode", "codex", true, false, false, false],
+  ["runtime-mode", "codex", false, false, false],
+] as const)(
+  "%s to %s with temporary=%s rejects=%s before changing a live session",
+  ([
+    operation,
+    target,
+    temporary,
+    rejects,
+    supportsRuntimeModeSwitchInSession = true,
+    hasSession = true,
+  ]) => {
+    const threadId = ThreadId.make("thread:temporary-provider-switch");
+    const otherSelection = { instanceId: ProviderInstanceId.make(target), model: "test" };
+    const owned = new Set<ThreadId>(temporary ? [threadId] : []);
+    const storageLayer = Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+      register: ({ threadId: id }) =>
+        Effect.sync(() => {
+          owned.add(id);
+        }),
+      isTemporary: (id) => Effect.sync(() => owned.has(id)),
+      isDiscarded: () => Effect.succeed(false),
+      family: (id) => Effect.succeed([id]),
+    });
+    const engineLayer = ProviderReplayHarness.layerWithRegistry(
+      { name: "temporary-provider-switch" },
+      ProviderAdapterRegistry.layerFromAdapters([
+        adapter,
+        { ...adapter, instanceId: ProviderInstanceId.make("other-codex") },
+        {
+          ...adapter,
+          instanceId: ProviderInstanceId.make("other-claude"),
+          driver: ProviderDriverKind.make("claude"),
+        },
+      ]),
+      { databaseLayer: layerDatabase, runEffectWorker: false },
+    ).pipe(Layer.provide(storageLayer));
+    const storesLayer = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
+      Layer.provide(layerDatabase),
+    );
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        temporary,
+        threadId,
+        commandId: CommandId.make("temporary-switch-create"),
+        projectId: ProjectId.make("project:temporary-switch"),
+        title: "Temporary",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const now = yield* DateTime.now;
+      const sessionId = ProviderSessionId.make("temporary-switch-session");
+      if (hasSession)
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("temporary-switch-session-attached"),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: sessionId,
+                driver: adapter.driver,
+                providerInstanceId: instanceId,
+                status: "ready",
+                cwd: "/repo",
+                model: modelSelection.model,
+                capabilities: {
+                  ...CodexProviderCapabilitiesV2,
+                  sessions: {
+                    ...CodexProviderCapabilitiesV2.sessions,
+                    supportsProviderSwitchingViaHandoff: false,
+                    supportsRuntimeModeSwitchInSession,
+                  },
+                },
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+            },
+          ],
+        });
+      const before = yield* projections.getThreadProviderContext(threadId);
+      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const commandId = CommandId.make("temporary-switch");
+      const refused = yield* Effect.result(
+        orchestrator.dispatch(
+          operation === "runtime-mode"
+            ? {
+                type: "thread.runtime-mode.set",
+                commandId,
+                threadId,
+                runtimeMode: "approval-required",
+              }
+            : operation !== "message"
+              ? {
+                  type:
+                    operation === "selection" ? "thread.model-selection.set" : "provider.switch",
+                  commandId,
+                  threadId,
+                  modelSelection: otherSelection,
+                }
+              : {
+                  type: "message.dispatch",
+                  commandId,
+                  threadId,
+                  modelSelection: otherSelection,
+                  messageId: MessageId.make("temporary-switch-message"),
+                  text: "Switch provider",
+                  attachments: [],
+                  dispatchMode: { type: "start_immediately" },
+                  createdBy: "user",
+                  creationSource: "web",
+                },
+        ),
+      );
+      assert.equal(Result.isFailure(refused), rejects);
+      const projection = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+      assert.isEmpty(projection.runs);
+      if (rejects) {
+        if (operation === "runtime-mode" && Result.isFailure(refused)) {
+          assert.instanceOf(refused.failure, Orchestrator.OrchestratorDispatchError);
+          if (refused.failure._tag === "OrchestratorDispatchError") {
+            assert.equal(refused.failure.cause, "Keep this thread before using this operation.");
+          }
+        }
+        assert.deepEqual(yield* projections.getThreadProviderContext(threadId), before);
+        assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+        assert.isEmpty(yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect));
+        assert.isEmpty(yield* outbox.listByCommandId(commandId));
+      } else {
+        if (operation === "runtime-mode") {
+          assert.equal(projection.thread.runtimeMode, "approval-required");
+          assert.deepEqual(projection.thread.modelSelection, modelSelection);
+        } else {
+          assert.deepEqual(projection.thread.modelSelection, otherSelection);
+        }
+        if (temporary) {
+          assert.equal(
+            (yield* projections.getThreadProviderContext(threadId)).providerSessions[0]?.id,
+            hasSession ? sessionId : undefined,
+          );
+          assert.isEmpty(yield* outbox.listByCommandId(commandId));
+        }
+      }
+    }).pipe(Effect.provide(Layer.merge(engineLayer, storesLayer)));
+  },
 );
 
 it.effect("dispatch records the command outcome and its duration", () =>

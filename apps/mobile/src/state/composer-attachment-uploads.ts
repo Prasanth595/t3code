@@ -12,6 +12,7 @@ import {
 import {
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
+  composerDraftUploadOwner,
   canUploadComposerAttachment,
   createComposerAttachmentUploadQueue,
   type ComposerAttachmentUploadState,
@@ -23,6 +24,7 @@ import {
   ComposerDraftPersistenceError,
   type ComposerDraft,
   composerDraftsAtom,
+  isTemporaryComposerDraft,
   composerDraftUploadSourcesAtom,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
@@ -61,10 +63,13 @@ export function retryComposerAttachmentUpload(environmentId: EnvironmentId, atta
 type ComposerAttachmentUploadRequest = {
   readonly environmentId: EnvironmentId;
   readonly attachment: DraftComposerAttachment;
+  readonly owner?: ReturnType<typeof composerDraftUploadOwner>;
 };
 
 export function composerAttachmentUploadRequests(input: {
-  readonly drafts: Readonly<Record<string, Pick<ComposerDraft, "attachments" | "project">>>;
+  readonly drafts: Readonly<
+    Record<string, Pick<ComposerDraft, "attachments" | "project" | "temporary">>
+  >;
   readonly queuedMessagesByThreadKey: Parameters<typeof flattenQueuedThreadMessages>[0];
   readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly operableEnvironmentIds: ReadonlySet<EnvironmentId>;
@@ -75,6 +80,7 @@ export function composerAttachmentUploadRequests(input: {
 }): ReadonlyArray<ComposerAttachmentUploadRequest> {
   const queued = flattenQueuedThreadMessages(input.queuedMessagesByThreadKey);
   return Object.entries(input.drafts).flatMap(([key, draft]) => {
+    if (isTemporaryComposerDraft(key, draft)) return [];
     const environmentId = composerDraftEnvironmentId(key, queued, draft);
     if (
       environmentId === null ||
@@ -86,7 +92,11 @@ export function composerAttachmentUploadRequests(input: {
       .filter((attachment) =>
         canUploadComposerAttachment(attachment, input.serverConfigs.get(environmentId)),
       )
-      .map((attachment) => ({ environmentId, attachment }));
+      .map((attachment) => ({
+        environmentId,
+        attachment,
+        owner: composerDraftUploadOwner(key, queued, environmentId, draft),
+      }));
   });
 }
 
@@ -128,13 +138,14 @@ export function createComposerAttachmentUploadWorker(
   ensureComposerDraftsLoaded();
   const queue = createComposerAttachmentUploadQueue({
     onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
-    upload: async ({ environmentId, attachment }, signal, onProgress) => {
+    upload: async ({ environmentId, attachment, owner }, signal, onProgress) => {
       const release = isFileBackedComposerAttachment(attachment)
         ? retainComposerAttachmentFileForPreview(attachment)
         : undefined;
       const prepared = await settlePromise(() =>
         prepareTurnAttachments({
           environmentId,
+          ...(owner === undefined ? {} : { owner }),
           attachments: [attachment],
           supportsImageUploads: true,
           signal,

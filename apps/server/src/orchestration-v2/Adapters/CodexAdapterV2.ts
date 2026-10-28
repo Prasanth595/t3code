@@ -1,3 +1,4 @@
+import * as TemporaryThreadLifecycleState from "../TemporaryThreadLifecycleState.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -800,6 +801,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
 );
 
 function providerSession(input: {
+  readonly temporary: boolean;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly cwd: string | null;
@@ -813,7 +815,42 @@ function providerSession(input: {
     status: "ready",
     cwd: input.cwd ?? process.cwd(),
     model: input.model,
-    capabilities: CodexProviderCapabilitiesV2,
+    capabilities: input.temporary
+      ? {
+          ...CodexProviderCapabilitiesV2,
+          sessions: {
+            ...CodexProviderCapabilitiesV2.sessions,
+            supportsMultipleProviderThreadsPerSession: false,
+            supportsProviderSwitchingViaHandoff: false,
+          },
+          threads: {
+            ...CodexProviderCapabilitiesV2.threads,
+            canRollbackThread: false,
+            canForkThread: false,
+            canForkFromTurn: false,
+            canForkFromSubagentThread: false,
+          },
+          turns: {
+            ...CodexProviderCapabilitiesV2.turns,
+            supportsSteeringByInterruptRestart: false,
+          },
+          subagents: {
+            supportsSubagents: false,
+            exposesSubagentThreadIds: false,
+            emitsSubagentLifecycle: false,
+            canWaitForSubagents: false,
+            canCloseSubagents: false,
+            canForkSubagentThread: false,
+          },
+          checkpointing: {
+            ...CodexProviderCapabilitiesV2.checkpointing,
+            appCanCheckpointFilesystem: false,
+            supportsNestedCheckpointScopes: false,
+            providerCanRollbackConversation: false,
+            providerRollbackReturnsSnapshot: false,
+          },
+        }
+      : CodexProviderCapabilitiesV2,
     createdAt: input.now,
     updatedAt: input.now,
     lastError: null,
@@ -1318,6 +1355,27 @@ export const CODEX_THREAD_CONFIG = {
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
+const CODEX_TEMPORARY_THREAD_CONFIG = {
+  "history.persistence": "none",
+  "features.shell_snapshot": false,
+  "features.shell_snapshot_v2": false,
+  "features.memories": false,
+  "features.memory_tool": false,
+  "memories.generate_memories": false,
+  "memories.use_memories": false,
+  "features.multi_agent": false,
+  "features.multi_agent_v2": false,
+  "agents.enabled": false,
+  "features.hooks": false,
+  notify: [],
+  "otel.exporter": "none",
+  "otel.trace_exporter": "none",
+  "otel.metrics_exporter": "none",
+  "otel.log_user_prompt": false,
+  "analytics.enabled": false,
+  "feedback.enabled": false,
+} as const;
+
 function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
@@ -1402,12 +1460,13 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
 });
 
 export function makeCodexAppServerProtocolLogger(input: {
+  readonly temporary?: boolean;
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }): CodexClient.CodexAppServerClientOptions["logger"] | undefined {
   const { nativeEventLogger } = input;
-  if (nativeEventLogger === undefined) {
+  if (input.temporary === true || nativeEventLogger === undefined) {
     return undefined;
   }
 
@@ -1481,26 +1540,68 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | ProviderEventLoggers.ProviderEventLoggers
+  | FileSystem.FileSystem
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fs = yield* FileSystem.FileSystem;
+    const lifecycle = yield* TemporaryThreadLifecycleState.TemporaryThreadLifecycleState;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const privateDirectory =
+          input.runtimePolicy.temporary === true
+            ? yield* Effect.acquireRelease(
+                fs.makeTempDirectory({ prefix: "t3-codex-temporary-" }),
+                (path) =>
+                  fs.remove(path, { recursive: true, force: true }).pipe(
+                    Effect.tapError(() =>
+                      Effect.sync(() => {
+                        const pending =
+                          lifecycle.pendingNativeCleanup.get(input.threadId) ??
+                          new Map<string, OrchestrationV2ProviderSession["id"]>();
+                        pending.set(path, input.providerSessionId);
+                        lifecycle.pendingNativeCleanup.set(input.threadId, pending);
+                      }),
+                    ),
+                    Effect.ignore({ log: true }),
+                  ),
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              )
+            : undefined;
         const environment = {
           ...codexAppServerEnvironment(input.environment),
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
+          ...(input.runtimePolicy.temporary === true ? { RUST_LOG: "off" } : {}),
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
-          args: codexAppServerArgs(
-            resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-          ),
+          args: [
+            ...codexAppServerArgs(
+              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            ),
+            ...(privateDirectory !== undefined
+              ? Object.entries({
+                  ...CODEX_TEMPORARY_THREAD_CONFIG,
+                  sqlite_home: privateDirectory,
+                  log_dir: privateDirectory,
+                }).flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`])
+              : []),
+          ],
           env: environment,
           threadId: input.threadId,
         }).pipe(Effect.provideService(AgentScope, agentScope));
@@ -1516,6 +1617,7 @@ export const layerAppServerClientFactory: Layer.Layer<
           ),
         );
         const protocolLogger = makeCodexAppServerProtocolLogger({
+          temporary: input.runtimePolicy.temporary === true,
           nativeEventLogger,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
@@ -1535,7 +1637,7 @@ export const layerAppServerClientFactory: Layer.Layer<
       }),
     });
   }),
-);
+).pipe(Layer.provide(TemporaryThreadLifecycleState.layer));
 
 export type CodexAdapterV2DriverEnv =
   | CodexAppServerClientFactory
@@ -1633,6 +1735,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
         const scope = yield* Scope.Scope;
+        const temporary = input.runtimePolicy.temporary === true;
+        if (
+          temporary &&
+          (input.initialNativeThreadId !== undefined || input.resumeFromSession !== undefined)
+        ) {
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: CODEX_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause: "A temporary native session cannot resume from disk.",
+          });
+        }
+        const temporaryThreads = new Map<ThreadId, OrchestrationV2ProviderThread>();
+        const temporaryThreadPermit = yield* Semaphore.make(1);
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
             ? undefined
@@ -1725,6 +1840,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const now = yield* DateTime.now;
         const session = providerSession({
+          temporary,
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
@@ -6767,41 +6883,87 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          ensureThread: (threadInput) =>
-            ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
-                client.request(
-                  "thread/start",
-                  codexThreadRuntimeParams({
-                    mcpSession,
-                    modelSelection: threadInput.modelSelection,
-                    runtimePolicy: threadInput.runtimePolicy,
-                  }),
+          ensureThread: Effect.fn("CodexAdapterV2.ensureThread")(
+            function* (threadInput) {
+              if (temporary) {
+                if (threadInput.forceNewNativeThread === true)
+                  return yield* toProtocolError(
+                    "Keep the temporary thread before replacing its native conversation",
+                  );
+                if (threadInput.threadId !== input.threadId) {
+                  return yield* toProtocolError("Keep the temporary thread before adding children");
+                }
+                const existing = temporaryThreads.get(threadInput.threadId);
+                if (existing !== undefined) return existing;
+                if (threadInput.existingProviderThread?.nativeThreadRef != null) {
+                  return yield* toProtocolError(
+                    "The temporary native conversation is no longer available",
+                  );
+                }
+              } else if (threadInput.runtimePolicy.temporary === true) {
+                return yield* toProtocolError(
+                  "A temporary thread requires its own nonpersistent session",
+                );
+              }
+              yield* ensureInitialized;
+              const params = codexThreadRuntimeParams({
+                mcpSession: yield* mcpSessions.read(threadInput.threadId),
+                modelSelection: threadInput.modelSelection,
+                runtimePolicy: threadInput.runtimePolicy,
+              });
+              const response = yield* client.request("thread/start", {
+                ...params,
+                ...(temporary
+                  ? {
+                      ephemeral: true,
+                      config: {
+                        ...params.config,
+                        ...CODEX_TEMPORARY_THREAD_CONFIG,
+                      },
+                    }
+                  : {}),
+              });
+              if (
+                temporary &&
+                (response.thread.ephemeral !== true || response.thread.path !== null)
+              ) {
+                return yield* toProtocolError("Codex did not create a nonpersistent native thread");
+              }
+              const providerThread = providerThreadFromCodexThread({
+                appThreadId: threadInput.threadId,
+                idAllocator,
+                ownerNodeId: null,
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: adapterOptions.instanceId,
+                thread: response.thread,
+              });
+              if (temporary) temporaryThreads.set(threadInput.threadId, providerThread);
+              return providerThread;
+            },
+            (effect, threadInput) =>
+              (temporary ? temporaryThreadPermit.withPermits(1)(effect) : effect).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                      driver: CODEX_PROVIDER,
+                      threadId: threadInput.threadId,
+                      cause,
+                    }),
                 ),
               ),
-              Effect.map((response): OrchestrationV2ProviderThread =>
-                providerThreadFromCodexThread({
-                  appThreadId: threadInput.threadId,
-                  idAllocator,
-                  ownerNodeId: null,
-                  providerSessionId: input.providerSessionId,
-                  providerInstanceId: adapterOptions.instanceId,
-                  thread: response.thread,
-                }),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterEnsureThreadError({
-                    driver: CODEX_PROVIDER,
-                    threadId: threadInput.threadId,
-                    cause,
-                  }),
-              ),
-            ),
+          ),
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              if (temporary) {
+                const live = temporaryThreads.get(threadInput.threadId ?? input.threadId);
+                if (live?.nativeThreadRef?.nativeId !== nativeThreadId) {
+                  return yield* toProtocolError(
+                    "The temporary native conversation cannot resume from disk",
+                  );
+                }
+                return threadInput.providerThread;
+              }
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
@@ -6923,6 +7085,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           startTurn: (turnInput) => {
+            if (temporary && turnInput.restartContinuationOfRunId !== undefined) {
+              return Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: CODEX_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: toProtocolError("Keep the temporary thread before restarting a turn"),
+                }),
+              );
+            }
             const goalCommand =
               turnInput.restartContinuationOfRunId === undefined
                 ? parseGoalCommand(turnInput.message)
@@ -6997,6 +7170,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // shut the native thread (and its MCP servers) down once it is idle.
           unloadThread: Effect.fn("CodexAdapterV2.unloadThread")(
             function* (unloadInput) {
+              if (temporary) return;
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
@@ -7634,6 +7808,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           forkThread: Effect.fn("CodexAdapterV2.forkThread")(
             function* (threadInput) {
+              if (temporary || threadInput.runtimePolicy?.temporary === true) {
+                return yield* toProtocolError(
+                  "Keep the temporary thread before forking or adding children",
+                );
+              }
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(

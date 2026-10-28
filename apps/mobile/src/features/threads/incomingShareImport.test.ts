@@ -1,4 +1,8 @@
 import { AtomRegistry } from "effect/reactivity";
+import {
+  forgetTemporaryThread,
+  setTemporaryThread,
+} from "@t3tools/client-runtime/temporary-threads";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -135,6 +139,89 @@ describe("transitionShareImport", () => {
 });
 
 describe("incoming share imports", () => {
+  it.each(["draft flag", "live registry"])(
+    "rejects a temporary draft from its %s before reserving the share",
+    async (source) => {
+      const target = importTarget({ draftKey: "env-1:private-thread" });
+      const { drafts, deps, imports, watch } = setup();
+      const draft = { text: "private", attachments: [], temporary: source === "draft flag" };
+      drafts.set(target.draftKey, draft);
+      if (source === "live registry") setTemporaryThread("env-1", "private-thread", true);
+      try {
+        const watched = watch(target);
+        await imports.settled(target);
+
+        expect(watched.phase()).toBe("failed");
+        expect(deps.reserve).not.toHaveBeenCalled();
+        expect(deps.mergeIntoDraft).not.toHaveBeenCalled();
+        expect(deps.consume).not.toHaveBeenCalled();
+        await imports.cancel(target);
+        expect(drafts.get(target.draftKey)).toEqual(draft);
+        expect(deps.leave).toHaveBeenCalledWith(target);
+      } finally {
+        forgetTemporaryThread("env-1", "private-thread");
+      }
+    },
+  );
+
+  it("stops before merging when the draft becomes temporary during reservation", async () => {
+    const reserved = Promise.withResolvers<void>();
+    const { drafts, deps, imports, watch } = setup({ reserve: vi.fn(() => reserved.promise) });
+    const target = importTarget();
+    const watched = watch(target);
+    const draft = { text: "private", attachments: [], temporary: true };
+    drafts.set(target.draftKey, draft);
+    reserved.resolve();
+    await imports.settled(target);
+
+    expect(watched.phase()).toBe("failed");
+    expect(deps.mergeIntoDraft).not.toHaveBeenCalled();
+    expect(deps.consume).not.toHaveBeenCalled();
+    await imports.cancel(target);
+    expect(deps.release).toHaveBeenCalledWith(target.shareId, destination);
+    expect(drafts.get(target.draftKey)).toEqual(draft);
+  });
+
+  it("stops before consuming and keeps temporary mode when cancelling a pending merge", async () => {
+    const mergeStarted = Promise.withResolvers<void>();
+    const merged = Promise.withResolvers<{ readonly skippedAttachmentCount: number }>();
+    const { drafts, deps, imports, watch } = setup({
+      mergeIntoDraft: (draftKey, content) => {
+        mergeInto(drafts, draftKey, content);
+        mergeStarted.resolve();
+        return merged.promise;
+      },
+    });
+    const target = importTarget();
+    const watched = watch(target);
+    await mergeStarted.promise;
+    drafts.set(target.draftKey, { ...drafts.get(target.draftKey)!, temporary: true });
+    merged.resolve({ skippedAttachmentCount: 0 });
+    await imports.settled(target);
+
+    expect(watched.phase()).toBe("failed");
+    expect(deps.consume).not.toHaveBeenCalled();
+    await imports.cancel(target);
+    expect(drafts.get(target.draftKey)).toEqual({ text: "mine", attachments: [], temporary: true });
+    expect(deps.release).toHaveBeenCalledWith(target.shareId, destination);
+  });
+
+  it("cancel keeps temporary mode enabled during a merge that failed to persist", async () => {
+    const { drafts, imports, watch } = setup({
+      mergeIntoDraft: async (draftKey, content) => {
+        mergeInto(drafts, draftKey, content);
+        drafts.set(draftKey, { ...drafts.get(draftKey)!, temporary: true });
+        throw new Error("write failed");
+      },
+    });
+    const target = importTarget();
+    watch(target);
+    await imports.settled(target);
+    await imports.cancel(target);
+
+    expect(drafts.get(target.draftKey)).toEqual({ text: "mine", attachments: [], temporary: true });
+  });
+
   it("reserves, attaches and consumes once, releasing files the draft did not keep", async () => {
     const kept = fileAttachment("kept");
     const skipped = fileAttachment("skipped");

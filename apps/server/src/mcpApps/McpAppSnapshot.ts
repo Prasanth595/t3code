@@ -15,6 +15,8 @@ import * as Predicate from "effect/Predicate";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
+
 const encoder = new TextEncoder();
 
 function readMcpAppDocument(
@@ -54,6 +56,8 @@ export const snapshotMcpApp = Effect.fn("McpAppSnapshot.snapshot")(function* (in
   readonly contents: ReadonlyArray<unknown>;
 }) {
   if (!input.resourceUri.startsWith(MCP_APP_RESOURCE_SCHEME)) return undefined;
+  const policy = yield* TemporaryResourcePolicy.make;
+  yield* policy.assertDurable(input.threadId, "MCP app snapshots");
   const document = readMcpAppDocument(input.contents, input.resourceUri);
   if (document === undefined) return undefined;
   if (document.html === null || encoder.encode(document.html).byteLength > MCP_APP_MAX_HTML_BYTES) {

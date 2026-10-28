@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import {
   parseScopedProjectKey,
   scopedProjectKey,
@@ -224,6 +225,7 @@ export function recordFaviconForThread(
   threadRef: ScopedThreadRef,
   favicon: DesktopPreviewFavicon,
 ): boolean {
+  if (isTemporaryThread(threadRef.environmentId, threadRef.threadId)) return false;
   if (
     !isStorableFaviconDataUrl(favicon.dataUrl) ||
     !isValidFaviconCapturedAt(favicon.capturedAt) ||
@@ -261,6 +263,7 @@ function flushPendingFaviconsForThread(
   projectRef: ScopedProjectRef,
   environmentHostname: string | undefined,
 ): boolean {
+  if (isTemporaryThread(threadRef.environmentId, threadRef.threadId)) return false;
   const threadKey = scopedThreadKey(threadRef);
   const pending = useBrowserFaviconStore.getState().pendingByThreadKey[threadKey];
   if (!pending) return true;

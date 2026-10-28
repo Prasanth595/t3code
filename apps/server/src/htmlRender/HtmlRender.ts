@@ -1,3 +1,4 @@
+import { TemporaryResourceError } from "@t3tools/contracts";
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -32,9 +33,12 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
+
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
@@ -126,7 +130,10 @@ export class HtmlRender extends Context.Service<
       readonly html: string;
       readonly title: string;
       readonly height: number;
-    }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
+    }) => Effect.Effect<
+      HtmlRenderReference,
+      HtmlRenderPrepareError | HtmlRenderStoreError | TemporaryResourceError
+    >;
     readonly preview: (input: {
       readonly html: string;
       readonly width?: number | undefined;
@@ -139,6 +146,7 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowser.PreviewBrowserUnsupportedError
       | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
+      | TemporaryResourceError
     >;
   }
 >()("t3/htmlRender/HtmlRender") {}
@@ -331,6 +339,7 @@ const MEASURE_FRAGMENT = htmlRenderThemeFragment(
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const policy = yield* TemporaryResourcePolicy.make;
   const config = yield* ServerConfig.ServerConfig;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -415,6 +424,7 @@ const make = Effect.gen(function* () {
     readonly title: string;
     readonly height: number;
   }) {
+    yield* policy.assertDurable(input.threadId, "HTML output");
     const html = yield* prepare(input.html);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
@@ -464,6 +474,11 @@ const make = Effect.gen(function* () {
     readonly width?: number | undefined;
     readonly appearance?: ThemeAppearance | undefined;
   }) {
+    const invocation = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+    const threadId = Option.isSome(invocation) ? invocation.value.thread?.threadId : undefined;
+    yield* threadId === undefined
+      ? policy.assertUnattributedDurable("HTML preview")
+      : policy.assertDurable(threadId, "HTML preview");
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),

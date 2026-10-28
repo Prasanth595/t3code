@@ -210,6 +210,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     }
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
+      reusableStoredDraftThread.temporary !== true &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -314,6 +315,7 @@ export function createNewThreadHandler(router: AnyRouter) {
 
     if (
       latestActiveDraftThread &&
+      latestActiveDraftThread.temporary !== true &&
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
@@ -353,6 +355,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       if (
         racedDraft &&
+        racedDraft.temporary !== true &&
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {

@@ -41,6 +41,7 @@ import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHt
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
+import { forgetTemporaryThread, setTemporaryThread } from "../temporaryThreads.ts";
 
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
@@ -258,6 +259,60 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect.each(LOADERS.filter((loader) => loader.path.startsWith("/api/orchestration/threads/")))(
+    "does not send a temporary ID through HTTP for $name",
+    (loader) =>
+      Effect.gen(function* () {
+        const harness = makeHarness(() => Response.json(loader.response));
+        setTemporaryThread(PREPARED.environmentId, THREAD.projection.thread.id, true);
+        const result = yield* loader
+          .load(harness.input)
+          .pipe(Effect.provide(harness.httpLayer), Effect.result);
+        expect(result._tag).toBe("Failure");
+        expect(harness.calls).toEqual([]);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() =>
+            forgetTemporaryThread(PREPARED.environmentId, THREAD.projection.thread.id),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(
+    LOADERS.filter((loader) => loader.path.startsWith("/api/orchestration/")).flatMap((loader) =>
+      [
+        { auth: "cookie", authorization: null },
+        { auth: "bearer", authorization: { _tag: "Bearer" as const, token: "test-token" } },
+        { auth: "DPoP", authorization: PREPARED.httpAuthorization },
+      ].map((auth) => ({ ...loader, ...auth })),
+    ),
+  )("disables caching before sending $name with $auth", ({ load, response, authorization }) =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(response));
+      yield* load({
+        ...harness.input,
+        prepared: { ...PREPARED, httpAuthorization: authorization },
+      }).pipe(Effect.provide(harness.httpLayer));
+      expect(harness.calls).toHaveLength(1);
+      const sent = harness.calls[0]!.init;
+      const headers = new Headers(sent.headers);
+      expect(sent.cache).toBe("no-store");
+      expect(headers.get("cache-control")).toBe("no-store");
+      expect(headers.get(ORCHESTRATION_PROTOCOL_HEADER)).toBe(ORCHESTRATION_PROTOCOL_VERSION_TEXT);
+      expect(headers.get("x-t3-accept-temporary-threads")).toBe("1");
+      expect(headers.get("authorization")).toBe(
+        authorization === null
+          ? null
+          : authorization._tag === "Bearer"
+            ? "Bearer test-token"
+            : "DPoP current-token",
+      );
+      expect(headers.get("dpop")).toBe(authorization?._tag === "Dpop" ? "proof-1" : null);
+      expect(sent.credentials).toBe(authorization === null ? "include" : undefined);
+    }),
+  );
+
   it.effect.each(LOADERS)("rejects an invalid $name response", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json({}));
@@ -302,6 +357,7 @@ describe("authenticated environment HTTP requests", () => {
         expect(new Headers(call.init.headers).get(ORCHESTRATION_PROTOCOL_HEADER)).toBe(
           ORCHESTRATION_PROTOCOL_VERSION_TEXT,
         );
+        expect(new Headers(call.init.headers).get("x-t3-accept-temporary-threads")).toBe("1");
       }
       expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
       // The proof signs exactly the URL sent; signers drop the query for `htu`.
@@ -432,6 +488,10 @@ describe("authenticated environment HTTP requests", () => {
       expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
         "DPoP renewed-token",
       );
+      expect(harness.calls.map((call) => call.init.cache)).toEqual(["no-store", "no-store"]);
+      expect(
+        harness.calls.map((call) => new Headers(call.init.headers).get("cache-control")),
+      ).toEqual(["no-store", "no-store"]);
     }),
   );
 

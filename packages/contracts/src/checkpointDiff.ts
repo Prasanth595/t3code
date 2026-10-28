@@ -29,6 +29,7 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
+    acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
     ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   }),
   { unsafePreserveChecks: true },
@@ -40,6 +41,7 @@ export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResu
 
 export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
   threadId: ThreadId,
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   toTurnCount: NonNegativeInt,
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
 });

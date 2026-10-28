@@ -427,6 +427,7 @@ describe("AcpAdapterV2", () => {
         const instanceId = ProviderInstanceId.make(`idle-error-${details}`);
         const threadId = ThreadId.make(`thread-idle-error-${details}`);
         const childSessionId = "mock-child-session-idle-error";
+        let nativeRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -456,6 +457,10 @@ describe("AcpAdapterV2", () => {
                 new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
               ),
               environment: { T3_ACP_IDLE_ERROR: details },
+              wrapRuntime: (runtime) => {
+                nativeRuntime = runtime;
+                return runtime;
+              },
             }),
           },
         });
@@ -496,6 +501,12 @@ describe("AcpAdapterV2", () => {
 
         const failedEvents = yield* runTurn(1);
         const failed = failedEvents.at(-1);
+        assert.isFalse(
+          failedEvents.some(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+          ),
+          "the fixture must keep child completion after the terminal event",
+        );
         assert.equal(failed?.type, "turn.terminal");
         if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
           return assert.fail("expected a failed terminal");
@@ -504,15 +515,16 @@ describe("AcpAdapterV2", () => {
           failed.childTurnsContinue,
           "the run keeps ingesting work that outlives the failed prompt",
         );
+        assert.isDefined(nativeRuntime);
+        yield* nativeRuntime!.request("_test/finish-idle-error-child", {});
         const lateSubagent = yield* runtime.events.pipe(
           Stream.filter(
             (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
           ),
           Stream.runHead,
-          Effect.timeoutOption("2 seconds"),
         );
         assert.isTrue(
-          Option.isSome(lateSubagent) && Option.isSome(lateSubagent.value),
+          Option.isSome(lateSubagent),
           "a subagent finishing after the failed prompt still reports to the run",
         );
         assert.deepEqual(

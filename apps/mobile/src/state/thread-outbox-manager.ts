@@ -1,4 +1,5 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { setTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import * as Schema from "effect/Schema";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -49,6 +50,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   let loadPromise: Promise<boolean> | null = null;
   let mutationQueue: Promise<void> = Promise.resolve();
   const revisions = new Map<MessageId, number>();
+  const keptThreadKeys = new Set<string>();
   const bumpRevision = (messageId: MessageId): void => {
     revisions.set(messageId, (revisions.get(messageId) ?? 0) + 1);
   };
@@ -175,6 +177,44 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       ]);
       return true;
     });
+
+  const keepThread = async (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    keepOnServer: () => Promise<boolean>,
+  ): Promise<boolean> => {
+    const key = `${environmentId}:${threadId}`;
+    if (!keptThreadKeys.has(key)) {
+      if (!(await keepOnServer())) return false;
+      keptThreadKeys.add(key);
+      setTemporaryThread(environmentId, threadId, false);
+    }
+    const pendingMessages = () =>
+      currentMessages().filter(
+        (message) =>
+          message.environmentId === environmentId &&
+          message.threadId === threadId &&
+          message.temporary,
+      );
+    const saved = await Promise.allSettled(
+      pendingMessages().map((message) =>
+        update({ ...message, temporary: false }, revisions.get(message.messageId) ?? 0),
+      ),
+    );
+    const failure = saved.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    const pending = pendingMessages()[0];
+    if (pending !== undefined)
+      throw new ThreadOutboxManagerError({
+        operation: "update",
+        environmentId,
+        threadId,
+        messageId: pending.messageId,
+        cause: new Error("Queued messages changed while saving. Try Keep again."),
+      });
+    keptThreadKeys.delete(key);
+    return true;
+  };
 
   // Check live ownership too; editor locks can change without message revision updates.
   const remove = (
@@ -334,6 +374,9 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         bumpRevision(message.messageId);
       }
       setMessages(reconciledMessages);
+      for (const key of keptThreadKeys) {
+        if (key.startsWith(`${environmentId}:`)) keptThreadKeys.delete(key);
+      }
       // Report the actual removed messages so caller-owned attachment cleanup includes records loaded here.
       return removed;
     });
@@ -347,6 +390,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     confirmQueued,
     revisionOf: (messageId: MessageId): number => revisions.get(messageId) ?? 0,
     update,
+    keepThread,
     remove,
     clearEnvironment,
   };

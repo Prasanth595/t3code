@@ -1,3 +1,4 @@
+import { TemporaryResourceError } from "@t3tools/contracts";
 import type { ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -7,12 +8,22 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
+
+const isTemporaryResourceError = Schema.is(TemporaryResourceError);
+
 export const MCP_APP_MODEL_CONTEXT_MAX_BYTES = 16 * 1024;
 
 export class McpAppModelContextError extends Schema.TaggedError<McpAppModelContextError>()(
   "McpAppModelContextError",
   { cause: Schema.optional(Schema.Defect()) },
-) {}
+) {
+  override get message(): string {
+    return isTemporaryResourceError(this.cause)
+      ? this.cause.message
+      : "MCP app context could not be saved.";
+  }
+}
 
 export interface McpAppModelContextEntry {
   readonly itemId: string;
@@ -42,6 +53,7 @@ export const layer = Layer.effect(
   McpAppModelContext,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const policy = yield* TemporaryResourcePolicy.make;
     const fail = (cause: unknown) => new McpAppModelContextError({ cause });
 
     const set = Effect.fn("McpAppModelContext.set")(function* (input: {
@@ -51,6 +63,7 @@ export const layer = Layer.effect(
       readonly tool: string;
       readonly text: string;
     }) {
+      yield* policy.assertDurable(input.threadId, "MCP app context").pipe(Effect.mapError(fail));
       if (input.text.trim() === "") {
         yield* sql`
           DELETE FROM mcp_app_model_context

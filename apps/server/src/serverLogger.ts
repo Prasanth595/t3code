@@ -1,11 +1,15 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redactable from "effect/Redactable";
 import * as References from "effect/References";
+import * as Option from "effect/Option";
+
+import * as TemporaryThreadDiagnostics from "./observability/TemporaryThreadDiagnostics.ts";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpLogger from "effect/observability/OtlpLogger";
 
@@ -44,6 +48,31 @@ function prettyCauseFields(value: unknown): unknown {
 
 export const layer = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const diagnostics = yield* Effect.serviceOption(
+    TemporaryThreadDiagnostics.TemporaryThreadDiagnostics,
+  );
+  const protect = (logger: Logger.Logger<unknown, void>) =>
+    Logger.make<unknown, void>((options) => {
+      if (Option.isSome(diagnostics) && !diagnostics.value.canRecord()) {
+        const message = TemporaryThreadDiagnostics.operationalLogMessages.get(options.logLevel);
+        if (message === undefined || !diagnostics.value.canRecordOperational()) return;
+        const context = options.fiber.context.pipe(
+          Context.add(References.CurrentLogAnnotations, {}),
+          Context.add(References.CurrentLogSpans, []),
+        );
+        logger.log({
+          ...options,
+          message: [message],
+          cause: Cause.empty,
+          fiber: {
+            ...options.fiber,
+            getRef: (reference) => Context.get(context, reference),
+          },
+        });
+        return;
+      }
+      logger.log(options);
+    });
   const hostName = yield* HostProcess.Hostname;
   const layerMinimumLogLevel = Layer.succeed(References.MinimumLogLevel, config.logLevel);
 
@@ -62,8 +91,8 @@ export const layer = Effect.gen(function* () {
   // OTLP includes traced messages as log records, so also using tracerLogger would duplicate in-span exports.
   const layerLogger = Logger.layer(
     otlpLogger === undefined
-      ? [consolePretty(), Logger.tracerLogger]
-      : [consolePretty(), otlpLogger],
+      ? [protect(consolePretty()), protect(Logger.tracerLogger)]
+      : [protect(consolePretty()), Effect.map(otlpLogger, protect)],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),

@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -11,6 +12,7 @@ import { FetchHttpClient, type HttpMethod } from "effect/http";
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import { isTemporaryThread } from "../temporaryThreads.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -29,10 +31,12 @@ export function withOrchestrationProtocolHeader(
   headers: EnvironmentHttpAuthHeaders,
 ): EnvironmentHttpAuthHeaders & {
   readonly [ORCHESTRATION_PROTOCOL_HEADER]: typeof ORCHESTRATION_PROTOCOL_VERSION_TEXT;
+  readonly "x-t3-accept-temporary-threads": "1";
 } {
   return {
     ...headers,
     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+    "x-t3-accept-temporary-threads": "1",
   };
 }
 
@@ -40,12 +44,20 @@ export function withOrchestrationProtocolHeader(
  * Cookie-authenticated environments need credentialed mode for cross-origin fetches; bearer/DPoP uses headers.
  * `FetchHttpClient` reads `RequestInit` from the fiber context per request.
  */
-const withEnvironmentCredentials = <A, E, R>(
+const withEnvironmentRequestOptions = <A, E, R>(
   authorization: PreparedHttpAuthorization | null,
+  preventCaching: boolean,
   request: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  authorization === null
-    ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
+  authorization === null || preventCaching
+    ? request.pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, {
+          ...(authorization === null ? { credentials: "include" as const } : {}),
+          ...(preventCaching
+            ? { cache: "no-store" as const, headers: { "cache-control": "no-store" } }
+            : {}),
+        }),
+      )
     : request;
 
 const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironmentAuthHeaders")(
@@ -111,6 +123,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   R,
 >(input: {
   readonly prepared: PreparedConnection;
+  readonly threadId?: ThreadId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly method: HttpMethod.HttpMethod;
@@ -177,10 +190,24 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         requestUrl,
         input.signer,
       );
+      if (
+        input.group === "orchestration" &&
+        input.threadId !== undefined &&
+        isTemporaryThread(input.prepared.environmentId, input.threadId)
+      ) {
+        return yield* new RemoteEnvironmentAuthFetchError({
+          message: "Keep this thread before downloading its conversation.",
+          cause: "temporary_http_read",
+        });
+      }
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,
         input.timeoutMs,
-        withEnvironmentCredentials(authorization, input.request({ client, headers })),
+        withEnvironmentRequestOptions(
+          authorization,
+          input.group === "orchestration",
+          input.request({ client, headers }),
+        ),
       ).pipe(Effect.result);
 
       if (Result.isFailure(result)) {

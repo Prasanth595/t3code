@@ -7,11 +7,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import * as TemporaryThreadDiagnostics from "./TemporaryThreadDiagnostics.ts";
 
 import * as ServerConfig from "../config.ts";
 
 const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
-  function* (logsDir: string) {
+  function* (logsDir: string, canSnapshot: () => boolean) {
+    if (!canSnapshot()) return;
     const fs = yield* FileSystem.FileSystem;
     const timestamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");
     const path = NodePath.join(logsDir, `server-${process.pid}-${timestamp}.heapsnapshot`);
@@ -27,9 +31,13 @@ const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
+    const diagnostics = yield* Effect.serviceOption(
+      TemporaryThreadDiagnostics.TemporaryThreadDiagnostics,
+    );
+    const canSnapshot = () => Option.isNone(diagnostics) || diagnostics.value.canSnapshot();
     const { logsDir } = yield* ServerConfig.ServerConfig;
     const runFork = Effect.runForkWith(yield* Effect.context<FileSystem.FileSystem>());
-    const onSignal = () => void runFork(writeHeapSnapshot(logsDir));
+    const onSignal = () => void runFork(writeHeapSnapshot(logsDir, canSnapshot));
     yield* Effect.acquireRelease(
       Effect.sync(() => process.on("SIGUSR2", onSignal)),
       () => Effect.sync(() => process.off("SIGUSR2", onSignal)),

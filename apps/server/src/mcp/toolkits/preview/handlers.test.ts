@@ -1,3 +1,4 @@
+import { temporaryResourceStorage } from "../../../orchestration-v2/testkit/TemporaryResourceStorage.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
@@ -101,3 +102,22 @@ describe("claimPreviewRecording", () => {
       ),
   );
 });
+
+it.effect("temporary recording claims fail before reading or moving media", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(
+      claimPreviewRecording(ThreadId.make("private-recording"), { private: "temporary-sentinel" }),
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") expect(result.failure.message).toContain("Keep this thread");
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        temporaryResourceStorage,
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-private-recording-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  ),
+);

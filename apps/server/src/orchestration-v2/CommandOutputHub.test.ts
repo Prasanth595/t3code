@@ -363,3 +363,19 @@ layer("CommandOutputHub", (it) => {
     ),
   );
 });
+
+it.effect("discarding a temporary thread purges output and rejects late subscribers", () =>
+  Effect.gen(function* () {
+    const threadId = yield* seedThread;
+    const hub = yield* CommandOutputHub.CommandOutputHub;
+    yield* writeCommandItem(threadId, { status: "running" });
+    yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "temporary-sentinel" });
+    yield* hub.purgeThread(threadId);
+    yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "late-private-output" });
+    const result = yield* Effect.result(
+      hub.subscribe({ threadId, itemId: ITEM_ID }).pipe(Stream.runCollect),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.include(result.failure.message, "discarded");
+  }).pipe(Effect.provide(layerTest)),
+);

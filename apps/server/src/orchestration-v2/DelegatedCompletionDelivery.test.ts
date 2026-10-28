@@ -428,7 +428,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
             },
           ],
         });
-        yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+        yield* sink.stream({ threadId, afterSequence, eventType: "subagent.updated" }).pipe(
           Stream.filter(
             (stored) =>
               stored.event.type === "subagent.updated" &&
@@ -1477,16 +1477,18 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const queued = before.runs.find((run) => run.ordinal === 3)!;
         assert.equal(queued.status, "queued");
         const waitForStatus = (afterSequence: number, status: string) =>
-          eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
-            Stream.filter(
-              (stored) =>
-                stored.event.type === "subagent.updated" &&
-                stored.event.payload.id === queued.delegatedTaskId &&
-                stored.event.payload.status === status,
-            ),
-            Stream.take(1),
-            Stream.runHead,
-          );
+          eventSink
+            .stream({ threadId: parentThreadId, afterSequence, eventType: "subagent.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === queued.delegatedTaskId &&
+                  stored.event.payload.status === status,
+              ),
+              Stream.take(1),
+              Stream.runHead,
+            );
         const afterSequence = yield* eventSink.latestSequence();
         yield* orchestrator.dispatch({
           type: "thread.stop",
@@ -1522,7 +1524,11 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         )!;
         if (activeTask.result === null) {
           yield* eventSink
-            .stream({ afterSequence: endedSequence, eventType: "subagent.updated" })
+            .stream({
+              threadId: parentThreadId,
+              afterSequence: endedSequence,
+              eventType: "subagent.updated",
+            })
             .pipe(
               Stream.filter(
                 (stored) =>
@@ -2388,7 +2394,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         ],
       });
       const settled = yield* eventSink
-        .stream({ afterSequence, eventType: "subagent.updated" })
+        .stream({ threadId, afterSequence, eventType: "subagent.updated" })
         .pipe(
           Stream.filter(
             (stored) =>
@@ -2753,7 +2759,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       });
 
       const settled = yield* eventSink
-        .stream({ afterSequence, eventType: "subagent.updated" })
+        .stream({ threadId, afterSequence, eventType: "subagent.updated" })
         .pipe(
           Stream.filter(
             (stored) =>
@@ -3014,7 +3020,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             return { task: { id: taskId }, childThreadId, run: run.payload };
           });
         const settled = (taskId: NodeId, afterSequence: number) =>
-          sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+          sink.stream({ threadId, afterSequence, eventType: "subagent.updated" }).pipe(
             Stream.filter(
               (stored) =>
                 stored.event.type === "subagent.updated" &&

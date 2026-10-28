@@ -1,6 +1,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type ThreadId,
+  type OrchestrationV2SearchThreadInput,
   type OrchestrationGetTurnDiffResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createEnvironmentCommand,
   type QueryAnswerHandler,
 } from "./runtime.ts";
@@ -23,7 +25,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, request, subscribe } from "../rpc/client.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
@@ -95,11 +97,21 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       ...onCheckpointDiffAnswer,
     }),
     workflowScript: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:workflow-script",
       tag: ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.getWorkflowScript, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
@@ -110,23 +122,42 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       ...onCheckpointDiffAnswer,
     }),
     threadFind: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-find",
       tag: ORCHESTRATION_V2_WS_METHODS.searchThread,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.searchThread, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
-    threadFindProgressive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    threadFindProgressive: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-find-progressive",
-      tag: ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+      subscribe: (input: OrchestrationV2SearchThreadInput) =>
+        subscribe(ORCHESTRATION_V2_WS_METHODS.searchThreadStream, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       completeWhen: (result) => result.complete !== false,
       idleTtlMs: 0,
     }),
@@ -144,6 +175,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     worktreeThreadIds: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:worktree-thread-ids",
       tag: ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds,
+      execute: (input) =>
+        request(ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds, {
+          ...input,
+          acceptTemporaryThreads: true,
+        }),
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),

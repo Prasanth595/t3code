@@ -419,6 +419,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   inline
                   text={workEntry.detail ?? previewText}
                   cwd={ctx.markdownCwd}
+                  threadRef={ctx.threadRef ?? undefined}
                   parseRawHtml={false}
                   extraRemarkPlugins={[
                     [

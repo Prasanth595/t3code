@@ -135,6 +135,16 @@ export function applyShellStreamEvent(
     { readonly kind: "snapshot" } | { readonly kind: "synchronized" }
   >,
 ): OrchestrationV2ShellSnapshot {
+  if (event.kind === "temporary.snapshot") {
+    const threads = snapshot.threads.filter((thread) => thread.temporary !== true);
+    const archivedThreads = snapshot.archivedThreads.filter((thread) => thread.temporary !== true);
+    const saved = new Set([...threads, ...archivedThreads].map((thread) => thread.id));
+    return {
+      ...snapshot,
+      threads: [...threads, ...event.threads.filter((thread) => !saved.has(thread.id))],
+      archivedThreads,
+    };
+  }
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {

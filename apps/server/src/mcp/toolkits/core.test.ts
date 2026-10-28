@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  AttachmentCreateUploadUrlResult,
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
@@ -55,6 +56,9 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
+import * as AttachmentUpload from "../../assets/AttachmentUpload.ts";
+import * as TemporaryThreadDiagnostics from "../../observability/TemporaryThreadDiagnostics.ts";
+import * as TemporaryThreadStorage from "../../orchestration-v2/TemporaryThreadStorage.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
@@ -72,6 +76,7 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeAttachmentUploadUrlResult = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -859,9 +864,10 @@ it.effect("discovers workflow stop targets and requires orchestration capability
   );
 });
 
-it.effect("only the caller that prepared a pending upload can discard it", () =>
+it.effect("saved uploads stay scoped beside temporary chats and discard stays caller-owned", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
+    const diagnostics = yield* TemporaryThreadDiagnostics.TemporaryThreadDiagnostics;
     const call = (
       name: string,
       args: Record<string, unknown>,
@@ -873,12 +879,35 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
+    const external = { ...scope, thread: undefined };
+    const upload = { name: "shot.png", mimeType: "image/png", sizeBytes: 4 };
+    expect((yield* call("t3_attachment_prepare_upload", { upload }, external)).isError).toBe(false);
+    diagnostics.enter(ThreadId.make("mcp-private-upload"));
     const prepared = yield* call(
       "t3_attachment_prepare_upload",
       { upload: { name: "shot.png", mimeType: "image/png", sizeBytes: 4 } },
       scope,
     );
-    const { attachmentId } = prepared.structuredContent as { readonly attachmentId: string };
+    expect(prepared.isError).toBe(false);
+    const { attachmentId, relativeUrl } = yield* decodeAttachmentUploadUrlResult(
+      prepared.structuredContent,
+    );
+    const claims = yield* AttachmentUpload.validateAttachmentUploadToken(
+      relativeUrl.slice(AttachmentUpload.ATTACHMENT_UPLOAD_ROUTE_PREFIX.length + 1),
+    );
+    expect(claims?.owner).toEqual({ _tag: "thread", threadId });
+    const privateResult = yield* call(
+      "t3_attachment_prepare_upload",
+      { upload },
+      { ...scope, thread: { ...scope.thread!, threadId: ThreadId.make("mcp-private-upload") } },
+    );
+    expect(declaredFailure(privateResult)).toMatchObject({ code: "capability_denied" });
+    const externalResult = yield* call(
+      "t3_attachment_prepare_upload",
+      { upload: { ...upload, owner: { _tag: "thread", threadId } } },
+      external,
+    );
+    expect(externalResult.isError).toBe(true);
     const otherThread = {
       ...scope,
       requestNamespace: "other-session",
@@ -888,12 +917,14 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
     expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
 
+    diagnostics.leave(ThreadId.make("mcp-private-upload"));
     yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
-    yield* call(
+    const later = yield* call(
       "t3_attachment_prepare_upload",
       { upload: { name: "later.png", mimeType: "image/png", sizeBytes: 4 } },
       scope,
     );
+    expect(later.isError).toBe(false);
 
     const discarded = yield* call(
       "t3_attachment_discard",
@@ -906,9 +937,16 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       McpHttpServer.layerAttachmentToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(ServerSecretStore.layer),
+        Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+        Layer.provideMerge(TemporaryThreadDiagnostics.layer),
+        Layer.provideMerge(
+          Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+            isTemporary: (id) => Effect.succeed(id === "mcp-private-upload"),
+            isDiscarded: () => Effect.succeed(false),
+          }),
+        ),
       ),
     ),
   ),

@@ -1,3 +1,5 @@
+import { toastManager } from "../ui/toast";
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -175,6 +177,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
   }) => {
+    if (isTemporaryThread(environmentId, input.sourceThreadId)) {
+      toastManager.add({ type: "info", title: "Keep this thread before forking." });
+      return;
+    }
+
     if (!activeThread || activeEnvironmentUnavailable) return;
     const targetThreadId = newThreadId();
     const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);

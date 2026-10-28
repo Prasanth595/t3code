@@ -4,8 +4,13 @@ import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observabilit
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
+import * as Option from "effect/Option";
+
+import * as TemporaryThreadDiagnostics from "./TemporaryThreadDiagnostics.ts";
 import * as Tracer from "effect/Tracer";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpMetrics from "effect/observability/OtlpMetrics";
@@ -17,9 +22,15 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 
+const operationalEventNames = new Set(TemporaryThreadDiagnostics.operationalLogMessages.values());
+
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const diagnostics = yield* Effect.serviceOption(
+      TemporaryThreadDiagnostics.TemporaryThreadDiagnostics,
+    );
+    const canRecord = () => Option.isNone(diagnostics) || diagnostics.value.canRecord();
 
     const traces = config.otlpTracesExport;
     const metrics = config.otlpMetricsExport;
@@ -71,9 +82,47 @@ export const layer = Layer.unwrap(
           ...(delegate ? { delegate } : {}),
         });
 
+        const protectedTracer = Tracer.make({
+          span: (options) => {
+            const span = canRecord() ? tracer.span(options) : new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            const event = span.event.bind(span);
+            let hasOperationalSignal = false;
+            span.event = (name, time, attributes) => {
+              hasOperationalSignal ||= operationalEventNames.has(name);
+              event(name, time, attributes);
+            };
+            span.end = (time, exit) => {
+              if (canRecord()) {
+                end(time, exit);
+                return;
+              }
+              if (Option.isNone(diagnostics) || !diagnostics.value.canRecordOperational()) return;
+              if (Exit.isSuccess(exit) && !hasOperationalSignal) return;
+              const signal = tracer.span({
+                ...options,
+                name: Exit.isSuccess(exit) ? "Server operation signal" : "Server operation failed",
+                parent: Option.none(),
+                annotations: Context.empty(),
+                links: [],
+                kind: "internal",
+                root: true,
+              });
+              signal.end(time, Exit.void);
+            };
+            return span;
+          },
+          ...(tracer.context ? { context: tracer.context } : {}),
+        });
+
         return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, tracer),
-          BrowserTraceCollector.layer(sink),
+          Layer.succeed(Tracer.Tracer, protectedTracer),
+          BrowserTraceCollector.layer({
+            ...sink,
+            push: (record) => {
+              if (canRecord()) sink.push(record);
+            },
+          }),
         );
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(layerSerialization));

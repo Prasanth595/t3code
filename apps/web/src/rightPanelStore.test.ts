@@ -1,3 +1,4 @@
+import { setTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -1220,4 +1221,26 @@ describe("rightPanelStore", () => {
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
   });
+});
+
+it("keeps temporary panels and closed views in memory without saving their paths or thread keys", async () => {
+  setTemporaryThread(refA.environmentId, refA.threadId, true);
+  try {
+    const panels = useRightPanelStore.getState();
+    panels.openFile(refA, "temporary-path-sentinel.ts");
+    panels.openFile(refB, "saved-path.ts");
+    panels.closeAllSurfaces(refA);
+    expect(JSON.stringify(useClosedViewStore.getState().entries)).toContain(
+      "temporary-path-sentinel.ts",
+    );
+    const panelOptions = useRightPanelStore.persist.getOptions();
+    const panelBytes = JSON.stringify(await panelOptions.storage!.getItem(panelOptions.name!));
+    const closedOptions = useClosedViewStore.persist.getOptions();
+    const closedBytes = JSON.stringify(await closedOptions.storage!.getItem(closedOptions.name!));
+    expect(panelBytes).toContain("saved-path.ts");
+    expect(panelBytes + closedBytes).not.toContain("temporary-path-sentinel.ts");
+    expect(panelBytes + closedBytes).not.toContain(refA.threadId);
+  } finally {
+    setTemporaryThread(refA.environmentId, refA.threadId, false);
+  }
 });

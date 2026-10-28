@@ -2,7 +2,10 @@ import { OrchestrationV2ThreadShellJson } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { StoredOrchestrationShellSnapshot } from "./orchestrationCache.ts";
+import {
+  filterTemporaryShellSnapshot,
+  StoredOrchestrationShellSnapshot,
+} from "./orchestrationCache.ts";
 
 const ROWS_PER_CHUNK = 32;
 
@@ -74,7 +77,7 @@ export function makeStoredShellSnapshotEncoder(
         return rows.map((row) => encodedRows.get(row));
       });
 
-    const { snapshot } = stored;
+    const snapshot = filterTemporaryShellSnapshot(stored.snapshot, stored.environmentId);
     const threads = yield* encodeRows(snapshot.threads);
     const archivedThreads = yield* encodeRows(snapshot.archivedThreads);
     if (hasWorked) yield* yieldToHost;

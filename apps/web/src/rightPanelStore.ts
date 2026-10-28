@@ -1,3 +1,4 @@
+import { isTemporaryThreadKey } from "./temporaryChat";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -1110,13 +1111,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
           Object.entries(state.byThreadKey).filter(
-            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
+            ([threadKey]) => !isPullRequestsPanelKey(threadKey) && !isTemporaryThreadKey(threadKey),
           ),
         ),
         threadPanelVisibilityByThreadKey: Object.fromEntries(
           Object.entries(state.threadPanelVisibilityByThreadKey).flatMap(
             ([threadKey, visibility]) =>
-              visibility.inlineOpen ? [] : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
+              visibility.inlineOpen || isTemporaryThreadKey(threadKey)
+                ? []
+                : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
           ),
         ),
       }),

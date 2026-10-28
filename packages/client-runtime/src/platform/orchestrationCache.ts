@@ -9,6 +9,35 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { isTemporaryThread } from "../temporaryThreads.ts";
+
+export function canPersistThreadSnapshot(
+  snapshot: OrchestrationV2ThreadDetailSnapshot,
+  environmentId?: string,
+): boolean {
+  return (
+    snapshot.projection.thread.temporary !== true &&
+    (environmentId === undefined ||
+      !isTemporaryThread(environmentId, snapshot.projection.thread.id))
+  );
+}
+
+export function filterTemporaryShellSnapshot<
+  A extends {
+    readonly threads: ReadonlyArray<{ readonly id: string; readonly temporary?: boolean }>;
+    readonly archivedThreads: ReadonlyArray<{ readonly id: string; readonly temporary?: boolean }>;
+  },
+>(snapshot: A, environmentId?: string): A {
+  const saved = (thread: { readonly id: string; readonly temporary?: boolean }) =>
+    thread.temporary !== true &&
+    (environmentId === undefined || !isTemporaryThread(environmentId, thread.id));
+  return {
+    ...snapshot,
+    threads: snapshot.threads.filter(saved),
+    archivedThreads: snapshot.archivedThreads.filter(saved),
+  };
+}
+
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
 // Older caches may contain human turns that bypassed server history budgets.
 export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;

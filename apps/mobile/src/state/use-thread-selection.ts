@@ -68,6 +68,7 @@ function threadDetailToShell(
     projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
   return presentThreadShell(environmentId, {
     id: thread.id,
+    temporary: thread.temporary,
     projectId: thread.projectId,
     title: thread.title,
     providerInstanceId: thread.providerInstanceId,
@@ -140,6 +141,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
           }
       : lastRouteThreadRef;
   const selectedThreadShell = useQuietThreadShell(selectedThreadRef);
+  const shellStatus =
+    selectedThreadShell?.runtime?.status ?? selectedThreadShell?.latestRun?.status;
   const selectedThreadKey =
     selectedThreadRef === null
       ? null
@@ -151,6 +154,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     threadKey: selectedThreadKey,
     queuedMessagesByThreadKey,
     outcomes: creationOutcome,
+    shellStatus,
   });
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
   const needsDetail =
@@ -171,6 +175,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     threadKey: selectedThreadKey,
     pending: pendingCreation,
     previous: previousCreation,
+    shellStatus,
     detail: selectedThreadDetail,
   });
   // Compare pendingCreation contents; new render-time objects would otherwise continually set state.

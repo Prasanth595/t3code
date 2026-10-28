@@ -1,12 +1,54 @@
-import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type AttachmentUploadOwner,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 
-import { parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
+import { newTaskDraftThreadId, parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
 import type { DraftComposerAttachment } from "./composerImages";
 
 export interface ComposerAttachmentUploadRequest {
   readonly environmentId: EnvironmentId;
   readonly attachment: DraftComposerAttachment;
+  readonly owner?: AttachmentUploadOwner;
+}
+
+export function composerDraftUploadOwner(
+  draftKey: string,
+  queuedMessages: ReadonlyArray<{ readonly messageId: string; readonly threadId: ThreadId }>,
+  environmentId: EnvironmentId,
+  draft?: { readonly temporary?: boolean },
+): AttachmentUploadOwner {
+  const draftOwner = { _tag: "draft" as const, draftId: draftKey };
+  if (draftKey.startsWith("new-task:"))
+    return {
+      ...draftOwner,
+      threadId: newTaskDraftThreadId(draftKey),
+      temporary: draft?.temporary === true,
+    };
+  if (draftKey.startsWith("pending-task:")) {
+    const queued = queuedMessages.find(
+      (message) => `pending-task:${message.messageId}` === draftKey,
+    );
+    return queued ? { _tag: "thread", threadId: queued.threadId } : draftOwner;
+  }
+  if (!draftKey.startsWith(`${environmentId}:`)) return draftOwner;
+  const localKey = draftKey.slice(environmentId.length + 1).split("~queued-edit~")[0]!;
+  if (localKey.startsWith("question-")) {
+    try {
+      const threadId: unknown = JSON.parse(
+        decodeURIComponent(localKey.slice(9, localKey.lastIndexOf("-%5B"))),
+      );
+      return typeof threadId === "string"
+        ? { _tag: "thread", threadId: ThreadId.make(threadId) }
+        : draftOwner;
+    } catch {
+      return draftOwner;
+    }
+  }
+  return { _tag: "thread", threadId: ThreadId.make(localKey) };
 }
 
 export type ComposerAttachmentUploadState =

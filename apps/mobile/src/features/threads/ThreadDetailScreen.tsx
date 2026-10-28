@@ -14,6 +14,7 @@ import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-v
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -1430,6 +1431,18 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         }}
                       />
                     </Animated.View>
+                  ) : null}
+                  {props.selectedThread.temporary ? (
+                    <View
+                      accessibilityRole="alert"
+                      className="mx-3 mb-2 gap-1 rounded-xl border border-border-subtle bg-screen p-3"
+                    >
+                      <Text className="text-sm font-t3-medium text-foreground">Temporary chat</Text>
+                      <Text className="text-xs text-foreground-muted">
+                        T3 does not save this chat. Deleted when you leave. Keep the thread to save
+                        it. Providers may keep their own records. File changes stay.
+                      </Text>
+                    </View>
                   ) : null}
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}

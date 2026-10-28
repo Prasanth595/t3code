@@ -38,6 +38,7 @@ import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as PlatformError from "effect/PlatformError";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -52,7 +53,6 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
-import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -249,6 +249,94 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
+  it.effect.each([true, false])(
+    "isolates temporary startup files and clears inherited notify: %s",
+    (temporary) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const commands: Array<ChildProcess.StandardCommand> = [];
+        let privateDirectory: string | undefined;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            assert.isTrue(ChildProcess.isStandardCommand(command));
+            if (ChildProcess.isStandardCommand(command)) {
+              commands.push(command);
+              const directories = command.args.filter((arg) => arg.startsWith("sqlite_home="));
+              assert.lengthOf(directories, temporary ? 1 : 0);
+              if (temporary) {
+                privateDirectory = JSON.parse(directories[0]!.slice("sqlite_home=".length));
+                assert.isString(privateDirectory);
+                if (privateDirectory === undefined) return yield* Effect.die("missing directory");
+                assert.include(command.args, `log_dir=${JSON.stringify(privateDirectory)}`);
+                assert.isTrue(yield* fs.exists(privateDirectory));
+                yield* fs.writeFileString(`${privateDirectory}/logs_2.sqlite`, "private-sentinel");
+              }
+            }
+            return yield* new PlatformError.PlatformError(
+              new PlatformError.SystemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+              }),
+            );
+          }),
+        );
+        const inheritedNotify = 'notify=["legacy-notify-recorder"]';
+        yield* Effect.gen(function* () {
+          const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+            Effect.provide(
+              CodexAdapterV2.layerAppServerClientFactory.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                    Layer.succeed(
+                      ProviderEventLoggers.ProviderEventLoggers,
+                      ProviderEventLoggers.NoOpProviderEventLoggers,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          yield* factory
+            .open({
+              instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+              threadId: ThreadId.make("notify-startup"),
+              providerSessionId: ProviderSessionId.make("notify-startup-session"),
+              runtimePolicy: {
+                ...CODEX_TEST_RUNTIME_POLICY,
+                ...(temporary ? { temporary: true } : {}),
+              },
+              settings: { ...DEFAULT_CODEX_SETTINGS, launchArgs: `-c '${inheritedNotify}'` },
+              environment: {},
+            })
+            .pipe(Effect.flip);
+        }).pipe(Effect.scoped);
+        assert.lengthOf(commands, 1);
+        assert.deepEqual(
+          commands[0]!.args.filter((arg) => arg.startsWith("notify=")),
+          temporary ? [inheritedNotify, "notify=[]"] : [inheritedNotify],
+        );
+        if (privateDirectory !== undefined) assert.isFalse(yield* fs.exists(privateDirectory));
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not install a protocol logger for temporary sessions", () =>
+    Effect.sync(() => {
+      const logger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/unused",
+          write: () => Effect.die("unexpected write"),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("temporary-log"),
+        providerSessionId: ProviderSessionId.make("temporary-log-session"),
+        temporary: true,
+      });
+      assert.isUndefined(logger);
+    }),
+  );
+
   it.effect("logs decoded app-server frames once with credentials redacted", () =>
     Effect.gen(function* () {
       const writes: Array<{
@@ -566,6 +654,8 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly temporary?: boolean;
+  readonly nativeTemporary?: boolean;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -606,7 +696,34 @@ function codexReplayPreamble(input: {
       frame: {
         id: 2,
         method: "thread/start",
-        params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+        params: {
+          config: {
+            ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+            ...(input.temporary
+              ? {
+                  "history.persistence": "none",
+                  "features.shell_snapshot": false,
+                  "features.shell_snapshot_v2": false,
+                  "features.memories": false,
+                  "features.memory_tool": false,
+                  "memories.generate_memories": false,
+                  "memories.use_memories": false,
+                  "features.multi_agent": false,
+                  "features.multi_agent_v2": false,
+                  "agents.enabled": false,
+                  "features.hooks": false,
+                  notify: [],
+                  "otel.exporter": "none",
+                  "otel.trace_exporter": "none",
+                  "otel.metrics_exporter": "none",
+                  "otel.log_user_prompt": false,
+                  "analytics.enabled": false,
+                  "feedback.enabled": false,
+                }
+              : {}),
+          },
+          ...(input.temporary ? { ephemeral: true, cwd: "/workspace", model: "gpt-5.4" } : {}),
+        },
       },
     },
     {
@@ -621,12 +738,15 @@ function codexReplayPreamble(input: {
             projectId: null,
             forkedFromId: null,
             preview: "",
-            ephemeral: false,
+            ephemeral: input.nativeTemporary ?? input.temporary ?? false,
             modelProvider: "openai",
             createdAt: 1782622440,
             updatedAt: 1782622440,
             status: { type: "idle" },
-            path: `/tmp/${input.nativeThreadId}.jsonl`,
+            path:
+              (input.nativeTemporary ?? input.temporary)
+                ? null
+                : `/tmp/${input.nativeThreadId}.jsonl`,
             cwd: "/workspace",
             cliVersion: "0.144.0",
             source: "vscode",
@@ -866,6 +986,7 @@ describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    temporary = false,
   ) =>
     Effect.gen(function* () {
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -875,7 +996,10 @@ describe("CodexAdapterV2 session initialize", () => {
       let initializeRequests = 0;
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_CODEX_SETTINGS,
+        settings: {
+          ...DEFAULT_CODEX_SETTINGS,
+          launchArgs: `-c 'notify=["legacy-notify-recorder"]'`,
+        },
         environment: {},
         clientFactory: {
           open: (openInput) =>
@@ -914,14 +1038,18 @@ describe("CodexAdapterV2 session initialize", () => {
         threadId: ThreadId.make(`thread-${transcript.scenario}`),
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, ...(temporary ? { temporary: true } : {}) },
       });
       return {
+        runtime,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
             modelSelection: CODEX_TEST_MODEL_SELECTION,
-            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            runtimePolicy: {
+              ...CODEX_TEST_RUNTIME_POLICY,
+              ...(temporary ? { temporary: true } : {}),
+            },
           }),
         initializeRequests: () => initializeRequests,
       };
@@ -929,6 +1057,159 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect("starts a temporary native thread and retains its live conversation", () =>
+    Effect.gen(function* () {
+      const completed = (id: string): CodexReplay.CodexAppServerReplayEntry => ({
+        type: "emit_inbound",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: "temporary-native",
+            turn: makeCodexReplayTurn({ id, status: "completed" }),
+          },
+        },
+      });
+      const entries = [
+        ...codexReplayPreamble({
+          nativeThreadId: "temporary-native",
+          nativeTurnId: "temporary-turn-1",
+          prompt: "First temporary message.",
+          temporary: true,
+        }),
+        completed("temporary-turn-1"),
+        ...codexReplayPreamble({
+          nativeThreadId: "temporary-native",
+          nativeTurnId: "temporary-turn-2",
+          prompt: "Continue temporary conversation.",
+        })
+          .slice(-3)
+          .map((entry) =>
+            "frame" in entry && Predicate.isObject(entry.frame) && "id" in entry.frame
+              ? withReplayRequestId(entry, 4)
+              : entry,
+          ),
+        completed("temporary-turn-2"),
+      ];
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({ scenario: "temporary-native", entries }),
+        undefined,
+        true,
+      );
+      assert.isFalse(session.runtime.providerSession.capabilities.threads.canForkThread);
+      assert.isFalse(session.runtime.providerSession.capabilities.subagents.supportsSubagents);
+      const first = yield* session.ensureThread("thread-temporary-native");
+      const terminals = yield* Queue.unbounded<void>();
+      yield* session.runtime.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "turn.terminal" ? Queue.offer(terminals, undefined) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* session.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: ThreadId.make("thread-temporary-native"),
+          providerThread: first,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("temporary-turn-1"),
+          text: "First temporary message.",
+        }),
+      );
+      yield* Queue.take(terminals);
+      const second = yield* session.ensureThread("thread-temporary-native");
+      assert.equal(second.nativeThreadRef?.nativeId, first.nativeThreadRef?.nativeId);
+      if (session.runtime.unloadThread !== undefined)
+        yield* session.runtime.unloadThread({ providerThread: first });
+      const resumed = yield* session.runtime.resumeThread({ providerThread: first });
+      assert.equal(resumed.nativeThreadRef?.nativeId, first.nativeThreadRef?.nativeId);
+      yield* session.runtime.startTurn({
+        ...makeCodexTestTurnInput({
+          threadId: ThreadId.make("thread-temporary-native"),
+          providerThread: resumed,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("temporary-turn-2"),
+          text: "Continue temporary conversation.",
+        }),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+      });
+      yield* Queue.take(terminals);
+      assert.equal(session.initializeRequests(), 1);
+      const replacement = yield* session.runtime
+        .ensureThread({
+          threadId: ThreadId.make("thread-temporary-native"),
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, temporary: true },
+          existingProviderThread: { ...first, nativeThreadRef: null },
+          forceNewNativeThread: true,
+        })
+        .pipe(Effect.flip);
+      assert.equal(replacement._tag, "ProviderAdapterEnsureThreadError");
+      assert.instanceOf(replacement.cause, ProviderAdapter.ProviderAdapterProtocolError);
+      const fork = yield* session.runtime
+        .forkThread({
+          sourceProviderThread: first,
+          targetThreadId: ThreadId.make("temporary-child"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(fork._tag, "ProviderAdapterForkThreadError");
+      assert.match(String(fork.cause), /Keep the temporary thread/);
+      const lost = yield* session.runtime
+        .resumeThread({
+          providerThread: {
+            ...first,
+            nativeThreadRef: { driver: first.driver, nativeId: "lost-native", strength: "strong" },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(lost._tag, "ProviderAdapterResumeThreadError");
+      assert.instanceOf(lost.cause, ProviderAdapter.ProviderAdapterProtocolError);
+      const retry = yield* session.runtime
+        .startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: ThreadId.make("thread-temporary-native"),
+            providerThread: first,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("temporary-retry"),
+            text: "must not replay",
+          }),
+          restartContinuationOfRunId: RunId.make("prior-run"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(retry._tag, "ProviderAdapterTurnStartError");
+      assert.instanceOf(retry.cause, ProviderAdapter.ProviderAdapterProtocolError);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("rejects a native thread that ignores temporary mode before a prompt", () =>
+    Effect.gen(function* () {
+      const entries = codexReplayPreamble({
+        nativeThreadId: "temporary-unsupported",
+        nativeTurnId: "unused",
+        prompt: "unused",
+        temporary: true,
+        nativeTemporary: false,
+      }).slice(0, 5);
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({ scenario: "temporary-unsupported", entries }),
+        undefined,
+        true,
+      );
+      const error = yield* session.ensureThread("thread-temporary-unsupported").pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterEnsureThreadError");
+      assert.instanceOf(error.cause, ProviderAdapter.ProviderAdapterProtocolError);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {
@@ -1208,19 +1489,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const prompt = "Only the current request";
         const history: ProviderAdapter.ProviderAdapterV2HistoricalContext = {
           context: "Historical conversation",
-          messages: (["user", "assistant"] as const).map((role) => ({
-            role,
-            text:
-              role === "user"
-                ? "Original request\n" + "界".repeat(300)
-                : "Partial interrupted work",
-            threadId: ThreadId.make("source"),
-            runId: RunId.make("source-run"),
-            itemId: TurnItemId.make(`source-${role}`),
-            providerThreadId: null,
-            kind: `${role}_message`,
-            status: "interrupted",
-          })),
+          messages: [
+            ...(["user", "assistant"] as const).map((role) => ({
+              role,
+              text:
+                role === "user"
+                  ? "Original request\n" + "界".repeat(300)
+                  : "Partial interrupted work",
+              threadId: ThreadId.make("source"),
+              runId: RunId.make("source-run"),
+              itemId: TurnItemId.make(`source-${role}`),
+              providerThreadId: null,
+              kind: `${role}_message`,
+              status: "interrupted",
+            })),
+            {
+              role: "assistant",
+              text: "Completed tool result: edited existing user file.",
+              threadId: ThreadId.make("source"),
+              runId: RunId.make("source-run"),
+              itemId: TurnItemId.make("source-tool"),
+              providerThreadId: null,
+              kind: "command_execution",
+              status: "completed",
+            },
+          ],
         };
         const items = historyResponseItems(history.messages, history.context);
         const preamble = codexReplayPreamble({

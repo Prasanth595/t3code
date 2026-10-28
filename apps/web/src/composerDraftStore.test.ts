@@ -2513,3 +2513,65 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("temporary composer drafts", () => {
+  it("excludes the entire temporary draft and project mapping before serialization", () => {
+    resetComposerDraftStore();
+    const draftId = DraftId.make("temporary-draft-sentinel");
+    const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("temporary-project"));
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId: ThreadId.make("temporary-thread-sentinel"),
+      temporary: true,
+    });
+    store.setPrompt(draftId, "temporary-prompt-sentinel");
+    const raw = JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState()));
+    expect(raw).not.toContain("temporary-");
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "temporary-prompt-sentinel",
+    );
+    store.clearDraftThread(draftId);
+  });
+
+  it("keeps saved drafts while omitting a captured draft switched to temporary before flush", () => {
+    resetComposerDraftStore();
+    const draftId = DraftId.make("switch-draft-sentinel");
+    const savedId = DraftId.make("saved-draft");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(
+      scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("switch-project")),
+      draftId,
+    );
+    store.setPrompt(draftId, "switch-prompt-sentinel");
+    store.setPrompt(savedId, "saved-prompt");
+    const captured = useComposerDraftStore.getState();
+    store.setDraftThreadContext(draftId, { temporary: true });
+    const raw = JSON.stringify(partializeComposerDraftStoreState(captured));
+    expect(raw).not.toContain("switch-");
+    expect(raw).toContain("saved-prompt");
+    store.clearDraftThread(draftId);
+  });
+});
+
+describe("temporary thread context", () => {
+  it("rejects temporary thread references before adding their titles to a saved draft", () => {
+    resetComposerDraftStore();
+    const sourceId = DraftId.make("temporary-source-draft");
+    const sourceThread = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("temporary-source"));
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(
+      scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("context-project")),
+      sourceId,
+      { threadId: sourceThread.threadId, temporary: true },
+    );
+    const target = DraftId.make("saved-context-target");
+    store.addThreadContexts(target, [
+      threadContextRecord(sourceThread, "temporary-title-sentinel"),
+    ]);
+    expect(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    ).not.toContain("temporary-title-sentinel");
+    expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
+    store.clearDraftThread(sourceId);
+  });
+});

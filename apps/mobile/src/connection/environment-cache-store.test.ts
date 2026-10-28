@@ -259,6 +259,30 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("does not write temporary detail content to SQLite", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      yield* store.saveThread(ENVIRONMENT_ID, {
+        ...THREAD_SNAPSHOT,
+        projection: {
+          ...THREAD_SNAPSHOT.projection,
+          thread: {
+            ...THREAD_SNAPSHOT.projection.thread,
+            temporary: true,
+            title: "temporary-sentinel",
+          },
+        },
+      });
+      expect([...memory.values.values()].join(" ")).not.toContain("temporary-sentinel");
+      expect(memory.values.size).toBe(0);
+      yield* store.saveThread(ENVIRONMENT_ID, THREAD_SNAPSHOT);
+      expect(memory.values.size).toBe(1);
+    }),
+  );
+
   it.effect("loads a V5 record and migrates to V6 on the next save without losing items", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();

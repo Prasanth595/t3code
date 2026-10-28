@@ -434,6 +434,7 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
 );
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  temporary: Schema.optionalKey(Schema.Boolean),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -820,10 +821,10 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
 /**
- * Wire-only, for clients that opted in with `acceptDedupedBodies` or `dedupeBodies=1`: the field
- * was blanked because an earlier record on the same response or stream holds the same value.
- * Restore with `@t3tools/shared/orchestrationV2DedupedBodies`; never store or forward a marked
- * value. Clients restore only these fields, so blanking another field needs a new opt-in.
+ * Wire-only markers for `acceptDedupedBodies`/`dedupeBodies=1`; marked fields repeat prior
+ * records on the same response or stream. Restore with
+ * `@t3tools/shared/orchestrationV2DedupedBodies` before use, storage, or forwarding.
+ * Blanking other fields needs a new opt-in.
  */
 const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
 
@@ -2021,6 +2022,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  temporary: Schema.optionalKey(Schema.Boolean),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2177,6 +2179,12 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
 export const OrchestrationV2ShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("temporary.snapshot"),
+    epoch: TrimmedNonEmptyString,
+    revision: NonNegativeInt,
+    threads: Schema.Array(OrchestrationV2ThreadShell),
+  }),
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
   }),
@@ -2852,6 +2860,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    temporary: Schema.optionalKey(Schema.Boolean),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -3506,12 +3515,15 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  keepThread: "orchestration.keepThread",
+  updateTemporaryThreadViews: "orchestration.updateTemporaryThreadViews",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
 } as const;
 
 export const OrchestrationV2SubscribeCommandOutputInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   itemId: TurnItemId,
 });
@@ -3546,7 +3558,28 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
 });
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
 
+export const OrchestrationV2KeepThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  commandId: CommandId,
+});
+export type OrchestrationV2KeepThreadInput = typeof OrchestrationV2KeepThreadInput.Type;
+
+export const OrchestrationV2UpdateTemporaryThreadViewsInput = Schema.Struct({
+  viewId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  generation: NonNegativeInt,
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(256)),
+  background: Schema.Boolean,
+});
+export type OrchestrationV2UpdateTemporaryThreadViewsInput =
+  typeof OrchestrationV2UpdateTemporaryThreadViewsInput.Type;
+
+export class OrchestrationV2TemporaryThreadError extends Schema.TaggedError<OrchestrationV2TemporaryThreadError>()(
+  "OrchestrationV2TemporaryThreadError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  temporary: Schema.optionalKey(Schema.Boolean),
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),
@@ -3582,12 +3615,14 @@ export const OrchestrationV2DispatchCommandResult = Schema.Struct({
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 
 export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
 });
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
@@ -3604,6 +3639,7 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
 export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
 });
 export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
@@ -3620,6 +3656,7 @@ export const OrchestrationV2ThreadFamily = Schema.Struct({
 export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
 
 export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   worktreePath: TrimmedNonEmptyString,
 });
 export type OrchestrationV2GetWorktreeThreadIdsInput =
@@ -3686,6 +3723,8 @@ export const OrchestrationV2WorktreeThreadIds = Schema.Struct({
 export type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
+  storageGeneration: Schema.optionalKey(TrimmedNonEmptyString),
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
@@ -3705,6 +3744,7 @@ export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2Subscrib
 const IdTableMarker = Schema.optionalKey(Schema.Literal(true));
 
 export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
+  storageGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   snapshotSequence: NonNegativeInt,
   projection: OrchestrationV2ThreadProjection,
   /** With hasMoreHistory/cursor, this projection is a bounded window, not a complete timeline. */
@@ -3717,6 +3757,7 @@ export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDe
 /** Keep historyCursor opaque; resume events with afterSequence = snapshotSequence. */
 export const OrchestrationV2ThreadBoundedSnapshot = withRecordIdTable(
   Schema.Struct({
+    storageGeneration: Schema.optionalKey(TrimmedNonEmptyString),
     snapshotSequence: NonNegativeInt,
     projection: OrchestrationV2ThreadProjection,
     historyCursor: Schema.NullOr(TrimmedNonEmptyString),
@@ -3736,6 +3777,7 @@ export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadB
 
 export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
   Schema.Struct({
+    storageGeneration: Schema.optionalKey(TrimmedNonEmptyString),
     snapshotSequence: NonNegativeInt,
     items: projectedTurnItemArray(
       OrchestrationV2ProjectedTurnItem,
@@ -3803,6 +3845,7 @@ export const OrchestrationV2ThreadStreamItem = withRecordIdTable(
     }),
     Schema.Struct({
       kind: Schema.Literal("snapshot"),
+      storageGeneration: Schema.optionalKey(TrimmedNonEmptyString),
       snapshotSequence: NonNegativeInt,
       projection: OrchestrationV2ThreadProjection,
       historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
@@ -3838,6 +3881,7 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
+    reason: Schema.optional(Schema.Literal("thread_not_found")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -3890,6 +3934,7 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
 }
 
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   scriptPath: TrimmedNonEmptyString,
 });
@@ -3938,6 +3983,7 @@ export class OrchestrationWorkflowFileError extends Schema.TaggedError<Orchestra
 }
 
 export const OrchestrationV2GetTurnItemInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   itemId: TurnItemId,
   revision: Schema.optional(Schema.String),
@@ -3983,6 +4029,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
 }
 
 export const OrchestrationV2SearchThreadInput = Schema.Struct({
+  acceptTemporaryThreads: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   skills: Schema.optionalKey(
     Schema.Array(
@@ -4082,6 +4129,14 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  keepThread: {
+    input: OrchestrationV2KeepThreadInput,
+    output: Schema.Struct({ threadId: ThreadId }),
+  },
+  updateTemporaryThreadViews: {
+    input: OrchestrationV2UpdateTemporaryThreadViewsInput,
+    output: Schema.Void,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

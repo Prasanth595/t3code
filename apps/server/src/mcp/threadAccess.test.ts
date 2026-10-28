@@ -8,6 +8,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 import { readThread } from "./threadAccess.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const client: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("environment:thread-access"),
@@ -37,4 +39,22 @@ it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
     expect(error.code).toBe("thread_not_found");
     expect(error.message).toBe(`The thread was not found. Did you mean \`mcp:${bareId}\`?`);
   }),
+);
+
+it.effect("temporary thread data cannot be copied into an outside MCP client", () =>
+  Effect.gen(function* () {
+    const error = yield* readThread(bareId).pipe(Effect.flip);
+    expect(error.code).toBe("capability_denied");
+    expect(error.message).toContain("Keep this thread");
+  }).pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, client),
+    Effect.provide(
+      Layer.merge(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
+        }),
+        temporaryResourceStorage,
+      ),
+    ),
+  ),
 );

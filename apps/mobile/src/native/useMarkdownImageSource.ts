@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../state/presentation";
 import { useEnvironmentQuery } from "../state/query";
@@ -34,6 +35,8 @@ export function useMarkdownImageSource(props: {
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   return useCallback(
     async (image) => {
+      if (threadId !== null && isTemporaryThread(environmentId, threadId))
+        throw new Error("Keep this thread before loading media.");
       const media = resolveMobileMarkdownMediaSource(image.href, {
         threadId: threadId ?? undefined,
         workspaceRoot,

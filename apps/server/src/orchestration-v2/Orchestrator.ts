@@ -89,6 +89,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type * as Scope from "effect/Scope";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import {
@@ -168,6 +169,8 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as TemporaryThreadService from "./TemporaryThreadService.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -404,6 +407,10 @@ export interface OrchestratorV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
+  readonly subscribeThreadRunUpdates: (
+    threadId: ThreadId,
+    includeDelegatedWork?: boolean,
+  ) => Effect.Effect<Stream.Stream<void, OrchestratorV2Error>, OrchestratorV2Error, Scope.Scope>;
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
   ) => Effect.Effect<ThreadId | null, OrchestratorV2Error>;
@@ -955,6 +962,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
+  const temporaryStorage = yield* Effect.serviceOption(
+    TemporaryThreadStorage.TemporaryThreadStorage,
+  );
+  const temporaryLifecycle = yield* Effect.serviceOption(
+    TemporaryThreadService.TemporaryThreadLifecycleState,
+  );
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -1042,25 +1055,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  const providerSessionIdFor = (input: {
+  const providerSessionIdFor = Effect.fn("orchestrationV2.providerSessionIdFor")(function* (input: {
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
-    readonly threadId: ThreadId;
-  }) =>
-    input.adapter.getCapabilities().pipe(
-      Effect.flatMap((capabilities) =>
-        capabilities.sessions.supportsMultipleProviderThreadsPerSession
-          ? Effect.succeed(
-              idAllocator.derive.providerSession({
-                providerInstanceId: input.providerInstanceId,
-              }),
-            )
-          : idAllocator.allocate.providerSession({
-              providerInstanceId: input.providerInstanceId,
-              threadId: input.threadId,
-            }),
-      ),
-    );
+    readonly thread: OrchestrationV2AppThread;
+  }) {
+    const capabilities = yield* input.adapter.getCapabilities();
+    const temporary =
+      input.thread.temporary === true ||
+      (Option.isSome(temporaryStorage) &&
+        (yield* temporaryStorage.value.isTemporary(input.thread.id)));
+    return capabilities.sessions.supportsMultipleProviderThreadsPerSession && !temporary
+      ? idAllocator.derive.providerSession({
+          providerInstanceId: input.providerInstanceId,
+        })
+      : yield* idAllocator.allocate.providerSession({
+          providerInstanceId: input.providerInstanceId,
+          threadId: input.thread.id,
+        });
+  });
 
   const makeEvent =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -1851,7 +1864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionIdFor({
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
-              threadId,
+              thread: projection.thread,
             }),
           ),
           Effect.mapError(
@@ -2514,6 +2527,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       createdBy: command.createdBy,
       creationSource: command.creationSource,
       id: command.threadId,
+      ...(command.temporary === true ? { temporary: true } : {}),
       projectId: command.projectId,
       title: command.title,
       providerInstanceId: command.modelSelection.instanceId,
@@ -3096,16 +3110,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.type === "thread.metadata.update" &&
         command.worktreePath !== undefined &&
         command.worktreePath !== thread.worktreePath);
+    const temporaryRuntimeModeChange =
+      command.type === "thread.runtime-mode.set" &&
+      Option.isSome(temporaryStorage) &&
+      (yield* temporaryStorage.value.isTemporary(command.threadId));
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
             command.threadId,
             command.type === "thread.model-selection.set" || command.type === "provider.switch"
               ? command.modelSelection.instanceId
-              : undefined,
+              : temporaryRuntimeModeChange
+                ? thread.modelSelection.instanceId
+                : undefined,
           )
           .pipe(mapDispatchError(command))
       : null;
+    if (temporaryRuntimeModeChange) {
+      const pinnedSessionId = providerContext!.providerThreads.find(
+        (providerThread) => providerThread.id === thread.activeProviderThreadId,
+      )?.providerSessionId;
+      const pinnedRuntime =
+        pinnedSessionId == null
+          ? Option.none()
+          : yield* providerSessions.get(pinnedSessionId).pipe(mapDispatchError(command));
+      if (
+        providerContext!.providerSessions.some(
+          (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+        ) ||
+        (Option.isSome(pinnedRuntime) &&
+          !pinnedRuntime.value.providerSession.capabilities.sessions
+            .supportsRuntimeModeSwitchInSession)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Keep this thread before using this operation.",
+        });
+      }
+    }
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
@@ -4647,7 +4690,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerSessionIdFor({
             adapter: targetAdapter,
             providerInstanceId: input.modelSelection.instanceId,
-            threadId: input.command.threadId,
+            thread: input.projection.thread,
           }),
         ));
       const targetProviderThreadBase: OrchestrationV2ProviderThread =
@@ -5864,7 +5907,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerSessionIdFor({
             adapter,
             providerInstanceId: modelSelection.instanceId,
-            threadId: command.threadId,
+            thread: projection.thread,
           }),
         ));
       const providerThreadId =
@@ -6247,7 +6290,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerSessionIdFor({
           adapter,
           providerInstanceId: modelSelection.instanceId,
-          threadId: command.threadId,
+          thread: projection.thread,
         }),
       ));
     const existingProviderSession = projection.providerSessions.find(
@@ -12093,19 +12136,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             node.id === request.nodeId && node.runId !== null && resultRunIds.has(node.runId),
         )
       ) {
-        yield* dispatchWithReceipt({
-          type: "thread.user-input.dismiss",
-          commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
-          threadId: childThreadId,
-          requestId: request.id,
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to dismiss task question", {
+        yield* threadDispatch
+          .withLock(
+            childThreadId,
+            dispatchWithReceiptEffect({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
+              threadId: childThreadId,
               requestId: request.id,
-              cause,
             }),
-          ),
-        );
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to dismiss task question", {
+                requestId: request.id,
+                cause,
+              }),
+            ),
+          );
       }
     }
   });
@@ -12374,6 +12422,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    if (
+      (command.type === "thread.create" && command.temporary === true) ||
+      (Option.isSome(temporaryStorage) &&
+        (yield* temporaryStorage.value.isTemporary(commandThreadId(command))))
+    ) {
+      if (
+        (command.type === "thread.create" && command.importedNativeThread !== undefined) ||
+        command.type === "thread.fork" ||
+        command.type === "checkpoint.rollback" ||
+        command.type === "prepared-run.retry" ||
+        (command.type === "message.dispatch" && command.dispatchMode?.type === "restart_active")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Keep this thread before using this operation.",
+        });
+      }
+      if (
+        command.type === "thread.create" ||
+        command.type === "delegated_task.request" ||
+        command.type === "thread.model-selection.set" ||
+        command.type === "provider.switch" ||
+        (command.type === "message.dispatch" && command.modelSelection !== undefined)
+      ) {
+        const selection = command.modelSelection;
+        if (selection !== undefined) {
+          if (
+            (command.type === "thread.model-selection.set" ||
+              command.type === "provider.switch" ||
+              command.type === "message.dispatch") &&
+            selection.instanceId !==
+              (yield* mapDispatchError(command)(projectionStore.getThread(command.threadId)))
+                .modelSelection.instanceId
+          ) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Keep this thread before switching provider instances.",
+            });
+          }
+          yield* mapDispatchError(command)(providerAdapters.get(selection.instanceId));
+        }
+      }
+    }
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
@@ -12738,6 +12832,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": commandThreadId(command),
     });
 
+    if (Option.isSome(temporaryStorage)) {
+      const storage = temporaryStorage.value;
+      const threadId = commandThreadId(command);
+      const sourceId =
+        command.type === "thread.fork" || command.type === "thread.merge_back"
+          ? command.sourceThreadId
+          : command.type === "delegated_task.request"
+            ? command.parentThreadId
+            : threadId;
+      if (
+        (yield* storage.isDiscarded(threadId)) ||
+        (yield* storage.isDiscarded(sourceId)) ||
+        (Option.isSome(temporaryLifecycle) &&
+          (yield* storage.family(sourceId)).some((id) =>
+            temporaryLifecycle.value.discarding.has(id),
+          ) &&
+          command.type !== "thread.stop" &&
+          command.type !== "thread.delete" &&
+          command.type !== "provider-session.detach")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Temporary thread is closed.",
+        });
+      }
+      if (yield* storage.isTemporary(sourceId)) {
+        if (
+          command.type === "thread.guest-share.open" ||
+          command.type === "thread.guest-share.redeem" ||
+          command.type === "thread.guest-share.close" ||
+          command.type === "thread.guest-message.submit" ||
+          command.type === "thread.guest-message.dismiss"
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Keep this thread before using guest sharing.",
+          });
+        }
+        if (command.type === "thread.merge_back") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Keep this thread before merging it.",
+          });
+        }
+        if (command.type === "thread.fork") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Keep this thread before using this operation.",
+          });
+        }
+      }
+    }
+
     const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
       Effect.mapError(
         (cause) =>
@@ -12795,6 +12946,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
+    if (
+      command.type === "thread.create" &&
+      command.temporary === true &&
+      Option.isNone(temporaryStorage)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Temporary storage is unavailable.",
+      });
+    }
+
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
     if (limit !== undefined) {
@@ -12825,6 +12988,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.catch((cause) =>
         Effect.gen(function* () {
           if (cause._tag === "OrchestratorThreadAboveModeLimitError") return yield* cause;
+          if (
+            command.type === "thread.create" &&
+            command.temporary === true &&
+            Option.isSome(temporaryStorage) &&
+            !(yield* temporaryStorage.value.isTemporary(command.threadId))
+          )
+            return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({
@@ -12952,25 +13122,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    const dispatch = threadDispatch.withLock(
+    let dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    // Answering a message-mode question can also start a follow-up.
     if (
-      command.type !== "runtime-request.respond" &&
-      (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
-    )
-      return yield* dispatch;
-    const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-      ),
-    );
-    // Follow-up intake and Stop serialize on the parent before taking the child lock.
-    return yield* parentThreadId === undefined
-      ? dispatch
-      : threadDispatch.withLock(parentThreadId, dispatch);
+      command.type === "runtime-request.respond" ||
+      (command.type === "message.dispatch" && mayStartSubagentFollowup(command))
+    ) {
+      const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+      if (parentThreadId !== undefined)
+        dispatch = threadDispatch.withLock(parentThreadId, dispatch);
+    }
+    if (Option.isSome(temporaryStorage) && Option.isSome(temporaryLifecycle)) {
+      const sourceId =
+        command.type === "thread.fork" || command.type === "thread.merge_back"
+          ? command.sourceThreadId
+          : command.type === "delegated_task.request"
+            ? command.parentThreadId
+            : commandThreadId(command);
+      if (
+        (command.type === "thread.create" && command.temporary === true) ||
+        (yield* temporaryStorage.value.isTemporary(sourceId))
+      ) {
+        const family = yield* temporaryStorage.value.family(sourceId);
+        dispatch = temporaryLifecycle.value.commands.withLock(family[0] ?? sourceId, dispatch);
+      }
+    }
+    return yield* dispatch;
   });
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
@@ -13364,6 +13547,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
+    subscribeThreadRunUpdates: Effect.fn("Orchestrator.subscribeThreadRunUpdates")(
+      function* (threadId, includeDelegatedWork = false) {
+        const updates = Option.isSome(temporaryStorage)
+          ? yield* temporaryStorage.value.subscribeThreadRunUpdates(threadId, includeDelegatedWork)
+          : yield* eventSink.latestSequence({ threadId }).pipe(
+              Effect.map((afterSequence) =>
+                Stream.mergeAll(
+                  (
+                    [
+                      "run.updated",
+                      "thread.deleted",
+                      ...(includeDelegatedWork
+                        ? (["subagent.updated", "provider-thread.updated"] as const)
+                        : []),
+                    ] as const
+                  ).map((eventType) => eventSink.stream({ threadId, afterSequence, eventType })),
+                  { concurrency: "unbounded" },
+                ).pipe(Stream.as(undefined)),
+              ),
+            );
+        return updates.pipe(
+          Stream.mapError((cause) => new OrchestratorDomainEventStreamError({ cause })),
+        );
+      },
+      (effect, threadId) =>
+        effect.pipe(
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        ),
+    ),
     findGuestShareThreadId: Effect.fn("OrchestratorV2.findGuestShareThreadId")(function (shareId) {
       return projectionStore
         .findGuestShareThreadId(shareId)

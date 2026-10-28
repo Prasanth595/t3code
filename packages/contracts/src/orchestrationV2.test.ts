@@ -5,6 +5,9 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2SubscribeShellInput,
+  OrchestrationV2SubscribeThreadInput,
+  OrchestrationV2ShellStreamItem,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -34,7 +37,100 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
 
+const decodeTemporaryShellInput = Schema.decodeSync(OrchestrationV2SubscribeShellInput);
+const decodeTemporaryThreadInput = Schema.decodeSync(OrchestrationV2SubscribeThreadInput);
+const decodeTemporaryShellItem = Schema.decodeSync(OrchestrationV2ShellStreamItem);
+const decodeTemporaryKeep = Schema.decodeSync(OrchestrationV2RpcSchemas.keepThread.input);
+const decodeTemporaryViews = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.updateTemporaryThreadViews.input,
+);
+
 describe("orchestration V2 contracts", () => {
+  it.each([
+    [
+      "turn diff",
+      Schema.decodeUnknownSync(OrchestrationV2RpcSchemas.getTurnDiff.input),
+      { threadId: "thread-1", fromTurnCount: 0, toTurnCount: 1 },
+    ],
+    [
+      "full thread diff",
+      Schema.decodeUnknownSync(OrchestrationV2RpcSchemas.getFullThreadDiff.input),
+      { threadId: "thread-1", toTurnCount: 1 },
+    ],
+    [
+      "family",
+      Schema.decodeUnknownSync(OrchestrationV2RpcSchemas.getThreadFamily.input),
+      { threadId: "thread-1" },
+    ],
+    [
+      "worktree",
+      Schema.decodeUnknownSync(OrchestrationV2RpcSchemas.getWorktreeThreadIds.input),
+      { worktreePath: "/repo" },
+    ],
+  ] as const)(
+    "preserves an optional boolean temporary read opt-in for %s",
+    (_name, decode, input) => {
+      expect(decode(input)).toEqual(input);
+      expect(decode({ ...input, acceptTemporaryThreads: true })).toEqual({
+        ...input,
+        acceptTemporaryThreads: true,
+      });
+      expect(decode({ ...input, acceptTemporaryThreads: false })).toEqual({
+        ...input,
+        acceptTemporaryThreads: false,
+      });
+      expect(() => decode({ ...input, acceptTemporaryThreads: "true" })).toThrow();
+    },
+  );
+
+  it("keeps temporary subscription opt-in and storage cursors on the wire", () => {
+    expect(
+      decodeTemporaryShellInput({
+        acceptTemporaryThreads: true,
+      }),
+    ).toEqual({ acceptTemporaryThreads: true });
+    expect(
+      decodeTemporaryThreadInput({
+        threadId: "thread-1",
+        acceptTemporaryThreads: true,
+        storageGeneration: "volatile-1",
+      }),
+    ).toMatchObject({ acceptTemporaryThreads: true, storageGeneration: "volatile-1" });
+    expect(
+      decodeTemporaryShellItem({
+        kind: "temporary.snapshot",
+        epoch: "process-1",
+        revision: 2,
+        threads: [],
+      }),
+    ).toEqual({ kind: "temporary.snapshot", epoch: "process-1", revision: 2, threads: [] });
+  });
+
+  it("validates temporary view generations and Keep commands", () => {
+    expect(
+      decodeTemporaryViews({
+        viewId: "view-1",
+        generation: 0,
+        threadIds: ["thread-1"],
+        background: true,
+      }),
+    ).toEqual({
+      viewId: "view-1",
+      generation: 0,
+      threadIds: ["thread-1"],
+      background: true,
+    });
+    expect(() =>
+      decodeTemporaryViews({ viewId: "view-1", generation: -1, threadIds: [], background: false }),
+    ).toThrow();
+    expect(
+      decodeTemporaryKeep({
+        threadId: "thread-1",
+        commandId: "command-1",
+      }),
+    ).toEqual({ threadId: "thread-1", commandId: "command-1" });
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

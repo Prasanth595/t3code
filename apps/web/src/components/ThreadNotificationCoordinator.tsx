@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -181,6 +182,7 @@ export function startThreadNotifications(
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
+      if (rawThread.temporary || isTemporaryThread(environmentId, rawThread.id)) continue;
       if (
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },

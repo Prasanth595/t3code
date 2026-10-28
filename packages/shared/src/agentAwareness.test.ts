@@ -63,6 +63,29 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
+  it.each(["starting", "running", "waiting", "completed", "failed"] as const)(
+    "does not project %s temporary activity",
+    (status) => {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: { ...v2Thread({ status }), temporary: true },
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("projects explicitly saved activity", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: { ...v2Thread(), temporary: false },
+      }),
+    ).toMatchObject({ phase: "running" });
+  });
+
   it.each(["running", "completed", "failed"] as const)(
     "does not publish %s subagent activity",
     (status) => {

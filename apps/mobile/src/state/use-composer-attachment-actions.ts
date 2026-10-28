@@ -17,6 +17,7 @@ import {
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
+  isTemporaryComposerDraft,
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
 import { startComposerDraftOperation } from "./composerDraftOperations";
@@ -61,6 +62,10 @@ export function useComposerAttachmentActions(props: {
   const onPickDraftMedia = async () => {
     const key = props.draftKey;
     if (!key || props.locked) return;
+    if (isTemporaryComposerDraft(key)) {
+      Dialog.alert("Keep thread first", "Keep this thread before using attachments.");
+      return;
+    }
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       const result = await pickComposerMedia({
@@ -77,6 +82,10 @@ export function useComposerAttachmentActions(props: {
   const onPickDraftFiles = async () => {
     const key = props.draftKey;
     if (!key || props.locked) return;
+    if (isTemporaryComposerDraft(key)) {
+      Dialog.alert("Keep thread first", "Keep this thread before using attachments.");
+      return;
+    }
     const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) {
       Dialog.alert("Could not attach file", "This server does not support file attachments.");
@@ -98,6 +107,10 @@ export function useComposerAttachmentActions(props: {
   const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
     const key = props.draftKey;
     if (!key || props.locked || !uris.length) return;
+    if (isTemporaryComposerDraft(key)) {
+      Dialog.alert("Keep thread first", "Keep this thread before using attachments.");
+      return;
+    }
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       try {
@@ -117,6 +130,10 @@ export function useComposerAttachmentActions(props: {
   const onNativePasteText = async (paste: ComposerTextPaste) => {
     const key = props.draftKey;
     if (!key || props.locked) return;
+    if (isTemporaryComposerDraft(key)) {
+      Dialog.alert("Keep thread first", "Keep this thread before using attachments.");
+      return;
+    }
     const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) return;
     const names = reservedNames.current.get(key) ?? new Set<string>();

@@ -21,6 +21,8 @@ import * as Stream from "effect/Stream";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+
 const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
 
 const scope = {
@@ -1030,4 +1032,19 @@ it.effect("keeps each thread's current tab when threads share a provider session
       expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
     }),
   ),
+);
+
+it.effect("temporary browser automation fails before host routing", () =>
+  Effect.gen(function* () {
+    const broker = yield* makeBroker;
+    const result = yield* Effect.result(
+      broker.invoke({
+        scope,
+        operation: "navigate",
+        input: { url: "https://example.com/temporary-sentinel" },
+      }),
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") expect(result.failure.message).toContain("Keep this thread");
+  }).pipe(Effect.provide(temporaryResourceStorage)),
 );

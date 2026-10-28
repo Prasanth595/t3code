@@ -1,3 +1,4 @@
+import { canPersistThreadSnapshot } from "@t3tools/client-runtime/platform/orchestration-cache";
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
@@ -844,6 +845,7 @@ export const layer = Layer.effectContext(
       ),
       saveThread: Effect.fn("storage.saveThread")(
         function* (environmentId, snapshot) {
+          if (!canPersistThreadSnapshot(snapshot, environmentId)) return;
           const encoded = yield* encodeStoredThreadSnapshot({
             schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
             environmentId,

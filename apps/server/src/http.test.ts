@@ -94,11 +94,18 @@ describe("MCP app asset responses", () => {
 });
 
 describe("browser API CORS", () => {
-  it("accepts protocol negotiation with authenticated browser headers", async () => {
+  it.each([
+    "/api/environment",
+    "/api/orchestration/shell",
+    "/api/orchestration/threads/thread-1",
+    "/api/orchestration/threads/thread-1/transcript",
+    "/api/orchestration/threads/thread-1/bounded",
+    "/api/orchestration/threads/thread-1/history",
+  ] as const)("accepts authenticated temporary thread preflight for %s", async (resource) => {
     const layerRoute = Layer.effectDiscard(
       Effect.gen(function* () {
         const router = yield* HttpRouter.HttpRouter;
-        yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+        yield* router.add("GET", resource, HttpServerResponse.empty());
       }),
     );
     const layerApp = Layer.merge(layerRoute, ServerHttp.layerBrowserApiCors).pipe(
@@ -109,7 +116,7 @@ describe("browser API CORS", () => {
 
     try {
       const response = await handler(
-        new Request("https://backend.example/api/environment", {
+        new Request(`https://backend.example${resource}`, {
           method: "OPTIONS",
           headers: {
             origin: "https://app.t3.codes",
@@ -118,6 +125,8 @@ describe("browser API CORS", () => {
               ORCHESTRATION_PROTOCOL_HEADER,
               "authorization",
               "dpop",
+              "x-t3-accept-temporary-threads",
+              "cache-control",
             ].join(", "),
           },
         }),
@@ -133,6 +142,8 @@ describe("browser API CORS", () => {
       expect(allowedHeaders.has(ORCHESTRATION_PROTOCOL_HEADER)).toBe(true);
       expect(allowedHeaders.has("authorization")).toBe(true);
       expect(allowedHeaders.has("dpop")).toBe(true);
+      expect(allowedHeaders.has("x-t3-accept-temporary-threads")).toBe(true);
+      expect(allowedHeaders.has("cache-control")).toBe(true);
     } finally {
       await dispose();
     }

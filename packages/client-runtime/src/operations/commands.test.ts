@@ -37,6 +37,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  createThread,
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
@@ -62,11 +63,17 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
+  readonly uploads?: unknown[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
 }) {
   const client = {
+    [WS_METHODS.assetsPersistChatAttachments]: (upload: unknown) =>
+      Effect.sync(() => {
+        input.uploads?.push(upload);
+        return { attachments: [] };
+      }),
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
@@ -237,6 +244,7 @@ describe("V2 environment commands", () => {
           createThread: {
             projectId: ProjectId.make("project-1"),
             title: "Thread",
+            temporary: true,
             modelSelection: v2Projection.thread.modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -250,6 +258,7 @@ describe("V2 environment commands", () => {
       expect(launches[0]).toMatchObject({
         threadId: v2ThreadId,
         title: "Continue here",
+        temporary: true,
         generateTitle: true,
         workspaceStrategy: {
           type: "existing_worktree",
@@ -562,3 +571,70 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 });
+
+it.effect("rejects temporary bootstrap uploads before any remote file write", () =>
+  Effect.gen(function* () {
+    const uploads: unknown[] = [];
+    const launches: OrchestrationV2ThreadLaunchInput[] = [];
+    const supervisor = yield* makeSupervisor({ commands: [], projects: [], uploads, launches });
+    const result = yield* startThreadTurn({
+      commandId: CommandId.make("temporary-upload"),
+      threadId: v2ThreadId,
+      message: {
+        messageId: MessageId.make("temporary-message"),
+        role: "user",
+        text: "Temporary",
+        attachments: [
+          {
+            type: "image",
+            name: "secret.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            dataUrl: "data:image/png;base64,AA==",
+          },
+        ],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      bootstrap: {
+        createThread: {
+          projectId: v2Projection.thread.projectId,
+          title: "Temporary",
+          temporary: true,
+          modelSelection: v2Projection.thread.modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-06-20T00:00:00.000Z",
+        },
+      },
+    }).pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(uploads).toEqual([]);
+    expect(launches).toEqual([]);
+  }).pipe(Effect.provide(layerTestCrypto)),
+);
+
+it.effect("passes temporary retention through direct creation", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationV2Command[] = [];
+    const supervisor = yield* makeSupervisor({ commands, projects: [] });
+    yield* createThread({
+      commandId: CommandId.make("temporary-create"),
+      threadId: v2ThreadId,
+      projectId: v2Projection.thread.projectId,
+      title: "Temporary",
+      temporary: true,
+      modelSelection: v2Projection.thread.modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+    expect(commands[0]).toMatchObject({ type: "thread.create", temporary: true });
+  }).pipe(Effect.provide(layerTestCrypto)),
+);

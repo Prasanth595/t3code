@@ -1,3 +1,4 @@
+import { temporaryResourceStorage } from "./testkit/TemporaryResourceStorage.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
@@ -94,3 +95,53 @@ it.effect(
       }
     }),
 );
+
+it.effect("temporary checkpoints never inspect or write repository state", () => {
+  const calls: string[] = [];
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const scope = yield* checkpoints.prepareRootRunScope({
+      threadId: ThreadId.make("temporary-checkpoint-sentinel"),
+      runId: RunId.make("run-private"),
+      rootNodeId: NodeId.make("node-private"),
+      providerThreadId: ProviderThreadId.make("provider-private"),
+      cwd: "/user-source-kept",
+      createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+    });
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+    const baseline = yield* checkpoints.materializeBaselineCheckpoint({
+      scope,
+      ordinalWithinScope: 0,
+    });
+    const captured = yield* checkpoints.capture({
+      scope,
+      runId: scope.runId,
+      nodeId: NodeId.make("node-private"),
+      ordinalWithinScope: 1,
+      appRunOrdinal: 1,
+      capturedAt: scope.createdAt,
+    });
+    assert.equal(baseline.status, "missing");
+    assert.equal(captured.status, "missing");
+    assert.deepEqual(calls, []);
+  }).pipe(
+    Effect.provide(
+      CheckpointService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            Layer.mock(CheckpointStore.CheckpointStore)({
+              isGitRepository: () =>
+                Effect.sync(() => {
+                  calls.push("inspect");
+                  return false;
+                }),
+            }),
+          ),
+        ),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(temporaryResourceStorage),
+      ),
+    ),
+  );
+});

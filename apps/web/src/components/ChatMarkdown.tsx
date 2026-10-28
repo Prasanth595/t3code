@@ -63,6 +63,7 @@ import {
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { temporaryThreadAtom } from "@t3tools/client-runtime/temporary-threads";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
@@ -151,6 +152,7 @@ import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
+import { environmentThreadShells } from "../state/threads";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
@@ -205,6 +207,7 @@ import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
+import { rehypeTemporaryMedia } from "./chat/markdownTemporaryMedia";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
   extractCodeBlock,
@@ -433,6 +436,15 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
+const markdownTemporaryThreadAtom = Atom.family((ref: ScopedThreadRef | null) =>
+  Atom.make(
+    (get) =>
+      ref !== null &&
+      (get(temporaryThreadAtom(ref)) ||
+        get(environmentThreadShells.quietThreadShellAtom(ref))?.temporary === true),
+  ),
+);
+
 function useChatMarkdownState({
   text,
   inline = false,
@@ -452,6 +464,7 @@ function useChatMarkdownState({
   headingLevelOffset = 0,
   sourceControlMedia = false,
 }: ChatMarkdownProps) {
+  const temporary = useAtomValue(markdownTemporaryThreadAtom(threadRef ?? null));
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
@@ -851,7 +864,7 @@ function useChatMarkdownState({
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={
-          threadRef && canPreviewMedia
+          threadRef && canPreviewMedia && !temporary
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
             : undefined
         }
@@ -864,6 +877,7 @@ function useChatMarkdownState({
         revealLabel={revealInFileManagerLabel}
         onOpenInBrowser={
           threadRef &&
+          !temporary &&
           canOperatePreview &&
           isPreviewAvailableFor(threadRef.environmentId) &&
           isBrowserPreviewFile(fileLinkMeta.filePath)
@@ -875,6 +889,7 @@ function useChatMarkdownState({
   };
 
   const componentState = {
+    temporary,
     canOperateHost,
     canOperatePreview,
     cwd,
@@ -1038,6 +1053,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const {
+      temporary,
       canOperateHost,
       canOperatePreview,
       cwd,
@@ -1248,7 +1264,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             });
           }}
         >
-          {faviconHost && hasText && !isPullRequestAutolink ? (
+          {!temporary && faviconHost && hasText && !isPullRequestAutolink ? (
             <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
               {linkChildren}
             </MarkdownExternalLinkContent>
@@ -1660,11 +1676,12 @@ function ChatMarkdown({
         <ChatMarkdownTextContext value={text}>
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
-            rehypePlugins={
-              parseRawHtml
+            rehypePlugins={[
+              ...(parseRawHtml
                 ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-            }
+                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
+              [rehypeTemporaryMedia, componentState.temporary],
+            ]}
             skipHtml={false}
             components={CHAT_MARKDOWN_COMPONENTS}
             urlTransform={markdownUrlTransform}

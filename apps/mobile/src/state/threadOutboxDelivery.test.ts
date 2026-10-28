@@ -83,6 +83,12 @@ vi.mock("./projects", () => ({ environmentProjects: {} }));
 
 vi.mock("./workspace", () => ({ workspaceConnections: {} }));
 
+vi.mock("./entities", () => ({
+  useProjects: () => [],
+  useServerConfigs: () => new Map(),
+  useThreadShells: () => [],
+}));
+
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
@@ -105,6 +111,10 @@ vi.mock("./session", () => ({
   environmentSession: {},
   readEnvironmentScope: () => harness.canOperate,
   sessionHasScope: () => harness.canOperate,
+}));
+
+vi.mock("./use-remote-environment-registry", () => ({
+  useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
 }));
 
 vi.mock("./use-thread-outbox", async () => {

@@ -1,5 +1,6 @@
 import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
+import { temporaryResourceStorage } from "./testkit/TemporaryResourceStorage.ts";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -285,3 +286,21 @@ describe("AttachmentClaims", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 });
+
+it.effect("temporary attachments fail before inspecting or copying upload bytes", () =>
+  Effect.gen(function* () {
+    const error = yield* claimPendingAttachments({
+      threadId: "private-thread",
+      attachments: [
+        {
+          type: "image",
+          id: ChatAttachmentId.make("existing-id"),
+          name: "private-sentinel",
+          mimeType: "image/png",
+          sizeBytes: 1,
+        },
+      ],
+    }).pipe(Effect.flip);
+    expect(error.message).toContain("Keep this thread");
+  }).pipe(Effect.provide(Layer.merge(temporaryResourceStorage, layerTest))),
+);

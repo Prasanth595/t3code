@@ -7,6 +7,7 @@ import {
   flushComposerDrafts,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Promise<void> {
@@ -15,6 +16,7 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
   const source = getComposerDraftSnapshot(sourceKey);
   if (source.text.length === 0 && source.attachments.length === 0) return;
 
+  updateComposerDraftSettings(targetKey, { temporary: message.temporary === true });
   await mergeComposerDraftContent(targetKey, {
     text: source.text,
     context: source.context,

@@ -48,6 +48,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import * as TemporaryThreadStorage from "../orchestration-v2/TemporaryThreadStorage.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -94,6 +95,7 @@ const layerCleanup = Layer.effect(
     const { attachmentsDir } = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     return {
+      cleanupCommandOutput: () => Effect.void,
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
@@ -135,11 +137,11 @@ const layerTest = GuestShareService.layer.pipe(
       Layer.provideMerge(layerOrchestration.pipe(Layer.provide(layerCleanup))),
     ),
   ),
-  Layer.provide(layerProviders),
+  Layer.provideMerge(layerProviders),
   Layer.provideMerge(ServerSettings.layerTest({ guestSharingEnabled: true })),
-  Layer.provide(layerConnect),
+  Layer.provideMerge(layerConnect),
   Layer.provideMerge(layerAnalytics),
-  Layer.provide(ServerSecretStore.layer),
+  Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -565,6 +567,65 @@ const joinedGuest = Effect.gen(function* () {
   });
   return { ...shared, session, shareId };
 });
+
+const guestLayerWithVolatileThread = (state: string) =>
+  Layer.fresh(GuestShareService.layer).pipe(
+    Layer.provide(
+      Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+        isTemporary: (id) => Effect.succeed(id === threadId && state === "temporary"),
+        isDiscarded: (id) => Effect.succeed(id === threadId && state === "discarded"),
+      }),
+    ),
+  );
+
+it.effect.each(["temporary", "discarded"])(
+  "refuses new guest links for a %s thread while saved sharing still works",
+  (state) =>
+    Effect.gen(function* () {
+      const { orchestrator } = yield* shareThread;
+      const before = (yield* orchestrator.getThreadRecords(threadId, [])).thread.guestShare;
+      yield* Effect.gen(function* () {
+        const guestShares = yield* GuestShareService.GuestShareService;
+        assert.equal(
+          (yield* Effect.flip(guestShares.create({ threadId }))).reason,
+          "thread_unavailable",
+        );
+        const after = (yield* orchestrator.getThreadRecords(threadId, [])).thread.guestShare;
+        assert.deepEqual(after, before);
+        const saved = yield* shareThreadFor(ThreadId.make("thread:saved-beside-temporary"));
+        yield* guestShares.redeem({ credential: saved.credential, name: "Sam" });
+      }).pipe(Effect.provide(guestLayerWithVolatileThread(state)));
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["temporary", "discarded"])(
+  "refuses guest reads and file writes for a %s thread",
+  (state) =>
+    Effect.gen(function* () {
+      const { credential, session, shareId } = yield* joinedGuest;
+      const uploads = yield* uploadsOf([png("private.png")]);
+      yield* Effect.gen(function* () {
+        const guestShares = yield* GuestShareService.GuestShareService;
+        const requests: ReadonlyArray<
+          Effect.Effect<unknown, GuestShareService.GuestShareAccessError>
+        > = [
+          guestShares.redeem({ credential, name: "Eve" }),
+          guestShares.check(session),
+          guestShares.stream(session),
+          guestShares.item(session, "item:private"),
+          guestShares.render(session, "item:private"),
+          guestShares.commandOutput(session, "item:private"),
+          guestShares.attachment(session, "attachment:private"),
+          guestShares.submit(session, { shareId, text: "Private" }, uploads),
+        ];
+        for (const request of requests) {
+          assert.equal((yield* Effect.flip(Effect.asVoid(request))).reason, "inactive");
+        }
+        assert.deepEqual(yield* storedFiles, []);
+        assert.deepEqual(yield* waitingMessages, []);
+      }).pipe(Effect.provide(guestLayerWithVolatileThread(state)));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
 
 const waitingMessages = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;

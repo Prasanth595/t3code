@@ -39,6 +39,7 @@ import {
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
+import * as TemporaryThreadDiagnostics from "./observability/TemporaryThreadDiagnostics.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
@@ -336,6 +337,11 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   OTLP_TRACES_PROXY_PATH,
   Effect.gen(function* () {
     yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
+    const diagnostics = yield* Effect.serviceOption(
+      TemporaryThreadDiagnostics.TemporaryThreadDiagnostics,
+    );
+    const canRecord = () => Option.isNone(diagnostics) || diagnostics.value.canRecord();
+    if (!canRecord()) return HttpServerResponse.empty({ status: 204 });
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig.ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
@@ -353,7 +359,7 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
       Effect.catch((cause) => Effect.logWarning("Failed to decode browser OTLP traces", { cause })),
     );
 
-    if (otlpTracesUrl === undefined) {
+    if (otlpTracesUrl === undefined || !canRecord()) {
       return HttpServerResponse.empty({ status: 204 });
     }
 

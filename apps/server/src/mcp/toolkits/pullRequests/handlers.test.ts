@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as TemporaryThreadStorage from "../../../orchestration-v2/TemporaryThreadStorage.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
@@ -136,6 +137,8 @@ function makeLink(
 }
 
 interface HarnessOptions {
+  readonly scope?: McpInvocationContext.McpInvocationScope;
+  readonly onRead?: () => void;
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   readonly reject?: (command: OrchestrationCommand) => string | null;
@@ -194,7 +197,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
-        Effect.succeed(id === THREAD_ID && thread ? v2PullRequestThread(thread) : null),
+        Effect.sync(() => {
+          options.onRead?.();
+          return id === THREAD_ID && thread ? v2PullRequestThread(thread) : null;
+        }),
       dispatch,
     }),
     Layer.succeed(Crypto.Crypto, testCrypto),
@@ -218,11 +224,52 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        options.scope ?? invocation(capabilities),
+      ),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
 });
+
+it.effect.each(["saved", "external", "family"] as const)(
+  "PR listing checks reverse family access for %s before reading",
+  (caller) =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const base = invocation(["pull-requests"]);
+      const scope = {
+        ...base,
+        thread:
+          caller === "external" ? undefined : { ...base.thread!, threadId: ThreadId.make(caller) },
+      };
+      const harness = yield* makeHarness({
+        scope,
+        thread: makeThread([makeLink(123, { headBranch: "private-pr-sentinel" })]),
+        onRead: () => reads++,
+      });
+      const result = yield* harness
+        .call("list_thread_pull_requests", { threadId: THREAD_ID })
+        .pipe(Effect.result);
+      if (caller === "family") {
+        expect(JSON.stringify(result)).toContain("private-pr-sentinel");
+        expect(reads).toBe(1);
+      } else {
+        expect(JSON.stringify(result)).not.toContain("private-pr-sentinel");
+        expect(reads).toBe(0);
+        expect(JSON.stringify(result)).toContain("PullRequestListFailedError");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+          isTemporary: (id) => Effect.succeed(id === THREAD_ID || id === "family"),
+          isDiscarded: () => Effect.succeed(false),
+          family: () => Effect.succeed([THREAD_ID, ThreadId.make("family")]),
+        }),
+      ),
+    ),
+);
 
 describe("pull request toolkit handlers", () => {
   it.effect("refuses a credential without the pull-requests capability", () =>

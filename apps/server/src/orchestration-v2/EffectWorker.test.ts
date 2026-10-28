@@ -84,6 +84,7 @@ function layerExecutorFor(input: {
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
+  readonly releaseTemporaryOwned?: ProviderSessionManager.ProviderSessionManagerV2Shape["releaseTemporaryOwned"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -110,6 +111,7 @@ function layerExecutorFor(input: {
         close: () => Effect.void,
         closeInstance: () => Effect.void,
         release: () => record("release"),
+        releaseTemporaryOwned: input.releaseTemporaryOwned ?? (() => Effect.void),
         detach: () => record("detach"),
       }),
     ),
@@ -166,6 +168,31 @@ function layerExecutorFor(input: {
     ),
   );
 }
+
+it.effect("preserves a terminal owner release failure for worker retry", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const failure = new ProviderSessionManager.ProviderSessionReleaseError({
+      providerSessionId: oldSessionId,
+      reason: "manual_shutdown",
+    });
+    const layer = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      releaseTemporaryOwned: () => Effect.fail(failure),
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const effect = {
+        ...restartEffect(now, { type: "detach" }),
+        request: { type: "provider-session.release-temporary" as const },
+      };
+      const error = yield* Effect.flip(executor.execute(effect));
+      assert.strictEqual(error.cause, failure);
+      assert.equal(error.effectId, effect.id);
+      assert.equal(error.effectType, "provider-session.release-temporary");
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 it.effect("settles a stopped run when its adapter has already lost the native turn", () =>
   Effect.gen(function* () {

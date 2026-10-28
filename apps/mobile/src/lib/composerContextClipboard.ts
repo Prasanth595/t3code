@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { requireNativeModule } from "expo";
 import {
   type ComposerContextClipboardFragment,
@@ -73,6 +74,16 @@ export async function importComposerContextClipboard(
   const fragment =
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
   if (!fragment) return null;
+  if (
+    fragment.records.some(
+      (record) =>
+        record.kind === "thread" &&
+        "environmentId" in record &&
+        "threadId" in record &&
+        isTemporaryThread(record.environmentId, record.threadId),
+    )
+  )
+    throw new Error("Keep the source thread before importing its context.");
   const selected = referencedComposerContext(input.text, { version: 1, records: fragment.records });
   const imported = reidentifyComposerContext(input.text, selected?.records ?? [], uuidv4);
   const skippedThreads =

@@ -138,6 +138,22 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.release-temporary":
+            return providerSessions
+              .releaseTemporaryOwned({
+                threadId: effect.threadId,
+                ...(effect.request.detail === undefined ? {} : { detail: effect.request.detail }),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })

@@ -1,3 +1,5 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
@@ -35,7 +37,16 @@ type BrowserPreviewRouteScreenProps = StaticScreenProps<{
   readonly tabId?: string;
 }>;
 
-export function BrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
+export function BrowserPreviewRouteScreen(props: BrowserPreviewRouteScreenProps) {
+  const { environmentId, threadId } = props.route.params;
+  if (isTemporaryThread(environmentId, threadId))
+    return (
+      <EmptyState title="Keep thread first" detail="Keep this thread before opening a preview." />
+    );
+  return <SavedBrowserPreviewRouteScreen {...props} />;
+}
+
+function SavedBrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = () => navigation.goBack();
   return (

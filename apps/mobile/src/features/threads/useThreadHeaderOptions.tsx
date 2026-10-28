@@ -23,6 +23,9 @@ export function useThreadHeaderOptions(props: {
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
+  readonly temporary?: boolean;
+  readonly keepingThread?: boolean;
+  readonly onKeepThread?: () => void;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -88,8 +91,23 @@ export function useThreadHeaderOptions(props: {
         ? undefined
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
-    unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerRightItems: () => [
+      ...(props.temporary && props.onKeepThread
+        ? [
+            {
+              type: "button" as const,
+              identifier: "thread-keep",
+              label: props.keepingThread ? "Saving…" : "Keep thread",
+              accessibilityLabel: props.keepingThread ? "Saving thread" : "Keep thread",
+              disabled: props.keepingThread,
+              onPress: props.onKeepThread,
+            },
+          ]
+        : []),
+      ...(usesDuoHeader || layout.usesSplitView
+        ? threadCenterHeaderItems
+        : compactRightHeaderItems),
+    ],
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
@@ -99,6 +117,9 @@ export function useThreadHeaderOptions(props: {
     options,
     // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
     optionsVersion: [
+      props.temporary,
+      props.keepingThread,
+      props.onKeepThread,
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,

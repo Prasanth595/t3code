@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   messageSearchTokens,
@@ -623,6 +624,35 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ThreadSearch, make);
+
+export const layerRouted = Layer.effect(
+  ThreadSearch,
+  Effect.gen(function* () {
+    const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+    const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+    const durable = yield* make.pipe(
+      Effect.provideService(SqlClient.SqlClient, stores.durable.sql),
+    );
+    const volatile = yield* make.pipe(
+      Effect.provideService(SqlClient.SqlClient, stores.volatile.sql),
+    );
+    return ThreadSearch.of({
+      searchThreads: durable.searchThreads,
+      searchOlderSettled: durable.searchOlderSettled,
+      search: Effect.fn("ThreadSearch.searchRouted")(function* (input) {
+        if (input.acceptTemporaryThreads !== true) return yield* durable.search(input);
+        const [temporary, saved] = yield* Effect.all([
+          volatile.search(input),
+          durable.search(input),
+        ]);
+        const owned = yield* Effect.filter(temporary.matches, (match) =>
+          storage.isTemporary(match.threadId),
+        );
+        return { matches: [...owned, ...saved.matches].slice(0, input.limit ?? 50) };
+      }),
+    });
+  }),
+);
 
 /**
  * The client search: message hits, and with `olderSettledBefore`, the rows of the best older

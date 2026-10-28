@@ -195,6 +195,7 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  isComposerDraftEmpty,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
@@ -354,6 +355,41 @@ function modelReconciliationHarness(
 }
 
 describe("mobile composer drafts", () => {
+  it("marks an empty recovery draft temporary before recovered content arrives", async () => {
+    await waitForComposerDraftsLoaded();
+    updateComposerDraftSettings("new-task:recovery-temp", { temporary: true });
+    expect(isComposerDraftEmpty(getComposerDraftSnapshot("new-task:recovery-temp"))).toBe(true);
+    setComposerDraftText("new-task:recovery-temp", "recovery-secret");
+    await flushComposerDrafts();
+    expect(getComposerDraftSnapshot("new-task:recovery-temp").text).toBe("recovery-secret");
+    expect(composerDraftFileMocks.getDocument()).not.toContain("recovery-secret");
+  });
+
+  it("excludes temporary live and signed-out drafts before serialization", async () => {
+    await waitForComposerDraftsLoaded();
+    appAtomRegistry.set(composerDraftsAtom, {
+      "new-task:temporary": { ...DRAFT, text: "temporary-sentinel", temporary: true },
+      "new-task:saved": { ...DRAFT, text: "saved-sentinel" },
+    });
+    appAtomRegistry.set(composerCloudDraftsAtom, {
+      accountId: "account",
+      signedOut: {
+        account: {
+          drafts: {
+            "new-task:temporary": { ...DRAFT, text: "signed-out-secret", temporary: true },
+          },
+          queuedMessages: [],
+        },
+      },
+    });
+    setComposerDraftText("new-task:saved", "saved-sentinel");
+    await flushComposerDrafts();
+    expect(composerDraftFileMocks.getDocument()).toContain("saved-sentinel");
+    expect(composerDraftFileMocks.getDocument()).not.toContain("temporary-sentinel");
+    expect(composerDraftFileMocks.getDocument()).not.toContain("signed-out-secret");
+    expect(composerDraftFileMocks.getDocument()).not.toContain("new-task:temporary");
+  });
+
   it.each([false, true])(
     "restores visible file chips from legacy drafts (archived: %s)",
     async (archived) => {

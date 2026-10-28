@@ -109,6 +109,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       if (config.shellThreadFamilies !== true) return EMPTY_FAMILY;
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, {
         threadId: input.threadId,
+        acceptTemporaryThreads: true,
       });
     }),
   });

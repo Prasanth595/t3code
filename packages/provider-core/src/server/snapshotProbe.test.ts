@@ -9,6 +9,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -32,6 +33,29 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
       currentValue: "build",
     },
   ],
+});
+
+it("advertises T3 temporary history for every provider", () => {
+  const input = {
+    enabled: true,
+    checkedAt: "2026-10-24T00:00:00.000Z",
+    models: [],
+    probe: {
+      installed: true,
+      version: "0.156.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+    },
+  } as const;
+  expect(
+    buildServerProvider({
+      ...input,
+      presentation: { displayName: "Codex" },
+    }).temporaryThreads,
+  ).toBe(true);
+  expect(
+    buildServerProvider({ ...input, presentation: { displayName: "Other" } }).temporaryThreads,
+  ).toBe(true);
 });
 
 describe("providerModelsFromSettings", () => {

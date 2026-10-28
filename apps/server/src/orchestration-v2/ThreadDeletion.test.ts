@@ -18,9 +18,36 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import * as TemporaryThreadDiagnostics from "../observability/TemporaryThreadDiagnostics.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
+import * as EventSink from "./EventSink.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { applyToProjection, emptyProjection } from "./ProjectionStore.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 
@@ -225,6 +252,233 @@ it.effect("cancels active work without reviving a run while disposing delegated 
   }).pipe(Effect.provide(IdAllocator.layer)),
 );
 
+it.effect.each([false, true])(
+  "permanent deletion closes a kept temporary runtime with prior settle=%s",
+  (settled) =>
+    Effect.gen(function* () {
+      const closed = yield* Ref.make<ReadonlyArray<ProviderSessionId>>([]);
+      const adapter = ProviderAdapter.ProviderAdapterV2.of({
+        instanceId: providerInstanceId,
+        driver,
+        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+        openSession: (input) =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Ref.update(closed, (ids) => [...ids, input.providerSessionId]),
+            );
+            const capabilities = {
+              ...CodexProviderCapabilitiesV2,
+              sessions: {
+                ...CodexProviderCapabilitiesV2.sessions,
+                supportsMultipleProviderThreadsPerSession: !input.runtimePolicy.temporary,
+              },
+            };
+            return {
+              instanceId: providerInstanceId,
+              driver,
+              providerSessionId: input.providerSessionId,
+              providerSession: {
+                id: input.providerSessionId,
+                providerInstanceId,
+                driver,
+                status: "ready" as const,
+                cwd: process.cwd(),
+                model: modelSelection.model,
+                capabilities,
+                createdAt,
+                updatedAt: createdAt,
+                lastError: null,
+              },
+              events: Stream.never,
+              ensureThread: () => Effect.die("unused ensureThread"),
+              resumeThread: () => Effect.die("unused resumeThread"),
+              startTurn: () => Effect.void,
+              steerTurn: () => Effect.void,
+              interruptTurn: () => Effect.void,
+              respondToRuntimeRequest: () => Effect.void,
+              readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+              rollbackThread: () => Effect.die("unused rollbackThread"),
+              forkThread: () => Effect.die("unused forkThread"),
+            } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          }),
+      });
+      const stores = TemporaryThreadStorage.layer.pipe(
+        Layer.provide(Sqlite.layerMemory),
+        Layer.provide(TemporaryThreadDiagnostics.layer),
+      );
+      const managerLayer = ProviderSessionManager.layerWithOptions({ configureMcp: false }).pipe(
+        Layer.provideMerge(stores),
+        Layer.provideMerge(IdAllocator.layer),
+        Layer.provide(ProviderAdapterRegistry.layerSingle(adapter)),
+        Layer.provide(McpProviderSessions.layer),
+        Layer.provide(McpSessionRegistryTestkit.layer),
+        Layer.provide(Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({})),
+        Layer.provide(CommandOutputHub.layer.pipe(Layer.provide(stores))),
+        Layer.provide(NodeServices.layer),
+      );
+      const executor = EffectWorker.layerExecutor.pipe(
+        Layer.provideMerge(managerLayer),
+        Layer.provide(Layer.mock(RunFinalizationService.RunFinalizationService)({})),
+        Layer.provide(Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({})),
+        Layer.provide(Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({})),
+        Layer.provide(Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({})),
+        Layer.provide(Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({})),
+        Layer.provide(
+          Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+        ),
+        Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
+        Layer.provide(ServerSettings.layerTest()),
+      );
+      const layer = EffectWorker.layer.pipe(Layer.provideMerge(executor));
+      yield* Effect.gen(function* () {
+        const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+        const sink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const sessionId = ProviderSessionId.make("session:kept-delete");
+        const sharedSessionId = ProviderSessionId.make("session:saved-shared");
+        const savedOwner = ThreadId.make("thread:saved-owner");
+        const savedPeer = ThreadId.make("thread:saved-peer");
+        yield* storage.register({ threadId });
+        for (const id of [threadId, savedOwner, savedPeer]) {
+          yield* sink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: id }),
+                type: "thread.created",
+                threadId: id,
+                occurredAt: createdAt,
+                payload: {
+                  ...makeProjection().thread,
+                  id,
+                  worktreePath: null,
+                  lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+                },
+              },
+            ],
+          });
+          yield* manager.open({
+            threadId: id,
+            providerSessionId: id === threadId ? sessionId : sharedSessionId,
+            modelSelection,
+            runtimePolicy: {
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: null,
+              temporary: id === threadId,
+            },
+          });
+        }
+        yield* storage.keep({ threadId, commandId: CommandId.make("keep:delete-test") });
+        assert.isFalse(yield* storage.isTemporary(threadId));
+        assert.isTrue(yield* manager.isLive(sessionId));
+        if (settled) {
+          const settleId = CommandId.make("settle:delete-test");
+          yield* sink.commitCommand({
+            threadId,
+            commandId: settleId,
+            commandType: "thread.settle",
+            acceptedAt: deletedAt,
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "thread.settled",
+                threadId,
+                occurredAt: deletedAt,
+                payload: { ...(yield* projectionStore.getThread(threadId)), settledAt: deletedAt },
+              },
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-session.detached",
+                threadId,
+                occurredAt: deletedAt,
+                payload: {
+                  providerSessionId: sessionId,
+                  detachedAt: deletedAt,
+                  reason: "Thread settled.",
+                },
+              },
+            ],
+            effects: [
+              {
+                id: "effect:settle:delete-test",
+                commandId: settleId,
+                threadId,
+                request: { type: "provider-session.detach", providerSessionId: sessionId },
+              },
+            ],
+          });
+          yield* worker.drain();
+          assert.deepEqual(
+            (yield* projectionStore.getThreadRecords(threadId, ["providerSessions"]))
+              .providerSessions,
+            [],
+          );
+          assert.isTrue(yield* manager.isLive(sessionId));
+          assert.deepEqual(yield* Ref.get(closed), []);
+        }
+        for (const id of [threadId, savedOwner]) {
+          const deleteCommand = {
+            ...command,
+            threadId: id,
+            commandId: CommandId.make("delete:" + id),
+          };
+          const plan = yield* planThreadDeletion({
+            command: deleteCommand,
+            projection: yield* projectionStore
+              .getThreadSnapshot(id)
+              .pipe(Effect.map((snapshot) => snapshot.projection)),
+            attachmentIds: [],
+            now: deletedAt,
+            idAllocator,
+          });
+          yield* sink.commitCommand({
+            threadId: id,
+            commandId: deleteCommand.commandId,
+            commandType: deleteCommand.type,
+            acceptedAt: deletedAt,
+            ...plan,
+          });
+          yield* worker.drain();
+          const outbox = yield* EffectOutbox.EffectOutboxV2;
+          assert.isTrue(
+            (yield* outbox.listByCommandId(deleteCommand.commandId)).every(
+              (effect) => effect.status === "succeeded",
+            ),
+          );
+          assert.isFalse(yield* manager.isLive(sessionId));
+          assert.deepEqual(yield* Ref.get(closed), [sessionId]);
+          assert.isTrue(yield* manager.isLive(sharedSessionId));
+        }
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("requeues terminal temporary release after a worker process is lost", () =>
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    yield* outbox.enqueue([
+      {
+        id: "effect:deleted-temporary-owner",
+        commandId: command.commandId,
+        threadId,
+        request: { type: "provider-session.release-temporary" },
+      },
+    ]);
+    yield* outbox.claimNext({ workerId: "lost-worker" });
+    assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { cancelled: 0, requeued: 1 });
+    const reclaimed = yield* outbox.claimNext({ workerId: "new-worker" });
+    assert.isTrue(Option.isSome(reclaimed));
+    if (Option.isSome(reclaimed)) {
+      assert.equal(reclaimed.value.request.type, "provider-session.release-temporary");
+      assert.equal(reclaimed.value.attemptCount, 2);
+    }
+  }).pipe(Effect.provide(EffectOutbox.layer.pipe(Layer.provide(Sqlite.layerMemory)))),
+);
+
 it.effect("queues provider and resource cleanup and preserves an earlier deletion timestamp", () =>
   Effect.gen(function* () {
     const base = makeProjection();
@@ -290,6 +544,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
           detail: "Thread deleted.",
           revokeMcpCredential: true,
         },
+        { type: "provider-session.release-temporary", detail: "Thread deleted." },
         { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },

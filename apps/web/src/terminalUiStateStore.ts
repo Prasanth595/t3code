@@ -1,3 +1,4 @@
+import { persistentThreadEntries } from "./temporaryChat";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -765,7 +766,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({
-        terminalUiStateByThreadKey: state.terminalUiStateByThreadKey,
+        terminalUiStateByThreadKey: persistentThreadEntries(state.terminalUiStateByThreadKey),
       }),
     },
   ),

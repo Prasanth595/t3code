@@ -53,6 +53,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as TemporaryThreadService from "./TemporaryThreadService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -81,6 +82,7 @@ export interface ThreadLaunchInput {
   readonly commandId: CommandId;
   readonly threadId?: ThreadId;
   readonly reuseExistingThread?: boolean;
+  readonly temporary?: boolean;
   readonly projectId: ProjectId;
   readonly title: string;
   readonly generateTitle?: boolean;
@@ -107,7 +109,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "temporary"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -213,6 +215,9 @@ const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const temporaryLifecycle = yield* Effect.serviceOption(
+    TemporaryThreadService.TemporaryThreadLifecycleState,
+  );
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
@@ -228,6 +233,17 @@ const make = Effect.gen(function* () {
         ...(threadId === undefined ? {} : { threadId }),
         cause,
       });
+
+  const assertTemporaryLifecycle = Effect.fn("ThreadLaunchService.assertTemporaryLifecycle")(
+    function* (input: PreparationInput) {
+      if (input.temporary === true && Option.isNone(temporaryLifecycle)) {
+        return yield* mapError(
+          input,
+          "create-thread",
+        )("Temporary lifecycle ownership is unavailable.");
+      }
+    },
+  );
 
   const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
     receipts
@@ -459,20 +475,23 @@ const make = Effect.gen(function* () {
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
-      if (reused === undefined) {
-        yield* threads
-          .dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`${input.commandId}:workspace`),
-            threadId,
-            branch,
-            worktreePath,
-          })
-          .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
-      }
-      workspaceRecorded = true;
+      yield* Effect.gen(function* () {
+        if (reused === undefined) {
+          yield* threads
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${input.commandId}:workspace`),
+              threadId,
+              branch,
+              worktreePath,
+            })
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+        }
+        workspaceRecorded = true;
+      }).pipe(Effect.uninterruptible);
 
       if (
+        input.temporary !== true &&
         reused === undefined &&
         worktreePath !== null &&
         branch !== null &&
@@ -675,7 +694,7 @@ const make = Effect.gen(function* () {
           if (
             tracked &&
             createdWorktreePath &&
-            ((cancelled && !runReleased) || !workspaceRecorded)
+            ((cancelled && !runReleased && input.temporary !== true) || !workspaceRecorded)
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
             const removedPath = createdWorktreePath;
@@ -765,6 +784,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
   ) {
+    yield* assertTemporaryLifecycle(input);
     const preparation = Effect.gen(function* () {
       const prepare = prepareInBackground(input, threadId, runId);
       if (
@@ -791,7 +811,20 @@ const make = Effect.gen(function* () {
         );
       yield* Effect.raceFirst(prepare, interruption);
     });
-    yield* preparation.pipe(
+    let completed = false;
+    let fiber: Fiber.Fiber<void> | undefined;
+    const temporaryState =
+      input.temporary === true && Option.isSome(temporaryLifecycle)
+        ? temporaryLifecycle.value
+        : undefined;
+    const finish = Effect.sync(() => {
+      completed = true;
+      if (temporaryState === undefined || fiber === undefined) return;
+      const active = temporaryState.preparations.get(threadId);
+      active?.delete(fiber);
+      if (active?.size === 0) temporaryState.preparations.delete(threadId);
+    });
+    fiber = yield* preparation.pipe(
       Effect.onError((cause) =>
         failPreparedRun(
           input,
@@ -802,8 +835,14 @@ const make = Effect.gen(function* () {
       ),
       Effect.ignoreCause,
       Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.ensuring(finish),
       Effect.forkIn(preparationScope),
     );
+    if (temporaryState !== undefined && !completed) {
+      const active = temporaryState.preparations.get(threadId) ?? new Set<Fiber.Fiber<void>>();
+      active.add(fiber);
+      temporaryState.preparations.set(threadId, active);
+    }
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
@@ -815,6 +854,7 @@ const make = Effect.gen(function* () {
         (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
+      yield* assertTemporaryLifecycle(input);
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -884,7 +924,10 @@ const make = Effect.gen(function* () {
                   .folderForThread({
                     projectId: input.projectId,
                     threadId: candidateThreadId,
-                    text: input.initialMessage?.text ?? input.title,
+                    text:
+                      input.temporary === true
+                        ? "Temporary"
+                        : (input.initialMessage?.text ?? input.title),
                   })
                   .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))),
                 {
@@ -906,6 +949,7 @@ const make = Effect.gen(function* () {
               })
             : threads.dispatch({
                 type: "thread.create",
+                ...(input.temporary === true ? { temporary: true } : {}),
                 commandId: input.commandId,
                 threadId: candidateThreadId,
                 projectId: input.projectId,
@@ -966,7 +1010,9 @@ const make = Effect.gen(function* () {
                 : { senderThreadId: input.initialMessage.senderThreadId }),
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
-              ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
+              ...(input.generateTitle === true && input.temporary !== true
+                ? { titleSeed: input.title }
+                : {}),
               modelSelection: input.modelSelection,
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
@@ -1113,6 +1159,7 @@ const make = Effect.gen(function* () {
       {
         commandId: input.commandId,
         projectId: projection.thread.projectId,
+        ...(projection.thread.temporary === true ? { temporary: true } : {}),
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined

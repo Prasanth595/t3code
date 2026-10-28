@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentNotRegisteredError } from "@t3tools/client-runtime/connection";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
+import { isTemporaryThread, setTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import {
   CommandId,
   ComposerContextId,
@@ -112,6 +113,154 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
+  it("retries queued Keep writes without promoting the server twice", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const registry = AtomRegistry.make();
+    onTestFinished(() => registry.dispose());
+    const message = {
+      ...queuedMessage({ messageId: "keep-retry", createdAt: "2026-10-25T00:00:00Z" }),
+      temporary: true,
+    };
+    const second = {
+      ...queuedMessage({ messageId: "keep-second", createdAt: "2026-10-25T00:00:01Z" }),
+      temporary: true,
+    };
+    const normal = queuedMessage({
+      threadId: "saved-thread",
+      messageId: "saved-message",
+      createdAt: "2026-10-25T00:00:01Z",
+    });
+    setTemporaryThread(message.environmentId, message.threadId, true);
+    onTestFinished(() => setTemporaryThread(message.environmentId, message.threadId, false));
+    const manager = createThreadOutboxManager({ registry, storage: expoThreadOutboxStorage });
+    await manager.enqueue(message);
+    await manager.enqueue(second);
+    await manager.enqueue(normal);
+    const normalFile = outboxFiles.get("saved-message.json");
+    const response = Promise.withResolvers<boolean>();
+    const keepOnServer = vi.fn(() => response.promise);
+    using write = vi.spyOn(expoThreadOutboxStorage, "write");
+    write.mockRejectedValueOnce(new Error("disk full"));
+
+    const keeping = manager.keepThread(message.environmentId, message.threadId, keepOnServer);
+    expect(isTemporaryThread(message.environmentId, message.threadId)).toBe(true);
+    expect(outboxFiles.has("keep-retry.json")).toBe(false);
+    response.resolve(true);
+    await expect(keeping).rejects.toMatchObject({ operation: "update" });
+    expect(isTemporaryThread(message.environmentId, message.threadId)).toBe(false);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)["environment-1:thread-1"]).toEqual([
+      message,
+      { ...second, temporary: false },
+    ]);
+    expect(outboxFiles.has("keep-retry.json")).toBe(false);
+    const savedSecondFile = outboxFiles.get("keep-second.json");
+
+    write.mockRejectedValueOnce(new Error("disk still full"));
+    await expect(
+      manager.keepThread(message.environmentId, message.threadId, keepOnServer),
+    ).rejects.toMatchObject({ operation: "update" });
+    expect(outboxFiles.has("keep-retry.json")).toBe(false);
+
+    await expect(
+      manager.keepThread(message.environmentId, message.threadId, keepOnServer),
+    ).resolves.toBe(true);
+    expect(keepOnServer).toHaveBeenCalledTimes(1);
+    expect(outboxFiles.get("saved-message.json")).toBe(normalFile);
+    expect(outboxFiles.get("keep-second.json")).toBe(savedSecondFile);
+    const restarted = createThreadOutboxManager({ registry, storage: expoThreadOutboxStorage });
+    await expect(restarted.load()).resolves.toBe(true);
+    expect(registry.get(restarted.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [
+        { ...message, temporary: false },
+        { ...second, temporary: false },
+      ],
+      "environment-1:saved-thread": [normal],
+    });
+  });
+
+  it("leaves queued Keep messages private when the server refuses Keep", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const registry = AtomRegistry.make();
+    onTestFinished(() => registry.dispose());
+    const message = {
+      ...queuedMessage({ messageId: "keep-refused", createdAt: "2026-10-25T00:00:00Z" }),
+      temporary: true,
+    };
+    setTemporaryThread(message.environmentId, message.threadId, true);
+    onTestFinished(() => setTemporaryThread(message.environmentId, message.threadId, false));
+    const manager = createThreadOutboxManager({ registry, storage: expoThreadOutboxStorage });
+    await manager.enqueue(message);
+    await expect(
+      manager.keepThread(message.environmentId, message.threadId, async () => false),
+    ).resolves.toBe(false);
+    expect(isTemporaryThread(message.environmentId, message.threadId)).toBe(true);
+    expect(outboxFiles.size).toBe(0);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)["environment-1:thread-1"]).toEqual([
+      message,
+    ]);
+    await expect(
+      manager.keepThread(message.environmentId, message.threadId, async () => true),
+    ).resolves.toBe(true);
+    expect((await expoThreadOutboxStorage.load()).messages).toEqual([
+      { ...message, temporary: false },
+    ]);
+  });
+
+  it("retries the latest same-id queued prompt after a Keep write fails", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const registry = AtomRegistry.make();
+    onTestFinished(() => registry.dispose());
+    const message = {
+      ...queuedMessage({ messageId: "keep-edited", createdAt: "2026-10-25T00:00:00Z" }),
+      temporary: true,
+    };
+    const manager = createThreadOutboxManager({ registry, storage: expoThreadOutboxStorage });
+    await manager.enqueue(message);
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    using write = vi.spyOn(expoThreadOutboxStorage, "write");
+    write.mockImplementationOnce(async () => {
+      started.resolve();
+      await release.promise;
+      throw new Error("disk full");
+    });
+    const keepOnServer = vi.fn(async () => true);
+    const keeping = manager.keepThread(message.environmentId, message.threadId, keepOnServer);
+    await started.promise;
+    const edited = { ...message, text: "Latest queued prompt" };
+    const editing = manager.enqueue(edited);
+    release.resolve();
+    await expect(keeping).rejects.toMatchObject({ operation: "update" });
+    await editing;
+    await expect(
+      manager.keepThread(message.environmentId, message.threadId, keepOnServer),
+    ).resolves.toBe(true);
+    expect(keepOnServer).toHaveBeenCalledTimes(1);
+    expect((await expoThreadOutboxStorage.load()).messages).toEqual([
+      { ...edited, temporary: false },
+    ]);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)["environment-1:thread-1"]).toEqual([
+      { ...edited, temporary: false },
+    ]);
+  });
+
+  it("keeps temporary messages out of disk across writes and removal", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const message = {
+      ...queuedMessage({ messageId: "temporary-sentinel", createdAt: "2026-10-24T00:00:00Z" }),
+      temporary: true,
+    };
+    await expoThreadOutboxStorage.write(message);
+    expect(outboxFiles.size).toBe(0);
+    await expoThreadOutboxStorage.write({ ...message, text: "edited-secret" });
+    expect(outboxFiles.size).toBe(0);
+    await expoThreadOutboxStorage.remove(message);
+    expect([...outboxFiles.values()].join(" ")).not.toContain("temporary-sentinel");
+    expect(outboxFiles.size).toBe(0);
+    await expoThreadOutboxStorage.write({ ...message, temporary: false });
+    expect([...outboxFiles.values()].join(" ")).toContain("temporary-sentinel");
+  });
+
   it("retains structured context through a persisted offline queue round trip", () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "context-message", createdAt: "2026-09-06T12:00:00.000Z" }),

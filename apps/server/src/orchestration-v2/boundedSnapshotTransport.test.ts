@@ -34,6 +34,8 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -50,6 +52,7 @@ import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
@@ -391,18 +394,26 @@ const seed = Effect.gen(function* () {
   for (const event of events) yield* projections.apply(event);
 });
 
-const TestLayer = Layer.mergeAll(
+const testServices = Layer.mergeAll(
   management,
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
     getEnvironmentId: Effect.succeed(EnvironmentId.make("compact-transport")),
   }),
   Layer.effectDiscard(seed),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
-  Layer.mock(ProjectStore.ProjectStoreV2)({}),
+  Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
   Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
-).pipe(Layer.provideMerge(store));
+);
+const TestLayer = testServices.pipe(Layer.provideMerge(store));
+const TemporaryTestLayer = testServices.pipe(
+  Layer.provideMerge(
+    TemporaryThreadStorage.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ),
+);
 
-const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<A>) =>
+const withHttp = <A>(
+  use: (get: (path: string, headers?: Record<string, string>) => Promise<Response>) => Promise<A>,
+) =>
   Effect.gen(function* () {
     const context = yield* Effect.context<Layer.Success<typeof TestLayer>>();
     const appLayer = HttpApiBuilder.layer(OrchestrationApi).pipe(
@@ -417,11 +428,12 @@ const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<
       Effect.sync(() => HttpRouter.toWebHandler(appLayer, { disableLogger: true })),
       ({ handler }) =>
         Effect.promise(() =>
-          use((path) =>
+          use((path, headers) =>
             handler(
               new Request(`http://environment.test${path}`, {
                 headers: {
                   [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
+                  ...headers,
                 },
               }),
             ),
@@ -446,6 +458,30 @@ function itemIds(projection: OrchestrationV2ThreadProjection): string[] {
   return projection.turnItems.map((item) => String(item.id));
 }
 
+it.layer(TemporaryTestLayer)("temporary HTTP shell", (it) => {
+  it.effect("HTTP: shell excludes temporary titles and IDs even with opt-in", () =>
+    Effect.gen(function* () {
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const privateId = ThreadId.make("native-private-shell-id");
+      yield* storage.register({ threadId: privateId });
+      const created = threadCreated(privateId, yield* DateTime.now);
+      yield* stores.volatile.projectionStore.apply(created);
+      assert.isNotNull(yield* stores.volatile.projectionStore.getThreadShell(privateId));
+      assert.isNull(yield* stores.durable.projectionStore.getThreadShell(privateId));
+      yield* withHttp(async (get) => {
+        for (const headers of [undefined, { "x-t3-accept-temporary-threads": "1" }]) {
+          const response = await get("/api/orchestration/shell", headers);
+          assert.strictEqual(response.status, 200);
+          const body = await response.text();
+          assert.include(body, FORK);
+          assert.notInclude(body, privateId);
+        }
+      });
+    }),
+  );
+});
+
 it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
   describe.each([
     ["fork", FORK],
@@ -458,6 +494,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         const ignoredBody = await (await get(`${base}?compactTurnItems=yes&unknown=1`)).text();
         const compactResponse = await get(`${base}?compactTurnItems=1`);
         assert.strictEqual(compactResponse.status, 200);
+        assert.strictEqual(compactResponse.headers.get("cache-control"), "no-store");
         const compactBody = await compactResponse.text();
 
         assert.notInclude(legacyBody, "turnItemsOmitLocalVisible");
@@ -498,6 +535,89 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           }),
         ),
       ),
+    );
+
+    it.effect("HTTP: temporary data stays off HTTP even with opt-in", () =>
+      withHttp(async (get) => {
+        for (const suffix of ["", "/bounded", "/transcript", "/history?cursor=invalid"]) {
+          const path = `/api/orchestration/threads/${encodeURIComponent(threadId)}${suffix}`;
+          const denied = await get(path);
+          assert.strictEqual(denied.status, 404);
+          const accepted = await get(path, { "x-t3-accept-temporary-threads": "1" });
+          assert.strictEqual(accepted.status, 404);
+          assert.strictEqual(accepted.headers.get("cache-control"), "no-store");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+            isTemporary: () => Effect.succeed(true),
+            isDiscarded: () => Effect.succeed(false),
+            generation: () => Effect.succeed("temporary-generation"),
+          }),
+        ),
+      ),
+    );
+
+    it.effect("WS: Keep replaces the focused generation on the existing subscription", () =>
+      Effect.gen(function* () {
+        const changes = yield* Queue.unbounded<{
+          type: "kept";
+          threadIds: ReadonlyArray<ThreadId>;
+          generation: string;
+        }>();
+        const snapshots =
+          yield* Queue.unbounded<
+            Extract<typeof OrchestrationV2ThreadStreamItem.Type, { kind: "snapshot" }>
+          >();
+        let generation = "temporary-generation";
+        const storage = Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+          isTemporary: () => Effect.sync(() => generation === "temporary-generation"),
+          isDiscarded: () => Effect.succeed(false),
+          generation: () => Effect.sync(() => generation),
+          changes: Stream.fromQueue(changes),
+        });
+        const worker = yield* Stream.unwrap(
+          subscribeOrchestrationV2Thread({ threadId, acceptTemporaryThreads: true }),
+        ).pipe(
+          Stream.filter((item) => item.kind === "snapshot"),
+          Stream.take(2),
+          Stream.runForEach((item) => Queue.offer(snapshots, item)),
+          Effect.provide(storage),
+          Effect.forkChild,
+        );
+        assert.strictEqual(
+          (yield* Queue.take(snapshots)).storageGeneration,
+          "temporary-generation",
+        );
+        generation = "saved-generation";
+        yield* Queue.offer(changes, { type: "kept", threadIds: [threadId], generation });
+        assert.strictEqual((yield* Queue.take(snapshots)).storageGeneration, "saved-generation");
+        yield* Fiber.join(worker);
+      }),
+    );
+
+    it.effect("WS: temporary snapshots require opt-in and carry their storage generation", () =>
+      Effect.gen(function* () {
+        const storage = Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+          isTemporary: () => Effect.succeed(true),
+          isDiscarded: () => Effect.succeed(false),
+          generation: () => Effect.succeed("temporary-generation"),
+          changes: Stream.empty,
+        });
+        const denied = yield* Effect.exit(
+          firstSnapshot({ threadId }).pipe(Effect.provide(storage)),
+        );
+        assert.strictEqual(denied._tag, "Failure");
+        const accepted = yield* firstSnapshot({
+          threadId,
+          acceptTemporaryThreads: true,
+          acceptBoundedSnapshot: true,
+          acceptCompactTurnItems: true,
+        }).pipe(Effect.provide(storage));
+        assert.strictEqual(accepted.decoded.storageGeneration, "temporary-generation");
+        assert.isUndefined(accepted.decoded.historyCursor);
+        assert.isUndefined(accepted.decoded.turnItemsOmitLocalVisible);
+      }),
     );
 
     it.effect("HTTP: the ID table is opt-in and decodes to the same snapshot", () =>

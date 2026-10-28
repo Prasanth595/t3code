@@ -33,7 +33,9 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, getInitialServerConfig, request } from "../rpc/client.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { isTemporaryThread, setTemporaryThread } from "../temporaryThreads.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -71,6 +73,7 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly temporary?: boolean;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -144,6 +147,7 @@ interface StartThreadBootstrap {
   readonly createThread?: {
     readonly projectId: ProjectId;
     readonly title: string;
+    readonly temporary?: boolean;
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
@@ -267,7 +271,10 @@ const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
 const getProjection = (threadId: ThreadId) =>
-  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+    threadId,
+    acceptTemporaryThreads: true,
+  });
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
@@ -281,6 +288,13 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
     (attachment): attachment is UploadChatAttachment => "dataUrl" in attachment,
   );
   if (uploads.length === 0) return stored;
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  if (isTemporaryThread(supervisor.target.environmentId, threadId)) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: "Keep thread before uploading attachments.",
+    });
+  }
   const result = yield* request(WS_METHODS.assetsPersistChatAttachments, {
     threadId,
     messageId,
@@ -383,8 +397,13 @@ export const deleteProject = Effect.fn("EnvironmentCommands.deleteProject")(func
 export const createThread = Effect.fn("EnvironmentCommands.createThread")(function* (
   input: CreateThreadInput,
 ) {
+  if (input.temporary === true) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    setTemporaryThread(supervisor.target.environmentId, input.threadId, true);
+  }
   return yield* dispatch({
     type: "thread.create",
+    ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
     commandId: yield* allocateCommandId(input),
     createdBy: "user",
     creationSource: input.creationSource ?? "web",
@@ -653,6 +672,10 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
+  if (input.bootstrap?.createThread?.temporary === true) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    setTemporaryThread(supervisor.target.environmentId, input.threadId, true);
+  }
   const commandId = yield* allocateCommandId(input);
   const attachments = yield* persistAttachments(
     input.threadId,
@@ -698,6 +721,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
       projectId: thread.projectId,
+      ...(thread.temporary === undefined ? {} : { temporary: thread.temporary }),
       title: input.titleSeed ?? thread.title,
       generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,

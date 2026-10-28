@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -22,6 +23,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -87,6 +89,49 @@ const sendGuestMessage = (orchestrator: Orchestrator.OrchestratorV2["Service"], 
     createdBy: "user",
     creationSource: "web",
   });
+
+it.effect.each(["temporary", "discarding", "discarded"] as const)(
+  "rejects guest commands for %s families before writing command receipts",
+  (state) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const childId = ThreadId.make("thread:guest-share-child");
+      yield* storage.register({ threadId });
+      yield* storage.register({ threadId: childId, parentThreadId: threadId });
+      if (state === "discarding") yield* storage.markDiscarding(threadId);
+      if (state === "discarded") yield* storage.discard(threadId);
+      const expiresAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 24 }));
+      for (const target of [threadId, childId]) {
+        for (const command of [
+          { type: "thread.guest-share.open", shareId, host: "env.t3.test", expiresAt },
+          { type: "thread.guest-share.redeem", shareId, guestName: "Sam" },
+          { type: "thread.guest-share.close" },
+          { type: "thread.guest-message.submit", shareId, guestMessageId, text: "Private" },
+          { type: "thread.guest-message.dismiss", guestMessageId },
+        ] as const) {
+          const commandId = CommandId.make(`${state}:${target}:${command.type}`);
+          assert.isTrue(
+            Exit.isFailure(
+              yield* Effect.exit(
+                orchestrator.dispatch({ ...command, commandId, threadId: target }),
+              ),
+            ),
+          );
+          for (const store of [stores.durable, stores.volatile]) {
+            assert.isTrue(Option.isNone(yield* store.commandReceipts.getByCommandId(commandId)));
+          }
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(
+          Layer.provideMerge(TemporaryThreadStorage.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
+);
 
 it.effect("redeems a guest link once and sends each guest message once, with its turn", () =>
   Effect.gen(function* () {

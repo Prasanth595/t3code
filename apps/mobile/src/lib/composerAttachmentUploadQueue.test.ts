@@ -11,6 +11,7 @@ import {
   composerAttachmentsStillUploading,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
+  composerDraftUploadOwner,
   createComposerAttachmentUploadQueue,
   type ComposerAttachmentUploadRequest,
   type ComposerAttachmentUploadState,
@@ -247,6 +248,18 @@ describe("composer attachment upload queue", () => {
 });
 
 describe("draft upload scope and offline submission", () => {
+  it("uses the exact thread owner for remote environments and question drafts", () => {
+    const environment = EnvironmentId.make("remote:server");
+    const threadId = ThreadId.make("thread:1");
+    for (const key of [
+      `${environment}:${threadId}`,
+      `${environment}:${threadId}~queued-edit~run-1`,
+      questionAttachmentDraftKey(environment, threadId, "request-1", "question-1"),
+    ]) {
+      expect(composerDraftUploadOwner(key, [], environment)).toEqual({ _tag: "thread", threadId });
+    }
+  });
+
   it("uploads question drafts in their environment without matching other thread prefixes", () => {
     const requestId = ApprovalRequestId.make("request:1");
     for (const environment of [environmentId, EnvironmentId.make("remote:server")]) {

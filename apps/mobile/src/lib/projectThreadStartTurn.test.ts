@@ -35,6 +35,7 @@ describe("project thread title", () => {
     const uploadedAttachments = [{ ...attachment, id: "prepared-attachment", sizeBytes: 3 }];
     const wire = serializeComposerMessageForServer(text, undefined);
     const spec = {
+      temporary: true,
       projectId: ProjectId.make("project"),
       projectCwd: "/workspace",
       threadId: "image-thread",
@@ -54,6 +55,11 @@ describe("project thread title", () => {
       worktreeBranchName: "unused",
     } satisfies ProjectThreadStartTurnSpec;
     const input = buildProjectThreadStartTurnInput(spec);
+    expect(input.bootstrap.createThread.temporary).toBe(true);
+    expect(
+      buildProjectThreadStartTurnInput({ ...spec, temporary: false }).bootstrap.createThread
+        .temporary,
+    ).toBeUndefined();
 
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
@@ -66,6 +72,7 @@ describe("project thread title", () => {
       titleText: input.bootstrap.createThread.title,
     });
     expect(relaunched.titleSeed).toBe(title);
+    expect(relaunched.bootstrap.createThread.temporary).toBe(true);
     expect(relaunched.message.text).toBe(wire.text);
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });

@@ -12,6 +12,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { Tool, Toolkit } from "effect/ai";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -35,7 +36,12 @@ const AttachmentUploadTool = Tool.make("t3_attachment_prepare_upload", {
   ...shared,
   description:
     "Get an upload URL. POST the file's exact bytes to `relativeUrl` on this MCP server's HTTP origin, then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
-  parameters: Schema.Struct({ upload: AttachmentCreateUploadUrlInput }),
+  parameters: Schema.Struct({
+    upload: AttachmentCreateUploadUrlInput.mapMembers(([image, file]) => [
+      image.mapFields(Struct.omit(["owner"])),
+      file.mapFields(Struct.omit(["owner"])),
+    ]),
+  }),
   success: AttachmentCreateUploadUrlResult,
 }).annotate(Tool.Destructive, true);
 const AttachmentDiscardTool = Tool.make("t3_attachment_discard", {

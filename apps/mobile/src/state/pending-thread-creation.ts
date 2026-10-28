@@ -21,9 +21,20 @@ export type PendingThreadCreation = {
   readonly outcome: PendingThreadCreationOutcome | null;
 };
 
+export function threadCreationHasStopped(status: string | null | undefined): boolean {
+  return (
+    status === "failed" ||
+    status === "error" ||
+    status === "cancelled" ||
+    status === "stopped" ||
+    status === "interrupted"
+  );
+}
+
 export function selectThreadCreationDetail<Ref>(input: {
   readonly threadRef: Ref | null;
   readonly threadKey: string | null;
+  readonly shellStatus?: string | null;
   readonly queuedMessagesByThreadKey: Readonly<
     Record<string, ReadonlyArray<QueuedThreadMessage> | undefined>
   >;
@@ -44,7 +55,9 @@ export function selectThreadCreationDetail<Ref>(input: {
   // before subscribing: an early not-found is cached as a deleted thread.
   // Every detail reader must use this ref, not the route id.
   const detailRef =
-    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
+    pendingCreation === null ||
+    pendingCreation.outcome?.kind === "delivered" ||
+    threadCreationHasStopped(input.shellStatus)
       ? input.threadRef
       : null;
   return { pendingCreation, detailRef };
@@ -54,6 +67,7 @@ export function resolvePendingThreadCreation(input: {
   readonly threadKey: string | null;
   readonly pending: PendingThreadCreation | null;
   readonly previous: PendingThreadCreation | null;
+  readonly shellStatus?: string | null;
   readonly detail: {
     readonly messages: ReadonlyArray<{ readonly id: string }>;
     readonly runs: ReadonlyArray<{ readonly status: string }>;
@@ -70,11 +84,7 @@ export function resolvePendingThreadCreation(input: {
   const detail = input.detail;
   const latestRun = detail?.runs.at(-1);
   const terminalStatus = latestRun?.status;
-  if (
-    terminalStatus === "failed" ||
-    terminalStatus === "cancelled" ||
-    terminalStatus === "interrupted"
-  )
+  if (threadCreationHasStopped(input.shellStatus) || threadCreationHasStopped(terminalStatus))
     return null;
   // Message delivery can precede startup; wait for turn timing before replacing the preparing pill.
   if (
@@ -143,6 +153,7 @@ export function pendingThreadCreationShell(
   const timestamp = DateTime.makeUnsafe(message.createdAt);
   return presentThreadShell(message.environmentId, {
     id: message.threadId,
+    temporary: message.temporary,
     projectId: creation.projectId,
     title: deriveThreadTitleFromPrompt(message.text),
     providerInstanceId: message.modelSelection.instanceId,

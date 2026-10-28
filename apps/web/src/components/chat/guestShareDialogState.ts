@@ -2,6 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { canShareWithGuestAtom } from "./guestShareAvailability";
 
 /**
  * Which thread has the guest share dialog open. The thread menu and the command palette both
@@ -13,5 +14,6 @@ export const guestShareDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null
 );
 
 export function openGuestShareDialog(threadRef: ScopedThreadRef): void {
+  if (!appAtomRegistry.get(canShareWithGuestAtom(threadRef))) return;
   appAtomRegistry.set(guestShareDialogThreadAtom, threadRef);
 }

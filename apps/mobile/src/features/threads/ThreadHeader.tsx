@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -85,18 +86,28 @@ export function ThreadHeader(
         options={native.options}
         optionsVersion={native.optionsVersion}
         trailing={
-          props.fileInspectorSupported && props.hasThreadCwd ? (
-            <ScreenHeaderButton
-              accessibilityLabel={
-                props.inspectorMode !== null && panes.auxiliaryPaneVisible
-                  ? "Hide inspector"
-                  : "Show inspector"
-              }
-              icon="sidebar.right"
-              selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
-              onPress={props.onToggleInspector}
-            />
-          ) : null
+          <>
+            {Platform.OS === "android" && props.temporary && props.onKeepThread ? (
+              <ScreenHeaderButton
+                accessibilityLabel="Keep thread"
+                label={props.keepingThread ? "Saving…" : "Keep thread"}
+                disabled={props.keepingThread}
+                onPress={props.onKeepThread}
+              />
+            ) : null}
+            {props.fileInspectorSupported && props.hasThreadCwd ? (
+              <ScreenHeaderButton
+                accessibilityLabel={
+                  props.inspectorMode !== null && panes.auxiliaryPaneVisible
+                    ? "Hide inspector"
+                    : "Show inspector"
+                }
+                icon="sidebar.right"
+                selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
+                onPress={props.onToggleInspector}
+              />
+            ) : null}
+          </>
         }
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}

@@ -135,6 +135,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 }
 
 export interface EnvironmentThreadShell {
+  readonly temporary?: boolean;
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -285,6 +286,7 @@ export function presentThreadShell(
   return {
     environmentId,
     id: thread.id,
+    ...(thread.temporary === undefined ? {} : { temporary: thread.temporary }),
     projectId: thread.projectId,
     title:
       thread.lineage.relationshipToParent === "subagent"

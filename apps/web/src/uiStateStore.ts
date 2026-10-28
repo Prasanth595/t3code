@@ -1,3 +1,4 @@
+import { persistentThreadEntries } from "./temporaryChat";
 import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -225,7 +226,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
+        threadLastVisitedAtById: persistentThreadEntries(state.threadLastVisitedAtById),
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
         // Older clients read only this field.
@@ -234,7 +235,9 @@ export function persistState(state: UiState): void {
             ? (state.sidebarProjectScopeKeys[0] ?? null)
             : null,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
-        threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+        threadChangedFilesExpandedById: persistentThreadEntries(
+          state.threadChangedFilesExpandedById,
+        ),
         pullRequestMergeMethod: state.pullRequestMergeMethod,
       } satisfies PersistedUiState),
     );

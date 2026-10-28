@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import type { Action } from "expo-quick-actions";
 import type { NavigationState } from "@react-navigation/native";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
@@ -73,6 +74,7 @@ export function withRecentThreadShortcut(
   current: ReadonlyArray<RecentThreadShortcut>,
   opened: RecentThreadShortcut,
 ): ReadonlyArray<RecentThreadShortcut> {
+  if (isTemporaryThread(opened.environmentId, opened.threadId)) return current;
   const existing = current.find(
     (thread) =>
       thread.environmentId === opened.environmentId && thread.threadId === opened.threadId,
@@ -96,12 +98,15 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },
-    ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map((thread): Action => ({
-      // URI-encoded hrefs avoid env/thread id collisions that plain hyphen joins allow.
-      id: `thread:${threadShortcutHref(thread)}`,
-      title: threadShortcutLabel(thread),
-      icon: SHORTCUT_ICON,
-      params: { href: threadShortcutHref(thread) },
-    })),
+    ...recents
+      .filter((thread) => !isTemporaryThread(thread.environmentId, thread.threadId))
+      .slice(0, MAX_RECENT_THREAD_SHORTCUTS)
+      .map((thread): Action => ({
+        // URI-encoded hrefs avoid env/thread id collisions that plain hyphen joins allow.
+        id: `thread:${threadShortcutHref(thread)}`,
+        title: threadShortcutLabel(thread),
+        icon: SHORTCUT_ICON,
+        params: { href: threadShortcutHref(thread) },
+      })),
   ];
 }

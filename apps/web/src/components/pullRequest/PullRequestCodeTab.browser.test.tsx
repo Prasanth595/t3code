@@ -149,6 +149,7 @@ const tab = (
 
 it("keeps the diff after a refresh that brings back the same page", async () => {
   setup({ paged: false });
+  using _cores = vi.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(2);
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   await using screen = await render(tab(0), { container });
@@ -186,6 +187,7 @@ async function expectFileHeaderShown(
 
 it("scrolls to a file asked for as the tab opens", async () => {
   setup({ paged: true });
+  using _cores = vi.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(2);
   const container = pagedContainer();
   await using screen = await render(tab(0, { path: "early-39.ts", nonce: 1 }), { container });
 
@@ -194,6 +196,7 @@ it("scrolls to a file asked for as the tab opens", async () => {
 
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
   setup({ paged: true });
+  using _cores = vi.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(2);
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();

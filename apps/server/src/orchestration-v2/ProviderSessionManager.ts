@@ -1,3 +1,4 @@
+import * as TemporaryThreadLifecycleState from "./TemporaryThreadLifecycleState.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -174,6 +175,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  readonly releaseTemporaryOwned: (input: {
+    readonly threadId: ThreadId;
+    readonly detail?: string;
+  }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
@@ -188,6 +193,8 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly temporary: boolean;
+  readonly ownerThreadId: ThreadId;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
@@ -307,6 +314,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
+      const lifecycle = yield* TemporaryThreadLifecycleState.TemporaryThreadLifecycleState;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
@@ -1172,7 +1180,7 @@ export const layerWithOptions = (
         const key = sessionKey(providerSessionId);
         const current = yield* Ref.get(sessions);
         const entry = current.get(key);
-        if (entry === undefined || entry.busyTurns.size > 0) {
+        if (entry === undefined || entry.temporary || entry.busyTurns.size > 0) {
           return;
         }
 
@@ -1493,7 +1501,8 @@ export const layerWithOptions = (
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
         function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId) {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
-          if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
+          if (entry === undefined || entry.temporary || hasBusyTurn(entry, providerThreadId))
+            return;
           const tracked = Array.from(entry.idleThreadUnloads).find(
             ([, pending]) => pending.providerThread.id === providerThreadId,
           );
@@ -1648,6 +1657,7 @@ export const layerWithOptions = (
         eventSubscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
+        temporary: boolean,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
@@ -1740,31 +1750,39 @@ export const layerWithOptions = (
             );
           },
           forkThread: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.targetThreadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
-              Effect.andThen(runtime.forkThread(input)),
-              Effect.tap((providerThread) =>
-                markProviderThreadLoaded({
-                  providerSessionId,
-                  threadId: input.targetThreadId,
-                  providerThreadKey: providerThreadLoadKey({
-                    providerThread,
-                    ...(input.modelSelection === undefined
-                      ? {}
-                      : { modelSelection: input.modelSelection }),
-                    ...(input.runtimePolicy === undefined
-                      ? {}
-                      : { runtimePolicy: input.runtimePolicy }),
+            temporary
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterForkThreadError({
+                    driver: runtime.driver,
+                    providerThreadId: input.sourceProviderThread.id,
+                    cause: "Keep the temporary thread before creating native children.",
                   }),
-                }),
-              ),
-            ),
+                )
+              : observeActivity(
+                  providerSessionId,
+                  ensureThreadAttached({
+                    providerSessionId,
+                    threadId: input.targetThreadId,
+                    providerInstanceId: runtime.instanceId,
+                  }),
+                ).pipe(
+                  Effect.andThen(runtime.forkThread(input)),
+                  Effect.tap((providerThread) =>
+                    markProviderThreadLoaded({
+                      providerSessionId,
+                      threadId: input.targetThreadId,
+                      providerThreadKey: providerThreadLoadKey({
+                        providerThread,
+                        ...(input.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: input.modelSelection }),
+                        ...(input.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: input.runtimePolicy }),
+                      }),
+                    }),
+                  ),
+                ),
           startTurn: (input) =>
             observeActivity(
               providerSessionId,
@@ -2047,8 +2065,21 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
+                if (
+                  (input.runtimePolicy.temporary === true && !existing.temporary) ||
+                  ((existing.temporary || input.runtimePolicy.temporary === true) &&
+                    (existing.runtime.instanceId !== input.modelSelection.instanceId ||
+                      existing.ownerThreadId !== input.threadId))
+                ) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "Keep the temporary thread before changing its provider or adding children.",
+                  });
+                }
                 const attached = existing.attachedThreadIds.has(input.threadId);
-                if (!attached && !existing.supportsMultipleProviderThreads) {
+                if (!existing.temporary && !attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
                     providerSessionId: input.providerSessionId,
@@ -2075,6 +2106,38 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              if (
+                input.runtimePolicy.temporary === true &&
+                (input.initialNativeThreadId !== undefined || input.resumeFromSession !== undefined)
+              ) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause:
+                    "Temporary threads require a fresh live session. Keep the thread before retrying a lost session.",
+                });
+              }
+              if (input.runtimePolicy.temporary === true) {
+                const projection = yield* projectionStore
+                  .getThreadRecords(input.threadId, ["providerThreads"])
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (projection.providerThreads.some((thread) => thread.nativeThreadRef !== null)) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: "Keep the temporary conversation before replacing its native session.",
+                  });
+                }
+              }
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
@@ -2142,14 +2205,20 @@ export const layerWithOptions = (
               const eventSubscribers = yield* Ref.make<
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
-              const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+              const exposedRuntime = decorateRuntime(
+                runtime,
+                eventSubscribers,
+                input.runtimePolicy.temporary === true,
+              );
               const entry: LiveSessionEntry = {
+                ownerThreadId: input.threadId,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
+                temporary: input.runtimePolicy.temporary === true,
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
@@ -2269,6 +2338,49 @@ export const layerWithOptions = (
             ),
         ),
         release: releaseEntry,
+        releaseTemporaryOwned: Effect.fn("ProviderSessionManager.releaseTemporaryOwned")(
+          function* (input) {
+            const owned = Array.from((yield* Ref.get(sessions)).values()).filter(
+              (entry) => entry.temporary && entry.ownerThreadId === input.threadId,
+            );
+            yield* Effect.forEach(
+              owned,
+              (entry) =>
+                sessionOpen.withLock(
+                  entry.runtime.providerSessionId,
+                  Effect.gen(function* () {
+                    const current = (yield* Ref.get(sessions)).get(
+                      sessionKey(entry.runtime.providerSessionId),
+                    );
+                    if (current?.temporary !== true || current.ownerThreadId !== input.threadId)
+                      return;
+                    yield* releaseEntry({
+                      providerSessionId: entry.runtime.providerSessionId,
+                      reason: "manual_shutdown",
+                      detachedThreadId: input.threadId,
+                      ...(input.detail === undefined ? {} : { detail: input.detail }),
+                    });
+                  }),
+                ),
+              { discard: true },
+            );
+            const pending = lifecycle.pendingNativeCleanup.get(input.threadId);
+            for (const [path, providerSessionId] of pending ?? []) {
+              yield* fileSystem.remove(path, { recursive: true, force: true }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionReleaseError({
+                      providerSessionId,
+                      reason: "manual_shutdown",
+                      cause,
+                    }),
+                ),
+              );
+              pending?.delete(path);
+            }
+            if (pending?.size === 0) lifecycle.pendingNativeCleanup.delete(input.threadId);
+          },
+        ),
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
             const key = sessionKey(input.providerSessionId);
@@ -2372,6 +2484,7 @@ export const layerWithOptions = (
               return;
             }
             if (
+              !detached.value.temporary &&
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
             ) {
@@ -2384,7 +2497,11 @@ export const layerWithOptions = (
               return;
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
-            if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
+            if (
+              !detached.value.temporary &&
+              detached.value.supportsMultipleProviderThreads &&
+              unloadThread !== undefined
+            ) {
               // Serialize unload with attachment so attached threads stay loaded and later attaches resume after unload.
               yield* threadAttachment.withLock(
                 threadAttachmentKey(input),
@@ -2435,6 +2552,6 @@ export const layerWithOptions = (
         ),
       } satisfies ProviderSessionManagerV2Shape);
     }),
-  );
+  ).pipe(Layer.provide(TemporaryThreadLifecycleState.layer));
 
 export const layer = layerWithOptions();

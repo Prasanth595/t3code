@@ -23,6 +23,9 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+import * as TemporaryThreadStorage from "../orchestration-v2/TemporaryThreadStorage.ts";
+
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
@@ -358,6 +361,45 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
   ),
 );
 
+it.effect("temporary callers cannot copy data into persistent MCP actions", () =>
+  Effect.gen(function* () {
+    for (const tool of ["writes", "starts_threads", "writes_environment"]) {
+      expect(yield* call(tool, threadCaller(fullAccessThreadId))).toBe("capability_denied");
+    }
+  }).pipe(
+    Effect.provide(
+      probeServer(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+        }),
+      ).pipe(Layer.provide(temporaryResourceStorage)),
+    ),
+  ),
+);
+
+it.effect.each([threadCaller(fullAccessThreadId), clientCaller("full-access")])(
+  "thread mutations refuse private responses to saved and external callers %#",
+  (scope) =>
+    call("writes_threads", scope, { threadId: supervisedThreadId }).pipe(
+      Effect.map((outcome) => expect(outcome).toBe("capability_denied")),
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+          }),
+        ).pipe(
+          Layer.provide(
+            Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+              isTemporary: (id) => Effect.succeed(id === supervisedThreadId),
+              isDiscarded: () => Effect.succeed(false),
+              family: () => Effect.succeed([supervisedThreadId]),
+            }),
+          ),
+        ),
+      ),
+    ),
+);
+
 const box = EnvironmentId.make("environment-box");
 const here = EnvironmentId.make("environment");
 const linkedProbe = {
@@ -465,4 +507,17 @@ it.effect("refuses a linked environment to a tool that acts as its calling threa
     ).pipe(Effect.scoped, Effect.exit);
     expect(Exit.isFailure(built) && Cause.hasDies(built.cause)).toBe(true);
   }),
+);
+
+it.effect.each([
+  "writes",
+  "writes_with_capability",
+  "writes_threads",
+  "starts_threads",
+  "writes_environment",
+] as const)("a temporary caller's linked %s is refused before it goes", (tool) =>
+  call(tool, fullAccess, { environmentId: box, threadId: supervisedThreadId }).pipe(
+    Effect.map((outcome) => expect(outcome).toBe("capability_denied")),
+    Effect.provide(linkedProbeServer.pipe(Layer.provide(temporaryResourceStorage))),
+  ),
 );

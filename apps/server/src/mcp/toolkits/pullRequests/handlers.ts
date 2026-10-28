@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as TemporaryResourcePolicy from "../../../orchestration-v2/TemporaryResourcePolicy.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
@@ -201,6 +202,7 @@ const make = Effect.gen(function* () {
 
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
+  const policy = yield* TemporaryResourcePolicy.make;
 
   const commandId = (tag: string, threadId: ThreadId) =>
     crypto.randomUUIDv4().pipe(
@@ -221,6 +223,9 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
+    yield* policy
+      .assertCopyTarget(threadId, scope.thread?.threadId)
+      .pipe(Effect.mapError((cause) => new Failure({ cause })));
     const thread = yield* engine.getThreadShell(threadId).pipe(
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new Failure({ cause })),

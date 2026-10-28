@@ -101,6 +101,7 @@ import {
 import {
   AssetAccessError,
   AssetCreateUrlInput,
+  TemporaryResourceError,
   AssetCreateUrlResult,
   AttachmentCreateUploadUrlInput,
   AttachmentCreateUploadUrlResult,
@@ -226,6 +227,7 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2TemporaryThreadError,
 } from "./orchestrationV2.ts";
 import {
   ProjectCreateNewInput,
@@ -1358,7 +1360,11 @@ const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatA
 const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
   payload: AttachmentCreateUploadUrlInput,
   success: AttachmentCreateUploadUrlResult,
-  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    AttachmentUploadSigningKeyError,
+    OrchestrationV2TemporaryThreadError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
@@ -1499,64 +1505,64 @@ const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileCont
 const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsTerminalObserveRpc = Rpc.make(WS_METHODS.terminalObserve, {
   payload: TerminalObserveInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
   payload: TerminalWriteInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalResizeRpc = Rpc.make(WS_METHODS.terminalResize, {
   payload: TerminalResizeInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
   payload: TerminalClearInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   payload: TerminalCloseInput,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
   payload: PreviewOpenInput,
   success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([PreviewError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
   payload: PreviewResizeInput,
   success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([PreviewError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewAdjustRpc = Rpc.make(WS_METHODS.previewAdjust, {
   payload: PreviewAdjustInput,
   success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([PreviewError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   payload: PreviewCloseInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([PreviewError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
@@ -1577,7 +1583,7 @@ const WsPreviewReportProfilesRpc = Rpc.make(WS_METHODS.previewReportProfiles, {
 
 const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   payload: PreviewReportStatusInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([PreviewError, TemporaryResourceError, EnvironmentAuthorizationError]),
 });
 
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
@@ -1765,6 +1771,21 @@ const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.get
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
   error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
 });
+
+const WsOrchestrationV2KeepThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.keepThread, {
+  payload: OrchestrationV2RpcSchemas.keepThread.input,
+  success: OrchestrationV2RpcSchemas.keepThread.output,
+  error: Schema.Union([OrchestrationV2TemporaryThreadError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationV2UpdateTemporaryThreadViewsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews,
+  {
+    payload: OrchestrationV2RpcSchemas.updateTemporaryThreadViews.input,
+    success: OrchestrationV2RpcSchemas.updateTemporaryThreadViews.output,
+    error: Schema.Union([OrchestrationV2TemporaryThreadError, EnvironmentAuthorizationError]),
+  },
+);
 
 const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.launchThread, {
   payload: OrchestrationV2RpcSchemas.launchThread.input,
@@ -2113,6 +2134,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2KeepThreadRpc,
+  WsOrchestrationV2UpdateTemporaryThreadViewsRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,

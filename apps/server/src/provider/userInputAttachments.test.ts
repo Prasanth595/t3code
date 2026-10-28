@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as DocumentText from "./DocumentText.ts";
 import { extractDocumentText } from "./documentTextWorker.ts";
 import * as Cleanup from "../orchestration-v2/ResourceCleanupService.ts";
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -325,6 +326,7 @@ describe("question answer paths", () => {
           Cleanup.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
+                Layer.mock(CommandOutputHub.CommandOutputHub)({ purgeThread: () => Effect.void }),
                 Layer.mock(TerminalManager.TerminalManager)({}),
                 Layer.mock(PreviewManager.PreviewManager)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),

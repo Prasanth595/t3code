@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   ChatFileAttachment,
@@ -137,7 +138,13 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
             : [],
         };
       },
-      partialize: ({ entries }) => ({ entries: entries.filter(isPersistentView) }),
+      partialize: ({ entries }) => ({
+        entries: entries
+          .filter(
+            (entry) => !isTemporaryThread(entry.threadRef.environmentId, entry.threadRef.threadId),
+          )
+          .filter(isPersistentView),
+      }),
     },
   ),
 );

@@ -14,8 +14,15 @@ import {
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { isTemporaryThread } from "../temporaryThreads.ts";
 
 const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
+
+export const layerSocket = Layer.succeed(ThreadSnapshotLoader.ThreadSnapshotLoader, {
+  load: Effect.fn("ThreadSnapshotLoader.load")(() =>
+    Effect.succeed({ _tag: "unavailable" } as const),
+  ),
+});
 
 export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentBoundedThreadSnapshot",
@@ -56,10 +63,6 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   );
 });
 
-/**
- * A structured EnvironmentResourceNotFoundError means the thread is missing. Any other failure
- * leaves the snapshot to the socket.
- */
 export const layer: Layer.Layer<
   ThreadSnapshotLoader.ThreadSnapshotLoader,
   never,
@@ -77,7 +80,7 @@ export const layer: Layer.Layer<
         prepared: PreparedConnection,
         threadId: ThreadId,
       ) {
-        return fetchEnvironmentBoundedThreadSnapshot({
+        const loadBounded = fetchEnvironmentBoundedThreadSnapshot({
           prepared,
           threadId,
           signer,
@@ -87,6 +90,9 @@ export const layer: Layer.Layer<
             _tag: "present",
             snapshot: {
               snapshotSequence: bounded.snapshotSequence,
+              ...(bounded.storageGeneration === undefined
+                ? {}
+                : { storageGeneration: bounded.storageGeneration }),
               projection: bounded.projection,
               latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
             },
@@ -100,11 +106,11 @@ export const layer: Layer.Layer<
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>
               Effect.logDebug(
-                "Bounded thread snapshot not found over HTTP; treating the thread as deleted.",
+                "Bounded thread snapshot not found over HTTP; using the socket to include temporary threads.",
               ).pipe(
                 Effect.annotateLogs({ threadId }),
                 Effect.as({
-                  _tag: "missing",
+                  _tag: "unavailable",
                 } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
               ),
           }),
@@ -118,6 +124,11 @@ export const layer: Layer.Layer<
               } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
             ),
           ),
+        );
+        return Effect.suspend(() =>
+          isTemporaryThread(prepared.environmentId, threadId)
+            ? Effect.succeed({ _tag: "unavailable" as const })
+            : loadBounded,
         );
       }),
     });

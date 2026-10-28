@@ -40,6 +40,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { GuestMessageAttachments } from "./GuestMessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
+import { canShareWithGuestAtom } from "./guestShareAvailability";
 
 function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShare | null {
   return useQuietThreadProjection(threadRef)?.projection.thread.guestShare ?? null;
@@ -47,7 +48,8 @@ function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShar
 
 export function GuestShareDialogHost() {
   const threadRef = useAtomValue(guestShareDialogThreadAtom);
-  if (threadRef === null) return null;
+  const canShare = useAtomValue(canShareWithGuestAtom(threadRef));
+  if (threadRef === null || !canShare) return null;
   return (
     <GuestShareDialog
       key={`${threadRef.environmentId}:${threadRef.threadId}`}
@@ -71,9 +73,7 @@ function GuestShareDialog({
   readonly onClose: () => void;
 }) {
   const activeShare = useThreadGuestShare(threadRef);
-  const canCreate = useAtomValue(
-    serverEnvironment.createGuestShare.permissionAtom(threadRef.environmentId),
-  );
+  const canCreate = useAtomValue(canShareWithGuestAtom(threadRef));
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
   });
@@ -81,6 +81,7 @@ function GuestShareDialog({
   const [state, setState] = useState<CreateState>({ status: "idle" });
 
   const create = async () => {
+    if (!appAtomRegistry.get(canShareWithGuestAtom(threadRef))) return;
     setState({ status: "creating" });
     const result = await createGuestShare({
       environmentId: threadRef.environmentId,
@@ -174,13 +175,13 @@ function GuestShareDialog({
 }
 
 /** Header status for a shared thread, with the way to end the share. */
-export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef | null }) {
   const share = useThreadGuestShare(threadRef);
   const closeGuestShare = useOrchestrationCommand(threadEnvironment.closeGuestShare, {
     label: "stop guest share",
   });
   const [closing, setClosing] = useState(false);
-  if (share === null) return null;
+  if (threadRef === null || share === null) return null;
   return (
     <div className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs">
       <UserIcon aria-hidden className="size-3.5" />

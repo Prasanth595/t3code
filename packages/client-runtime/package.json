@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./temporary-threads": {
+      "types": "./src/temporaryThreads.ts",
+      "default": "./src/temporaryThreads.ts"
+    },
+    "./platform/orchestration-cache": {
+      "types": "./src/platform/orchestrationCache.ts",
+      "default": "./src/platform/orchestrationCache.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"

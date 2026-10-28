@@ -51,9 +51,12 @@ export const layer = McpToolAccess.toLayer(
       t3_attachment_prepare_upload: McpToolAccess.writes(
         (input) =>
           Effect.gen(function* () {
-            const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
-              Effect.mapError(unavailable),
-            );
+            const { thread } = yield* McpInvocationContext.McpInvocationContext;
+            const result = yield* Upload.issueAttachmentUploadUrl(
+              thread === undefined
+                ? input.upload
+                : { ...input.upload, owner: { _tag: "thread", threadId: thread.threadId } },
+            ).pipe(Effect.mapError(unavailable));
             const now = yield* Clock.currentTimeMillis;
             for (const [id, entry] of uploadOwners) {
               if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);

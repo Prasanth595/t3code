@@ -8,6 +8,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
 const layer = it.layer(
   Layer.merge(database, McpAppModelContext.layer.pipe(Layer.provide(database))),
@@ -63,3 +65,33 @@ layer("McpAppModelContext", (it) => {
     }),
   );
 });
+
+it.effect("temporary MCP app context fails before SQL persistence", () =>
+  Effect.gen(function* () {
+    yield* runMigrations();
+    const store = yield* McpAppModelContext.McpAppModelContext;
+    const result = yield* Effect.result(
+      store.set({
+        threadId,
+        itemId: TurnItemId.make("private-item"),
+        server: "private",
+        tool: "private",
+        text: "temporary-sentinel",
+      }),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.include(result.failure.message, "Keep this thread");
+    const sql = yield* SqlClient.SqlClient;
+    assert.equal((yield* sql`SELECT * FROM mcp_app_model_context`).length, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        database,
+        McpAppModelContext.layer.pipe(
+          Layer.provide(database),
+          Layer.provide(temporaryResourceStorage),
+        ),
+      ),
+    ),
+  ),
+);

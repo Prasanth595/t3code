@@ -17,6 +17,7 @@ import {
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
+  readonly temporary?: boolean;
   readonly projectId: ProjectId;
   readonly projectCwd: string;
   readonly threadId: string;
@@ -60,6 +61,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     interactionMode: spec.interactionMode,
     bootstrap: {
       createThread: {
+        ...(spec.temporary ? { temporary: true } : {}),
         projectId: spec.projectId,
         title,
         modelSelection: spec.modelSelection,

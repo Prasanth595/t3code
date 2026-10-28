@@ -10,6 +10,8 @@ import { expect } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "./Manager.ts";
 
+import { temporaryResourceStorage } from "../orchestration-v2/testkit/TemporaryResourceStorage.ts";
+
 const DRAIN_LIMIT = 100;
 
 interface EventCollector {
@@ -243,3 +245,16 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 });
+
+it.effect("temporary preview open fails before publishing browser state", () =>
+  Effect.gen(function* () {
+    const manager = yield* PreviewManager.PreviewManager;
+    const threadId = ThreadId.make("private-preview");
+    const result = yield* Effect.result(
+      manager.open({ threadId, url: "https://example.com/private-sentinel" }),
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") expect(result.failure.message).toContain("Keep this thread");
+    expect((yield* manager.list({ threadId })).sessions).toEqual([]);
+  }).pipe(Effect.provide(layer.pipe(Layer.provide(temporaryResourceStorage)))),
+);

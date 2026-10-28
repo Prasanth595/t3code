@@ -37,6 +37,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -56,6 +57,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -72,6 +74,8 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -83,6 +87,14 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
+import * as TemporaryThreadService from "./TemporaryThreadService.ts";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -273,10 +285,8 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
 
 const layerTest = Layer.mergeAll(
   RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
+  RuntimeLayer.layerStorage,
   ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
@@ -319,6 +329,7 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
   ),
 );
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
+  Layer.provide(CommandOutputHub.layer.pipe(Layer.provide(RuntimeLayer.layerStorage))),
   Layer.provideMerge(layerScheduledTasksTest),
   Layer.provide(
     Layer.mergeAll(
@@ -599,7 +610,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
-  RuntimeLayer.layerEventInfrastructure,
+  RuntimeLayer.layerStorage,
 ).pipe(
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -636,6 +647,599 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerPlatformTest),
 );
+
+it.effect("production runtime stops temporary launch preparation on the last view leave", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const production = RuntimeLayer.layerProduction.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(AnalyticsService.AnalyticsService, {
+            record: () => Effect.void,
+            flush: Effect.void,
+            recordOwners: () => Effect.void,
+          }),
+          WorktreeSetupTracker.layer,
+          ProviderRegistryMock.layer(),
+          Layer.mock(CloudManagedEndpointRuntime)({}),
+          Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
+            get: () => Effect.succeed(null),
+          }),
+          ServerSecretStore.layer,
+          Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+          Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          Layer.mock(TextGeneration.TextGeneration)({}),
+          Layer.mock(GitWorkflow.GitWorkflowService)({
+            hasCommit: () => Effect.succeed(true),
+            createWorktree: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              ),
+          }),
+          Layer.mock(WorkspacePaths.WorkspacePaths)({
+            normalizeWorkspaceRoot: (root) => Effect.succeed(root),
+          }),
+          Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+            peek: () =>
+              Effect.succeed({
+                repositoryIdentity: null,
+                faviconPath: null,
+                repositoryIdentityResolved: false,
+              }),
+            getAvailable: () =>
+              Effect.succeed({
+                repositoryIdentity: null,
+                faviconPath: null,
+                repositoryIdentityResolved: false,
+              }),
+            request: () => Effect.void,
+            invalidate: () => Effect.void,
+          }),
+          McpSessionRegistryTestkit.layer,
+          McpProviderSessions.layer,
+          layerCheckpointStoreTest,
+          layerTestProviderInstanceRegistry,
+        ),
+      ),
+      Layer.provide(SqlitePersistence.layerMemory),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerServerConfig),
+      Layer.provide(layerPlatformTest),
+    );
+    yield* Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const launches = yield* ThreadLaunchService.ThreadLaunchService;
+      const lifecycle = yield* TemporaryThreadService.TemporaryThreadService;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const projectId = ProjectId.make("production-temporary-project");
+      const threadId = ThreadId.make("production-temporary-launch");
+      yield* projects.create({
+        commandId: CommandId.make("production-temporary-project-create"),
+        projectId,
+        title: "Temporary launch",
+        workspaceRoot: "/work/production-temporary-test",
+      });
+      yield* launches.launch({
+        commandId: CommandId.make("production-temporary-launch-create"),
+        threadId,
+        projectId,
+        title: "Temporary preparation",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "temporary-test" },
+        createdBy: "user",
+        creationSource: "web",
+        temporary: true,
+      });
+      yield* Deferred.await(entered);
+      const identity = { sessionId: "runtime-session", clientId: "runtime-client" };
+      yield* lifecycle.updateViews(identity, {
+        viewId: "runtime-view",
+        generation: 1,
+        threadIds: [threadId],
+        background: false,
+      });
+      yield* lifecycle.updateViews(identity, {
+        viewId: "runtime-view",
+        generation: 2,
+        threadIds: [],
+        background: false,
+      });
+      assert.isTrue(yield* Deferred.isDone(interrupted));
+      assert.isTrue(yield* storage.isDiscarded(threadId));
+      assert.isNull(yield* stores.durable.projectionStore.getThreadShell(threadId));
+    }).pipe(Effect.provide(production));
+  }),
+);
+
+const temporaryCreateCommand = (threadId: ThreadId) =>
+  ({
+    type: "thread.create",
+    commandId: CommandId.make(`${threadId}-create`),
+    threadId,
+    projectId: ProjectId.make("temporary-receipts-project"),
+    title: "Temporary",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+    temporary: true,
+  }) as const;
+
+it.layer(Layer.fresh(Layer.merge(layerTest, TemporaryThreadService.layerState)))(
+  "temporary create receipts",
+  (it) => {
+    it.effect("temporary cleanup recovers from a rejected stop receipt in routed storage", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+        const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+        const threadId = ThreadId.make("temporary-rejected-cleanup-stop");
+        const commandId = CommandId.make(`temporary-discard:stop:${threadId}`);
+        yield* storage.register({ threadId });
+        const stop = { type: "thread.stop", threadId, commandId } as const;
+        assert.equal(
+          (yield* orchestrator.dispatch(stop).pipe(Effect.flip))._tag,
+          "OrchestratorProjectionError",
+        );
+        assert.equal(
+          (yield* orchestrator.dispatch(stop).pipe(Effect.flip))._tag,
+          "OrchestratorCommandPreviouslyRejectedError",
+        );
+        yield* orchestrator.dispatch(temporaryCreateCommand(threadId));
+        yield* Effect.gen(function* () {
+          const cleanup = yield* TemporaryThreadService.TemporaryThreadCleanup;
+          yield* cleanup.stopAndTeardown([threadId]);
+        }).pipe(Effect.provide(TemporaryThreadService.layerCleanup));
+        assert.isNull(yield* stores.volatile.projectionStore.getThreadShell(threadId));
+        assert.isNull(yield* stores.durable.projectionStore.getThreadShell(threadId));
+        assert.isTrue(
+          Option.isNone(yield* stores.durable.commandReceipts.getByCommandId(commandId)),
+        );
+      }),
+    );
+
+    it.effect("replays a rejected receipt without registering a temporary root", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+        const threadId = ThreadId.make("temporary-rejected-replay");
+        const commandId = CommandId.make("temporary-rejected-replay-create");
+        yield* sink.commitRejectedCommand({
+          threadId,
+          commandId,
+          commandType: "thread.create",
+          rejectedAt: yield* DateTime.now,
+          error: "Previously rejected create",
+        });
+        const error = yield* orchestrator
+          .dispatch(temporaryCreateCommand(threadId))
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorCommandPreviouslyRejectedError");
+        assert.isFalse(yield* storage.isTemporary(threadId));
+        assert.isFalse(yield* storage.isDiscarded(threadId));
+      }),
+    );
+
+    it.effect.each([false, true])("replays a kept create with thread conflict=%s", (conflict) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+        const threadId = ThreadId.make(`temporary-kept-replay-${conflict}`);
+        const create = temporaryCreateCommand(threadId);
+        yield* orchestrator.dispatch(create);
+        yield* storage.keep({ threadId, commandId: CommandId.make(`${threadId}-keep`) });
+        const targetId = conflict ? ThreadId.make(`${threadId}-other`) : threadId;
+        const replay = orchestrator.dispatch({ ...create, threadId: targetId });
+        if (conflict) {
+          assert.equal(
+            (yield* replay.pipe(Effect.flip))._tag,
+            "OrchestratorCommandIdConflictError",
+          );
+        } else {
+          assert.isTrue((yield* replay).replayed);
+        }
+        assert.isFalse(yield* storage.isTemporary(targetId));
+        assert.isFalse(yield* storage.isDiscarded(targetId));
+      }),
+    );
+
+    it.effect.each(["cleanup-failed", "discarded"] as const)(
+      "rejects accepted create replay after %s",
+      (state) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+          const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+          const lifecycle = yield* TemporaryThreadService.TemporaryThreadLifecycleState;
+          const threadId = ThreadId.make(`temporary-closed-replay-${state}`);
+          const create = {
+            ...temporaryCreateCommand(threadId),
+            title: "Private create payload",
+          } as const;
+          yield* orchestrator.dispatch(create);
+          lifecycle.discarding.add(threadId);
+          yield* storage.markDiscarding(threadId);
+          if (state === "cleanup-failed") {
+            yield* stores.volatile.sql.unsafe(
+              "CREATE TEMP TRIGGER fail_create_cleanup BEFORE DELETE ON orchestration_events BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END",
+            );
+            yield* storage.discard(threadId).pipe(Effect.flip);
+            yield* stores.volatile.sql.unsafe("DROP TRIGGER fail_create_cleanup");
+            assert.isTrue(
+              Option.isSome(
+                yield* stores.volatile.commandReceipts.getByCommandId(create.commandId),
+              ),
+            );
+          } else {
+            yield* storage.discard(threadId);
+            assert.isTrue(yield* storage.isDiscarded(threadId));
+          }
+          const error = yield* orchestrator.dispatch(create).pipe(Effect.flip);
+          assert.equal(error._tag, "OrchestratorDispatchError");
+          if (error._tag === "OrchestratorDispatchError") {
+            assert.equal(error.cause, "Temporary thread is closed.");
+          }
+        }),
+    );
+
+    it.effect.each([false, true])("failed create preserves prior reservation=%s", (reserved) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+        const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+        const threadId = ThreadId.make(`temporary-invalid-create-${reserved}`);
+        if (reserved) yield* storage.register({ threadId });
+        const create = {
+          ...temporaryCreateCommand(threadId),
+          modelSelection: { ...modelSelection, instanceId: ProviderInstanceId.make("missing") },
+        };
+        const error = yield* orchestrator.dispatch(create).pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorDispatchError");
+        assert.equal(yield* storage.isTemporary(threadId), reserved);
+        assert.isFalse(yield* storage.isDiscarded(threadId));
+        assert.isNull(yield* stores.durable.projectionStore.getThreadShell(threadId));
+        assert.isNull(yield* stores.volatile.projectionStore.getThreadShell(threadId));
+        assert.isTrue(
+          Option.isNone(yield* stores.durable.commandReceipts.getByCommandId(create.commandId)),
+        );
+        assert.equal(
+          Option.isSome(yield* stores.volatile.commandReceipts.getByCommandId(create.commandId)),
+          reserved,
+        );
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(Layer.merge(layerTest, TemporaryThreadService.layerState)))(
+  "temporary child finalization",
+  (it) => {
+    it.effect(
+      "finishes a cancelled child question while its user follow-up holds the family lock",
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+          const projection = yield* ProjectionStore.ProjectionStoreV2;
+          const lifecycle = yield* TemporaryThreadService.TemporaryThreadLifecycleState;
+          const parentId = ThreadId.make("temporary-lock-parent");
+          yield* seedProject({
+            projectId: ProjectId.make("temporary-lock-project"),
+            title: "Temporary locks",
+            workspaceRoot: process.cwd(),
+            defaultModelSelection: modelSelection,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          });
+          yield* orchestrator.dispatch({
+            ...temporaryCreateCommand(parentId),
+            projectId: ProjectId.make("temporary-lock-project"),
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("temporary-lock-start"),
+            threadId: parentId,
+            messageId: MessageId.make("temporary-lock-message"),
+            text: "Delegate",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const parent = yield* orchestrator.getThreadRecords(parentId, ["runs"]);
+          const parentRun = parent.runs[0]!;
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("temporary-lock-delegate"),
+            parentThreadId: parentId,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId!,
+            task: "Ask a question",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          const task = (yield* orchestrator.getThreadRecords(parentId, ["subagents"]))
+            .subagents[0]!;
+          const childId = task.childThreadId!;
+          assert.isTrue(yield* storage.isTemporary(childId));
+          const child = yield* orchestrator.getThreadRecords(childId, ["runs"]);
+          const run = child.runs[0]!;
+          const now = yield* DateTime.now;
+          const requestId = RuntimeRequestId.make("temporary-lock-question");
+          for (const event of [
+            {
+              id: EventId.make("temporary-lock-run-cancelled"),
+              type: "run.updated",
+              threadId: childId,
+              occurredAt: now,
+              payload: { ...run, status: "cancelled", completedAt: now },
+            },
+            {
+              id: EventId.make("temporary-lock-question-pending"),
+              type: "runtime-request.updated",
+              threadId: childId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId: run.rootNodeId!,
+                providerTurnId: null,
+                nativeRequestRef: null,
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "message" },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+          ] as const)
+            yield* projection.apply(event);
+          const finalizerReady = yield* Deferred.make<void>();
+          const userHasFamily = yield* Deferred.make<void>();
+          const cycle = yield* Deferred.make<void>();
+          const getRecords = projection.getThreadRecords;
+          using _records = vi
+            .spyOn(projection, "getThreadRecords")
+            .mockImplementation((threadId, records, options) => {
+              const read = getRecords(threadId, records, options);
+              return threadId === childId &&
+                records.length === 1 &&
+                records[0] === "runtimeRequests"
+                ? Deferred.succeed(finalizerReady, undefined).pipe(
+                    Effect.andThen(Deferred.await(userHasFamily)),
+                    Effect.andThen(read),
+                  )
+                : read;
+            });
+          const withLock = lifecycle.commands.withLock;
+          let familyRequests = 0;
+          const observeFamily: typeof withLock = (key, effect) => {
+            if (key !== parentId) return withLock(key, effect);
+            if (++familyRequests === 1) {
+              return withLock(
+                key,
+                Deferred.succeed(userHasFamily, undefined).pipe(Effect.andThen(effect)),
+              );
+            }
+            return Deferred.succeed(cycle, undefined).pipe(Effect.andThen(withLock(key, effect)));
+          };
+          using _family = vi
+            .spyOn(lifecycle.commands, "withLock")
+            .mockImplementation(observeFamily);
+          const finalizer = yield* orchestrator
+            .recoverDelegatedTask(childId, run.id)
+            .pipe(Effect.forkChild);
+          assert.isTrue(
+            yield* Effect.raceFirst(
+              Deferred.await(finalizerReady).pipe(Effect.as(true)),
+              Fiber.join(finalizer).pipe(Effect.as(false)),
+            ),
+          );
+          const followup = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("temporary-lock-followup"),
+              threadId: childId,
+              messageId: MessageId.make("temporary-lock-followup-message"),
+              text: "Continue",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.forkChild);
+          const completed = yield* Effect.raceFirst(
+            Effect.all([Fiber.join(finalizer), Fiber.join(followup)]).pipe(Effect.as(true)),
+            Deferred.await(cycle).pipe(Effect.as(false)),
+          );
+          assert.isTrue(completed, "Finalization and follow-up must finish without a lock cycle");
+          const updated = yield* orchestrator.getThreadRecords(childId, [
+            "runtimeRequests",
+            "runs",
+          ]);
+          assert.equal(updated.runtimeRequests[0]?.status, "resolved");
+          assert.equal(updated.runtimeRequests[0]?.decision, "cancel");
+          assert.lengthOf(updated.runs, 2);
+        }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(layerTest))("global stored events", (it) => {
+  it.effect.each(["genesis", "resume", "filtered"] as const)(
+    "global stored events preserve durable replay: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+        const threadId = ThreadId.make(`global-replay-${mode}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: ProjectId.make("global-replay-project"),
+          title: "Replay",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const afterSequence = yield* sink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`${threadId}-rename`),
+          threadId,
+          title: "Renamed",
+        });
+        const input =
+          mode === "resume"
+            ? { afterSequence }
+            : { afterSequence: 0, eventType: "thread.metadata-updated" as const };
+        const expected = yield* stores.durable.eventStore
+          .read(mode === "genesis" ? undefined : input)
+          .pipe(Stream.runCollect);
+        assert.isAbove(expected.length, 0);
+        const marker = {
+          id: EventId.make(`${threadId}-live`),
+          type: "thread.metadata-updated" as const,
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: (yield* orchestrator.getThreadProjection(threadId)).thread,
+        };
+        const read = stores.durable.eventStore.read;
+        const ready = yield* Deferred.make<void>();
+        using _read = vi
+          .spyOn(stores.durable.eventStore, "read")
+          .mockImplementation((cursor) =>
+            read(cursor).pipe(
+              Stream.onEnd(
+                cursor?.eventType === (mode === "filtered" ? input.eventType : undefined)
+                  ? Deferred.succeed(ready, undefined)
+                  : Effect.void,
+              ),
+            ),
+          );
+        const observer = yield* (
+          mode === "genesis"
+            ? orchestrator.streamStoredEvents
+            : orchestrator.streamStoredEventsFrom(input)
+        ).pipe(
+          Stream.takeUntil((stored) => stored.event.id === marker.id),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(ready);
+        yield* sink.write({ events: [marker] });
+        const actual = yield* Fiber.join(observer);
+        assert.deepEqual(
+          actual.map((stored) => stored.event.id),
+          [...expected.map((stored) => stored.event.id), marker.id],
+        );
+      }),
+  );
+
+  it.effect("global stored events keep temporary history live-only through Keep", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const storage = yield* TemporaryThreadStorage.TemporaryThreadStorage;
+      const stores = yield* TemporaryThreadStorage.TemporaryThreadStores;
+      const threadId = ThreadId.make("global-temporary-replay");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("global-temporary-create"),
+        threadId,
+        projectId: ProjectId.make("global-replay-project"),
+        title: "Temporary replay",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        temporary: true,
+      });
+      const live = {
+        id: EventId.make("global-temporary-live"),
+        type: "thread.metadata-updated" as const,
+        threadId,
+        occurredAt: yield* DateTime.now,
+        payload: (yield* orchestrator.getThreadProjection(threadId)).thread,
+      };
+      const keptId = EventId.make("global-temporary-kept-live");
+      const read = stores.volatile.eventStore.read;
+      const ready = yield* Deferred.make<void>();
+      const durableReady = yield* Deferred.make<void>();
+      const liveSeen = yield* Deferred.make<void>();
+      const durableRead = stores.durable.eventStore.read;
+      using _durableRead = vi
+        .spyOn(stores.durable.eventStore, "read")
+        .mockImplementation((cursor) =>
+          durableRead(cursor).pipe(
+            Stream.onEnd(
+              cursor?.eventType === undefined
+                ? Deferred.succeed(durableReady, undefined)
+                : Effect.void,
+            ),
+          ),
+        );
+      using _read = vi
+        .spyOn(stores.volatile.eventStore, "read")
+        .mockImplementation((cursor) =>
+          read(cursor).pipe(
+            Stream.onEnd(
+              cursor?.eventType === undefined ? Deferred.succeed(ready, undefined) : Effect.void,
+            ),
+          ),
+        );
+      const observer = yield* orchestrator.streamStoredEvents.pipe(
+        Stream.filter((stored) => stored.event.threadId === threadId),
+        Stream.tap((stored) =>
+          stored.event.id === live.id ? Deferred.succeed(liveSeen, undefined) : Effect.void,
+        ),
+        Stream.takeUntil((stored) => stored.event.id === keptId),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(ready);
+      yield* Deferred.await(durableReady);
+      yield* sink.write({ events: [live] });
+      yield* Deferred.await(liveSeen);
+      yield* storage.keep({ threadId, commandId: CommandId.make("global-temporary-keep") });
+      yield* sink.write({
+        events: [
+          {
+            ...live,
+            id: keptId,
+            payload: (yield* orchestrator.getThreadProjection(threadId)).thread,
+          },
+        ],
+      });
+      const events = yield* Fiber.join(observer);
+      assert.deepEqual(
+        events.map((stored) => stored.event.id),
+        [live.id, keptId],
+      );
+      assert.isFalse(yield* storage.isTemporary(threadId));
+    }),
+  );
+});
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
   const seedFailingRollbackThread = (name: string) =>
@@ -7059,10 +7663,8 @@ const queueResumeDisabledInstanceProjectId = ProjectId.make(
 
 const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
   RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
+  RuntimeLayer.layerStorage,
   ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),

@@ -2,6 +2,7 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   type OrchestrationProjectShell,
+  type OrchestrationV2ThreadShellSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,12 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
+import { HttpEffect, HttpServerResponse } from "effect/http";
+import * as Option from "effect/Option";
+import * as TemporaryThreadStorage from "./TemporaryThreadStorage.ts";
+import * as TemporaryThreadTransport from "./TemporaryThreadTransport.ts";
+import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
+import type { OrchestratorV2Error } from "./Orchestrator.ts";
 
 import {
   annotateEnvironmentRequest,
@@ -59,9 +66,21 @@ export const layer = HttpApiBuilder.group(
     const sql = yield* SqlClient.SqlClient;
     const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-    const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const rawStores = yield* Effect.serviceOption(TemporaryThreadStorage.TemporaryThreadStores);
+    const applicationEvents = Option.isSome(rawStores)
+      ? rawStores.value.durable.applicationEvents
+      : yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const readThreads: Effect.Effect<
+      Effect.Effect<
+        OrchestrationV2ThreadShellSnapshot,
+        ProjectionStoreV2Error | OrchestratorV2Error
+      >,
+      ProjectionStoreV2Error | OrchestratorV2Error
+    > = Option.isSome(rawStores)
+      ? rawStores.value.durable.projectionStore.readShellSnapshot({ location: "active" })
+      : threadManagement.readShellSnapshot({ location: "active" });
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
       (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -87,7 +106,7 @@ export const layer = HttpApiBuilder.group(
         const base = buildActiveShellSnapshot(
           yield* loadShellSnapshotParts({
             sql,
-            readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+            readThreads,
             listProjects: projectStore.listShells(),
             latestSequence: applicationEvents.latestApplicationSequence,
           }),
@@ -168,6 +187,14 @@ export const layer = HttpApiBuilder.group(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(
+              HttpServerResponse.setHeaders(response, {
+                "cache-control": "no-store",
+                vary: "x-t3-accept-temporary-threads",
+              }),
+            ),
+          );
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* loadShellSnapshot({
             omitIdleSubagents: args.query.omitIdleSubagents === "1",
@@ -184,13 +211,30 @@ export const layer = HttpApiBuilder.group(
         "threadSnapshot",
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(
+              HttpServerResponse.setHeaders(response, {
+                "cache-control": "no-store",
+                vary: "x-t3-accept-temporary-threads",
+              }),
+            ),
+          );
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const readState = yield* TemporaryThreadTransport.getReadState(
+            args.params.threadId,
+            args.headers["x-t3-accept-temporary-threads"] === "1",
+          );
+          if (!readState.allowed || readState.temporary)
+            return yield* failEnvironmentNotFound("thread_not_found");
           const snapshot = yield* loadThreadSnapshot(
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
           ).pipe(traceLocalHandlerWork);
           return {
             snapshotSequence: snapshot.snapshotSequence,
+            ...(readState.generation === undefined
+              ? {}
+              : { storageGeneration: readState.generation }),
             projection: snapshot.projection,
           };
         }),
@@ -199,7 +243,21 @@ export const layer = HttpApiBuilder.group(
         "threadTranscript",
         Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(
+              HttpServerResponse.setHeaders(response, {
+                "cache-control": "no-store",
+                vary: "x-t3-accept-temporary-threads",
+              }),
+            ),
+          );
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const readState = yield* TemporaryThreadTransport.getReadState(
+            args.params.threadId,
+            args.headers["x-t3-accept-temporary-threads"] === "1",
+          );
+          if (!readState.allowed || readState.temporary)
+            return yield* failEnvironmentNotFound("thread_not_found");
           return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
             Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
             traceLocalHandlerWork,
@@ -224,7 +282,21 @@ export const layer = HttpApiBuilder.group(
         "threadBoundedSnapshot",
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(
+              HttpServerResponse.setHeaders(response, {
+                "cache-control": "no-store",
+                vary: "x-t3-accept-temporary-threads",
+              }),
+            ),
+          );
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const readState = yield* TemporaryThreadTransport.getReadState(
+            args.params.threadId,
+            args.headers["x-t3-accept-temporary-threads"] === "1",
+          );
+          if (!readState.allowed || readState.temporary)
+            return yield* failEnvironmentNotFound("thread_not_found");
           const snapshot = yield* loadThreadSnapshotWindow(
             args.params.threadId,
             undefined,
@@ -237,6 +309,9 @@ export const layer = HttpApiBuilder.group(
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
+            ...(readState.generation === undefined
+              ? {}
+              : { storageGeneration: readState.generation }),
             ...boundedSnapshotResponseFields({
               bounded,
               compactTurnItems: args.query.compactTurnItems === "1",
@@ -250,7 +325,21 @@ export const layer = HttpApiBuilder.group(
         "threadHistoryPage",
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(
+              HttpServerResponse.setHeaders(response, {
+                "cache-control": "no-store",
+                vary: "x-t3-accept-temporary-threads",
+              }),
+            ),
+          );
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const readState = yield* TemporaryThreadTransport.getReadState(
+            args.params.threadId,
+            args.headers["x-t3-accept-temporary-threads"] === "1",
+          );
+          if (!readState.allowed || readState.temporary)
+            return yield* failEnvironmentNotFound("thread_not_found");
           const decoded = yield* Effect.try(() =>
             decodeThreadHistoryCursor(args.query.cursor),
           ).pipe(Effect.result);
@@ -273,9 +362,13 @@ export const layer = HttpApiBuilder.group(
                   : undefined,
             )
             .pipe(
-              Effect.map((page) =>
-                args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
-              ),
+              Effect.map((page) => ({
+                ...page,
+                ...(args.query.compactIds === "1" ? { idTable: true as const } : {}),
+                ...(readState.generation === undefined
+                  ? {}
+                  : { storageGeneration: readState.generation }),
+              })),
               traceLocalHandlerWork,
               Effect.catch(
                 Effect.fnUntraced(function* (cause) {

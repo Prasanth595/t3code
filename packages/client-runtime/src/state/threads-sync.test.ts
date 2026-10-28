@@ -1,9 +1,12 @@
 import {
   EnvironmentId,
+  ProjectId,
+  CommandId,
   EventId,
   MessageId,
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2GetThreadProjectionError,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -11,13 +14,17 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2GetTurnItemInput,
+  type OrchestrationV2ThreadLaunchInput,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -31,6 +38,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import { startThreadTurn } from "../operations/commands.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
@@ -41,12 +50,20 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import {
+  canPersistThreadSnapshot,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
 } from "../platform/orchestrationCache.ts";
+import { makeStoredShellSnapshotEncoder } from "../platform/shellCacheEncoding.ts";
+import {
+  forgetTemporaryThread,
+  isTemporaryThread,
+  setTemporaryThread,
+} from "../temporaryThreads.ts";
 import * as RpcSession from "../rpc/session.ts";
-import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2Projection, v2ThreadId, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 import { onThreadRequestsResolved, type ThreadRequestsResolved } from "./threadRequests.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
@@ -57,6 +74,7 @@ import {
   type ThreadSnapshotLoadResult,
 } from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -78,6 +96,10 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   ...v2Projection,
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
+
+const decodeThreadProjectionError = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2GetThreadProjectionError),
+);
 
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
 
@@ -112,6 +134,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  readonly snapshotLoader?: ThreadSnapshotLoader.ThreadSnapshotLoader["Service"];
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -119,16 +142,22 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
-  readonly getTurnItem?: (input: {
-    readonly itemId: TurnItemId;
-  }) => Effect.Effect<{ readonly item: OrchestrationV2TurnItem | null }>;
+  readonly getTurnItem?: (
+    input: OrchestrationV2GetTurnItemInput,
+  ) => Effect.Effect<{ readonly item: OrchestrationV2TurnItem | null }>;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
+  const launches = yield* Queue.unbounded<OrchestrationV2ThreadLaunchInput>();
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* SubscriptionRef.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const subscribed = yield* Queue.unbounded<{
+    readonly afterSequence?: number;
+    readonly storageGeneration?: string;
+    readonly acceptTemporaryThreads?: boolean;
+  }>();
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
@@ -146,8 +175,14 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ),
     );
   const client = {
+    [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
+      Queue.offer(launches, input).pipe(
+        Effect.as({ threadId: THREAD_ID, projection: BASE_PROJECTION, resumed: false }),
+      ),
     [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: {
       readonly afterSequence?: number;
+      readonly storageGeneration?: string;
+      readonly acceptTemporaryThreads?: boolean;
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
       readonly acceptCompactTurnItems?: true;
@@ -160,6 +195,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
           Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
           Effect.andThen(SubscriptionRef.update(subscriptionCount, (count) => count + 1)),
+          Effect.andThen(Queue.offer(subscribed, input)),
           Effect.as(
             options?.completionMarker === true
               ? streamFrom(inputs)
@@ -167,7 +203,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           ),
         ),
       ),
-    [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: { readonly itemId: TurnItemId }) =>
+    [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: OrchestrationV2GetTurnItemInput) =>
       options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
@@ -237,7 +273,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-    Effect.provideService(ThreadSnapshotLoader.ThreadSnapshotLoader, snapshotLoader),
+    Effect.provideService(
+      ThreadSnapshotLoader.ThreadSnapshotLoader,
+      options?.snapshotLoader ?? snapshotLoader,
+    ),
     Effect.provideService(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
@@ -269,7 +308,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
 
   return {
+    supervisor,
+    launches,
     threadState,
+    subscribed,
     loadWork: (anchorId: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, undefined, anchorId),
     loadEarlier: (throughEntryId?: string) =>
@@ -360,6 +402,258 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect("loads a cold temporary web thread over the socket after HTTP hides it", () => {
+    const requests: string[] = [];
+    const httpLayer = RpcHttp.layerRemoteHttpClient(async (input) => {
+      requests.push(String(input));
+      return Response.json(
+        {
+          _tag: "EnvironmentResourceNotFoundError",
+          code: "not_found",
+          reason: "thread_not_found",
+          traceId: "cold-temporary-thread",
+        },
+        { status: 404 },
+      );
+    });
+    return Effect.gen(function* () {
+      expect(isTemporaryThread(TARGET.environmentId, THREAD_ID)).toBe(false);
+      const snapshotLoader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
+        Effect.provide(BoundedThreadSnapshotHttp.layer.pipe(Layer.provide(httpLayer))),
+      );
+      const harness = yield* makeHarness({ snapshotLoader, completionMarker: true });
+      const projection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: {
+          ...BASE_PROJECTION.thread,
+          projectId: ProjectId.make("no-project"),
+          temporary: true,
+        },
+        messages: [
+          {
+            id: MessageId.make("cold-temporary-reply"),
+            threadId: THREAD_ID,
+            runId: null,
+            nodeId: null,
+            role: "assistant",
+            text: "NO_PROJECT_TEMP_UI_OK",
+            streaming: false,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "provider",
+            createdAt: BASE_PROJECTION.updatedAt,
+            updatedAt: BASE_PROJECTION.updatedAt,
+          },
+        ],
+      };
+      yield* Queue.offerAll(harness.inputs, [snapshot(projection), synchronized()]);
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted" || value.status === "live",
+      );
+      expect(state.status).toBe("live");
+      expect(Option.getOrThrow(state.data).messages.map((message) => message.text)).toEqual([
+        "NO_PROJECT_TEMP_UI_OK",
+      ]);
+      expect((yield* Queue.take(harness.subscribed)).acceptTemporaryThreads).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toContain(`/threads/${THREAD_ID}/bounded`);
+      expect(isTemporaryThread(TARGET.environmentId, THREAD_ID)).toBe(true);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
+      yield* Queue.offer(harness.inputs, deleted());
+      const removed = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(Option.isNone(removed.data)).toBe(true);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => forgetTemporaryThread(TARGET.environmentId, THREAD_ID))),
+    );
+  });
+
+  it.effect("deletes a cold web thread once when HTTP 404 is confirmed missing over WS", () => {
+    const requests: string[] = [];
+    const httpLayer = RpcHttp.layerRemoteHttpClient(async (input) => {
+      requests.push(String(input));
+      return Response.json(
+        {
+          _tag: "EnvironmentResourceNotFoundError",
+          code: "not_found",
+          reason: "thread_not_found",
+          traceId: "cold-missing-thread",
+        },
+        { status: 404 },
+      );
+    });
+    return Effect.gen(function* () {
+      const snapshotLoader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
+        Effect.provide(BoundedThreadSnapshotHttp.layer.pipe(Layer.provide(httpLayer))),
+      );
+      const harness = yield* makeHarness({ snapshotLoader });
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(
+        harness.inputs,
+        decodeThreadProjectionError({
+          _tag: "OrchestrationV2GetThreadProjectionError",
+          threadId: THREAD_ID,
+          message: "Failed to load the thread.",
+          reason: "thread_not_found",
+        }),
+      );
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted" || Option.isSome(value.error),
+      );
+      expect(state.status).toBe("deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(Option.isNone(state.error)).toBe(true);
+      yield* TestClock.adjust("2 minutes");
+      yield* harness.replaceSession;
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toContain(`/threads/${THREAD_ID}/bounded`);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => forgetTemporaryThread(TARGET.environmentId, THREAD_ID))),
+    );
+  });
+
+  it.effect("retries a cold web WS read failure after HTTP 404 and recovers", () => {
+    const httpLayer = RpcHttp.layerRemoteHttpClient(async () =>
+      Response.json(
+        {
+          _tag: "EnvironmentResourceNotFoundError",
+          code: "not_found",
+          reason: "thread_not_found",
+          traceId: "cold-retry-thread",
+        },
+        { status: 404 },
+      ),
+    );
+    return Effect.gen(function* () {
+      const snapshotLoader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
+        Effect.provide(BoundedThreadSnapshotHttp.layer.pipe(Layer.provide(httpLayer))),
+      );
+      const harness = yield* makeHarness({ snapshotLoader });
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(
+        harness.inputs,
+        new OrchestrationV2GetThreadProjectionError({
+          threadId: THREAD_ID,
+          message: "Thread not found while the database is unavailable.",
+        }),
+      );
+      const failed = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(failed.status).toBe("empty");
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
+      yield* TestClock.adjust("250 millis");
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      const recovered = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live",
+      );
+      expect(Option.getOrThrow(recovered.data)).toEqual(BASE_PROJECTION);
+      expect(Option.isNone(recovered.error)).toBe(true);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
+    });
+  });
+
+  it.effect("clears an authoritative missing snapshot without subscribing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(0);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+    }),
+  );
+
+  it.effect("dispatches the first native prompt before a socket snapshot without HTTP", () => {
+    const requests: string[] = [];
+    const httpLayer = RpcHttp.layerRemoteHttpClient(async (input) => {
+      requests.push(String(input));
+      return new Response(null, { status: 500 });
+    });
+    return Effect.gen(function* () {
+      const snapshotLoader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
+        Effect.provide(BoundedThreadSnapshotHttp.layerSocket),
+      );
+      const http = yield* HttpClient.HttpClient.pipe(Effect.provide(httpLayer));
+      const harness = yield* makeHarness({
+        snapshotLoader,
+        historyHttpClient: http,
+        completionMarker: true,
+      });
+      expect((yield* Queue.take(harness.subscribed)).acceptTemporaryThreads).toBe(true);
+      expect(Option.isNone((yield* SubscriptionRef.get(harness.threadState)).data)).toBe(true);
+      yield* startThreadTurn({
+        commandId: CommandId.make("native-first-prompt"),
+        threadId: THREAD_ID,
+        creationSource: "mobile",
+        message: {
+          messageId: MessageId.make("native-first-message"),
+          role: "user",
+          text: "FIRST_NATIVE_SOCKET_PROMPT",
+          attachments: [],
+        },
+        runtimeMode: BASE_PROJECTION.thread.runtimeMode,
+        interactionMode: BASE_PROJECTION.thread.interactionMode,
+        bootstrap: {
+          createThread: {
+            ...BASE_PROJECTION.thread,
+            temporary: true,
+            createdAt: DateTime.formatIso(BASE_PROJECTION.thread.createdAt),
+          },
+        },
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, harness.supervisor),
+        Effect.provideService(
+          Crypto.Crypto,
+          Crypto.make({
+            randomBytes: (size) => new Uint8Array(size),
+            digest: (_algorithm, data) => Effect.succeed(data),
+          }),
+        ),
+      );
+      expect(yield* Queue.take(harness.launches)).toMatchObject({
+        threadId: THREAD_ID,
+        temporary: true,
+        creationSource: "mobile",
+        initialMessage: {
+          messageId: "native-first-message",
+          text: "FIRST_NATIVE_SOCKET_PROMPT",
+          attachments: [],
+        },
+      });
+      expect(requests).toEqual([]);
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, temporary: true },
+        }),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data).thread.temporary).toBe(true);
+      expect(requests).toEqual([]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => forgetTemporaryThread(TARGET.environmentId, THREAD_ID))),
+    );
+  });
+
   it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
     Effect.gen(function* () {
       const item: OrchestrationV2TurnItem = {
@@ -1027,6 +1321,25 @@ describe("EnvironmentThreads", () => {
       getTurnItem: ({ itemId }: { readonly itemId: TurnItemId }) =>
         Effect.succeed({ item: items[itemId] ?? null }),
     });
+
+    it.effect("opts background item reconciliation into temporary thread reads", () =>
+      Effect.gen(function* () {
+        const received = yield* Queue.unbounded<OrchestrationV2GetTurnItemInput>();
+        const harness = yield* makeHarness({
+          cached,
+          getTurnItem: (input) =>
+            Queue.offer(received, input).pipe(
+              Effect.as({ item: command("cached-command", "completed", 0) }),
+            ),
+        });
+        yield* harness.reconcilePendingWork;
+        expect(yield* Queue.take(received)).toEqual({
+          threadId: THREAD_ID,
+          itemId: "cached-command",
+          acceptTemporaryThreads: true,
+        });
+      }),
+    );
 
     it.effect("settles an item the server finished without any new event, keeping history", () =>
       Effect.gen(function* () {
@@ -2202,3 +2515,198 @@ describe("EnvironmentThreads", () => {
     }),
   );
 });
+
+describe("temporary thread persistence", () => {
+  it.effect.each([false, true])(
+    "cleans deleted temporary snapshots after sync failure=%s",
+    (failDuringSync) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => forgetTemporaryThread(TARGET.environmentId, THREAD_ID)),
+        );
+        const stale = {
+          snapshotSequence: 8,
+          projection: {
+            ...BASE_PROJECTION,
+            thread: { ...BASE_PROJECTION.thread, title: "DELETED_TEMPORARY_SENTINEL" },
+          },
+        };
+        const capturedShell = {
+          ...v2ShellSnapshot,
+          threads: [
+            { ...v2ShellSnapshot.threads[0]!, id: THREAD_ID, title: stale.projection.thread.title },
+            {
+              ...v2ShellSnapshot.threads[0]!,
+              id: ThreadId.make("saved-neighbor"),
+              title: "Saved neighbor",
+            },
+          ],
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeHarness();
+            yield* Queue.offer(
+              harness.inputs,
+              snapshot(
+                {
+                  ...stale.projection,
+                  thread: { ...stale.projection.thread, temporary: true },
+                },
+                8,
+              ),
+            );
+            yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
+            const update = deleted(9);
+            yield* Queue.offer(harness.inputs, update);
+            yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+            if (failDuringSync) return yield* Effect.fail("sync failure");
+          }),
+        ).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              setTemporaryThread(TARGET.environmentId, THREAD_ID, false);
+              const encoded = yield* makeStoredShellSnapshotEncoder({ yieldToHost: Effect.void })({
+                schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+                environmentId: TARGET.environmentId,
+                snapshot: capturedShell,
+              });
+              expect(encoded).not.toContain("DELETED_TEMPORARY_SENTINEL");
+              expect(
+                JSON.parse(encoded).snapshot.threads.map(
+                  (thread: { title: string }) => thread.title,
+                ),
+              ).toEqual(["Saved neighbor"]);
+              expect(canPersistThreadSnapshot(stale, TARGET.environmentId)).toBe(false);
+              expect(capturedShell.threads).toHaveLength(2);
+            }).pipe(Effect.orDie),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.result,
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (result._tag === "Failure") expect(result.failure).toBe("sync failure");
+            expect(result._tag).toBe(failDuringSync ? "Failure" : "Success");
+            expect(
+              canPersistThreadSnapshot(
+                { snapshotSequence: 8, projection: BASE_PROJECTION },
+                TARGET.environmentId,
+              ),
+            ).toBe(true);
+          }),
+        ),
+      ),
+  );
+
+  it.effect("keeps the full sentinel in RAM without queued or finalizer disk writes", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => forgetTemporaryThread(TARGET.environmentId, THREAD_ID)),
+      );
+      const scope = yield* Scope.make();
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const harness = yield* makeHarness({ resumeCache }).pipe(Scope.provide(scope));
+      const projection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, temporary: true, title: "TEMPORARY_SENTINEL" },
+      };
+      yield* Queue.offer(harness.inputs, snapshot(projection, 8));
+      const state = yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
+      expect(Option.getOrThrow(state.data).thread.title).toBe("TEMPORARY_SENTINEL");
+      yield* Scope.close(scope, Exit.void);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+      expect(Option.getOrThrow(resumeCache.snapshot!.state.data).thread.title).toBe(
+        "TEMPORARY_SENTINEL",
+      );
+    }),
+  );
+});
+
+describe("thread storage generations", () => {
+  it.effect("resets the resume cursor when Keep moves to durable storage", () =>
+    Effect.gen(function* () {
+      expect(isTemporaryThread(TARGET.environmentId, THREAD_ID)).toBe(false);
+      const harness = yield* makeHarness();
+      expect((yield* Queue.take(harness.subscribed)).acceptTemporaryThreads).toBe(true);
+      yield* Queue.offer(harness.inputs, {
+        ...snapshot(
+          { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, temporary: true } },
+          500,
+        ),
+        storageGeneration: "volatile",
+      });
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
+      yield* Queue.offer(harness.inputs, {
+        ...snapshot(
+          { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Kept" } },
+          3,
+        ),
+        storageGeneration: "durable",
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.thread.title === "Kept",
+      );
+      yield* harness.replaceSession;
+      expect(yield* Queue.take(harness.subscribed)).toMatchObject({
+        afterSequence: 3,
+        storageGeneration: "durable",
+        acceptTemporaryThreads: true,
+      });
+    }),
+  );
+});
+
+it.effect("does not mix a pending history page into a replacement storage generation", () =>
+  Effect.gen(function* () {
+    const asked = yield* Deferred.make<void>();
+    const answer = yield* Deferred.make<void>();
+    const harness = yield* makeHarness({
+      historyHttpClient: HttpClient.make((request) =>
+        Deferred.succeed(asked, undefined).pipe(
+          Effect.andThen(Deferred.await(answer)),
+          Effect.as(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                storageGeneration: "previous-generation",
+                snapshotSequence: 500,
+                items: [],
+                nextCursor: null,
+                hasMoreHistory: false,
+              }),
+            ),
+          ),
+        ),
+      ),
+    });
+    yield* Queue.offer(harness.inputs, {
+      ...snapshot(BASE_PROJECTION, 500),
+      storageGeneration: "previous-generation",
+      historyCursor: "same-cursor",
+      hasMoreHistory: true,
+    });
+    yield* awaitThreadState(
+      harness.observed,
+      (value) => value.history.historyCursor === "same-cursor",
+    );
+    const pending = yield* harness.loadEarlier().pipe(Effect.forkChild);
+    yield* Deferred.await(asked);
+    yield* Queue.offer(harness.inputs, {
+      ...snapshot({ ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Kept" } }, 3),
+      storageGeneration: "durable",
+      historyCursor: "same-cursor",
+      hasMoreHistory: true,
+    });
+    yield* awaitThreadState(harness.observed, (value) =>
+      Option.exists(value.data, (projection) => projection.thread.title === "Kept"),
+    );
+    yield* Deferred.succeed(answer, undefined);
+    expect(yield* Fiber.join(pending)).toEqual({ _tag: "noop" });
+    expect((yield* SubscriptionRef.get(harness.threadState)).history.hasMoreHistory).toBe(true);
+  }),
+);

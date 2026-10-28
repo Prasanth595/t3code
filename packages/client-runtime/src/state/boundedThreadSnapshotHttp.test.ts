@@ -8,6 +8,11 @@ import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/
 import * as RpcHttp from "../rpc/http.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import {
+  forgetTemporaryThread,
+  markTemporaryThreadDeleted,
+  setTemporaryThread,
+} from "../temporaryThreads.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: "environment-bounded" as never,
@@ -122,18 +127,72 @@ const BoundedJson = Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot);
 const idTableBody = () => {
   const decodeBoundedJson = Schema.decodeSync(BoundedJson);
 
-  const snapshot = decodeBoundedJson(boundedBody(true));
+  const snapshot = decodeBoundedJson({ ...boundedBody(true), storageGeneration: "durable" });
   const encodeBoundedJson = Schema.encodeSync(BoundedJson);
 
   return encodeBoundedJson({ ...snapshot, idTable: true });
 };
 
 describe("boundedThreadSnapshotLoader", () => {
+  it.effect("uses the native socket before classifying an unknown deep-link ID", () => {
+    const urls: string[] = [];
+    const fetchFn: typeof fetch = async (input) => {
+      urls.push(String(input));
+      return Response.json(boundedBody(false));
+    };
+    return Effect.gen(function* () {
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+      expect(yield* loader.load(PREPARED, THREAD_ID)).toEqual({ _tag: "unavailable" });
+      expect(urls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.provide(
+          BoundedThreadSnapshotHttp.layerSocket,
+          RpcHttp.layerRemoteHttpClient(fetchFn),
+        ),
+      ),
+    );
+  });
+
+  it.effect.each(["temporary", "deleted"] as const)(
+    "uses the socket without an HTTP request for a %s thread",
+    (retention) => {
+      const urls: string[] = [];
+      const fetchFn: typeof fetch = async (input) => {
+        urls.push(String(input));
+        return Response.json(boundedBody(false));
+      };
+      return Effect.gen(function* () {
+        setTemporaryThread(PREPARED.environmentId, THREAD_ID, true);
+        if (retention === "deleted") markTemporaryThreadDeleted(PREPARED.environmentId, THREAD_ID);
+        const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+        expect(yield* loader.load(PREPARED, THREAD_ID)).toEqual({ _tag: "unavailable" });
+        expect(urls).toEqual([]);
+        if (retention === "temporary") {
+          setTemporaryThread(PREPARED.environmentId, THREAD_ID, false);
+          expect((yield* loader.load(PREPARED, THREAD_ID))._tag).toBe("present");
+          expect(urls).toHaveLength(1);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => forgetTemporaryThread(PREPARED.environmentId, THREAD_ID)),
+        ),
+      );
+    },
+  );
+
   it.effect.each([
-    ["an older server that ignores the opt-in", () => boundedBody(false)],
-    ["a server that sends compact turnItems", () => boundedBody(true)],
-    ["a server that also sends an ID table", idTableBody],
-  ] as const)("requests compact turnItems and loads %s", ([, body]) => {
+    ["an older server that ignores the opt-in", () => boundedBody(false), undefined],
+    [
+      "a server that sends compact turnItems",
+      () => ({ ...boundedBody(true), storageGeneration: "durable" }),
+      "durable",
+    ],
+    ["a server that also sends an ID table", idTableBody, "durable"],
+  ] as const)("requests compact turnItems and loads %s", ([, body, storageGeneration]) => {
     const urls: string[] = [];
     const fetchFn = ((input: RequestInfo | URL) => {
       urls.push(String(input));
@@ -147,6 +206,7 @@ describe("boundedThreadSnapshotLoader", () => {
       expect(new URL(urls[0]!).searchParams.get("compactIds")).toBe("1");
       expect(result._tag).toBe("present");
       if (result._tag !== "present") return;
+      expect(result.snapshot.storageGeneration).toBe(storageGeneration);
       expect(result.snapshot.projection.turnItems.map((item) => String(item.id))).toEqual([
         "local-1",
         "local-2",
@@ -165,7 +225,7 @@ describe("boundedThreadSnapshotLoader", () => {
     );
   });
 
-  it.effect("treats structured EnvironmentResourceNotFoundError from bounded as missing", () => {
+  it.effect("uses the socket when bounded HTTP 404 hides an unknown temporary thread", () => {
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);
       expect(url).toContain(`/api/orchestration/threads/${THREAD_ID}/bounded`);
@@ -185,7 +245,7 @@ describe("boundedThreadSnapshotLoader", () => {
     return Effect.gen(function* () {
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
-      expect(result).toEqual({ _tag: "missing" });
+      expect(result).toEqual({ _tag: "unavailable" });
     }).pipe(
       Effect.provide(
         Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),

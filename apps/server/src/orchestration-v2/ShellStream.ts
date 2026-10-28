@@ -566,3 +566,48 @@ export function shellStreamItemFromThreadShell(input: {
     threadId: input.stored.event.threadId,
   };
 }
+
+export function streamLiveStoredEvents<A, E, R>(
+  stores: ReadonlyArray<{
+    readonly latestSequence: () => Effect.Effect<number, E, R>;
+    readonly stream: (input: { readonly afterSequence: number }) => Stream.Stream<A, E, R>;
+  }>,
+): Stream.Stream<A, E, R> {
+  return Stream.mergeAll(
+    stores.map((store) =>
+      Stream.unwrap(
+        store.latestSequence().pipe(Effect.map((afterSequence) => store.stream({ afterSequence }))),
+      ),
+    ),
+    { concurrency: "unbounded" },
+  );
+}
+
+export function temporaryShellOverlay<E, R, E2, R2>(input: {
+  readonly epoch: string;
+  readonly changes: Stream.Stream<unknown, E, R>;
+  readonly loadThreads: Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, E2, R2>;
+}): Stream.Stream<
+  Extract<OrchestrationV2ShellStreamItem, { readonly kind: "temporary.snapshot" }>,
+  E | E2,
+  R | R2
+> {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const pull = yield* Stream.toPull(input.changes);
+      let revision = 0;
+      return Stream.concat(Stream.make(undefined), Stream.fromPull(Effect.succeed(pull))).pipe(
+        Stream.mapEffect(() =>
+          input.loadThreads.pipe(
+            Effect.map((threads) => ({
+              kind: "temporary.snapshot" as const,
+              epoch: input.epoch,
+              revision: revision++,
+              threads,
+            })),
+          ),
+        ),
+      );
+    }),
+  );
+}

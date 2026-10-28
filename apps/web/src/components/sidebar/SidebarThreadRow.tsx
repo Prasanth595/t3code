@@ -113,6 +113,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } f
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { SidebarTemporaryIndicator } from "./SidebarTemporaryIndicator";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -275,6 +276,7 @@ function SidebarThreadTooltip({
           ) : null
         }
       >
+        {thread.temporary ? <SidebarTemporaryIndicator /> : null}
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
             {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
@@ -1000,6 +1002,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     statusLabel: topStatus?.label ?? null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
+    temporary: thread.temporary,
   });
 
   const title = isRenaming ? (
@@ -1125,6 +1128,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const diff = latestRunDiff(thread);
   // Only the provider icon would remain, so the row drops the line instead of leaving it blank.
   const metaLineEmpty =
+    !thread.temporary &&
     !thread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
@@ -1133,6 +1137,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {thread.temporary ? <SidebarTemporaryIndicator /> : null}
       {thread.branch ? (
         <>
           <ThreadWorktreeIndicator thread={thread} />
@@ -1249,6 +1254,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              {!multiline && thread.temporary ? <SidebarTemporaryIndicator /> : null}
               {multiline ? titleLineProviderStack : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1621,6 +1627,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     statusLabel: null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isRouteActive,
+    temporary: thread.temporary,
   });
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(
@@ -1729,6 +1736,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               >
                 {thread.title}
               </span>
+              {thread.temporary ? <SidebarTemporaryIndicator /> : null}
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}

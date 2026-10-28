@@ -2,6 +2,7 @@ import * as QuickActions from "expo-quick-actions";
 import { Platform } from "react-native";
 import type { NavigationState } from "@react-navigation/native";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { Atom } from "effect/reactivity";
 
 import {
@@ -38,13 +39,18 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
   let saveQueue: Promise<unknown> = Promise.resolve();
 
   const commit = (next: ReadonlyArray<RecentThreadShortcut>) => {
+    next = next.filter((thread) => !isTemporaryThread(thread.environmentId, thread.threadId));
     recents = next;
     if (persistable) {
       saveQueue = saveQueue.then(
         () =>
-          dependencies.save(next).catch((error: unknown) => {
-            console.warn("[app-shortcuts] failed to persist recent threads", error);
-          }),
+          dependencies
+            .save(
+              next.filter((thread) => !isTemporaryThread(thread.environmentId, thread.threadId)),
+            )
+            .catch((error: unknown) => {
+              console.warn("[app-shortcuts] failed to persist recent threads", error);
+            }),
         () => undefined,
       );
     }
@@ -92,8 +98,11 @@ const activeThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
 const activeThreadShortcutAtom = Atom.make((get): RecentThreadShortcut | null => {
   const ref = get(activeThreadRefAtom);
   if (ref === null) return null;
-  const title = get(environmentThreadShells.threadShellAtom(ref))?.title ?? "";
-  return { environmentId: ref.environmentId, threadId: ref.threadId, title };
+  const shell = get(environmentThreadShells.threadShellAtom(ref));
+  if (shell === null || shell.temporary || isTemporaryThread(ref.environmentId, ref.threadId)) {
+    return null;
+  }
+  return { environmentId: ref.environmentId, threadId: ref.threadId, title: shell.title };
 }).pipe(
   Atom.withEquality(
     (left: RecentThreadShortcut | null, right: RecentThreadShortcut | null) =>

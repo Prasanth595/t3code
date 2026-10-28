@@ -1,5 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ThreadId } from "@t3tools/contracts";
+import * as Diagnostics from "../observability/TemporaryThreadDiagnostics.ts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -366,3 +368,48 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 });
+
+it.effect("temporary telemetry payloads never enter an export batch", () =>
+  Effect.gen(function* () {
+    const diagnostics = yield* Diagnostics.TemporaryThreadDiagnostics;
+    const batches = yield* sendFor(
+      10,
+      respondWithStatus(204),
+      Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        diagnostics.enter(ThreadId.make("private-telemetry"));
+        yield* analytics.record("private-event", { text: "temporary-sentinel" });
+        diagnostics.leave(ThreadId.make("private-telemetry"));
+        yield* analytics.record("private-delayed-event", { text: "temporary-sentinel" });
+        yield* analytics.flush;
+      }),
+    );
+    assert.deepEqual(batches, []);
+  }).pipe(Effect.provide(Layer.mergeAll(Diagnostics.layer, NodeServices.layer))),
+);
+
+it.effect(
+  "discard permits a payload-free server heartbeat while private telemetry remains blocked",
+  () =>
+    Effect.gen(function* () {
+      const diagnostics = yield* Diagnostics.TemporaryThreadDiagnostics;
+      const batches = yield* sendFor(
+        10,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          diagnostics.enter(ThreadId.make("discarded-telemetry"));
+          diagnostics.leave(ThreadId.make("discarded-telemetry"));
+          yield* analytics.record("private-delayed-event", { text: "private-telemetry-sentinel" });
+          yield* analytics.record("server.boot.heartbeat", { text: "private-telemetry-sentinel" });
+          yield* analytics.flush;
+        }),
+      );
+      assert.deepEqual(
+        batches.flat().map((event) => event.event),
+        ["server.boot.heartbeat"],
+      );
+      assert.notInclude(JSON.stringify(batches), "private-telemetry-sentinel");
+      assert.isFalse(diagnostics.canSnapshot());
+    }).pipe(Effect.provide(Layer.mergeAll(Diagnostics.layer, NodeServices.layer))),
+);

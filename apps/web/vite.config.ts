@@ -103,6 +103,8 @@ const browserTestProject = {
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
+      "@base-ui/react/collapsible",
+      "@base-ui/react/preview-card",
       "saxes",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",
@@ -120,6 +122,17 @@ const browserTestProject = {
       "pdfjs-dist",
       "sql.js",
       "tiff",
+      "hast-util-to-html",
+      "hast-util-to-jsx-runtime",
+      "katex",
+      "@t3tools/shared/codexMarkdownDirectives",
+      "pele/lazy",
+      "react-markdown",
+      "@t3tools/shared/markdownPipeline",
+      "remark-gfm",
+      "remark-math",
+      "remark-parse",
+      "unified",
     ],
   },
   test: {
@@ -252,7 +265,7 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   return {
     run: {
       tasks: {
@@ -339,9 +352,7 @@ export default defineConfig(() => {
       allowedHosts,
       // Warm the module graph before first request to avoid serial import transforms over tailnet.
       // Bundled dev ignores this; warmBundledDevPlugin handles it there.
-      warmup: {
-        clientFiles: ["./src/main.tsx"],
-      },
+      warmup: { clientFiles: mode === "test" ? [] : ["./src/main.tsx"] },
       ...(devProxyTarget
         ? {
             // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.

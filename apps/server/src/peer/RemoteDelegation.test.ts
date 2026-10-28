@@ -46,6 +46,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as TemporaryThreadStorage from "../orchestration-v2/TemporaryThreadStorage.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -954,6 +955,41 @@ it.effect("refuses worktree isolation for a task there before launching anything
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("isolation");
       expect(yield* Ref.get(thread.launched)).toBeNull();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("refuses a temporary thread's task there before launching anything", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const temporary = yield* Ref.make(false);
+      const a = yield* makeLaptop(database, offers).pipe(
+        Effect.provide(
+          Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+            isTemporary: (id) =>
+              Ref.get(temporary).pipe(Effect.map((on) => on && id === parentThreadId)),
+            isDiscarded: () => Effect.succeed(false),
+            family: (id) => Effect.succeed([id]),
+          }),
+        ),
+      );
+      yield* linkTo(a.links, b, "auto");
+      yield* seedParent(a);
+      yield* Ref.set(temporary, true);
+
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: { environmentId: box.environmentId },
+      });
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("capability_denied");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

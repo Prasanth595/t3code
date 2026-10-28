@@ -21,6 +21,7 @@ export function DraftThreadHeader(props: {
   readonly thread: EnvironmentThreadShell;
   readonly project: EnvironmentProject;
   readonly cwd: string | null;
+  readonly temporary?: boolean;
 }) {
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
@@ -49,7 +50,7 @@ export function DraftThreadHeader(props: {
   return (
     <ThreadHeader
       draft
-      title="New thread"
+      title={props.temporary ? "Temporary chat" : "New thread"}
       subtitle=""
       headerColor={themeVariables["--color-header"]}
       usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}

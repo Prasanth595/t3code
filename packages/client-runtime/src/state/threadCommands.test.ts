@@ -1,5 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
+  setTemporaryThread,
+  isTemporaryThread,
+  forgetTemporaryThread,
+  markTemporaryThreadDeleted,
+} from "../temporaryThreads.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  type AuthSessionState,
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
@@ -23,7 +33,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -31,6 +41,12 @@ import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
+}));
+const sessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
+);
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
 const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
@@ -95,11 +111,24 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
     reply: Deferred.Deferred<{ sequence: number }, Error>;
   }>();
   const reconciled = yield* Queue.unbounded<ThreadId>();
+  const keeps = yield* Queue.unbounded<{
+    input: { threadId: ThreadId; commandId: CommandId };
+    reply: Deferred.Deferred<{ threadId: ThreadId }, Error>;
+  }>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
+          [ORCHESTRATION_V2_WS_METHODS.keepThread]: (input: {
+            threadId: ThreadId;
+            commandId: CommandId;
+          }) =>
+            Effect.gen(function* () {
+              const reply = yield* Deferred.make<{ threadId: ThreadId }, Error>();
+              yield* Queue.offer(keeps, { input, reply });
+              return yield* Deferred.await(reply);
+            }),
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
               const reply = yield* Deferred.make<{ sequence: number }, Error>();
@@ -141,7 +170,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
   registry.mount(visibleAtom);
-  return { registry, commands, snapshotAtom, visibleAtom, requests, reconciled };
+  return { registry, commands, snapshotAtom, visibleAtom, requests, reconciled, keeps };
 });
 
 describe("history loading", () => {
@@ -505,5 +534,64 @@ describe("remote thread lifecycle commands", () => {
         expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
+  );
+});
+
+describe("Keep thread", () => {
+  const grant = (scopes: NonNullable<AuthSessionState["scopes"]>): AuthSessionState => ({
+    authenticated: true,
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "test",
+    },
+    scopes,
+    permissions: scopes,
+  });
+  it.effect("keeps retention volatile until the durable receipt and preserves it on failure", () =>
+    Effect.gen(function* () {
+      for (const fail of [true, false]) {
+        const h = yield* makeHarness();
+        h.registry.set(
+          sessions(ENVIRONMENT_ID),
+          AsyncResult.success(grant([AuthOrchestrationOperateScope])),
+        );
+        setTemporaryThread(ENVIRONMENT_ID, THREAD_ID, true);
+        markTemporaryThreadDeleted(ENVIRONMENT_ID, THREAD_ID);
+        const pending = h.commands.keep.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, commandId: CommandId.make("keep") },
+        });
+        const request = yield* Queue.take(h.keeps);
+        expect(isTemporaryThread(ENVIRONMENT_ID, THREAD_ID)).toBe(true);
+        if (fail) yield* Deferred.fail(request.reply, new Error("Disk full"));
+        else yield* Deferred.succeed(request.reply, { threadId: THREAD_ID });
+        expect((yield* Effect.promise(() => pending))._tag).toBe(fail ? "Failure" : "Success");
+        expect(isTemporaryThread(ENVIRONMENT_ID, THREAD_ID)).toBe(fail);
+        forgetTemporaryThread(ENVIRONMENT_ID, THREAD_ID);
+      }
+    }),
+  );
+  it.effect("uses read permission for view ownership and operate permission for Keep", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.registry.set(
+        sessions(ENVIRONMENT_ID),
+        AsyncResult.success(grant([AuthOrchestrationReadScope])),
+      );
+      expect(h.registry.get(h.commands.updateTemporaryViews.permissionAtom(ENVIRONMENT_ID))).toBe(
+        true,
+      );
+      expect(h.registry.get(h.commands.keep.permissionAtom(ENVIRONMENT_ID))).toBe(false);
+      const result = yield* Effect.promise(() =>
+        h.commands.keep.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, commandId: CommandId.make("denied") },
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(yield* Queue.size(h.keeps)).toBe(0);
+    }),
   );
 });

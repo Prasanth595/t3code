@@ -1,4 +1,5 @@
 // T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+import * as TemporaryThreadDiagnostics from "../observability/TemporaryThreadDiagnostics.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -116,6 +117,9 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 /** @public */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
+  const diagnostics = yield* Effect.serviceOption(
+    TemporaryThreadDiagnostics.TemporaryThreadDiagnostics,
+  );
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const { distinctId, installId } = yield* getTelemetryIdentity;
@@ -285,6 +289,10 @@ export const make = Effect.gen(function* () {
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
       if (!telemetryConfig.enabled || !distinctId) return;
+      if (Option.isSome(diagnostics) && !diagnostics.value.canRecord()) {
+        if (!diagnostics.value.canRecordOperational() || event !== "server.boot.heartbeat") return;
+        properties = undefined;
+      }
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.randomUUIDv7());

@@ -125,8 +125,10 @@ describe("createThreadFamilyAtoms", () => {
           yield* Queue.unbounded<
             Effect.Effect<OrchestrationV2ThreadFamily, OrchestrationV2GetShellSnapshotError>
           >();
+        const requests = yield* Queue.unbounded<unknown>();
         const client = {
-          [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: () => Effect.flatten(Queue.take(replies)),
+          [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input: unknown) =>
+            Queue.offer(requests, input).pipe(Effect.andThen(Effect.flatten(Queue.take(replies)))),
         } as unknown as WsRpcProtocolClient;
         const session = {
           client,
@@ -169,7 +171,7 @@ describe("createThreadFamilyAtoms", () => {
           ),
         );
         const parent = row("parent");
-        const child = row("idle-child");
+        const child = { ...row("idle-child"), temporary: true };
         const shellSnapshot = {
           schemaVersion: 1,
           snapshotSequence: 3,
@@ -208,6 +210,10 @@ describe("createThreadFamilyAtoms", () => {
         registry.set(shellState, AsyncResult.success(shellAt(1)));
         yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 3, threads: [child] }));
         yield* settle;
+        expect(yield* Queue.take(requests)).toEqual({
+          threadId: parent.id,
+          acceptTemporaryThreads: true,
+        });
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
 

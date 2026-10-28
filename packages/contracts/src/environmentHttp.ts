@@ -78,6 +78,7 @@ const OptionalBearerHeaders = Schema.Struct({
 });
 
 const OrchestrationProtocolHeaders = Schema.Struct({
+  "x-t3-accept-temporary-threads": Schema.optionalKey(Schema.Literal("1")),
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
   [ORCHESTRATION_PROTOCOL_HEADER]: Schema.Literal(ORCHESTRATION_PROTOCOL_VERSION_TEXT),

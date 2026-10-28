@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   COMPACT_THREAD_CACHE_SCHEMA_VERSION,
@@ -140,6 +141,11 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }),
     ),
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
+      if (
+        snapshot.projection.thread.temporary === true ||
+        isTemporaryThread(environmentId, snapshot.projection.thread.id)
+      )
+        return;
       const threadId = snapshot.projection.thread.id;
       const payload = yield* encodeStoredThreadSnapshot({
         environmentId,

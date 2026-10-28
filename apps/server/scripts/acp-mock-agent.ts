@@ -886,22 +886,6 @@ const program = Effect.gen(function* () {
               : {}),
           },
         });
-        // The agent outlives the failed prompt, so its subagent finishes afterwards.
-        yield* Effect.sleep("50 millis").pipe(
-          Effect.andThen(
-            Effect.sync(() =>
-              writeJsonRpcNotification("session/update", {
-                sessionId: requestedSessionId,
-                update: {
-                  sessionUpdate: "tool_call_update",
-                  toolCallId: "tool-call-idle-error-subagent",
-                  status: "completed",
-                },
-              }),
-            ),
-          ),
-          Effect.forkDetach,
-        );
         return {};
       }
 
@@ -1757,6 +1741,19 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_test/finish-idle-error-child") {
+      return Effect.sync(() => {
+        writeJsonRpcNotification("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-subagent",
+            status: "completed",
+          },
+        });
+        return {};
+      });
+    }
     if (method === "_test/environment") {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",

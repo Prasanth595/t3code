@@ -67,6 +67,15 @@ export const AssetCreateUrlInput = Schema.Struct({
 });
 export type AssetCreateUrlInput = typeof AssetCreateUrlInput.Type;
 
+export class TemporaryResourceError extends Schema.TaggedError<TemporaryResourceError>()(
+  "TemporaryResourceError",
+  { resource: Schema.String },
+) {
+  override get message(): string {
+    return `Keep this thread before using ${this.resource}.`;
+  }
+}
+
 export const AssetImageDimensions = Schema.Struct({
   width: NonNegativeInt.check(Schema.isGreaterThanOrEqualTo(1)),
   height: NonNegativeInt.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -87,7 +96,18 @@ export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
 export const ATTACHMENT_UPLOAD_URL_TTL_MS = 10 * 60_000;
 
+export const AttachmentUploadOwner = Schema.Union([
+  Schema.TaggedStruct("thread", { threadId: ThreadId }),
+  Schema.TaggedStruct("draft", {
+    draftId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    threadId: Schema.optionalKey(ThreadId),
+    temporary: Schema.optionalKey(Schema.Boolean),
+  }),
+]);
+export type AttachmentUploadOwner = typeof AttachmentUploadOwner.Type;
+
 const ImageAttachmentCreateUploadUrlInput = Schema.Struct({
+  owner: Schema.optionalKey(AttachmentUploadOwner),
   type: Schema.optionalKey(Schema.Literal("image")),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: Schema.Literals(PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES),
@@ -98,6 +118,7 @@ const ImageAttachmentCreateUploadUrlInput = Schema.Struct({
 });
 
 const FileAttachmentCreateUploadUrlInput = Schema.Struct({
+  owner: Schema.optionalKey(AttachmentUploadOwner),
   type: Schema.Literal("file"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),

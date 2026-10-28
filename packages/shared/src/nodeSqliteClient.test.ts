@@ -57,6 +57,43 @@ const withReaderClient = <A, E>(
     }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
+it.effect("keeps writes available past 32 MiB while a snapshot reader is open", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-wal-limit-" });
+    const filename = path.join(directory, "state.sqlite");
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`PRAGMA journal_size_limit = 268435456`;
+      yield* sql`CREATE TABLE entries(value BLOB)`;
+      const reader = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(filename, { readOnly: true })),
+        (database) => Effect.sync(() => database.close()),
+      );
+      reader.exec("BEGIN; SELECT * FROM entries");
+      const worker = startedWorkers.at(-1)!;
+      const checkpoint = Effect.callback<{ blocked: boolean }>((resume) => {
+        const onMessage = (message: { type?: string; log?: number; blocked?: boolean }) => {
+          if (message.type !== "checkpoint" || (message.log ?? 0) < 10000) return;
+          worker.off("message", onMessage);
+          resume(Effect.succeed({ blocked: message.blocked === true }));
+        };
+        worker.on("message", onMessage);
+        return Effect.sync(() => worker.off("message", onMessage));
+      });
+      const result = yield* Effect.forkChild(checkpoint);
+      yield* sql`INSERT INTO entries VALUES (zeroblob(50331648))`;
+      assert.equal((yield* Fiber.join(result)).blocked, false);
+      yield* sql`INSERT INTO entries VALUES ('still-writing')`;
+      assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM entries").get()?.count, 0);
+      reader.exec("ROLLBACK");
+      assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM entries").get()?.count, 2);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const countEntries = (sql: SqlClient.SqlClient) =>
   Effect.map(
     sql<{ count: number }>`SELECT COUNT(*) AS count FROM entries`,

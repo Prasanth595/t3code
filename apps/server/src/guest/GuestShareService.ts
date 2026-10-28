@@ -52,6 +52,7 @@ import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts"
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
@@ -234,6 +235,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const resourcePolicy = yield* TemporaryResourcePolicy.make;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const signingKey = yield* Effect.cached(
     secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
@@ -315,6 +317,9 @@ const make = Effect.gen(function* () {
     if (Option.isNone(claims)) {
       return yield* new GuestShareAccessError({ reason: "invalid" });
     }
+    yield* resourcePolicy
+      .assertDurable(claims.value.threadId, "guest sharing")
+      .pipe(Effect.mapError(() => inactive));
     const { thread } = yield* orchestrator
       .getThreadRecords(claims.value.threadId, [])
       .pipe(Effect.mapError(() => inactive));
@@ -336,6 +341,9 @@ const make = Effect.gen(function* () {
   });
 
   const create = Effect.fn("GuestShareService.create")(function* (input: GuestShareCreateInput) {
+    yield* resourcePolicy
+      .assertDurable(input.threadId, "guest sharing")
+      .pipe(Effect.mapError(() => new GuestShareCreateError({ reason: "thread_unavailable" })));
     if (!(yield* sharingEnabled)) {
       return yield* new GuestShareCreateError({ reason: "disabled" });
     }

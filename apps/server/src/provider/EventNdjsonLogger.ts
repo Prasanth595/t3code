@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Native and canonical views share write state to avoid races on the same thread file. */
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -589,6 +590,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   FileSystem.FileSystem | Path.Path
 > {
   const fs = yield* FileSystem.FileSystem;
+  const policy = yield* TemporaryResourcePolicy.make;
   const path = yield* Path.Path;
   const resolved = yield* resolveOptions(options);
   const directory = NodePath.dirname(filePath);
@@ -702,6 +704,8 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
       if (!shouldPersistProviderEvent(stream, event)) return;
+      if (threadId === null ? !policy.canRecordUnattributed() : yield* policy.isVolatile(threadId))
+        return;
       let payload = yield* serializeEvent(boundProviderEventForLogging(event));
       if (payload === undefined) return;
       // Escaping can expand strings beyond their input size.

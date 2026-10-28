@@ -1,3 +1,5 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
+import { isTemporaryComposerTarget } from "../../temporaryChat";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -624,6 +626,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const temporary = useComposerDraftStore((state) => {
+    const draft = state.getDraftThread(composerDraftTarget);
+    if (draft)
+      return draft.temporary === true || isTemporaryThread(draft.environmentId, draft.threadId);
+    return (
+      typeof composerDraftTarget !== "string" &&
+      isTemporaryThread(composerDraftTarget.environmentId, composerDraftTarget.threadId)
+    );
+  });
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
@@ -715,6 +726,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
     environmentId,
+    threadRef: routeThreadRef,
     cwd: gitCwd ?? undefined,
     expandImage: (imageId: string) => {
       const preview = buildExpandedImagePreview(composerImages, imageId);
@@ -910,10 +922,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compatibleRuntimeModes.includes(option.mode),
   );
 
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
-  );
+  const providerSendBlockReason =
+    temporary && selectedProviderEntry?.snapshot.temporaryThreads !== true
+      ? "This provider cannot run temporary chats. Choose a supported provider or turn off Temporary."
+      : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
@@ -1947,6 +1959,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "thread") {
+      if (isTemporaryThread(item.thread.environmentId, item.thread.threadId)) {
+        toastManager.add({
+          type: "info",
+          title: "Keep this thread before copying it to another chat.",
+        });
+        return;
+      }
       if (trigger.kind !== "path") return;
       const shell = readThreadShell(item.thread);
       if (!shell) return;
@@ -2426,6 +2445,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const { addComposerAttachments, removeComposerImage, foldPastedText } =
     useComposerAttachmentIntake({
+      temporary,
       activeThreadId,
       activePendingProgress,
       activePendingIsResponding,
@@ -2577,6 +2597,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
   const importDroppedThread = useEffectEvent(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
+      if (
+        isTemporaryThread(ref.environmentId, ref.threadId) ||
+        isTemporaryComposerTarget(composerDraftTarget)
+      ) {
+        toastManager.add({
+          type: "info",
+          title: "Keep temporary threads before copying chat context.",
+        });
+        return;
+      }
       const targetKey = attachmentTargetKey;
       pendingDraftWork.begin(targetKey);
       const loadingToast = toastManager.add({
@@ -2631,6 +2661,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useThreadContextDrop(composerFormRef, environmentId, attachmentTargetKey, (refs, isActive) => {
     const records = refs.flatMap((ref) => {
+      if (isTemporaryThread(ref.environmentId, ref.threadId)) {
+        toastManager.add({
+          type: "info",
+          title: "Keep this thread before copying it to another chat.",
+        });
+        return [];
+      }
       // The agent reads a linked machine's thread itself, like the `@` picker's; any other
       // machine's comes in as its transcript.
       if (ref.environmentId !== environmentId && !linkedEnvironments.has(ref.environmentId)) {

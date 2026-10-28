@@ -280,6 +280,7 @@ it.effect(
           close: () => Effect.void,
           closeInstance: () => Effect.void,
           release: () => Effect.void,
+          releaseTemporaryOwned: () => Effect.void,
           detach: () => Effect.void,
         }),
       );

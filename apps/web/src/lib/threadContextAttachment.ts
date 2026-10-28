@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import type { EnvironmentId, OrchestrationV2ThreadTranscript } from "@t3tools/contracts";
 import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
@@ -7,6 +8,8 @@ export function threadContextAttachment(
   environmentId: EnvironmentId,
   transcript: OrchestrationV2ThreadTranscript,
 ): File {
+  if (isTemporaryThread(environmentId, transcript.threadId))
+    throw new Error("Keep this thread before copying it to another chat.");
   const updatedAt = DateTime.formatIso(transcript.updatedAt);
   const name = toKindScopedComposerContextId(
     "thread",

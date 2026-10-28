@@ -14,6 +14,7 @@ const native = vi.hoisted(() => ({
   fault: null as DraftFault,
   canOperate: true,
   nextId: 0,
+  mintedOwners: [] as unknown[],
   nextUuid: 0,
   mint: Symbol("mint"),
   remove: Symbol("remove"),
@@ -109,6 +110,11 @@ vi.mock("./server", async () => {
 vi.mock("./git", () => ({ gitEnvironment: {} }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
+vi.mock("./use-remote-environment-registry", () => ({
+  useRemoteConnectionStatus: () => ({
+    connectedEnvironments: [{ environmentId: "environment-1", connectionState: "connected" }],
+  }),
+}));
 vi.mock("./session", async () => {
   const { Atom } = await import("effect/reactivity");
   const Option = await import("effect/Option");
@@ -139,9 +145,10 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   runAtomCommand: async (
     _registry: unknown,
     command: unknown,
-    target: { input: { attachmentId?: string } },
+    target: { input: { attachmentId?: string; owner?: unknown } },
   ) => {
     if (command === native.mint) {
+      native.mintedOwners.push(target.input.owner);
       const id = `pending-${++native.nextId}`;
       native.server.set(id, null);
       return {
@@ -251,6 +258,7 @@ beforeEach(async () => {
   native.fault = null;
   native.canOperate = true;
   native.nextId = 0;
+  native.mintedOwners.length = 0;
   native.nextUuid = 0;
   native.files.set(draftsUri, Buffer.from('{"schemaVersion":1,"drafts":{}}'));
   drafts.resetComposerDraftsLoadState();
@@ -336,3 +344,28 @@ it("keeps an unexpected draft flush error blocking Send", async () => {
   );
   expect(native.deleted).toEqual(["pending-1"]);
 });
+
+it.each(["environment-1:thread-1", "environment-1:thread-1~queued-edit~run-1"])(
+  "sends the owning thread for draft %s to the authenticated mint",
+  async (key) => {
+    appAtomRegistry.set(drafts.composerDraftsAtom, {
+      [key]: { text: "saved", attachments: [image] },
+    });
+    const queue = worker();
+    await queue.settled();
+    expect(native.mintedOwners).toEqual([{ _tag: "thread", threadId: "thread-1" }]);
+  },
+);
+
+it.each(["project", "scratch"])(
+  "carries a stable normal first %s draft owner to the authenticated mint",
+  async (project) => {
+    const key = drafts.createNewTaskDraft({ environmentId, projectId: project as never });
+    drafts.replaceComposerDraftAttachments(key, [image]);
+    const queue = worker();
+    await queue.settled();
+    expect(native.mintedOwners).toEqual([
+      { _tag: "draft", draftId: key, threadId: key.slice("new-task:".length), temporary: false },
+    ]);
+  },
+);

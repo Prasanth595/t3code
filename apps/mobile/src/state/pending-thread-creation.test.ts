@@ -52,6 +52,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending,
       previous: null,
+      shellStatus: "preparing",
       detail: null,
     });
     expect(previous).toBe(pending);
@@ -118,6 +119,35 @@ describe("resolvePendingThreadCreation", () => {
       }),
     ).toBe(failed);
   });
+
+  it.each(["failed", "cancelled", "interrupted"])(
+    "ends temporary startup on a %s shell before focused detail catches up",
+    (shellStatus) => {
+      const message = { ...creation, temporary: true };
+      const delivered: PendingThreadCreation = {
+        message,
+        outcome: { kind: "delivered", message },
+      };
+      expect(
+        resolvePendingThreadCreation({
+          threadKey,
+          pending: null,
+          previous: delivered,
+          shellStatus,
+          detail: null,
+        }),
+      ).toBeNull();
+      expect(
+        resolvePendingThreadCreation({
+          threadKey,
+          pending: { message, outcome: null },
+          previous: delivered,
+          shellStatus,
+          detail: null,
+        }),
+      ).toBeNull();
+    },
+  );
 
   it("does not carry setup into another thread or invent it for existing threads", () => {
     expect(

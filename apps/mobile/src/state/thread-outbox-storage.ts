@@ -1,3 +1,4 @@
+import { isTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -108,6 +109,7 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
     return { messages, errors };
   },
   write: async (message) => {
+    if (message.temporary || isTemporaryThread(message.environmentId, message.threadId)) return;
     const fileName = messageFileName(message.messageId);
     try {
       await trackInFlightWrite(
@@ -128,6 +130,7 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
     }
   },
   remove: async (message) => {
+    if (message.temporary || isTemporaryThread(message.environmentId, message.threadId)) return;
     const fileName = messageFileName(message.messageId);
     try {
       const file = await getMessageFile(message.messageId);

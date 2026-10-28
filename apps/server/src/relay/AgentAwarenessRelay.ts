@@ -48,6 +48,7 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as TemporaryResourcePolicy from "../orchestration-v2/TemporaryResourcePolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 
@@ -363,6 +364,7 @@ export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const temporaryResources = yield* TemporaryResourcePolicy.make;
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
@@ -512,16 +514,20 @@ export const make = Effect.gen(function* () {
     });
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
-    const threadShell = yield* threads.getThreadShell(threadId);
+    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const volatile = yield* temporaryResources.isVolatile(threadId);
+    if (volatile && !publishedStateByThread.has(threadId)) return;
+    const threadShell = volatile ? null : yield* threads.getThreadShell(threadId);
+    const temporary = volatile || threadShell?.temporary === true;
     if (
-      threadShell?.lineage.relationshipToParent === "subagent" &&
-      !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
+      (temporary || threadShell?.lineage.relationshipToParent === "subagent") &&
+      !publishedStateByThread.has(threadId)
     ) {
       // Subagents have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      temporary || threadShell === null || threadShell.archivedAt !== null
         ? Option.none<OrchestrationV2ThreadShell>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
@@ -533,7 +539,6 @@ export const make = Effect.gen(function* () {
       project,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
-    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !publishedStateByThread.has(threadId)
@@ -556,9 +561,10 @@ export const make = Effect.gen(function* () {
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
     const requiresConfirmation =
-      (snapshot.state === null &&
+      !temporary &&
+      ((snapshot.state === null &&
         publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+        snapshot.state?.phase === "completed");
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;

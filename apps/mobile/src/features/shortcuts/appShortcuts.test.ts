@@ -1,3 +1,7 @@
+import {
+  setTemporaryThread,
+  forgetTemporaryThread,
+} from "@t3tools/client-runtime/temporary-threads";
 import { describe, expect, it } from "vite-plus/test";
 import type { NavigationState } from "@react-navigation/native";
 
@@ -18,6 +22,24 @@ function thread(suffix: string, title = `Thread ${suffix}`): RecentThreadShortcu
 }
 
 describe("withRecentThreadShortcut", () => {
+  it("excludes temporary IDs and titles from recents and launcher items", () => {
+    const saved = thread("saved");
+    const temporary = thread("temporary", "private-title");
+    setTemporaryThread(temporary.environmentId, temporary.threadId, true);
+    try {
+      const current = [saved];
+      expect(withRecentThreadShortcut(current, temporary)).toBe(current);
+      expect(JSON.stringify(buildShortcutActions([temporary, saved]))).not.toContain(
+        "private-title",
+      );
+      expect(JSON.stringify(buildShortcutActions([temporary, saved]))).not.toContain(
+        "thread-temporary",
+      );
+    } finally {
+      forgetTemporaryThread(temporary.environmentId, temporary.threadId);
+    }
+  });
+
   it("moves a reopened thread to the front without duplicating it", () => {
     const next = withRecentThreadShortcut([thread("a"), thread("b")], thread("b"));
     expect(next.map((entry) => entry.threadId)).toEqual(["thread-b", "thread-a"]);

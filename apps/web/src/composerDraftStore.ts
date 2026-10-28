@@ -1,3 +1,4 @@
+import { isTemporaryThread, setTemporaryThread } from "@t3tools/client-runtime/temporary-threads";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
@@ -394,6 +395,7 @@ export function composerDraftHasUserContent(
 }
 
 export interface DraftSessionState {
+  temporary?: boolean;
   threadId: ThreadId;
   environmentId: EnvironmentId;
   projectId: ProjectId;
@@ -451,6 +453,7 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     draftId: DraftId,
     options?: {
+      temporary?: boolean;
       threadId?: ThreadId;
       branch?: string | null;
       worktreePath?: string | null;
@@ -467,6 +470,7 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     draftId: DraftId,
     options?: {
+      temporary?: boolean;
       threadId?: ThreadId;
       branch?: string | null;
       worktreePath?: string | null;
@@ -482,6 +486,7 @@ interface ComposerDraftStoreState {
   setDraftThreadContext: (
     threadRef: ComposerThreadTarget,
     options: {
+      temporary?: boolean;
       branch?: string | null;
       worktreePath?: string | null;
       projectRef?: ScopedProjectRef;
@@ -1407,6 +1412,7 @@ function createDraftThreadState(
   logicalProjectKey: string,
   existingThread: DraftThreadState | undefined,
   options?: {
+    temporary?: boolean;
     threadId?: ThreadId;
     branch?: string | null;
     worktreePath?: string | null;
@@ -1441,7 +1447,10 @@ function createDraftThreadState(
       : options.startFromOrigin;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
+  const temporary = options?.temporary ?? existingThread?.temporary;
+  setTemporaryThread(projectRef.environmentId, threadId, temporary === true);
   return {
+    ...(temporary !== undefined ? { temporary } : {}),
     threadId,
     environmentId: projectRef.environmentId,
     projectId: projectRef.projectId,
@@ -1486,6 +1495,7 @@ function isDraftThreadPromoting(draftThread: DraftThreadState | null | undefined
 function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThreadState): boolean {
   return (
     !!left &&
+    left.temporary === right.temporary &&
     left.threadId === right.threadId &&
     left.environmentId === right.environmentId &&
     left.projectId === right.projectId &&
@@ -1997,6 +2007,13 @@ function migratePersistedComposerDraftStoreState(
 export function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
+  const isTemporaryKey = (key: string) => {
+    const draft = state.draftThreadsByThreadKey[key];
+    if (draft)
+      return draft.temporary === true || isTemporaryThread(draft.environmentId, draft.threadId);
+    const ref = parseScopedThreadKey(key);
+    return ref !== null && isTemporaryThread(ref.environmentId, ref.threadId);
+  };
   const mappedDraftKeys = new Set(
     Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
   );
@@ -2004,10 +2021,11 @@ export function partializeComposerDraftStoreState(
     Object.entries(state.draftThreadsByThreadKey)
       .filter(
         ([threadKey, draftThread]) =>
-          mappedDraftKeys.has(threadKey) ||
-          isDraftThreadPromoting(draftThread) ||
-          composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
-          draftThreadHasOpenPreview(draftThread),
+          !isTemporaryKey(threadKey) &&
+          (mappedDraftKeys.has(threadKey) ||
+            isDraftThreadPromoting(draftThread) ||
+            composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
+            draftThreadHasOpenPreview(draftThread)),
       )
       .map(([threadKey]) => threadKey),
   );
@@ -2015,7 +2033,7 @@ export function partializeComposerDraftStoreState(
     PersistedComposerDraftStoreState["draftsByThreadKey"]
   > = {};
   for (const [threadKey, draft] of Object.entries(state.draftsByThreadKey)) {
-    if (typeof threadKey !== "string" || threadKey.length === 0) {
+    if (typeof threadKey !== "string" || threadKey.length === 0 || isTemporaryKey(threadKey)) {
       continue;
     }
     if (state.draftThreadsByThreadKey[threadKey] !== undefined && !keptSessionKeys.has(threadKey)) {
@@ -2116,8 +2134,11 @@ export function partializeComposerDraftStoreState(
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
     draftThreadsByThreadKey: persistedDraftThreadsByThreadKey,
-    logicalProjectDraftThreadKeyByLogicalProjectKey:
-      state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+    logicalProjectDraftThreadKeyByLogicalProjectKey: Object.fromEntries(
+      Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
+        ([, key]) => !isTemporaryKey(key),
+      ),
+    ),
     stickyModelSelectionByProvider: compactModelSelectionByProvider(
       state.stickyModelSelectionByProvider,
     ),
@@ -2664,7 +2685,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (options.branch != null || options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
+            const temporary = options.temporary ?? existing.temporary;
+            setTemporaryThread(nextProjectRef.environmentId, existing.threadId, temporary === true);
             const nextDraftThread: DraftThreadState = {
+              ...(temporary !== undefined ? { temporary } : {}),
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
@@ -2690,6 +2714,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
+              nextDraftThread.temporary === existing.temporary &&
               nextDraftThread.environmentId === existing.environmentId &&
               nextDraftThread.projectId === existing.projectId &&
               nextDraftThread.logicalProjectKey === existing.logicalProjectKey &&
@@ -3757,6 +3782,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ),
           );
           const incoming = records.filter((record) => {
+            if (isTemporaryThread(record.environmentId, record.threadId)) return false;
             if (existingIds.has(record.contextId)) return false;
             existingIds.add(record.contextId);
             return true;
@@ -3795,6 +3821,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           if (!threadKey) return;
           const threadContexts = records
             .filter(isThreadContextRecord)
+            .filter((record) => !isTemporaryThread(record.environmentId, record.threadId))
             .map((record) => ({ ...record }));
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();

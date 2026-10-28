@@ -12,6 +12,35 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Temporary chats
+
+Start a new thread in a project or **No project** and turn on **Temporary** before
+sending. Temporary chats work with every provider, including ACP agents. T3 Code
+keeps the conversation and drafts in memory instead of saving them to your history.
+Your provider may still save its own transcript or logs, on your device or online.
+
+Leaving the last open view of the thread stops its agent and child work, then
+discards the chat. A view on another device keeps it open. Putting the app in the
+background also counts as keeping it open. A refresh or connection loss allows
+30 seconds to reconnect. Temporary chats do not survive a server restart.
+
+Choose **Save thread** on web or desktop, or **Keep thread** on mobile, to save
+the conversation and continue in the same thread. Wait for the save to succeed before leaving. If saving fails, the thread
+stays temporary. Discarding a temporary chat leaves file edits in place.
+
+Codex's local diagnostic databases use a separate temporary folder, which T3
+removes when the native session closes. A crash can leave that folder behind,
+and managed provider settings can override its location.
+
+Temporary chat does not erase records held by your provider, MCP servers, or
+tools the agent runs. This includes other local logs and generated files. It is
+not a promise that no trace of the work can remain on your device or in another
+service.
+
+Keep the thread before attaching files,
+using app terminals or worktree setup scripts, stashing prompts, sending to multiple
+models, sending in the background, or copying its context to another chat.
+
 ## Formatting
 
 The composer writes Markdown and shows it styled as you type. Markers such as

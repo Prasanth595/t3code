@@ -89,6 +89,30 @@ const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
 };
 
 describe("cooperative shell cache encoding", () => {
+  it.effect("never serializes temporary active or archived sentinels", () =>
+    Effect.gen(function* () {
+      const temporary = {
+        ...SHELL_SNAPSHOT.threads[0]!,
+        temporary: true,
+        title: "TEMPORARY_SENTINEL",
+      };
+      const snapshot = {
+        ...SHELL_SNAPSHOT,
+        threads: [...SHELL_SNAPSHOT.threads, temporary],
+        archivedThreads: [temporary],
+      };
+      const encoded = yield* makeStoredShellSnapshotEncoder({ yieldToHost: Effect.void })({
+        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+        environmentId: ENVIRONMENT_ID,
+        snapshot,
+      });
+      expect(encoded).not.toContain("TEMPORARY_SENTINEL");
+      expect(JSON.parse(encoded).snapshot.threads).toHaveLength(1);
+      expect(snapshot.threads).toHaveLength(2);
+      expect(snapshot.archivedThreads).toHaveLength(1);
+    }),
+  );
+
   // A fresh encoder per call keeps these cases cold; the cache has its own cases below.
   const encodeStoredShellSnapshot = (stored: typeof StoredOrchestrationShellSnapshot.Type) =>
     makeStoredShellSnapshotEncoder()(stored);

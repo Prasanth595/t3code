@@ -14,6 +14,7 @@ import {
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
+  resolveSidebarRowAccessibility,
   resolveSidebarSweepKeys,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -54,6 +55,36 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarRowAccessibility", () => {
+  it.each([null, "No project", "T3 Code"])(
+    "announces temporary chats and clears the mark after Keep in %s",
+    (projectDisplayName) => {
+      const row = {
+        title: "Plan a change",
+        statusLabel: "Working",
+        projectDisplayName,
+        isActive: true,
+        temporary: true,
+      };
+      const savedLabel = projectDisplayName
+        ? `Plan a change, Working, ${projectDisplayName}`
+        : "Plan a change, Working";
+
+      expect(resolveSidebarRowAccessibility(row)).toEqual({
+        label: `${savedLabel}, Temporary`,
+        current: "page",
+      });
+
+      row.temporary = false;
+
+      expect(resolveSidebarRowAccessibility(row)).toEqual({
+        label: savedLabel,
+        current: "page",
+      });
+    },
+  );
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

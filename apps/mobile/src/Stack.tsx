@@ -1,4 +1,6 @@
-import { isDraftThreadRoute } from "./features/threads/thread-route-state";
+import { useTemporaryThreadViews } from "./state/use-temporary-thread-views";
+import { isDraftThreadRoute, selectedChatRoute } from "./features/threads/thread-route-state";
+import { useAtomValue } from "@effect/atom-react";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
@@ -89,7 +91,11 @@ import {
   NewTaskThreadSettingsRouteScreen,
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
-import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
+import {
+  INACTIVE_FLOW_KEY,
+  newTaskFlowKey,
+  newTaskFlowStateAtom,
+} from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
@@ -492,6 +498,19 @@ export function workspaceLocationFromState(state: NavigationState) {
   };
 }
 
+function TemporaryThreadViewWorker(props: { readonly state: NavigationState }) {
+  const route = selectedChatRoute(props.state, Platform.OS);
+  const flowKey =
+    route?.key === undefined ? undefined : newTaskFlowKey({ ...route, key: route.key });
+  const flow = useAtomValue(newTaskFlowStateAtom(flowKey ?? INACTIVE_FLOW_KEY));
+  const routeDraftId = isDraftThreadRoute(route) ? route.params.draft.draftId : undefined;
+  const draftKey =
+    flow.draftKey ?? (Array.isArray(routeDraftId) ? routeDraftId[0] : routeDraftId) ?? null;
+  const navigation = useNavigation();
+  useTemporaryThreadViews(props.state, draftKey, navigation);
+  return null;
+}
+
 export function rootPathnameFromState(state: NavigationState): string {
   const path = getPathFromState(state, navigationPathConfig);
   return path.startsWith("/") ? path : `/${path}`;
@@ -528,6 +547,7 @@ function RootStackLayout(props: {
       routeDraftId={routeDraftId}
     >
       <HardwareKeyboardCommandProvider pathname={pathname}>
+        <TemporaryThreadViewWorker state={props.state} />
         <ShowcaseReadyMarker />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>

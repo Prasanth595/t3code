@@ -327,3 +327,45 @@ describe("reuseUnchangedThreadShells", () => {
     expect(next.threads[0]?.pullRequests).toEqual([]);
   });
 });
+
+describe("temporary shell overlay", () => {
+  it("changes temporary rows without advancing or hiding durable cursors", () => {
+    const temporary = { ...v2ThreadShell, id: ThreadId.make("temporary"), temporary: true };
+    const before = { ...v2ShellSnapshot, snapshotSequence: 500, threads: [v2ThreadShell] };
+    const next = applyShellStreamEvent(before, {
+      kind: "temporary.snapshot",
+      epoch: "one",
+      revision: 1,
+      threads: [temporary],
+    });
+    expect(next.snapshotSequence).toBe(500);
+    expect(next.threads.map((thread) => thread.id)).toEqual([v2ThreadShell.id, temporary.id]);
+    const changed = applyShellStreamEvent(next, {
+      kind: "thread.updated",
+      sequence: 501,
+      location: "active",
+      thread: { ...v2ThreadShell, title: "Saved update" },
+    });
+    expect(changed.threads[0]?.title).toBe("Saved update");
+    const discarded = applyShellStreamEvent(changed, {
+      kind: "temporary.snapshot",
+      epoch: "two",
+      revision: 0,
+      threads: [],
+    });
+    expect(discarded.threads.map((thread) => thread.id)).toEqual([v2ThreadShell.id]);
+    expect(discarded.snapshotSequence).toBe(501);
+  });
+});
+
+it("does not restore temporary retention over a durable Keep snapshot", () => {
+  const kept = { ...v2ThreadShell, temporary: false };
+  const snapshot = { ...v2ShellSnapshot, threads: [kept] };
+  const next = applyShellStreamEvent(snapshot, {
+    kind: "temporary.snapshot",
+    epoch: "before-keep",
+    revision: 1,
+    threads: [{ ...v2ThreadShell, temporary: true }],
+  });
+  expect(next.threads).toEqual([kept]);
+});

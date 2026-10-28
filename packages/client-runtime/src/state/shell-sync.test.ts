@@ -633,6 +633,7 @@ describe("environment shell synchronization", () => {
   it.effect("opts in to shell omissions and counts authoritative snapshots and removals", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
       const subscribeInput = yield* Deferred.make<unknown>();
       const loadOptions = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const client = {
@@ -660,7 +661,7 @@ describe("environment shell synchronization", () => {
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
         loadShell: () => Effect.succeedNone,
-        saveShell: () => Effect.void,
+        saveShell: (_environmentId, snapshot) => Ref.update(saved, (all) => [...all, snapshot]),
         loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
@@ -678,10 +679,14 @@ describe("environment shell synchronization", () => {
             Effect.as(Option.some(LIVE_SHELL_SNAPSHOT)),
           ),
       });
+      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+        Scope.provide(scope),
       );
       const stateWhere = (predicate: (state: EnvironmentShellState) => boolean) =>
         SubscriptionRef.changes(shellState).pipe(Stream.filter(predicate), Stream.runHead);
@@ -715,6 +720,28 @@ describe("environment shell synchronization", () => {
       expect(removed.generation).toBe(loaded.generation);
       expect(removed.removedAt.get(gone)).toBe(2);
 
+      const temporary = {
+        ...v2ThreadShell,
+        id: ThreadId.make("temporary-overlay"),
+        temporary: true,
+      };
+      yield* Queue.offer(events, {
+        kind: "temporary.snapshot",
+        epoch: "temporary-epoch",
+        revision: 1,
+        threads: [temporary],
+      });
+      const overlay = Option.getOrThrow(
+        yield* stateWhere((state) =>
+          Option.exists(state.snapshot, (snapshot) =>
+            snapshot.threads.some((thread) => thread.id === temporary.id),
+          ),
+        ),
+      );
+      expect(overlay.generation).toBe(removed.generation);
+      expect(overlay.removedAt).toBe(removed.removedAt);
+      expect(Option.getOrThrow(overlay.snapshot).snapshotSequence).toBe(2);
+
       yield* Queue.offer(events, {
         kind: "snapshot",
         snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 5 },
@@ -723,6 +750,16 @@ describe("environment shell synchronization", () => {
         yield* stateWhere((state) => state.generation > loaded.generation),
       );
       expect(reset.removedAt.size).toBe(0);
+      expect(Option.getOrThrow(reset.snapshot).threads).toContainEqual(temporary);
+      yield* Scope.close(scope, Exit.void);
+      const snapshots = yield* Ref.get(saved);
+      expect(snapshots.length).toBeGreaterThan(0);
+      expect(snapshots.at(-1)?.snapshotSequence).toBe(5);
+      for (const snapshot of snapshots) {
+        expect(
+          [...snapshot.threads, ...snapshot.archivedThreads].map((thread) => thread.id),
+        ).not.toContain(temporary.id);
+      }
     }),
   );
 

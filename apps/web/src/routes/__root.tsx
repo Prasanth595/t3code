@@ -34,6 +34,7 @@ import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoo
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { useTemporaryChatViews } from "../hooks/useTemporaryChatViews";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
@@ -206,6 +207,7 @@ function RootRouteBranch() {
         <ConnectOnboardingDialog />
         <SshPasswordPromptDialog />
         <SnapShotCoordinator />
+        <TemporaryChatViewSync />
         <ReopenClosedViewShortcut />
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
@@ -222,6 +224,11 @@ function RootRouteBranch() {
       </FirstRunGate>
     </>
   );
+}
+
+function TemporaryChatViewSync() {
+  useTemporaryChatViews();
+  return null;
 }
 
 function RootRouteErrorView({ error }: ErrorComponentProps) {

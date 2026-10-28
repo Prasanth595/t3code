@@ -1,5 +1,9 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import {
+  forgetTemporaryThread,
+  setTemporaryThread,
+} from "@t3tools/client-runtime/temporary-threads";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -140,6 +144,29 @@ it("loads a host image through the page's own route when there is no environment
 });
 
 describe("ChatMarkdown favicon privacy", () => {
+  it("updates registry-only media restrictions after Keep without changing the thread", async () => {
+    setup();
+    const threadRef = {
+      environmentId: EnvironmentId.make("markdown-privacy"),
+      threadId: ThreadId.make("registry-only"),
+    };
+    setTemporaryThread(threadRef.environmentId, threadRef.threadId, true);
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => forgetTemporaryThread(threadRef.environmentId, threadRef.threadId));
+    await using screen = await render(
+      <ChatMarkdown cwd="/tmp/project" threadRef={threadRef} text="[Link](https://example.com)" />,
+    );
+    expect(screen.container.querySelectorAll("img")).toHaveLength(0);
+    await act(async () => {
+      setTemporaryThread(threadRef.environmentId, threadRef.threadId, false);
+    });
+    await vi.waitFor(() => expect(screen.container.querySelectorAll("img")).toHaveLength(1));
+    await act(async () => {
+      setTemporaryThread(threadRef.environmentId, threadRef.threadId, true);
+    });
+    await vi.waitFor(() => expect(screen.container.querySelectorAll("img")).toHaveLength(0));
+  });
+
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();
     const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;

@@ -1,15 +1,31 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { assert, it, vi } from "@effect/vitest";
 import {
   AuthSessionId,
+  CommandId,
+  EventId,
+  ProviderInstanceId,
   EnvironmentId,
   ProjectId,
+  MessageId,
+  OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2GetShellSnapshotError,
+  OrchestrationGetTurnDiffError,
+  OrchestrationGetFullThreadDiffError,
+  type OrchestrationGetTurnDiffResult,
+  type OrchestrationV2ThreadFamily,
+  type OrchestrationV2WorktreeThreadIds,
   ThreadId,
   ProviderDriverKind,
-  ProviderInstanceId,
+  TurnItemId,
+  TemporaryResourceError,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2RpcSchemas,
+  OrchestrationV2TemporaryThreadError,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
@@ -17,19 +33,25 @@ import {
   type ServerConfigStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -39,13 +61,17 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
+import { CheckpointTurnRangeUnavailableError } from "./checkpointing/Errors.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
@@ -92,6 +118,8 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as TemporaryThreadService from "./orchestration-v2/TemporaryThreadService.ts";
+import * as TemporaryThreadStorage from "./orchestration-v2/TemporaryThreadStorage.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -120,6 +148,7 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  persistChatAttachments,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
@@ -128,6 +157,61 @@ import {
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
+
+const isTurnDiffError = Schema.is(OrchestrationGetTurnDiffError);
+const isFullThreadDiffError = Schema.is(OrchestrationGetFullThreadDiffError);
+const isCheckpointTurnRangeUnavailableError = Schema.is(CheckpointTurnRangeUnavailableError);
+const isThreadProjectionError = Schema.is(OrchestrationV2GetThreadProjectionError);
+const isTemporaryResourceError = Schema.is(TemporaryResourceError);
+
+it.effect("rejects temporary image persistence before writing attachment bytes", () =>
+  Effect.gen(function* () {
+    const writes: Array<string> = [];
+    const result = yield* Effect.result(
+      persistChatAttachments({
+        threadId: ThreadId.make("temporary-image"),
+        messageId: MessageId.make("message"),
+        attachments: [
+          {
+            type: "image",
+            name: "private.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            dataUrl: "data:image/png;base64,AQ==",
+          },
+        ],
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            ServerConfigModule.layerTest(process.cwd(), {
+              prefix: "temporary-attachment-test-",
+            }).pipe(Layer.provide(NodeServices.layer)),
+            Layer.mock(TemporaryThreadStorage.TemporaryThreadStorage)({
+              isTemporary: () => Effect.succeed(true),
+              isDiscarded: () => Effect.succeed(false),
+            }),
+            Layer.succeed(
+              FileSystem.FileSystem,
+              FileSystem.makeNoop({
+                writeFile: (path) =>
+                  Effect.sync(() => {
+                    writes.push(String(path));
+                  }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.isTrue(isTemporaryResourceError(result.failure.cause));
+      assert.deepInclude(result.failure.cause, { resource: "image attachments" });
+    }
+    assert.deepEqual(writes, []);
+  }),
+);
 
 const settingsUpdated = (settings: object): ServerConfigStreamEvent => ({
   version: 1,
@@ -185,8 +269,49 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
   }),
 );
 
+it.effect.each([false, true])(
+  "marks only authoritative missing thread snapshot failures, bounded=%s",
+  (acceptBoundedSnapshot) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:cold-missing");
+      for (const missing of [true, false]) {
+        const cause = new Orchestrator.OrchestratorProjectionError({
+          threadId,
+          cause: missing
+            ? new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })
+            : new ProjectionStore.ProjectionStoreReadError({ threadId }),
+        });
+        const result = yield* subscribeOrchestrationV2Thread({
+          threadId,
+          acceptTemporaryThreads: true,
+          acceptBoundedSnapshot,
+        }).pipe(
+          Effect.flatMap(Stream.runCollect),
+          Effect.result,
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                ensureLegacyTranscript: () => Effect.void,
+                getThreadSnapshot: () => Effect.fail(cause),
+                getThreadSnapshotWindow: () => Effect.fail(cause),
+              }),
+              Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
+            ),
+          ),
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, OrchestrationV2GetThreadProjectionError);
+          assert.deepInclude(result.failure, missing ? { reason: "thread_not_found" } : { cause });
+          if (!missing) assert.notProperty(result.failure, "reason");
+        }
+      }
+    }),
+);
+
 const ReplayTestLayer = OrchestrationEventStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 it.live.each(["thread", "shell"] as const)(
@@ -463,8 +588,27 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+const layerThreadRpcServices = Layer.mergeAll(
+  Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+    removeRpcClient: () => Effect.void,
+  }),
+  Layer.mock(EventLoopMonitor.EventLoopMonitor)({}),
+  Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+  Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+  Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: process.cwd(),
+  }),
+);
+
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  TemporaryThreadStorage.layer,
+  Layer.mock(TemporaryThreadService.TemporaryThreadService)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
@@ -549,6 +693,668 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect.each(["family", "worktree"] as const)(
+  "%s shell reads admit current temporary rows only with explicit opt-in",
+  (kind) =>
+    Effect.gen(function* () {
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ).pipe(Layer.provideMerge(layerConfigSources)),
+      );
+      const storage = Context.get(services, TemporaryThreadStorage.TemporaryThreadStorage);
+      const stores = Context.get(services, TemporaryThreadStorage.TemporaryThreadStores);
+      const projection = Context.get(services, ProjectionStore.ProjectionStoreV2);
+      const now = yield* DateTime.now;
+      const create = (id: string, parent: string | null) => ({
+        id: EventId.make(`create:${id}`),
+        type: "thread.created" as const,
+        threadId: ThreadId.make(id),
+        occurredAt: now,
+        payload: {
+          id: ThreadId.make(id),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          projectId: ProjectId.make("absent-project"),
+          title: id,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: "/shared-worktree",
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: parent === null ? null : ThreadId.make(parent),
+            relationshipToParent: parent === null ? null : ("subagent" as const),
+            rootThreadId: ThreadId.make(parent ?? id),
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      for (const id of ["saved", "saved-child", "private", "private-child"]) {
+        const parent = id.endsWith("-child") ? id.slice(0, -6) : null;
+        if (id.startsWith("private"))
+          yield* storage.register({
+            threadId: ThreadId.make(id),
+            ...(parent === null ? {} : { parentThreadId: ThreadId.make(parent) }),
+          });
+        yield* projection.apply(create(id, parent));
+      }
+      let keepDuringRead = false;
+      let checkLockOrder = false;
+      const readerHeld = yield* Deferred.make<void>();
+      const receiptHasStorage = yield* Deferred.make<void>();
+      const lockCycle = yield* Deferred.make<void>();
+      const responses =
+        yield* Queue.unbounded<
+          Exit.Exit<
+            OrchestrationV2ThreadFamily | OrchestrationV2WorktreeThreadIds,
+            OrchestrationV2GetShellSnapshotError
+          >
+        >();
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(
+          Rpc.make(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, {
+            payload: OrchestrationV2RpcSchemas.getThreadFamily.input,
+            success: OrchestrationV2RpcSchemas.getThreadFamily.output,
+            error: OrchestrationV2GetShellSnapshotError,
+          }),
+          Rpc.make(ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds, {
+            payload: OrchestrationV2RpcSchemas.getWorktreeThreadIds.input,
+            success: OrchestrationV2RpcSchemas.getWorktreeThreadIds.output,
+            error: OrchestrationV2GetShellSnapshotError,
+          }),
+        ),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit"
+              ? Queue.offer(responses, response.exit).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("shell-row-privacy"),
+              subject: "shell-row-privacy",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            Context.get(services, ServerBrowser.ServerBrowser),
+            yield* Effect.scope,
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                layerThreadRpcServices,
+                Layer.succeed(TemporaryThreadStorage.TemporaryThreadStores, {
+                  ...stores,
+                  getShellSnapshot: (options) =>
+                    stores.getShellSnapshot(options).pipe(
+                      Effect.tap(() => {
+                        if (!keepDuringRead) return Effect.void;
+                        keepDuringRead = false;
+                        return storage
+                          .keep({
+                            threadId: ThreadId.make("racing"),
+                            commandId: CommandId.make("keep-racing"),
+                          })
+                          .pipe(
+                            Effect.mapError(
+                              (cause) =>
+                                new ProjectionStore.ProjectionStoreReadError({
+                                  threadId: ThreadId.make("racing"),
+                                  cause,
+                                }),
+                            ),
+                          );
+                      }),
+                    ),
+                }),
+                Layer.mock(ThreadManagement.ThreadManagementService)({
+                  readShellSnapshot: (options) =>
+                    Effect.gen(function* () {
+                      if (checkLockOrder) {
+                        yield* Deferred.succeed(readerHeld, undefined);
+                        yield* Deferred.await(receiptHasStorage);
+                        yield* Deferred.succeed(lockCycle, undefined);
+                      }
+                      return yield* projection.readShellSnapshot(options);
+                    }).pipe(
+                      Effect.map((decode) =>
+                        decode.pipe(
+                          Effect.tap(() => {
+                            if (!keepDuringRead) return Effect.void;
+                            keepDuringRead = false;
+                            return storage.keep({
+                              threadId: ThreadId.make("racing"),
+                              commandId: CommandId.make("keep-racing"),
+                            });
+                          }),
+                          Effect.mapError(
+                            (cause) =>
+                              new Orchestrator.OrchestratorProjectionError({
+                                threadId: ThreadId.make("thread:shell"),
+                                cause,
+                              }),
+                          ),
+                        ),
+                      ),
+                      Effect.mapError(
+                        (cause) =>
+                          new Orchestrator.OrchestratorProjectionError({
+                            threadId: ThreadId.make("thread:shell"),
+                            cause,
+                          }),
+                      ),
+                    ),
+                }),
+              ),
+            ),
+            Layer.provide(Layer.succeedContext(services)),
+          ),
+        ),
+      );
+      let request = 0;
+      const read = (acceptTemporaryThreads?: boolean, root = "private") =>
+        Effect.gen(function* () {
+          yield* server.write(0, {
+            _tag: "Request",
+            id: RpcMessage.RequestId(`shell:${request++}`),
+            tag:
+              kind === "family"
+                ? ORCHESTRATION_V2_WS_METHODS.getThreadFamily
+                : ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds,
+            payload: {
+              ...(kind === "family"
+                ? { threadId: ThreadId.make(root) }
+                : { worktreePath: "/shared-worktree" }),
+              ...(acceptTemporaryThreads === undefined ? {} : { acceptTemporaryThreads }),
+            },
+            headers: Headers.empty,
+          });
+          const result = yield* Queue.take(responses);
+          const value = yield* result;
+          return (
+            "threadIds" in value ? value.threadIds : value.threads.map((row) => row.id)
+          ).toSorted();
+        });
+      const saved = kind === "family" ? [] : ["saved", "saved-child"];
+      for (const optIn of [undefined, false]) assert.deepEqual(yield* read(optIn), saved);
+      assert.deepEqual(yield* read(false, "saved"), ["saved", "saved-child"]);
+      const admitted =
+        kind === "family"
+          ? ["private", "private-child"]
+          : ["private", "private-child", "saved", "saved-child"];
+      assert.deepEqual(yield* read(true), admitted);
+      yield* storage.keep({
+        threadId: ThreadId.make("private"),
+        commandId: CommandId.make("keep"),
+      });
+      yield* stores.volatile.projectionStore.apply(create("private-child", "private"));
+      for (const optIn of [undefined, false, true]) assert.deepEqual(yield* read(optIn), admitted);
+      yield* storage.register({ threadId: ThreadId.make("discarded") });
+      yield* storage.register({
+        threadId: ThreadId.make("discarded-child"),
+        parentThreadId: ThreadId.make("discarded"),
+      });
+      yield* projection.apply(create("discarded", null));
+      yield* projection.apply(create("discarded-child", "discarded"));
+      yield* storage.discard(ThreadId.make("discarded"));
+      yield* stores.volatile.projectionStore.apply(create("discarded", null));
+      yield* stores.volatile.projectionStore.apply(create("discarded-child", "discarded"));
+      for (const optIn of [undefined, false, true])
+        assert.deepEqual(yield* read(optIn, "discarded"), kind === "family" ? [] : admitted);
+      yield* storage.register({ threadId: ThreadId.make("racing") });
+      yield* storage.register({
+        threadId: ThreadId.make("racing-child"),
+        parentThreadId: ThreadId.make("racing"),
+      });
+      yield* projection.apply(create("racing", null));
+      yield* projection.apply(create("racing-child", "racing"));
+      keepDuringRead = true;
+      assert.deepEqual(yield* read(true, "racing"), kind === "family" ? [] : admitted);
+      assert.deepEqual(
+        yield* read(false, "racing"),
+        kind === "family"
+          ? ["racing", "racing-child"]
+          : ["private", "private-child", "racing", "racing-child", "saved", "saved-child"],
+      );
+      checkLockOrder = true;
+      const familyRead = yield* read(true).pipe(Effect.forkChild);
+      const acquiredReader = yield* Effect.raceFirst(
+        Deferred.await(readerHeld).pipe(Effect.as(true)),
+        Fiber.join(familyRead).pipe(Effect.as(false)),
+      );
+      const getReceipt = stores.volatile.applicationReceipts.getByCommandId;
+      using _receipt = vi
+        .spyOn(stores.volatile.applicationReceipts, "getByCommandId")
+        .mockImplementation((input) =>
+          Deferred.succeed(receiptHasStorage, undefined).pipe(Effect.andThen(getReceipt(input))),
+        );
+      const receiptRead = yield* Context.get(services, CommandReceiptStore.CommandReceiptStoreV2)
+        .getByCommandId(CommandId.make("lock-order-receipt"))
+        .pipe(Effect.forkChild);
+      if (acquiredReader) yield* Deferred.await(receiptHasStorage);
+      const completed = yield* Effect.raceFirst(
+        Effect.all([Fiber.join(familyRead), Fiber.join(receiptRead)]).pipe(Effect.as(true)),
+        Deferred.await(lockCycle).pipe(Effect.as(false)),
+      );
+      assert.isTrue(
+        completed,
+        "Shell and receipt reads must finish without a storage/SQL lock cycle",
+      );
+    }).pipe(Effect.scoped),
+);
+
+it.effect.each(
+  (["getTurnDiff", "getFullThreadDiff"] as const).flatMap((method) =>
+    [0, 1].map((toTurnCount) => ({ method, toTurnCount })),
+  ),
+)(
+  "$method gates temporary reads before checkpoint queries for turn count $toTurnCount",
+  ({ method, toTurnCount }) =>
+    Effect.gen(function* () {
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ).pipe(Layer.provideMerge(layerConfigSources)),
+      );
+      const storage = Context.get(services, TemporaryThreadStorage.TemporaryThreadStorage);
+      const projection = Context.get(services, ProjectionStore.ProjectionStoreV2);
+      const now = yield* DateTime.now;
+      const savedId = ThreadId.make("saved-diff");
+      const temporaryId = ThreadId.make("temporary-diff");
+      yield* storage.register({ threadId: temporaryId });
+      for (const threadId of [savedId, temporaryId]) {
+        yield* projection.apply({
+          id: EventId.make(`create:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: threadId,
+            createdBy: "user",
+            creationSource: "web",
+            projectId: ProjectId.make("absent-project"),
+            title: threadId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      }
+      let reads = 0;
+      const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+        getCheckpointContext: (threadId) =>
+          Effect.sync(() => reads++).pipe(
+            Effect.andThen(projection.getCheckpointContext(threadId)),
+            Effect.mapError(
+              (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
+            ),
+          ),
+      });
+      const query = yield* Layer.build(
+        CheckpointDiffQuery.layer.pipe(
+          Layer.provide(threads),
+          Layer.provide(Layer.mock(CheckpointStore.CheckpointStore)({})),
+          Layer.provide(NodeCrypto.layer),
+        ),
+      );
+      const responses =
+        yield* Queue.unbounded<
+          Exit.Exit<
+            OrchestrationGetTurnDiffResult,
+            OrchestrationGetTurnDiffError | OrchestrationGetFullThreadDiffError
+          >
+        >();
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(
+          Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
+            payload: OrchestrationV2RpcSchemas.getTurnDiff.input,
+            success: OrchestrationV2RpcSchemas.getTurnDiff.output,
+            error: OrchestrationGetTurnDiffError,
+          }),
+          Rpc.make(ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff, {
+            payload: OrchestrationV2RpcSchemas.getFullThreadDiff.input,
+            success: OrchestrationV2RpcSchemas.getFullThreadDiff.output,
+            error: OrchestrationGetFullThreadDiffError,
+          }),
+        ),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit"
+              ? Queue.offer(responses, response.exit).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("diff-privacy"),
+              subject: "diff-privacy",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            Context.get(services, ServerBrowser.ServerBrowser),
+            yield* Effect.scope,
+          ).pipe(
+            Layer.provide(Layer.mergeAll(threads, layerThreadRpcServices)),
+            Layer.provide(Layer.succeedContext(Context.merge(services, query))),
+          ),
+        ),
+      );
+      let request = 0;
+      const check = (
+        threadId: ThreadId,
+        acceptTemporaryThreads: boolean | undefined,
+        allowed: boolean,
+      ) =>
+        Effect.gen(function* () {
+          const before = reads;
+          yield* server.write(0, {
+            _tag: "Request",
+            id: RpcMessage.RequestId(`diff:${request++}`),
+            tag: ORCHESTRATION_V2_WS_METHODS[method],
+            payload: {
+              threadId,
+              ...(method === "getTurnDiff" ? { fromTurnCount: 0 } : {}),
+              toTurnCount,
+              ...(acceptTemporaryThreads === undefined ? {} : { acceptTemporaryThreads }),
+            },
+            headers: Headers.empty,
+          });
+          const result = yield* Queue.take(responses);
+          if (allowed && toTurnCount === 0) {
+            assert.deepEqual(yield* result, {
+              threadId,
+              fromTurnCount: 0,
+              toTurnCount: 0,
+              diff: "",
+            });
+          } else {
+            assert.isTrue(Exit.isFailure(result));
+            if (Exit.isFailure(result)) {
+              const reason = result.cause.reasons[0];
+              assert.equal(reason?._tag, "Fail");
+              if (reason?._tag === "Fail") {
+                if (method === "getTurnDiff") assert.isTrue(isTurnDiffError(reason.error));
+                else assert.isTrue(isFullThreadDiffError(reason.error));
+                if (allowed)
+                  assert.isTrue(isCheckpointTurnRangeUnavailableError(reason.error.cause));
+                else assert.isTrue(isThreadProjectionError(reason.error.cause));
+              }
+            }
+          }
+          assert.equal(reads - before, allowed && toTurnCount === 1 ? 1 : 0);
+        });
+      for (const optIn of [undefined, false, true]) yield* check(savedId, optIn, true);
+      yield* check(temporaryId, true, true);
+      for (const optIn of [undefined, false]) yield* check(temporaryId, optIn, false);
+      yield* storage.discard(temporaryId);
+      for (const optIn of [undefined, false, true]) yield* check(temporaryId, optIn, false);
+    }).pipe(Effect.scoped),
+);
+
+it.effect.each(
+  [
+    { discarded: true, acceptTemporaryThreads: true, saved: false },
+    { discarded: true, acceptTemporaryThreads: false, saved: false },
+    { discarded: false, acceptTemporaryThreads: false, saved: false },
+    { discarded: false, acceptTemporaryThreads: true, saved: false },
+    { discarded: false, acceptTemporaryThreads: false, saved: true },
+    { discarded: false, acceptTemporaryThreads: true, saved: true },
+  ].flatMap((state) =>
+    [
+      { tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection },
+      { tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem },
+      { tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread, acceptBoundedSnapshot: false },
+      { tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread, acceptBoundedSnapshot: true },
+    ].map((request) => ({ ...state, ...request })),
+  ),
+)("preserves guard reasons for temporary thread RPC reads: %s", (state) =>
+  Effect.gen(function* () {
+    const services = yield* Layer.build(
+      Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ).pipe(Layer.provideMerge(layerConfigSources)),
+    );
+    const storage = Context.get(services, TemporaryThreadStorage.TemporaryThreadStorage);
+    const threadId = ThreadId.make("temporary-rpc-read");
+    if (!state.saved) yield* storage.register({ threadId });
+    if (state.discarded) yield* storage.discard(threadId);
+    const cause = new Orchestrator.OrchestratorProjectionError({ threadId });
+    let reads = 0;
+    const read = () => Effect.sync(() => reads++).pipe(Effect.andThen(Effect.fail(cause)));
+    const responses = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(
+        Rpc.make(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+          payload: OrchestrationV2RpcSchemas.getThreadProjection.input,
+          error: OrchestrationV2GetThreadProjectionError,
+        }),
+        Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
+          payload: OrchestrationV2RpcSchemas.getTurnItem.input,
+          error: OrchestrationV2GetThreadProjectionError,
+        }),
+        Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
+          payload: OrchestrationV2RpcSchemas.subscribeThread.input,
+          error: OrchestrationV2GetThreadProjectionError,
+          stream: true,
+        }),
+      ),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit"
+            ? Queue.offer(responses, response.exit).pipe(Effect.asVoid)
+            : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("temporary-rpc-read"),
+            subject: "temporary-rpc-read",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          Context.get(services, ServerBrowser.ServerBrowser),
+          yield* Effect.scope,
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerThreadRpcServices,
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                ensureLegacyTranscript: () => Effect.void,
+                getThreadSnapshot: read,
+                getThreadSnapshotWindow: read,
+                getTurnItem: () =>
+                  state.saved ? Effect.sync(() => reads++).pipe(Effect.as({ item: null })) : read(),
+              }),
+            ),
+          ),
+          Layer.provide(Layer.succeedContext(services)),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("read"),
+      tag: state.tag,
+      payload: { threadId, itemId: TurnItemId.make("item"), ...state },
+      headers: Headers.empty,
+    });
+    const result = yield* Queue.take(responses);
+    if (state.saved && state.tag === ORCHESTRATION_V2_WS_METHODS.getTurnItem) {
+      assert.isTrue(Exit.isSuccess(result));
+      if (Exit.isSuccess(result)) assert.deepEqual(result.value, { item: null });
+      assert.equal(reads, 1);
+      return;
+    }
+    const allowed = state.saved || (state.acceptTemporaryThreads && !state.discarded);
+    assert.isTrue(Exit.isFailure(result));
+    if (Exit.isFailure(result)) {
+      const error = result.cause.reasons[0];
+      assert.equal(error?._tag, "Fail");
+      if (error?._tag === "Fail") {
+        assert.isTrue(isThreadProjectionError(error.error));
+        if (isThreadProjectionError(error.error)) {
+          if (state.discarded) assert.equal(error.error.reason, "thread_not_found");
+          else assert.notProperty(error.error, "reason");
+          if (allowed) {
+            assert.deepInclude(error.error, { cause });
+            if (state.tag === ORCHESTRATION_V2_WS_METHODS.getTurnItem)
+              assert.equal(error.error.message, "Failed to load turn item");
+          } else {
+            assert.equal(error.error.message, "Thread is unavailable to this client.");
+            assert.notProperty(error.error, "cause");
+          }
+        }
+      }
+    }
+    assert.equal(reads, allowed ? 1 : 0);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([false, true])(
+  "expires a reloaded socket view after handler setup returns with another tab=%s",
+  (anotherTab) =>
+    Effect.gen(function* () {
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ).pipe(Layer.provideMerge(layerConfigSources)),
+      );
+      const storage = Context.get(services, TemporaryThreadStorage.TemporaryThreadStorage);
+      const lifecycle = yield* Layer.build(
+        TemporaryThreadService.layer.pipe(
+          Layer.provide(TemporaryThreadService.layerState),
+          Layer.provide(
+            Layer.succeed(TemporaryThreadService.TemporaryThreadCleanup, {
+              stopAndTeardown: () => Effect.void,
+            }),
+          ),
+          Layer.provide(Layer.succeedContext(services)),
+        ),
+      );
+      const temporaryThreads = Context.get(
+        lifecycle,
+        TemporaryThreadService.TemporaryThreadService,
+      );
+      const threadId = ThreadId.make("reloaded-socket");
+      const responses = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+      const socketScope = yield* Scope.fork(yield* Effect.scope);
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(
+          Rpc.make(ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews, {
+            payload: OrchestrationV2RpcSchemas.updateTemporaryThreadViews.input,
+            error: OrchestrationV2TemporaryThreadError,
+          }),
+        ),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit"
+              ? Queue.offer(responses, response.exit).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("reload-session"),
+              subject: "reload-session",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            Context.get(services, ServerBrowser.ServerBrowser),
+            socketScope,
+          ).pipe(
+            Layer.provide(Layer.succeedContext(lifecycle)),
+            Layer.provide(layerThreadRpcServices),
+            Layer.provide(Layer.succeedContext(services)),
+          ),
+        ),
+        Scope.provide(socketScope),
+      );
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("attach"),
+        tag: ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews,
+        payload: {
+          viewId: "old-document",
+          generation: 1,
+          threadIds: [threadId],
+          background: false,
+        },
+        headers: Headers.empty,
+      });
+      assert.isTrue(Exit.isSuccess(yield* Queue.take(responses)));
+      assert.isTrue(yield* storage.isTemporary(threadId));
+      const reloadIdentity = { sessionId: "reload-session", clientId: "new-socket" };
+      const reloadView = {
+        viewId: "new-document",
+        generation: 1,
+        threadIds: [threadId],
+        background: false,
+      };
+      yield* temporaryThreads.updateViews(reloadIdentity, reloadView);
+      if (anotherTab)
+        yield* temporaryThreads.updateViews(
+          { sessionId: "other-session", clientId: "other-socket" },
+          { ...reloadView, viewId: "other-tab" },
+        );
+      yield* Scope.close(socketScope, Exit.void);
+      yield* temporaryThreads.updateViews(reloadIdentity, {
+        ...reloadView,
+        generation: 2,
+        threadIds: [],
+      });
+      yield* TestClock.adjust("29 seconds");
+      assert.isTrue(yield* storage.isTemporary(threadId));
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* storage.isTemporary(threadId), anotherTab);
+      if (anotherTab) {
+        yield* temporaryThreads.updateViews(
+          { sessionId: "other-session", clientId: "other-socket" },
+          { ...reloadView, viewId: "other-tab", generation: 2, threadIds: [] },
+        );
+        assert.isFalse(yield* storage.isTemporary(threadId));
+      }
+    }).pipe(Effect.scoped),
 );
 
 it.effect(
@@ -646,6 +1452,7 @@ it.effect(
             },
             {},
             yield* ServerBrowser.ServerBrowser,
+            yield* Effect.scope,
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
@@ -706,7 +1513,6 @@ it.effect(
       Effect.provide(
         Layer.mergeAll(
           Layer.fresh(layerConfigSources),
-          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
           Layer.mock(ServerBrowser.ServerBrowser)({}),
         ),
       ),
@@ -812,6 +1618,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           },
           {},
           yield* ServerBrowser.ServerBrowser,
+          yield* Effect.scope,
         ).pipe(Layer.provide(configRpcServices)),
       ),
     );
@@ -859,11 +1666,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        Layer.fresh(layerConfigSources),
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ServerBrowser.ServerBrowser)({}),
-      ),
+      Layer.mergeAll(Layer.fresh(layerConfigSources), Layer.mock(ServerBrowser.ServerBrowser)({})),
     ),
     Effect.scoped,
   ),

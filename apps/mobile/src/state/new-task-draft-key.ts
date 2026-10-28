@@ -1,3 +1,5 @@
+import { ThreadId } from "@t3tools/contracts";
+
 const NEW_TASK_DRAFT_PREFIX = "new-task:";
 
 export function newTaskDraftKey(draftId: string): string {
@@ -6,6 +8,10 @@ export function newTaskDraftKey(draftId: string): string {
 
 export function isNewTaskDraftKey(draftKey: string): boolean {
   return draftKey.startsWith(NEW_TASK_DRAFT_PREFIX);
+}
+
+export function newTaskDraftThreadId(draftKey: string): ThreadId {
+  return ThreadId.make(draftKey.slice(NEW_TASK_DRAFT_PREFIX.length));
 }
 
 export function restoredNewTaskDraftKey(messageId: string): string {

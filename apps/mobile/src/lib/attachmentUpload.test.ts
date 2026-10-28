@@ -1,4 +1,4 @@
-import { EnvironmentId, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -174,6 +174,17 @@ describe("prepareTurnAttachments", () => {
         : { _tag: "Success", value: undefined },
     );
     mocks.upload.mockResolvedValue({ status: 204, body: "", headers: {} });
+  });
+
+  it("sends the target owner in the upload grant request", async () => {
+    const owner = { _tag: "thread" as const, threadId: ThreadId.make("saved-thread") };
+    await prepareTurnAttachments({ environmentId, attachments: [file], owner });
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.createUploadUrl,
+      expect.objectContaining({ input: expect.objectContaining({ owner }) }),
+      expect.anything(),
+    );
   });
 
   it("does not mint or transfer attachments without task operation access", async () => {

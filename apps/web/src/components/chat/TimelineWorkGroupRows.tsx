@@ -536,6 +536,7 @@ export function LiveWorkEntryTimelineRow({
                 inline
                 text={thoughtLine}
                 cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
                 parseRawHtml={false}
                 extraRemarkPlugins={[[remarkThoughtPreview, "Thought"]]}
               />
@@ -557,6 +558,7 @@ export function LiveWorkEntryTimelineRow({
               inline
               text={row.entry.detail ?? label}
               cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
               parseRawHtml={false}
               extraRemarkPlugins={[[remarkThoughtPreview, row.active ? "Thinking" : "Thought"]]}
             />

@@ -1,4 +1,9 @@
 import {
+  captureTemporaryChatLaunch,
+  reconcileTemporaryChatViews,
+} from "../../hooks/useTemporaryChatViews";
+import { isTemporaryComposerTarget } from "../../temporaryChat";
+import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
@@ -401,6 +406,8 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   ) => {
     e?.preventDefault();
+    const temporaryAtSend = isTemporaryComposerTarget(composerDraftTarget);
+    const finishTemporaryLaunch = captureTemporaryChatLaunch();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
@@ -772,6 +779,20 @@ export function useComposerSend(input: ComposerSendInput) {
           description: "This draft no longer points to an available project.",
         }),
       );
+      return;
+    }
+    if (
+      isTemporaryComposerTarget(composerDraftTarget) &&
+      (composerImages.length > 0 ||
+        composerFiles.length > 0 ||
+        multipleModelSelections !== null ||
+        submissionIntent === "background")
+    ) {
+      toastManager.add({
+        type: "info",
+        title:
+          "Keep this thread before attaching files, using multiple models, or sending in the background.",
+      });
       return;
     }
     const threadIdForSend = activeThread.id;
@@ -1218,6 +1239,14 @@ export function useComposerSend(input: ComposerSendInput) {
       failure = turnAttachmentsResult;
     }
 
+    if (failure === null && temporaryAtSend) {
+      const viewResult = await settlePromise(async () => {
+        if (!(await reconcileTemporaryChatViews()))
+          throw new Error("Reconnect this temporary chat before sending.");
+      });
+      if (viewResult._tag === "Failure") failure = viewResult;
+    }
+
     if (failure === null && compactBeforeSend) {
       const compactResult = await startThreadTurn({
         environmentId,
@@ -1249,6 +1278,7 @@ export function useComposerSend(input: ComposerSendInput) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
+                      ...(draftThread?.temporary ? { temporary: true } : {}),
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
@@ -1325,6 +1355,11 @@ export function useComposerSend(input: ComposerSendInput) {
         }
       }
       const startResult = await startPromise;
+      if (temporaryAtSend && finishTemporaryLaunch) {
+        const owned = await finishTemporaryLaunch(scopeThreadRef(environmentId, threadIdForSend));
+        if (!owned)
+          toastManager.add({ type: "error", title: "Temporary chat view could not reconnect." });
+      }
       if (startResult._tag === "Failure") {
         failure = startResult;
       } else {
@@ -1371,7 +1406,10 @@ export function useComposerSend(input: ComposerSendInput) {
       }
     }
 
-    if (failure !== null) {
+    if (
+      failure !== null &&
+      (!temporaryAtSend || currentRouteThreadKeyRef.current === routeThreadKey)
+    ) {
       if (isLocalDraftThread && draftId && draftThread) {
         restoreFailedDraftThread(
           draftId,

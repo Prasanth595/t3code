@@ -1,3 +1,4 @@
+import { forgetTemporaryThread } from "../temporaryThreads.ts";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -5,6 +6,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -118,6 +120,23 @@ export function createThreadEnvironmentAtoms<R, E>(
   });
 
   const commands = {
+    keep: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:keep",
+      tag: ORCHESTRATION_V2_WS_METHODS.keepThread,
+      onSuccess: ({ environmentId, input }) =>
+        Effect.sync(() => forgetTemporaryThread(environmentId, input.threadId)),
+      scheduler,
+      concurrency,
+    }),
+    updateTemporaryViews: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:temporary-views",
+      tag: ORCHESTRATION_V2_WS_METHODS.updateTemporaryThreadViews,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.viewId]),
+      },
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: createThread,

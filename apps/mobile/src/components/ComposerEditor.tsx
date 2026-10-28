@@ -15,6 +15,7 @@ import {
   createComposerDraftContextHistory,
   getComposerDraftAfterSelection,
   getComposerDraftSnapshot,
+  isTemporaryComposerDraft,
   insertComposerDraftContext,
   insertComposerDraftText,
   rememberComposerDraftSelection,
@@ -91,6 +92,10 @@ export function ComposerEditor({
       props.editable === false
     )
       return;
+    if (isTemporaryComposerDraft(draftKey)) {
+      Dialog.alert("Keep thread first", "Keep this thread before importing copied context.");
+      return;
+    }
     const insertion = { text: clipboard.value, ...clipboard.selection };
     const operation = startComposerDraftOperation(draftKey);
     const { signal } = operation;
@@ -143,7 +148,7 @@ export function ComposerEditor({
     }
   };
   const clipboardFragment =
-    environmentId && draft.context
+    environmentId && draft.context && !(draftKey && isTemporaryComposerDraft(draftKey))
       ? encodeComposerContextFragment({
           version: 1,
           source: { environmentId },

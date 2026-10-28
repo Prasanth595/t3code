@@ -1,3 +1,5 @@
+import { isTemporaryThread, temporaryThreadAtom } from "@t3tools/client-runtime/temporary-threads";
+import { useAtomValue } from "@effect/atom-react";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -142,7 +144,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { copyTextWithHaptic, tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
@@ -431,7 +433,12 @@ function AssistantForkButton(props: {
   });
   const runId = props.projectedItem.item.runId;
 
-  if (!canFork || runId === null) return null;
+  if (
+    !canFork ||
+    runId === null ||
+    isTemporaryThread(props.environmentId, props.projectedItem.sourceThreadId)
+  )
+    return null;
 
   return (
     <Pressable
@@ -485,14 +492,25 @@ function AssistantForkButton(props: {
   );
 }
 
-function MessageAttachmentImage(props: {
+type MessageAttachmentImageProps = {
+  readonly temporary: boolean;
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
   readonly mimeType: string;
   readonly className: string;
   readonly onPressPreview: (source: FilePreviewSource) => void;
-}) {
+};
+
+function MessageAttachmentImage(props: MessageAttachmentImageProps) {
+  return props.temporary ? (
+    <Text className="text-xs text-foreground-muted">Keep thread to open media.</Text>
+  ) : (
+    <SavedMessageAttachmentImage {...props} />
+  );
+}
+
+function SavedMessageAttachmentImage(props: MessageAttachmentImageProps) {
   const withGallery = useFilePreviewGallery();
   const sourceIdentifier = useId();
   const resource = {
@@ -565,6 +583,7 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
 }
 
 function MessageAttachmentFile(props: {
+  readonly temporary: boolean;
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -651,6 +670,8 @@ function MessageAttachmentFile(props: {
     })();
   };
 
+  if (props.temporary)
+    return <Text className="text-xs text-foreground-muted">Keep thread to open media.</Text>;
   const openAttachment = () =>
     isPdf
       ? props.onPressPreview({
@@ -758,6 +779,7 @@ function MessageAttachmentFile(props: {
 
 /** A message's files as its bubble shows them; a guest's waiting message uses it too. */
 function MessageAttachmentList(props: {
+  readonly temporary: boolean;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly environmentId: EnvironmentId;
   readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -766,6 +788,7 @@ function MessageAttachmentList(props: {
   return props.attachments.map((attachment) =>
     isImageAttachment(attachment) ? (
       <MessageAttachmentImage
+        temporary={props.temporary}
         key={attachment.id}
         environmentId={props.environmentId}
         attachmentId={attachment.id}
@@ -776,6 +799,7 @@ function MessageAttachmentList(props: {
       />
     ) : isFileAttachment(attachment) ? (
       <MessageAttachmentFile
+        temporary={props.temporary}
         key={attachment.id}
         environmentId={props.environmentId}
         attachment={attachment}
@@ -1090,6 +1114,8 @@ function OpenSenderThreadButton(props: {
 /** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function ThreadAutomationMessageRow(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly temporary: boolean;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
@@ -1163,6 +1189,8 @@ function ThreadAutomationMessageRow(props: {
               <UserMessageContent
                 text={renderAssistantCitationsAsText(props.text)}
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                temporary={props.temporary}
                 context={props.context}
                 markdownStyles={props.markdownStyles}
                 reviewCommentColors={props.reviewCommentColors}
@@ -1306,6 +1334,7 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
+    readonly temporary: boolean;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1352,6 +1381,7 @@ function renderFeedEntry(
         bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
         renderAttachments={(attachments) => (
           <MessageAttachmentList
+            temporary={props.temporary}
             attachments={attachments}
             environmentId={props.environmentId}
             onPressPreview={props.onPressPreview}
@@ -1388,6 +1418,8 @@ function renderFeedEntry(
     return <ThreadThinkingRow rowSizing={props.workRowSizing} iconSubtleColor={iconSubtleColor} />;
   }
 
+  if ((entry.type === "html-render" || entry.type === "mcp-app") && props.temporary)
+    return <Text className="text-xs text-foreground-muted">Keep thread to open media.</Text>;
   if (entry.type === "html-render") {
     return (
       <ThreadHtmlRender
@@ -1559,6 +1591,8 @@ function renderFeedEntry(
       return (
         <ThreadAutomationMessageRow
           environmentId={props.environmentId}
+          threadId={props.threadId}
+          temporary={props.temporary}
           text={presentation.text}
           context={message.context}
           scheduledTaskId={presentation.scheduledTaskId}
@@ -1644,6 +1678,7 @@ function renderFeedEntry(
                 {entry.pendingMessage?.attachments.map((attachment) =>
                   attachment.type === "image" && attachment.uploadedAttachmentId ? (
                     <MessageAttachmentImage
+                      temporary={props.temporary}
                       key={attachment.id}
                       environmentId={props.environmentId}
                       attachmentId={attachment.uploadedAttachmentId}
@@ -1681,6 +1716,7 @@ function renderFeedEntry(
                     {visibleAttachments.map((attachment) => {
                       return isImageAttachment(attachment) ? (
                         <MessageAttachmentImage
+                          temporary={props.temporary}
                           key={attachment.id}
                           environmentId={props.environmentId}
                           attachmentId={attachment.id}
@@ -1695,6 +1731,7 @@ function renderFeedEntry(
                         />
                       ) : isFileAttachment(attachment) ? (
                         <MessageAttachmentFile
+                          temporary={props.temporary}
                           key={attachment.id}
                           environmentId={props.environmentId}
                           attachment={attachment}
@@ -1714,6 +1751,8 @@ function renderFeedEntry(
                     <UserMessageContent
                       text={renderedText}
                       environmentId={props.environmentId}
+                      threadId={props.threadId}
+                      temporary={props.temporary}
                       context={message.context}
                       markdownStyles={styles}
                       reviewCommentColors={props.reviewCommentColors}
@@ -1783,12 +1822,28 @@ function renderFeedEntry(
                   text={presentation.text}
                   onCopy={
                     message.context && presentation.attribution !== "guest"
-                      ? () =>
-                          writeComposerContextClipboard(message.text, {
+                      ? async () => {
+                          if (
+                            props.temporary ||
+                            isTemporaryThread(props.environmentId, props.threadId)
+                          ) {
+                            if (
+                              !(await tryCopyTextWithHaptic(
+                                replaceComposerContextReferences(
+                                  presentation.text,
+                                  (reference) => reference.label,
+                                ),
+                              ))
+                            )
+                              throw new Error("Could not copy message.");
+                            return;
+                          }
+                          await writeComposerContextClipboard(message.text, {
                             version: 1,
                             source: { environmentId: props.environmentId, messageId: message.id },
                             records: message.context!.records,
-                          })
+                          });
+                        }
                       : undefined
                   }
                   tintColor={iconSubtleColor}
@@ -1829,6 +1884,7 @@ function renderFeedEntry(
           </MarkdownImageAvailableWidthContext>
         ) : null}
         <MessageAttachmentList
+          temporary={props.temporary}
           attachments={attachments}
           environmentId={props.environmentId}
           onPressPreview={props.onPressPreview}
@@ -1919,6 +1975,8 @@ function TurnDiffStat(props: {
 type UserMessageContentProps = {
   readonly text: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly temporary: boolean;
   readonly context?: OrchestrationMessageContext;
   readonly markdownStyles: MarkdownStyleSet;
   readonly reviewCommentColors: ReviewCommentColors;
@@ -1999,6 +2057,10 @@ function UserMessageContent(props: UserMessageContentProps) {
               (item) => item.contextId === reference.contextId,
             );
             if (actionId === "copy-context" && record) {
+              if (props.temporary || isTemporaryThread(props.environmentId, props.threadId)) {
+                Dialog.alert("Keep thread first", "Keep this thread before copying context.");
+                return;
+              }
               void writeComposerContextClipboard(
                 formatComposerContextReference({
                   ...reference,
@@ -2041,13 +2103,14 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
   const segments = parseReviewCommentMessageSegments(text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
-  const contextClipboardFragment = props.context
-    ? (encodeComposerContextFragment({
-        version: 1,
-        source: { environmentId: props.environmentId },
-        records: props.context.records,
-      }) ?? undefined)
-    : undefined;
+  const contextClipboardFragment =
+    props.context && !props.temporary && !isTemporaryThread(props.environmentId, props.threadId)
+      ? (encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: props.environmentId },
+          records: props.context.records,
+        }) ?? undefined)
+      : undefined;
   if (!hasReviewComment) {
     return (
       <SelectableMarkdownText
@@ -2158,6 +2221,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
+  const registryTemporary = useAtomValue(
+    temporaryThreadAtom(scopeThreadRef(props.environmentId, props.threadId)),
+  );
+  const temporary =
+    useQuietThreadShell(scopeThreadRef(props.environmentId, props.threadId))?.temporary === true ||
+    registryTemporary;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
@@ -2339,6 +2408,10 @@ export const ThreadFeed = memo(function ThreadFeed({
     return scopeThreadRef(props.environmentId, link.threadId);
   };
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+    if (temporary || isTemporaryThread(props.environmentId, props.threadId)) {
+      Dialog.alert("Keep thread first", "Keep this thread before opening media or links.");
+      return;
+    }
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -2561,6 +2634,8 @@ export const ThreadFeed = memo(function ThreadFeed({
     },
   };
   const renderMarkdownImage: MarkdownImageRenderer = (image) => {
+    if (temporary)
+      return <Text className="text-xs text-foreground-muted">Keep thread to open media.</Text>;
     const media = resolveMarkdownMediaPreview(image.href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
@@ -2645,6 +2720,8 @@ export const ThreadFeed = memo(function ThreadFeed({
     );
   };
   const renderViewedImage: MarkdownImageRenderer = (image) => {
+    if (temporary)
+      return <Text className="text-xs text-foreground-muted">Keep thread to open media.</Text>;
     const viewedImage = resolveViewedImageAsset(image.href, {
       threadId: props.threadId,
       workspaceRoot: props.workspaceRoot,
@@ -2694,6 +2771,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    temporary,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
@@ -3063,6 +3141,10 @@ export const ThreadFeed = memo(function ThreadFeed({
   };
 
   const onPressPreview = (source: FilePreviewSource) => {
+    if (temporary || isTemporaryThread(props.environmentId, props.threadId)) {
+      Dialog.alert("Keep thread first", "Keep this thread before opening media.");
+      return;
+    }
     markdownLinkRequest.current?.abort();
     openPreview(markdownLinkScope, { file: source });
   };
@@ -3073,7 +3155,9 @@ export const ThreadFeed = memo(function ThreadFeed({
   const getFixedItemSize = (entry: ThreadFeedRow) => {
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
-      return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      return temporary
+        ? undefined
+        : htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
@@ -3113,18 +3197,23 @@ export const ThreadFeed = memo(function ThreadFeed({
   // re-caches old sizes.
   const { textSizeKey } = workRowSizing;
   const hasHtmlRenders = presentedFeed.some((entry) => entry.type === "html-render");
-  const previousRowGeometry = useRef({ textSizeKey, contentWidth });
+  const previousRowGeometry = useRef({ textSizeKey, contentWidth, temporary });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches and starts a reflow after the commit that brings new row geometry
   useLayoutEffect(() => {
     const previous = previousRowGeometry.current;
-    if (previous.textSizeKey === textSizeKey && previous.contentWidth === contentWidth) return;
-    previousRowGeometry.current = { textSizeKey, contentWidth };
+    if (
+      previous.textSizeKey === textSizeKey &&
+      previous.contentWidth === contentWidth &&
+      previous.temporary === temporary
+    )
+      return;
+    previousRowGeometry.current = { textSizeKey, contentWidth, temporary };
     // Rows re-rendered at this width are measured in the next commit, after this effect.
     if (previous.contentWidth !== contentWidth) beginReflow();
     if (previous.textSizeKey !== textSizeKey || hasHtmlRenders) {
       listRef.current?.clearCaches({ mode: "sizes" });
     }
-  }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
+  }, [textSizeKey, contentWidth, temporary, hasHtmlRenders, beginReflow, listRef]);
 
   const renderItem = (info: { item: ThreadFeedRow; index: number }) => (
     <Animated.View
@@ -3139,6 +3228,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       >
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
+            temporary,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,

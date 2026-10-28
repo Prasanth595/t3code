@@ -8,6 +8,10 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import {
+  forgetTemporaryThread,
+  setTemporaryThread,
+} from "@t3tools/client-runtime/temporary-threads";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
@@ -122,7 +126,7 @@ const serverConfig = {
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
-  environment: { platform: { os: "linux" }, capabilities: {} },
+  environment: { platform: { os: "linux" }, capabilities: { serverBrowser: true } },
 };
 
 function setup() {
@@ -180,6 +184,23 @@ async function setAllowed(allowed: boolean) {
     for (const listener of state.listeners) listener();
   });
 }
+
+it.each([
+  ["shot.png", "preview-media"],
+  ["page.html", "open-in-browser"],
+])("withholds %s preview until the temporary thread is saved", async (file, action) => {
+  using _setup = setup();
+  setTemporaryThread(threadRef.environmentId, threadRef.threadId, true);
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => forgetTemporaryThread(threadRef.environmentId, threadRef.threadId));
+  await using screen = await renderMarkdown(`[File](${file})`);
+  await screen.openContextMenu();
+  expect(offeredActions()).not.toContain(action);
+
+  await act(async () => setTemporaryThread(threadRef.environmentId, threadRef.threadId, false));
+  await screen.openContextMenu();
+  expect(offeredActions()).toContain(action);
+});
 
 it("removes host actions after revocation while keeping file preview and copying", async () => {
   using _setup = setup();

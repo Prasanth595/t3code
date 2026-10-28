@@ -109,6 +109,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
+import { MessageCircleDashedIcon } from "lucide-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -271,6 +272,7 @@ import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { TemporaryChatControls } from "./chat/TemporaryChatControls";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -2509,6 +2511,17 @@ export default function ChatView(props: ChatViewProps) {
       }),
     ];
   })() as ComposerBannerStackItem[];
+  if (serverThread?.temporary === true || draftThread?.temporary === true) {
+    composerBannerItems.push({
+      id: "temporary-chat",
+      variant: "warning",
+      group: "environment",
+      icon: <MessageCircleDashedIcon />,
+      title: "Temporary chat",
+      description:
+        "T3 does not save this chat. Deleted when you leave. Save to keep it. Providers may keep their own records. File changes stay.",
+    });
+  }
 
   if (
     terminalUiLaunchContext !== null &&
@@ -2952,9 +2965,9 @@ export default function ChatView(props: ChatViewProps) {
           goal={goalNow}
         />
         {threadStatusLine}
-        {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
+        {pendingGuestMessageCount > 0 && isServerThread && routeThreadDetailRef ? (
           <GuestPendingMessages
-            threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
+            threadRef={routeThreadDetailRef}
             onImageExpand={onExpandTimelineImageStable}
             onFileOpen={openFileAttachmentStable}
           />
@@ -3076,10 +3089,19 @@ export default function ChatView(props: ChatViewProps) {
     onToggleRightPanel: toggleRightPanelStable,
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
-    <PanelLayoutControls
-      {...panelToggleControlProps}
-      showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
-    />
+    <div className="flex h-full shrink-0 items-center gap-1">
+      <TemporaryChatControls
+        key={`${activeThread.environmentId}:${activeThread.id}`}
+        threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
+        draftId={draftId}
+        temporary={serverThread?.temporary === true || draftThread?.temporary === true}
+        isServerThread={isServerThread}
+      />
+      <PanelLayoutControls
+        {...panelToggleControlProps}
+        showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
+      />
+    </div>
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
@@ -3147,6 +3169,7 @@ export default function ChatView(props: ChatViewProps) {
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             isServerThread={isServerThread}
+            threadDetailRef={routeThreadDetailRef}
             activeThreadTitle={activeThread.title}
             activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
             activeProject={activeProject ?? null}
@@ -3159,7 +3182,6 @@ export default function ChatView(props: ChatViewProps) {
               : {})}
           />
         </header>
-
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas
             findOptions={{

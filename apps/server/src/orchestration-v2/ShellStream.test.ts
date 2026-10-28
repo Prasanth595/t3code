@@ -19,6 +19,8 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   activeShellRowsForSubscriber,
   bufferShellLiveStream,
+  streamLiveStoredEvents,
+  temporaryShellOverlay,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
   omitIdleSubagentShells,
@@ -662,3 +664,40 @@ describe("skipUnchangedThreadShells", () => {
     }),
   );
 });
+
+it.effect("starts live workers at each store cursor without replaying temporary history", () =>
+  Effect.gen(function* () {
+    const source = (threadId: string, sequence: number) => ({
+      latestSequence: () => Effect.succeed(sequence),
+      stream: (input?: { readonly afterSequence?: number }) =>
+        Stream.fromIterable([
+          { sequence, event: { threadId } },
+          { sequence: sequence + 1, event: { threadId } },
+        ]).pipe(Stream.filter((event) => event.sequence > (input?.afterSequence ?? 0))),
+    });
+    const events = yield* streamLiveStoredEvents([
+      source("durable", 1000),
+      source("volatile", 2),
+    ]).pipe(Stream.runCollect);
+    expect(events.map((event) => [event.event.threadId, event.sequence]).sort()).toEqual([
+      ["durable", 1001],
+      ["volatile", 3],
+    ]);
+  }),
+);
+
+it.effect("sends volatile shell state on its own cursor", () =>
+  Effect.gen(function* () {
+    const shell = shellFixture({ id: ThreadId.make("temporary"), temporary: true });
+    const events = yield* temporaryShellOverlay({
+      epoch: "volatile-epoch",
+      changes: Stream.make(undefined),
+      loadThreads: Effect.succeed([shell]),
+    }).pipe(Stream.runCollect);
+    expect(events).toEqual([
+      { kind: "temporary.snapshot", epoch: "volatile-epoch", revision: 0, threads: [shell] },
+      { kind: "temporary.snapshot", epoch: "volatile-epoch", revision: 1, threads: [shell] },
+    ]);
+    expect(events.every((event) => !("sequence" in event))).toBe(true);
+  }),
+);

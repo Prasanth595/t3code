@@ -13,6 +13,7 @@ const testState = vi.hoisted(() => {
     defaultRuntimeMode: "full-access" as RuntimeMode,
   };
   let storedDraft: {
+    readonly temporary?: boolean;
     readonly draftId: string;
     readonly environmentId: string;
     readonly promotedTo: null;
@@ -362,5 +363,26 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("temporary draft reuse", () => {
+  it("starts a saved draft when New thread is called from an empty temporary draft", async () => {
+    testState.reset({
+      draftId: "temporary-old",
+      environmentId: "environment-ssh",
+      threadId: "temporary-reserved",
+      promotedTo: null,
+      temporary: true,
+    });
+    const pending = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.completeProjectFileRead(null);
+    await expect(pending).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
   });
 });
