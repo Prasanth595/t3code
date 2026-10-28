@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - Real SQLite connections verify WAL recovery and concurrent access.
 import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
