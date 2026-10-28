@@ -168,18 +168,22 @@ describe("RealtimeVoice", () => {
         [],
         dispatched,
       );
-      const { transcript } = received[0]!;
+      const { transcript, release } = received[0]!;
       yield* transcript({ role: "assistant", text: "do", final: false });
       yield* transcript({ role: "assistant", text: "ne", final: false });
       yield* TestClock.adjust("300 millis");
       yield* transcript({ role: "assistant", text: "!", final: false });
       yield* transcript({ role: "assistant", text: "done!", final: true });
       yield* transcript({ role: "assistant", text: "next", final: true });
+      yield* transcript({ role: "assistant", text: "cut off", final: false });
+      yield* release;
       expect(dispatched).toMatchObject([
         { threadId: chatId, text: "do", streaming: true },
         { text: "done!", streaming: true },
         { text: "done!", streaming: false },
         { text: "next", streaming: false },
+        { text: "cut off", streaming: true },
+        { text: "cut off", streaming: false },
       ]);
       const ids = dispatched.map((command) => ("messageId" in command ? command.messageId : null));
       expect(new Set(ids.slice(0, 3)).size).toBe(1);

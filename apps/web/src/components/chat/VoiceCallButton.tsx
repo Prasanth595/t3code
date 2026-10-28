@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { MicIcon, MicOffIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { IDLE_STATE } from "@t3tools/client-runtime/voice-call";
 import { useVoiceCall } from "~/hooks/useVoiceCall";
@@ -99,9 +99,14 @@ function VoiceCallControls({
   const active = state.phase === "connecting" || state.phase === "live";
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const starting = useRef(false);
   const toggle = async () => {
     if (active) return session?.call.hangUp();
-    const call = await begin();
+    if (starting.current) return;
+    starting.current = true;
+    const call = await begin().finally(() => {
+      starting.current = false;
+    });
     const { phase, error } = call.getSnapshot();
     if (phase !== "error") return;
     toastManager.add({
@@ -153,7 +158,7 @@ function VoiceCallControls({
           </TooltipTrigger>
           <TooltipPopup side="top">{active ? "End voice call" : "Start voice call"}</TooltipPopup>
         </Tooltip>
-        <span className="absolute -top-1.5 -right-1.5 z-10 opacity-0 transition-opacity focus-within:opacity-100 group-hover/voice:opacity-100 has-data-popup-open:opacity-100">
+        <span className="absolute -top-1.5 -right-1.5 z-10 opacity-0 transition-opacity focus-within:opacity-100 group-hover/voice:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100">
           <VoiceCallMenu
             open={menuOpen}
             onOpenChange={setMenuOpen}

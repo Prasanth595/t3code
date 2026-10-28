@@ -1150,7 +1150,7 @@ const make = Effect.gen(function* () {
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined,
     target: Pick<OrchestrationV2ThreadProjection, "thread">,
   ) =>
-    parent === undefined || target.thread.id === parent.thread.id
+    parent === undefined || target.thread.id === parent.thread.id || scope.thread?.call === true
       ? Effect.void
       : assertLiveCaller(scope, parent);
 
@@ -1167,7 +1167,6 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
   ) => {
-    if (scope.thread?.call === true) return Effect.void;
     const notActive = failure(
       "parent_not_active",
       "The calling provider no longer owns an active thread run.",

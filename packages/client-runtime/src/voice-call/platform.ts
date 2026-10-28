@@ -26,7 +26,8 @@ export const browserVoiceCallPlatform: VoiceCallPlatform = {
   playRemote: (stream) => {
     const audio = new Audio();
     audio.srcObject = stream;
-    void audio.play();
+    // Blocked or aborted by a hang-up; the call carries on without it.
+    audio.play().catch(() => {});
     return () => {
       audio.pause();
       audio.srcObject = null;

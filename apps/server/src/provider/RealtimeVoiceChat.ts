@@ -48,7 +48,10 @@ export const makeRealtimeVoiceChats = Effect.gen(function* () {
     chatId: ThreadId,
   ) {
     const lock = yield* Semaphore.make(1);
-    const spoken = new Map<string, { messageId: string; text: string; wroteAt: number }>();
+    const spoken = new Map<
+      TranscriptLine["role"],
+      { messageId: string; text: string; wroteAt: number }
+    >();
     const record = Effect.fn("RealtimeVoice.recordTranscriptLine")(
       function* ({ role, text, final }: TranscriptLine) {
         const now = yield* Clock.currentTimeMillis;
@@ -76,7 +79,12 @@ export const makeRealtimeVoiceChats = Effect.gen(function* () {
       },
       Effect.catch((error) => Effect.logWarning("Voice transcript was not recorded.", error)),
     );
-    return (line: TranscriptLine) => lock.withPermits(1)(record(line));
+    const finish = lock.withPermits(1)(
+      Effect.suspend(() =>
+        Effect.forEach([...spoken], ([role, { text }]) => record({ role, text, final: true })),
+      ),
+    );
+    return { record: (line: TranscriptLine) => lock.withPermits(1)(record(line)), finish };
   });
 
   /** Opens the call's own chat as a subagent of the thread, and gives the call access to it. */
@@ -119,6 +127,7 @@ export const makeRealtimeVoiceChats = Effect.gen(function* () {
       providerInstanceId: instanceId,
       call: true,
     });
+    const transcript = yield* recordTranscript(launched.threadId);
     return {
       chatThreadId: launched.threadId,
       thread: {
@@ -128,10 +137,12 @@ export const makeRealtimeVoiceChats = Effect.gen(function* () {
           `${account.displayName ?? instanceId} (${instanceId})`,
           chatModel.model,
         ),
-        transcript: yield* recordTranscript(launched.threadId),
+        transcript: transcript.record,
         mcp: { endpoint: config.endpoint, authorizationHeader: config.authorizationHeader },
         tools: THREAD_TOOLS,
-        release: mcpSessions.revokeProviderSession(config.providerSessionId),
+        release: transcript.finish.pipe(
+          Effect.andThen(mcpSessions.revokeProviderSession(config.providerSessionId)),
+        ),
       } satisfies RealtimeVoiceThread,
     };
   });
