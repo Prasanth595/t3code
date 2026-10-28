@@ -31,6 +31,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -382,12 +383,12 @@ function cursorToolOutput(toolCall: ToolCall): unknown {
 
 function cursorToolOutputText(toolCall: ToolCall): string {
   if (toolCall.type === "shell" && toolCall.result?.status === "success") {
-    return [toolCall.result.value.stdout, toolCall.result.value.stderr]
+    return [toolCall.result.value.stdout ?? "", toolCall.result.value.stderr ?? ""]
       .filter((part) => part.length > 0)
       .join("\n");
   }
   if (toolCall.type === "mcp" && toolCall.result?.status === "success") {
-    return toolCall.result.value.content
+    return (toolCall.result.value.content ?? [])
       .flatMap((part) => (part.text === undefined ? [] : [part.text.text]))
       .join("\n");
   }
@@ -414,7 +415,7 @@ function cursorToolFileName(toolCall: ToolCall): string {
     case "read":
     case "edit":
     case "ls":
-      return toolCall.args.path;
+      return toolCall.args.path ?? "<unknown path>";
     case "generateImage":
       return toolCall.args.filePath ?? "generated-image";
     default:
@@ -425,15 +426,15 @@ function cursorToolFileName(toolCall: ToolCall): string {
 function cursorToolSearchPattern(toolCall: ToolCall): string | undefined {
   switch (toolCall.type) {
     case "glob":
-      return toolCall.args.globPattern;
+      return toolCall.args.globPattern ?? "**/*";
     case "grep":
-      return toolCall.args.pattern;
+      return toolCall.args.pattern ?? "";
     case "semSearch":
-      return toolCall.args.query;
+      return toolCall.args.query ?? "";
     case "ls":
-      return toolCall.args.path;
+      return toolCall.args.path ?? "";
     case "readLints":
-      return toolCall.args.paths.join(", ");
+      return (toolCall.args.paths ?? []).join(", ");
     default:
       return undefined;
   }
@@ -445,12 +446,15 @@ type CursorLsDirectoryNode = Extract<
 >["value"]["directoryTreeRoot"];
 
 function cursorLsSearchResults(
-  node: CursorLsDirectoryNode,
+  node: CursorLsDirectoryNode | undefined,
   path: Path.Path,
 ): ReadonlyArray<{ readonly fileName: string }> {
+  if (node === undefined) return [];
   return [
-    ...node.childrenFiles.map((file) => ({ fileName: path.join(node.absPath, file.name) })),
-    ...node.childrenDirs.flatMap((child) => cursorLsSearchResults(child, path)),
+    ...(node.childrenFiles ?? [])
+      .filter((file) => typeof file.name === "string" && file.name.length > 0)
+      .map((file) => ({ fileName: path.join(node.absPath ?? "", file.name) })),
+    ...(node.childrenDirs ?? []).flatMap((child) => cursorLsSearchResults(child, path)),
   ];
 }
 
@@ -468,19 +472,19 @@ function cursorToolSearchResults(
   }
   switch (toolCall.type) {
     case "glob":
-      return toolCall.result.value.files.map((fileName) => ({ fileName }));
+      return (toolCall.result.value.files ?? []).map((fileName) => ({ fileName }));
     case "grep":
       return Object.values(toolCall.result.value.workspaceResults ?? {}).flatMap((result) => {
         if (result.type === "files") {
-          return result.output.files.map((fileName) => ({ fileName }));
+          return (result.output?.files ?? []).map((fileName) => ({ fileName }));
         }
         if (result.type === "count") {
-          return result.output.counts.map((entry) => ({
+          return (result.output?.counts ?? []).map((entry) => ({
             fileName: entry.file,
             preview: `${entry.count} matches`,
           }));
         }
-        return result.output.matches.map((entry) => ({
+        return (result.output?.matches ?? []).map((entry) => ({
           fileName: entry.file,
           ...(entry.lineNumber === undefined ? {} : { line: entry.lineNumber }),
           preview: entry.line,
@@ -489,13 +493,13 @@ function cursorToolSearchResults(
     case "ls":
       return cursorLsSearchResults(toolCall.result.value.directoryTreeRoot, path);
     case "readLints":
-      return toolCall.result.value.fileDiagnostics.flatMap((file) =>
-        file.diagnostics.map((diagnostic) => {
+      return (toolCall.result.value.fileDiagnostics ?? []).flatMap((file) =>
+        (file.diagnostics ?? []).map((diagnostic) => {
           const line = diagnostic.range?.start?.line;
           const character = diagnostic.range?.start?.character;
           const hasLine = typeof line === "number" && Number.isInteger(line) && line >= 0;
           return {
-            fileName: file.path,
+            fileName: file.path ?? "<unknown path>",
             ...(hasLine ? { line: line + 1 } : {}),
             ...(hasLine &&
             typeof character === "number" &&
@@ -503,7 +507,7 @@ function cursorToolSearchResults(
             character >= 0
               ? { column: character + 1 }
               : {}),
-            preview: diagnostic.message,
+            preview: diagnostic.message ?? "",
           };
         }),
       );
@@ -511,7 +515,7 @@ function cursorToolSearchResults(
       return [
         {
           fileName: "semantic-search",
-          preview: toolCall.result.value.results,
+          preview: toolCall.result.value.results ?? "",
         },
       ];
     default:
@@ -523,12 +527,13 @@ function cursorTodoSteps(
   toolCall: Extract<ToolCall, { readonly type: "updateTodos" }>,
 ): ReadonlyArray<OrchestrationV2PlanStep> {
   const todos =
-    toolCall.result?.status === "success" ? toolCall.result.value.todos : toolCall.args.todos;
+    (toolCall.result?.status === "success" ? toolCall.result.value.todos : toolCall.args.todos) ??
+    [];
   return todos
-    .filter((todo) => todo.status !== "cancelled" && todo.content.trim().length > 0)
+    .filter((todo) => todo.status !== "cancelled" && (todo.content ?? "").trim().length > 0)
     .map((todo, index) => ({
       id: `todo-${index + 1}`,
-      text: todo.content,
+      text: todo.content ?? "",
       status:
         todo.status === "inProgress"
           ? "running"
@@ -1227,10 +1232,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               turnItem = {
                 ...base,
                 type: "command_execution",
-                input: toolCall.args.command,
+                input: toolCall.args.command ?? "",
                 ...(outputText.length === 0 ? {} : { output: outputText }),
                 ...(toolCall.result?.status === "success"
-                  ? { exitCode: toolCall.result.value.exitCode }
+                  ? { exitCode: toolCall.result.value.exitCode ?? 0 }
                   : {}),
               };
               break;
@@ -1259,13 +1264,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   : toolCall.result?.status === "error" && outputText.trim().length > 0
                     ? { diffStr: outputText }
                     : {}),
-                ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
+                ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText ?? "" } : {}),
               };
               break;
             case "read":
               turnItem = {
                 ...base,
-                title: formatReadToolLabel(toolCall.args.path),
+                title: formatReadToolLabel(toolCall.args.path ?? "<unknown path>"),
                 type: "dynamic_tool",
                 toolName: "Read",
                 input: toolCall.args,
@@ -1311,8 +1316,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 type: "dynamic_tool",
                 ...(toolCall.type === "mcp"
                   ? mcpToolPresentation({
-                      serverName: toolCall.args.providerIdentifier,
-                      toolName: toolCall.args.toolName,
+                      serverName: toolCall.args.providerIdentifier ?? "mcp",
+                      toolName: toolCall.args.toolName ?? "unknown",
                     })
                   : {}),
                 toolName: cursorToolName(toolCall),
@@ -1845,7 +1850,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* emitPlanArtifacts({
                 context,
                 callId: update.callId,
-                markdown: toolCall.args.plan,
+                markdown: toolCall.args.plan ?? "",
                 completed,
                 failed: completed && cursorToolFailed(toolCall),
               });
@@ -2279,6 +2284,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
+            let pendingUpdateFailure: unknown;
             // MCP send overrides replace the ambient servers loaded when the agent opens.
             const sdkRun = yield* agent.session
               .send({
@@ -2346,12 +2352,31 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               },
             });
             for (const update of pendingUpdates) {
-              yield* handleInteractionUpdate(context, update);
+              yield* handleInteractionUpdate(context, update).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.sync(() => {
+                    pendingUpdateFailure ??= Cause.squash(cause);
+                  }),
+                ),
+              );
             }
 
             yield* sdkRun.wait.pipe(
               Effect.flatMap((result) =>
                 Effect.gen(function* () {
+                  if (pendingUpdateFailure !== undefined && !context.interrupted) {
+                    const cause = pendingUpdateFailure;
+                    yield* finalizeTurn({
+                      context,
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        cause,
+                        message: cause instanceof Error ? cause.message : undefined,
+                        class: "provider_error",
+                      }),
+                    });
+                    return;
+                  }
                   if (
                     context !== null &&
                     context.assistant.nextSegment === 0 &&
@@ -2408,6 +2433,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               Effect.catch((cause) =>
                 Effect.gen(function* () {
                   if (context !== null) {
+                    const callbackFailure = pendingUpdateFailure;
+                    const failureCause = callbackFailure ?? cause;
                     yield* finalizeTurn({
                       context,
                       status: context.interrupted ? "interrupted" : "failed",
@@ -2415,11 +2442,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                         ? {}
                         : {
                             failure: makeProviderFailure({
-                              cause,
-                              message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
-                                ? CursorAgentSdk.cursorSdkFailureMessage(cause)
-                                : undefined,
-                              class: "transport_error",
+                              cause: failureCause,
+                              message:
+                                callbackFailure instanceof Error
+                                  ? callbackFailure.message
+                                  : CursorAgentSdk.isCursorAgentSdkRunnerError(failureCause)
+                                    ? CursorAgentSdk.cursorSdkFailureMessage(failureCause)
+                                    : undefined,
+                              class:
+                                callbackFailure !== undefined ||
+                                (CursorAgentSdk.isCursorAgentSdkRunnerError(cause) &&
+                                  cause.method === "run.onDelta")
+                                  ? "provider_error"
+                                  : "transport_error",
                             }),
                           }),
                     });

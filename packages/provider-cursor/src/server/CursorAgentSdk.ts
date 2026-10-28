@@ -421,9 +421,6 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
             callbackChain = callbackChain
               .then(() => {
-                if (callbackFailure !== undefined) {
-                  return;
-                }
                 return Effect.runPromiseWith(context)(
                   log({
                     direction: "incoming",
@@ -510,14 +507,25 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             agentId: run.agentId,
             wait: Effect.tryPromise({
               try: async () => {
-                const result = await run.wait();
-                await callbackChain;
+                const [runResult] = await Promise.allSettled([run.wait()]);
+                let completedCallbacks: Promise<void>;
+                do {
+                  completedCallbacks = callbackChain;
+                  await completedCallbacks;
+                } while (callbackChain !== completedCallbacks);
                 if (callbackFailure !== undefined) {
                   throw callbackFailure.cause;
                 }
-                return result;
+                if (runResult.status === "rejected") {
+                  throw runResult.reason;
+                }
+                return runResult.value;
               },
-              catch: (cause) => runnerError(cause, "run.wait"),
+              catch: (cause) =>
+                runnerError(
+                  callbackFailure?.cause ?? cause,
+                  callbackFailure === undefined ? "run.wait" : "run.onDelta",
+                ),
             }).pipe(
               Effect.tap((result) =>
                 log({
