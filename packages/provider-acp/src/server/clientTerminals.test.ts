@@ -55,20 +55,31 @@ describe("AcpClientTerminals", () => {
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({
         defaultCwd: process.cwd(),
-        environmentForSession: (sessionId) => ({
-          T3_TEST_ACP_SESSION_TOKEN: sessionId === "session-a" ? "token-a" : "token-b",
-        }),
+        environment: {
+          ...process.env,
+          T3_ACP_MCP_AUTHORIZATION: "launching-thread-token",
+          t3_Acp_Mcp_Endpoint: "launching-thread-endpoint",
+          T3_TEST_INHERITED: "kept",
+        },
+        environmentForSession: (sessionId) =>
+          sessionId === "unknown"
+            ? undefined
+            : { T3_ACP_MCP_AUTHORIZATION: sessionId === "session-a" ? "token-a" : "token-b" },
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
 
       for (const [sessionId, expected] of [
-        ["session-a", "token-a"],
-        ["session-b", "token-b"],
+        ["session-a", "token-a||kept"],
+        ["session-b", "token-b||kept"],
+        ["unknown", "||kept"],
       ] as const) {
         const created = yield* terminals.create({
           sessionId,
           command: process.execPath,
-          args: ["-e", "process.stdout.write(process.env.T3_TEST_ACP_SESSION_TOKEN ?? '')"],
+          args: [
+            "-e",
+            "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3_TEST_INHERITED].join('|'))",
+          ],
         });
         yield* terminals.waitForExit({ sessionId, terminalId: created.terminalId });
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
