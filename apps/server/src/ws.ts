@@ -937,24 +937,24 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (input.afterSequence > highWater) {
         return yield* snapshotThenLive();
       }
-      const stats = yield* applicationEvents
-        .getAgentReplayStats({
+      const hasCreateEvent = yield* applicationEvents
+        .hasAgentEvent({
           threadId: input.threadId,
           afterSequence: input.afterSequence,
           throughSequence: highWater,
-          maxEvents: highWater - input.afterSequence,
+          eventType: "thread.created",
         })
         .pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationV2GetThreadProjectionError({
                 threadId: input.threadId,
-                message: `Failed to measure orchestration V2 thread ${input.threadId} replay`,
+                message: `Failed to check orchestration V2 thread ${input.threadId} creation`,
                 cause,
               }),
           ),
         );
-      if (!stats.hasCreateEvent) {
+      if (!hasCreateEvent) {
         // Pull each page only as the transport consumes the previous one. The
         // client commits each event's cursor before the final completion marker,
         // so a dropped connection resumes from its partial catch-up progress.
@@ -977,6 +977,23 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           withLiveDedupe,
         );
       }
+      const stats = yield* applicationEvents
+        .getAgentReplayStats({
+          threadId: input.threadId,
+          afterSequence: input.afterSequence,
+          throughSequence: highWater,
+          maxEvents: THREAD_RESUME_MAX_REPLAY_EVENTS,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2GetThreadProjectionError({
+                threadId: input.threadId,
+                message: `Failed to measure orchestration V2 thread ${input.threadId} replay`,
+                cause,
+              }),
+          ),
+        );
       // Bound stored and projected payload bytes separately; neither bounds process memory.
       if (
         stats.eventCount > THREAD_RESUME_MAX_REPLAY_EVENTS ||

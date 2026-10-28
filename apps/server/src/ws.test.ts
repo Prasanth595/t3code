@@ -312,6 +312,7 @@ it.effect.each([
   ({ count, padding, unknownPrefix }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
       const threadId = ThreadId.make("thread:incremental-replay");
       const now = "2026-10-28T00:00:00.000Z";
       const rows = Array.from({ length: count + unknownPrefix }, (_, version) => ({
@@ -338,6 +339,11 @@ it.effect.each([
           afterSequence,
           requestCompletionMarker: true,
         }).pipe(
+          Effect.provideService(OrchestrationEventStore.OrchestrationEventStore, {
+            ...eventStore,
+            getAgentReplayStats: () =>
+              Effect.die("Ordinary catch-up must not restore payloads for stats"),
+          }),
           Effect.provideService(ThreadManagement.ThreadManagementService, {
             ensureLegacyTranscript: () => Effect.void,
             getThreadSnapshot: () =>

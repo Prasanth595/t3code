@@ -68,6 +68,29 @@ const seedEvents = Effect.fn("test.seedSequenceEvents")(function* (
   `;
 });
 
+it.effect("checks creation ranges without restoring or decoding payloads", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const threadId = ThreadId.make("creation-existence");
+    const inserted = yield* seedEvents([
+      { ...eventRow(1, "thread", 2, threadId), event_type: "thread.created", payload_json: "{" },
+      eventRow(2, "thread", 2, threadId),
+      { ...eventRow(3, "thread", 2, "other"), event_type: "thread.created", payload_json: "{" },
+      { ...eventRow(4, "thread", 1, threadId), event_type: "thread.created", payload_json: "{" },
+    ]);
+    const range = {
+      threadId,
+      afterSequence: 0,
+      throughSequence: inserted[3]!.sequence,
+      eventType: "thread.created" as const,
+    };
+    assert.isTrue(yield* store.hasAgentEvent(range));
+    assert.isFalse(yield* store.hasAgentEvent({ ...range, afterSequence: inserted[0]!.sequence }));
+    assert.isFalse(yield* store.hasAgentEvent({ ...range, throughSequence: 0 }));
+    assert.isTrue(yield* store.hasAgentEvent({ ...range, throughSequence: inserted[0]!.sequence }));
+  }).pipe(Effect.provide(layerEventStore)),
+);
+
 it.effect("fetches the next byte-bounded replay page after delivering the previous page", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;

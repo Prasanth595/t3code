@@ -64,6 +64,14 @@ export class OrchestrationEventStore extends Context.Service<
       readonly maxPageBytes?: number;
     }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
+    /** Check a scoped replay range without reading or restoring event payloads. */
+    readonly hasAgentEvent: (input: {
+      readonly threadId: ThreadId;
+      readonly afterSequence: number;
+      readonly throughSequence: number;
+      readonly eventType: OrchestrationV2DomainEvent["type"];
+    }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
+
     readonly getAgentReplayStats: (input: {
       readonly threadId: ThreadId;
       readonly afterSequence: number;
@@ -601,6 +609,23 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
+  const hasAgentEvent: OrchestrationEventStore["Service"]["hasAgentEvent"] = (input) =>
+    sql<{ readonly found: number }>`
+      SELECT EXISTS (
+        SELECT 1 FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${input.threadId}
+          AND application_event_version = 2
+          AND sequence > ${input.afterSequence}
+          AND sequence <= ${input.throughSequence}
+          AND event_type = ${input.eventType}
+      ) AS found
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.hasAgentEvent:query")),
+      Effect.map((rows) => rows[0]?.found === 1),
+    );
+
   const getAgentReplayStats: OrchestrationEventStore["Service"]["getAgentReplayStats"] = (input) =>
     sql<{
       readonly eventCount: number;
@@ -759,6 +784,7 @@ const makeEventStore = Effect.gen(function* () {
     appendProjectEvent,
     appendAgentEvents,
     readAgentEvents,
+    hasAgentEvent,
     getAgentReplayStats,
     getReplayStats,
     latestAgentSequence,
