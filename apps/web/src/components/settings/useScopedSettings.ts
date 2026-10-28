@@ -49,13 +49,14 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return async (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+  return async (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
         title: "Setting not saved",
         description: plan.unavailableReason,
       });
+      onFailed?.();
       return false;
     }
     const { failedEnvironments, savedEnvironments, savedEnvironmentCount } =
@@ -79,6 +80,7 @@ function useRunScopedPlan() {
         persistClientSettingsPatch,
       );
     if (failedEnvironments.length > 0) {
+      onFailed?.();
       toastManager.add({
         type: "error",
         title:
@@ -100,7 +102,9 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch));
+  /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
+  return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
+    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
 }
 
 export function useClearScopedSettings() {
