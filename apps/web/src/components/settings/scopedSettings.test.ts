@@ -32,6 +32,8 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
+    settingsKeys?: readonly string[];
+    unsupportedSettingKeys?: ReadonlySet<string>;
   } = {},
 ) {
   return {
@@ -46,9 +48,15 @@ function environment(
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
             environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
+              capabilities: {
+                projectSettingsOverrides: options.projectOverrides !== false,
+                ...(options.settingsKeys ? { settingsKeys: options.settingsKeys } : {}),
+              },
             },
           },
+    ...(options.unsupportedSettingKeys
+      ? { unsupportedSettingKeys: options.unsupportedSettingKeys }
+      : {}),
   };
 }
 
@@ -789,5 +797,72 @@ describe("model selection patches at project scope", () => {
       optionsPlan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]
         ?.textGenerationModelSelection,
     ).toEqual({ ...saved, options });
+  });
+});
+
+describe("environments that cannot store a setting", () => {
+  const serverKeysWithout = (...missing: string[]) =>
+    Object.keys(DEFAULT_SERVER_SETTINGS).filter((key) => !missing.includes(key));
+  const reviewing = environment("Laptop", { settings: { reviewGuidesEnabled: true } });
+
+  it("leaves a key out of the comparison and the writes where the server does not advertise it", () => {
+    const old = environment("Server", {
+      settingsKeys: serverKeysWithout("reviewGuidesEnabled"),
+    });
+    const targets = resolveScopedSettingsTargets(all, [reviewing, old]);
+    const plan = planScopedSettingsPatch(all, [reviewing, old], {
+      reviewGuidesEnabled: false,
+      enableProviderUpdateChecks: false,
+    });
+    expect({
+      mixed: scopedSettingsAreMixed(targets, ["reviewGuidesEnabled"]),
+      writes: plan.serverWrites.map(({ label, patch }) => [label, patch]),
+    }).toEqual({
+      mixed: false,
+      writes: [
+        ["Laptop", { reviewGuidesEnabled: false, enableProviderUpdateChecks: false }],
+        ["Server", { enableProviderUpdateChecks: false }],
+      ],
+    });
+  });
+
+  // regression: after the first save reported the drop, the next click still wrote to the old server
+  it("learns a dropped key so the next click reaches the other environments and the row resolves", async () => {
+    const fresh = environment("Laptop");
+    const old = environment("Server");
+    const first = await persistScopedSettingsPatch(
+      planScopedSettingsPatch(all, [fresh, old], { reviewGuidesEnabled: true }),
+      async ({ environmentId, input }) => ({
+        _tag: "Success" as const,
+        value:
+          environmentId === fresh.environmentId
+            ? applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, input.patch)
+            : DEFAULT_SERVER_SETTINGS,
+      }),
+      vi.fn(),
+    );
+    const droppedKeys = first.failedEnvironments.flatMap((failed) => failed.droppedKeys);
+    const learned = environment("Server", { unsupportedSettingKeys: new Set(droppedKeys) });
+    const afterFirstSave = [reviewing, learned];
+
+    expect({
+      droppedKeys,
+      mixed: scopedSettingsAreMixed(resolveScopedSettingsTargets(all, afterFirstSave), [
+        "reviewGuidesEnabled",
+      ]),
+      secondClick: planScopedSettingsPatch(all, afterFirstSave, {
+        reviewGuidesEnabled: false,
+      }).serverWrites.map(({ label }) => label),
+    }).toEqual({ droppedKeys: ["reviewGuidesEnabled"], mixed: false, secondClick: ["Laptop"] });
+  });
+
+  it("asks to update T3 Code when no selected environment can store the key", () => {
+    const old = environment("Server", {
+      settingsKeys: serverKeysWithout("reviewGuidesEnabled"),
+    });
+    expect(planScopedSettingsPatch(all, [old], { reviewGuidesEnabled: true })).toMatchObject({
+      serverWrites: [],
+      unavailableReason: "Update T3 Code on Server to use this setting.",
+    });
   });
 });
