@@ -1203,7 +1203,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       <AlarmClockIcon aria-hidden className="size-3" />
                       {props.snoozeWakeLabelText}
                     </span>
-                  ) : isWoke ? (
+                  ) : (inFolder ? isWokeStatus : isWoke) ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={
