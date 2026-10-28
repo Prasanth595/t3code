@@ -1,5 +1,5 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useCallback, useState, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -12,6 +12,7 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -29,10 +30,14 @@ const TOOLBAR_FLIP_TIMING = {
   easing: Easing.inOut(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
-const TOOLBAR_HALF_HEIGHT = 22;
 const TOOLBAR_PERSPECTIVE = 600;
 
-function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimationFunction {
+function toolbarFlip(
+  fromDegrees: number,
+  toDegrees: number,
+  height: number,
+): EntryExitAnimationFunction {
+  const halfHeight = height / 2;
   return () => {
     "worklet";
     const fromRadians = (fromDegrees * Math.PI) / 180;
@@ -44,7 +49,7 @@ function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimation
         opacity: fromDegrees === 0 ? 1 : 0,
         transform: [
           { perspective: TOOLBAR_PERSPECTIVE },
-          { translateY: -TOOLBAR_HALF_HEIGHT * fromSine },
+          { translateY: -halfHeight * fromSine },
           { rotateX: `${fromDegrees}deg` },
         ],
       },
@@ -53,7 +58,7 @@ function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimation
         transform: [
           { perspective: TOOLBAR_PERSPECTIVE },
           {
-            translateY: withTiming(-TOOLBAR_HALF_HEIGHT * toSine, {
+            translateY: withTiming(-halfHeight * toSine, {
               ...TOOLBAR_FLIP_TIMING,
               easing: (time) => {
                 const angle =
@@ -69,10 +74,6 @@ function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimation
   };
 }
 
-const DRAFT_TOOLBAR_ENTERING = toolbarFlip(90, 0);
-const DRAFT_TOOLBAR_EXITING = toolbarFlip(0, 90);
-const DICTATION_TOOLBAR_ENTERING = toolbarFlip(-90, 0);
-const DICTATION_TOOLBAR_EXITING = toolbarFlip(0, -90);
 const WAVEFORM_BAR_HEIGHT = 32;
 const WAVEFORM_MIN_BAR_HEIGHT = 2;
 const WAVEFORM_BAR_SPACING = 5;
@@ -84,10 +85,13 @@ const WAVEFORM_TIMING = {
 
 export function ComposerDictationDraftContent(props: {
   readonly children: ReactNode;
+  readonly size?: "regular" | "large";
   readonly className?: string;
   readonly compact: boolean;
   readonly hidden: boolean;
 }) {
+  const { composerControlSize } = useAndroidControlSizing();
+  const halfHeight = (props.size === "large" ? composerControlSize : 44) / 2;
   const hidden = props.hidden;
   const rotation = useDerivedValue(() => withTiming(hidden ? 1 : 0, TOOLBAR_FLIP_TIMING));
   const compact = props.compact;
@@ -96,7 +100,7 @@ export function ComposerDictationDraftContent(props: {
     transform: compact
       ? [
           { perspective: TOOLBAR_PERSPECTIVE },
-          { translateY: -TOOLBAR_HALF_HEIGHT * Math.sin((rotation.value * Math.PI) / 2) },
+          { translateY: -halfHeight * Math.sin((rotation.value * Math.PI) / 2) },
           { rotateX: `${rotation.value * 90}deg` },
         ]
       : [],
@@ -118,16 +122,25 @@ export function ComposerDictationDraftContent(props: {
 
 export function ComposerDictationToolbar(props: {
   readonly children: ReactNode;
+  readonly size?: "regular" | "large";
   readonly showsDictation: boolean;
   readonly visible?: boolean;
 }) {
   // Android can drop the reduced-motion flip's final frame, leaving the toolbar invisible.
   const reducedMotion = useReducedMotion();
-  const entering = props.showsDictation ? DICTATION_TOOLBAR_ENTERING : DRAFT_TOOLBAR_ENTERING;
-  const exiting = props.showsDictation ? DICTATION_TOOLBAR_EXITING : DRAFT_TOOLBAR_EXITING;
+  const { composerControlSize } = useAndroidControlSizing();
+  const height = props.size === "large" ? composerControlSize : 44;
+  const entering = useMemo(
+    () => toolbarFlip(props.showsDictation ? -90 : 90, 0, height),
+    [props.showsDictation, height],
+  );
+  const exiting = useMemo(
+    () => toolbarFlip(0, props.showsDictation ? -90 : 90, height),
+    [props.showsDictation, height],
+  );
 
   return (
-    <View className="relative h-[44px] overflow-hidden">
+    <View className="relative overflow-hidden" style={{ height }}>
       {props.visible !== false ? (
         <Animated.View
           key={props.showsDictation ? "dictation" : "draft"}
@@ -258,6 +271,9 @@ function VoiceActionButton(props: {
   readonly onPress: () => void;
   readonly variant?: "plain" | "primary";
 }) {
+  const { scale, composerControlSize } = useAndroidControlSizing();
+  const height = props.size === "large" ? composerControlSize : 44;
+  const circleSize = props.size === "large" ? height : 30;
   const variant = props.variant ?? "plain";
   const loading = props.loading === true;
   const primaryStyle = useAnimatedStyle(() => ({
@@ -272,17 +288,17 @@ function VoiceActionButton(props: {
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ opacity: props.disabled && !props.loading ? 0.4 : 1 }}
+      style={{ width: height, height, opacity: props.disabled && !props.loading ? 0.4 : 1 }}
     >
       <View
         className={cn(
           "items-center justify-center",
-          variant === "primary"
-            ? props.size === "large"
-              ? "size-[44px] rounded-full bg-subtle"
-              : "size-[30px] rounded-full bg-subtle"
-            : "size-[44px]",
+          variant === "primary" && "rounded-full bg-subtle",
         )}
+        style={{
+          width: variant === "primary" ? circleSize : height,
+          height: variant === "primary" ? circleSize : height,
+        }}
       >
         {variant === "primary" ? (
           <Animated.View
@@ -296,7 +312,9 @@ function VoiceActionButton(props: {
           ) : (
             <SymbolView
               name={props.icon}
-              size={props.size === "large" ? 24 : variant === "primary" ? 16 : 20}
+              size={
+                props.size === "large" ? Math.round(24 * scale) : variant === "primary" ? 16 : 20
+              }
               weight={variant === "primary" ? "semibold" : "regular"}
               tintColorClassName={
                 variant === "primary" ? "accent-primary-foreground" : "accent-icon"

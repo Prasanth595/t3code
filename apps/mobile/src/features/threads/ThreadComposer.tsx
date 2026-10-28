@@ -1,12 +1,10 @@
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import {
-  useAppearancePreferences,
-  useAndroidFloatingTabs,
-} from "../settings/appearance/AppearancePreferencesProvider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
@@ -135,7 +133,7 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+export function useCompactComposerEditor(text: ScaledTextRole, value: string, controlHeight = 44) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
@@ -155,7 +153,8 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     value.length > 0 &&
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
-  const compactRowHeight = Math.max(44, minimum);
+  const compactRowHeight = Math.max(controlHeight, minimum);
+  const expandedToolbarHeight = controlHeight + 8;
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     overflow: "hidden",
@@ -163,11 +162,12 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     left: isExpanded ? 14 : editorX.value + 4,
     right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
     // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
+    bottom: isExpanded ? expandedToolbarHeight : (compactRowHeight - minimum) / 2,
   }));
   return {
     isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
+    compactRowHeight,
+    containerStyle: { height: isExpanded ? height + expandedToolbarHeight : compactRowHeight },
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       rowWidth.set(event.nativeEvent.layout.width);
@@ -573,12 +573,20 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { layout, setComposerEditing } = useAdaptiveWorkspaceLayout();
-  const floatingSidebarComposer = useAndroidFloatingTabs() && layout.usesSplitView;
+  const splitAndroidComposer = Platform.OS === "android" && layout.usesSplitView;
+  const { fabSize, composerControlSize } = useAndroidControlSizing();
   const usesLargeControls =
     useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
+  const controlSize = usesLargeControls || splitAndroidComposer ? "large" : "regular";
+  const controlHeight = splitAndroidComposer ? composerControlSize : 44;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const compactEditor = useCompactComposerEditor(bodyText, draftMessage, controlHeight);
+  const composerVerticalPadding = usesLargeControls
+    ? 9
+    : splitAndroidComposer
+      ? Math.max(2, (fabSize - compactEditor.compactRowHeight) / 2)
+      : 2;
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -784,7 +792,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const modelControl = (
     <View className="min-w-0 shrink">
       <ComposerModelControl
-        size={usesLargeControls ? "large" : "regular"}
+        size={controlSize}
         modelOption={currentModelOption}
         selection={currentModelSelection}
         provider={selectedProviderStatus?.driver}
@@ -868,10 +876,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         <ComposerSurface
           animateLayout={false}
           style={{
-            borderRadius: usesLargeControls ? 31 : 27,
+            borderRadius: splitAndroidComposer
+              ? (compactEditor.compactRowHeight + 2 * composerVerticalPadding) / 2
+              : usesLargeControls
+                ? 31
+                : 27,
             borderCurve: "circular",
             overflow: "hidden",
-            paddingVertical: usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2,
+            paddingVertical: composerVerticalPadding,
           }}
         >
           {isExpanded ? editingAttachments : null}
@@ -882,12 +894,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             }}
           >
             <ComposerDictationDraftContent
+              size={controlSize}
               className="flex-row items-end"
               compact
               hidden={showsCompactDictation}
             >
               <ComposerAttachmentButton
-                size={usesLargeControls ? "large" : "regular"}
+                size={controlSize}
                 disabled={isSubmissionLocked}
                 supportsFiles={Boolean(
                   props.serverConfig?.environment.capabilities.fileAttachments,
@@ -910,7 +923,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ]}
               ></Animated.View>
               {!isExpanded && stripAttachments.length > 0 ? (
-                <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
+                <View
+                  className="shrink-0 flex-row items-center gap-1 pl-1"
+                  style={{ height: controlHeight }}
+                >
                   {stripAttachments.slice(0, compactAttachmentLimit).map((attachment) => (
                     <ComposerAttachmentThumbnail
                       environmentId={props.environmentId}
@@ -940,7 +956,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               >
                 {modelControl}
                 <ComposerDictationStartAction
-                  size={usesLargeControls ? "large" : "regular"}
+                  size={controlSize}
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
                   disabled={isSubmissionLocked}
@@ -949,7 +965,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 />
                 {showStopAction ? (
                   <ComposerActionButton
-                    size={usesLargeControls ? "large" : "regular"}
+                    size={controlSize}
                     accessibilityLabel="Stop agent"
                     icon="stop.fill"
                     variant="danger"
@@ -958,7 +974,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : showResumeAction ? (
                   <ComposerActionButton
-                    size={usesLargeControls ? "large" : "regular"}
+                    size={controlSize}
                     accessibilityLabel="Resume queue"
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
@@ -966,7 +982,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : (
                   <SendActionButton
-                    size={usesLargeControls ? "large" : "regular"}
+                    size={controlSize}
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
                     presentation={sendPresentation}
                     disabled={!canSend}
@@ -1122,9 +1138,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
-            style={{ position: "absolute", bottom: usesLargeControls ? 9 : 2, left: 0, right: 0 }}
+            style={{ position: "absolute", bottom: composerVerticalPadding, left: 0, right: 0 }}
           >
             <ComposerDictationToolbar
+              size={controlSize}
               showsDictation={isVoiceInputPresented}
               visible={isToolbarVisible}
             >
@@ -1135,7 +1152,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={{ gap: 0 }}
               >
                 <ComposerDictationCancelAction
-                  size={usesLargeControls ? "large" : "regular"}
+                  size={controlSize}
                   presentation={voicePresentation}
                   onCancel={voiceInput.cancel}
                 />
@@ -1150,7 +1167,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
                     <ComposerAttachmentButton
-                      size={usesLargeControls ? "large" : "regular"}
+                      size={controlSize}
                       disabled={isSubmissionLocked}
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
@@ -1163,7 +1180,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 )}
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction
-                    size={usesLargeControls ? "large" : "regular"}
+                    size={controlSize}
                     state={voiceInput.state}
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}
@@ -1174,6 +1191,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                   {showStopAction ? (
                     <ComposerActionButton
+                      size={splitAndroidComposer ? "large" : undefined}
                       accessibilityLabel="Stop agent"
                       icon="stop.fill"
                       variant="danger"
@@ -1182,6 +1200,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
+                      size={splitAndroidComposer ? "large" : undefined}
                       accessibilityLabel="Resume queue"
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
@@ -1189,6 +1208,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     />
                   ) : voicePresentation.showsSend ? (
                     <SendActionButton
+                      size={splitAndroidComposer ? "large" : undefined}
                       accessibilityLabel={sendBlockedReason ?? sendLabel}
                       presentation={sendPresentation}
                       disabled={!canSend}
