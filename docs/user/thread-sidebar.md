@@ -139,6 +139,23 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+## Hide work on this device
+
+Choose **Hide on this device** from a thread's menu to remove it from this
+client's thread list without settling or snoozing it. It keeps running and stays
+visible on your other devices. New activity does not unhide it.
+
+On web and desktop, use the thread's **Hide** action beside Snooze and Settle.
+On mobile, swipe opposite the existing thread actions to hide it; on Android
+phones' main list, swipe left. In an Android phone's thread drawer, use the menu
+so the swipe can still close the drawer.
+
+Use **Undo** immediately, or turn on **Show hidden threads on this device** in
+the list filters and choose **Restore on this device** from the thread's menu.
+Hidden threads stay hidden after restarting this client; clearing its local data
+resets them. Hiding does not prevent automatic settlement or change any shared
+thread settings.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

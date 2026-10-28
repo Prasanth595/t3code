@@ -2,6 +2,7 @@ import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useHiddenThreads } from "./use-hidden-threads";
 
 export function ThreadListFilters(
   props: Pick<
@@ -17,6 +18,7 @@ export function ThreadListFilters(
     readonly gutter: number;
   },
 ) {
+  const { showHidden, setShowHidden } = useHiddenThreads();
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
@@ -85,7 +87,21 @@ export function ThreadListFilters(
           }
         }}
       />
-      {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
+      <ListFilterMenu
+        label={showHidden ? "Including hidden" : "Visible threads"}
+        accessibilityLabel="Show or exclude device-hidden threads"
+        active={showHidden}
+        actions={[
+          { id: "visible", title: "Visible threads", state: showHidden ? "off" : "on" },
+          {
+            id: "hidden",
+            title: "Show hidden threads on this device",
+            state: showHidden ? "on" : "off",
+          },
+        ]}
+        onSelect={(id) => setShowHidden(id === "hidden")}
+      />
+      {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null || showHidden ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Reset thread filters"
@@ -93,6 +109,7 @@ export function ThreadListFilters(
           onPress={() => {
             props.onEnvironmentChange(null);
             props.onProjectChange(null);
+            setShowHidden(false);
           }}
         >
           <SymbolView name="xmark.circle.fill" size={18} tintColorClassName="accent-icon-muted" />

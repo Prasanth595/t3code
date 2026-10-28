@@ -51,6 +51,7 @@ import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { useHiddenThreads } from "../home/use-hidden-threads";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
@@ -153,6 +154,7 @@ function ThreadNavigationSidebarPane(
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, props.width);
   const projects = useProjects();
   const threads = useNavigationThreadShells();
+  const { showHidden, setShowHidden } = useHiddenThreads();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const footerGradientId = `sidebar-footer-${useId().replaceAll(":", "")}`;
   const hasFooter =
@@ -348,6 +350,11 @@ function ThreadNavigationSidebarPane(
       : threadListV2Items;
   const listMenuActions = [
     {
+      id: "show-hidden",
+      title: "Show hidden threads on this device",
+      state: showHidden ? "on" : "off",
+    },
+    {
       id: "environment",
       title: "Environment",
       subactions: [
@@ -395,6 +402,10 @@ function ThreadNavigationSidebarPane(
     readonly nativeEvent: { readonly event: string };
   }) => {
     const event = nativeEvent.event;
+    if (event === "show-hidden") {
+      setShowHidden(!showHidden);
+      return;
+    }
     if (event === "environment:all") {
       setSelectedEnvironmentId(null);
       return;
@@ -668,7 +679,8 @@ function ThreadNavigationSidebarPane(
         );
     }
   };
-  const filterCustomized = options.selectedEnvironmentId !== null || selectedProjectKey !== null;
+  const filterCustomized =
+    options.selectedEnvironmentId !== null || selectedProjectKey !== null || showHidden;
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
@@ -679,6 +691,8 @@ function ThreadNavigationSidebarPane(
     selectedProjectKey,
     onEnvironmentChange: setSelectedEnvironmentId,
     onProjectChange: setSelectedProjectKey,
+    showHidden,
+    onShowHiddenChange: setShowHidden,
   });
   const nativeHeaderItems = createSidebarHeaderItems({
     filterIcon,

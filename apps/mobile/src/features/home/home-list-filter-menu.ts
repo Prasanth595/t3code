@@ -36,8 +36,17 @@ export function buildHomeListFilterMenu(props: {
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly showHidden: boolean;
+  readonly onShowHiddenChange: (showHidden: boolean) => void;
 }): HomeListFilterMenu {
-  const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
+  const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [
+    {
+      type: "action",
+      title: "Show hidden threads on this device",
+      state: props.showHidden ? "on" : "off",
+      onPress: () => props.onShowHiddenChange(!props.showHidden),
+    },
+  ];
 
   items.push({
     type: "submenu",

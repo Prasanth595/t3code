@@ -9,6 +9,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  filterSidebarV2VisibleThreads,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
   orderItemsByPreferredIds,
@@ -51,6 +52,37 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("filterSidebarV2VisibleThreads", () => {
+  it("omits locally hidden threads without hiding the same ID in another environment", () => {
+    const thread = {
+      id: ThreadId.make("thread-1"),
+      environmentId: localEnvironmentId,
+      projectId: ProjectId.make("project-1"),
+      archivedAt: null,
+      lineage: {
+        rootThreadId: ThreadId.make("thread-1"),
+        parentThreadId: null,
+        relationshipToParent: null,
+      },
+    } as const;
+    const otherEnvironment = { ...thread, environmentId: EnvironmentId.make("other") };
+    const archived = {
+      ...thread,
+      id: ThreadId.make("archived"),
+      archivedAt: "2026-10-27T12:00:00Z",
+    };
+    const hidden = new Set(["environment-local:thread-1"]);
+    const threads = [thread, otherEnvironment, archived];
+
+    expect(filterSidebarV2VisibleThreads(threads, null, hidden)).toEqual([otherEnvironment]);
+    expect(filterSidebarV2VisibleThreads(threads, null)).toEqual([thread, otherEnvironment]);
+    expect(
+      filterSidebarV2VisibleThreads(threads, new Set(["environment-local:project-1"]), hidden),
+    ).toEqual([]);
+    expect(threads).toEqual([thread, otherEnvironment, archived]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

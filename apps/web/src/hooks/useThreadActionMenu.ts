@@ -1,4 +1,6 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { setThreadHiddenOnClient } from "../lib/threadVisibility";
+import { useUiStateStore } from "../uiStateStore";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
@@ -135,6 +137,7 @@ export function useThreadActionMenu(input: {
         branch: thread.branch ?? null,
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
+        isHidden: useUiStateStore.getState().hiddenThreadKeys.includes(scopedThreadKey(threadRef)),
         isSettled: supports.settlement && thread.settledOverride === "settled",
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -180,6 +183,12 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "hide":
+          setThreadHiddenOnClient(threadRef, true);
+          return;
+        case "unhide":
+          setThreadHiddenOnClient(threadRef, false);
+          return;
         case "project-settings": {
           const project = projects.find(
             (candidate) =>

@@ -45,6 +45,7 @@ import Animated, {
 import { AppText as Text } from "../../components/ui/AppText";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
+import { resolveThreadSwipeRelease } from "./thread-swipe-direction";
 
 const ACTION_ITEM_WIDTH = 58;
 const ACTION_CIRCLE_SIZE = 36;
@@ -239,6 +240,7 @@ interface ThreadSwipeableProps {
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
   readonly primaryAction: ThreadSwipeAction;
+  readonly oppositeAction?: ThreadSwipeAction;
   readonly threadKey: string;
   /** Omitted defaults to Delete; null removes it so gated Snooze cannot fall back to Delete. */
   readonly secondaryAction?: ThreadSwipeAction | null;
@@ -252,7 +254,6 @@ interface ThreadSwipeableProps {
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeRowSide = props.side ?? "right";
-  // Right-side actions reveal on negative (leftward) translation; left-side on positive.
   const revealMultiplier = swipeRowSide === "left" ? 1 : -1;
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
@@ -407,17 +408,35 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       onDelete();
     }
   }, [commitPrimaryAction, content, fullSwipeAction, onDelete]);
+  const oppositeAction = props.oppositeAction;
+  const hasOppositeAction = oppositeAction !== undefined;
+  const commitOppositeAction = useCallback(() => {
+    if (!mountedRef.current || contentRef.current !== content) return;
+    swipeableRef.current?.close();
+    oppositeAction?.onPress();
+  }, [content, oppositeAction]);
   const handleRelease = useCallback(
     (translation: SharedValue<number>) => {
       "worklet";
       if (dismissing.value) return true;
-      if (translation.value * revealMultiplier >= fullSwipeThreshold) {
-        runOnJS(commitFullSwipe)();
-        return true;
-      }
-      return false;
+      const action = resolveThreadSwipeRelease(
+        translation.value,
+        swipeRowSide,
+        fullSwipeThreshold,
+        hasOppositeAction,
+      );
+      if (action === "opposite") runOnJS(commitOppositeAction)();
+      if (action === "primary") runOnJS(commitFullSwipe)();
+      return action !== null;
     },
-    [commitFullSwipe, dismissing, fullSwipeThreshold, revealMultiplier],
+    [
+      commitFullSwipe,
+      commitOppositeAction,
+      hasOppositeAction,
+      dismissing,
+      fullSwipeThreshold,
+      swipeRowSide,
+    ],
   );
   const handleFullSwipeArmedChange = useCallback(
     (armed: boolean) => {
@@ -495,6 +514,25 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     rightActions.current = { deps, element };
     return element;
   };
+  const renderOppositeActions =
+    oppositeAction === undefined
+      ? undefined
+      : (_progress: SharedValue<number>, translation: SharedValue<number>) =>
+          dormant ? null : (
+            <Animated.View style={actionStyle}>
+              <ThreadSwipeActions
+                backgroundColor={backgroundColor}
+                compact={compactActions}
+                fullSwipeAction="primary"
+                fullSwipeThreshold={fullSwipeThreshold}
+                onFullSwipeArmedChange={handleFullSwipeArmedChange}
+                primaryAction={{ ...oppositeAction, onPress: commitOppositeAction }}
+                secondaryAction={null}
+                side={swipeRowSide === "left" ? "right" : "left"}
+                translation={translation}
+              />
+            </Animated.View>
+          );
   const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
   const swipeableContainerStyle = useMemo(
     () => [{ backgroundColor }, containerStyle],
@@ -521,6 +559,19 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
                 overshootRight: true,
                 rightThreshold: actionsWidth * 0.42,
               })}
+          {...(oppositeAction === undefined
+            ? {}
+            : swipeRowSide === "left"
+              ? {
+                  dragOffsetFromRight: -8,
+                  overshootRight: true,
+                  rightThreshold: ACTION_ITEM_WIDTH * 0.42,
+                }
+              : {
+                  dragOffsetFromLeft: 8,
+                  overshootLeft: true,
+                  leftThreshold: ACTION_ITEM_WIDTH * 0.42,
+                })}
           enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
@@ -532,8 +583,8 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           onSwipeableWillOpen={handleWillOpen}
           overshootFriction={1}
           {...(swipeRowSide === "left"
-            ? { renderLeftActions: renderActions }
-            : { renderRightActions: renderActions })}
+            ? { renderLeftActions: renderActions, renderRightActions: renderOppositeActions }
+            : { renderRightActions: renderActions, renderLeftActions: renderOppositeActions })}
           simultaneousWith={props.simultaneousWith}
         >
           {

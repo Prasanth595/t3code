@@ -82,7 +82,9 @@ export function ThreadUndoNotice(props: {
       pointerEvents="box-none"
     >
       <Toast
-        message={`${notice.action} thread`}
+        message={
+          notice.action === "Hidden" ? "Hidden thread on this device" : `${notice.action} thread`
+        }
         action={{
           label: "Undo",
           onPress: () => {

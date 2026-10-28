@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setProjectExpanded,
+  setThreadHidden,
   type UiState,
 } from "./uiStateStore";
 
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
+    hiddenThreadKeys: [],
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
@@ -29,6 +31,19 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("hides and restores only the scoped thread on this client", () => {
+    const initial = makeUiState({ hiddenThreadKeys: ["other-environment:thread-1"] });
+    const hidden = setThreadHidden(initial, "environment:thread-1", true);
+
+    expect(hidden.hiddenThreadKeys).toEqual(["other-environment:thread-1", "environment:thread-1"]);
+    expect(initial.hiddenThreadKeys).toEqual(["other-environment:thread-1"]);
+    expect(hidden.threadLastVisitedAtById).toBe(initial.threadLastVisitedAtById);
+    expect(setThreadHidden(hidden, "environment:thread-1", true)).toBe(hidden);
+    expect(setThreadHidden(hidden, "environment:thread-1", false)).toEqual(initial);
+    expect(setThreadHidden(initial, "environment:thread-1", false)).toBe(initial);
+    expect(makeUiState().hiddenThreadKeys).toEqual([]);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -95,6 +110,15 @@ describe("uiStateStore pure functions", () => {
 });
 
 describe("parsePersistedState", () => {
+  it("defaults older clients to no hidden threads and sanitizes stored keys", () => {
+    expect(parsePersistedState({}).hiddenThreadKeys).toEqual([]);
+    expect(
+      parsePersistedState({
+        hiddenThreadKeys: ["environment:thread-1", "", "environment:thread-1"],
+      }).hiddenThreadKeys,
+    ).toEqual(["environment:thread-1"]);
+  });
+
   it("hydrates raw UI-owned state without server entities", () => {
     const parsed = parsePersistedState({
       projectExpandedById: {
@@ -126,6 +150,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      hiddenThreadKeys: [],
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -231,6 +256,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      hiddenThreadKeys: [],
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -243,6 +269,21 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("restores hidden threads from this client's storage across reloads", () => {
+    const hidden = setThreadHidden(makeUiState(), "environment:thread-1", true);
+    persistState(hidden);
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(parsePersistedState(persisted).hiddenThreadKeys).toEqual(["environment:thread-1"]);
+
+    persistState(setThreadHidden(hidden, "environment:thread-1", false));
+    expect(
+      parsePersistedState(JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}"))
+        .hiddenThreadKeys,
+    ).toEqual([]);
   });
 
   it("restores the sidebar project scope across reloads", () => {

@@ -22,6 +22,7 @@ export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  hiddenThreadKeys?: string[];
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -40,6 +41,7 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  hiddenThreadKeys: string[];
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -59,6 +61,7 @@ const initialState: UiState = {
   projectOrder: [],
   sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
+  hiddenThreadKeys: [],
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
@@ -145,6 +148,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    hiddenThreadKeys: sanitizeStringArray(parsed.hiddenThreadKeys),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -223,6 +227,7 @@ export function persistState(state: UiState): void {
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        hiddenThreadKeys: state.hiddenThreadKeys,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -240,6 +245,16 @@ export function persistState(state: UiState): void {
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+
+export function setThreadHidden(state: UiState, threadKey: string, hidden: boolean): UiState {
+  if (state.hiddenThreadKeys.includes(threadKey) === hidden) return state;
+  return {
+    ...state,
+    hiddenThreadKeys: hidden
+      ? [...state.hiddenThreadKeys, threadKey]
+      : state.hiddenThreadKeys.filter((key) => key !== threadKey),
+  };
+}
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -418,6 +433,7 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  setThreadHidden: (threadKey: string, hidden: boolean) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -434,6 +450,7 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  setThreadHidden: (threadKey, hidden) => set((state) => setThreadHidden(state, threadKey, hidden)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

@@ -7,6 +7,8 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "hide"
+  | "unhide"
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -72,6 +74,7 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  readonly isHidden?: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
@@ -97,6 +100,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
+    "hide",
+    "unhide",
     "share-guest",
     "copy",
     "copy-path",
@@ -109,6 +114,9 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    state.isHidden
+      ? { id: "unhide", label: "Restore on this device", icon: "eye" }
+      : { id: "hide", label: "Hide on this device", icon: "eye-off" },
     ...(state.branch
       ? [
           {

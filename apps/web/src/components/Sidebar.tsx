@@ -7,6 +7,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
+import { setThreadHiddenOnClient } from "../lib/threadVisibility";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -59,7 +60,15 @@ import {
 } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
-import { ChevronDownIcon, FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  EyeIcon,
+  EyeOffIcon,
+  FolderIcon,
+  ListFilterIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -309,6 +318,7 @@ type SidebarOptimisticDrop = {
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
+  readonly hiddenThreadKeys: ReadonlySet<string>;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -372,6 +382,7 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly routeRowThreadKey: string | null;
+  readonly hiddenThreadKeys: ReadonlySet<string>;
 }) {
   const {
     projectScopeKey,
@@ -380,6 +391,7 @@ function useSidebarThreads(input: {
     optimisticDrop,
     threads,
     routeRowThreadKey,
+    hiddenThreadKeys,
   } = input;
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const inboxReturnsVersion = useSyncExternalStore(
@@ -416,6 +428,7 @@ function useSidebarThreads(input: {
 
   const partition = partitionSidebarThreads({
     threads,
+    hiddenThreadKeys,
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
@@ -434,7 +447,8 @@ function useSidebarThreads(input: {
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
   const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    settledThreads.length +
+    olderSettledShelf.unloadedCount(filterSidebarV2VisibleThreads(threads, scopedProjectKeys));
   const visibleSettledThreads = (() => {
     const visible = listedSettledThreads.slice(0, settledVisibleCount);
     if (
@@ -522,7 +536,7 @@ function useSidebarThreads(input: {
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, input.hiddenThreadKeys);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -1097,6 +1111,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const hiddenThreadKeys = useUiStateStore((state) => state.hiddenThreadKeys);
+  const hiddenThreadKeySet = new Set(hiddenThreadKeys);
+  const [showHiddenThreads, setShowHiddenThreads] = useState(false);
+
   const {
     workingShelfEnabled,
     pinnedThreads,
@@ -1138,6 +1156,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     optimisticDrop,
     threads,
     routeRowThreadKey,
+    hiddenThreadKeys: showHiddenThreads ? new Set<string>() : hiddenThreadKeySet,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -2389,6 +2408,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }
                 : null,
               isPinned,
+              isHidden: useUiStateStore.getState().hiddenThreadKeys.includes(threadKey),
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
@@ -2421,6 +2441,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "hide":
+            setThreadHiddenOnClient(threadRef, true);
+            return;
+          case "unhide":
+            setThreadHiddenOnClient(threadRef, false);
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKey(
@@ -2702,6 +2728,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              threadVisibility={
+                <SidebarHeaderIconButton
+                  label={
+                    showHiddenThreads
+                      ? "Stop showing hidden threads"
+                      : "Show hidden threads on this device"
+                  }
+                  aria-pressed={showHiddenThreads}
+                  onClick={() => setShowHiddenThreads((value) => !value)}
+                >
+                  {showHiddenThreads ? <EyeIcon /> : <EyeOffIcon />}
+                </SidebarHeaderIconButton>
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -3047,6 +3086,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             isRenaming={renamingThreadKey === threadKey}
                             renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                             onContextMenu={handleThreadContextMenu}
+                            isHidden={hiddenThreadKeySet.has(threadKey)}
+                            onHiddenChange={setThreadHiddenOnClient}
                             onSettle={attemptSettle}
                             onActionSweepStart={startActionSweep}
                             onUnsettle={attemptUnsettle}

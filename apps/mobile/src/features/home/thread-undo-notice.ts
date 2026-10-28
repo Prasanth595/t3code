@@ -2,8 +2,8 @@ import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { useSyncExternalStore } from "react";
 
 type UndoNotice = {
-  readonly action: "Settled" | "Snoozed" | "Unpinned";
-  readonly claim: ReturnType<typeof ThreadUndo.begin>;
+  readonly action: "Settled" | "Snoozed" | "Unpinned" | "Hidden";
+  readonly claim: Pick<ReturnType<typeof ThreadUndo.begin>, "isCurrent" | "finish">;
   readonly undo: () => Promise<void>;
 };
 
@@ -44,6 +44,20 @@ export function showThreadUndoNotice(options: UndoNotice) {
   };
   notify();
   expiry = setTimeout(dismissThreadUndoNotice, 5_000);
+}
+
+export function showLocalThreadUndoNotice(undo: () => Promise<void>) {
+  let current = true;
+  showThreadUndoNotice({
+    action: "Hidden",
+    claim: {
+      isCurrent: () => current,
+      finish: () => {
+        current = false;
+      },
+    },
+    undo,
+  });
 }
 
 export function useThreadUndoNotice() {

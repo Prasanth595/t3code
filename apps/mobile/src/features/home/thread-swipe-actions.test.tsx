@@ -103,7 +103,7 @@ vi.mock("react-native-gesture-handler/ReanimatedSwipeable", async () => {
 import { withThreadDismissal } from "./thread-dismissal";
 import { ThreadSwipeable } from "./thread-swipe-actions";
 
-function setup(side: "left" | "right", onPrimary: () => void = vi.fn()) {
+function setup(side: "left" | "right", onPrimary: () => void = vi.fn(), onOpposite?: () => void) {
   harness.timingTargets = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
@@ -115,6 +115,16 @@ function setup(side: "left" | "right", onPrimary: () => void = vi.fn()) {
         fullSwipeAction="primary"
         fullSwipeWidth={400}
         onDelete={vi.fn()}
+        oppositeAction={
+          onOpposite === undefined
+            ? undefined
+            : {
+                accessibilityLabel: "Hide thread on this device",
+                icon: "eye.slash",
+                label: "Hide",
+                onPress: onOpposite,
+              }
+        }
         primaryAction={{
           accessibilityLabel: "Settle thread",
           icon: "checkmark",
@@ -170,6 +180,36 @@ describe("thread swipe input", () => {
         row.thread.click();
       });
       expect(selectThread).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each(["left", "right"] as const)(
+    "keeps taps and both full swipe actions independent with %s primary actions",
+    async (side) => {
+      const primary = vi.fn();
+      const hide = vi.fn();
+      using row = setup(side, primary, hide);
+      act(() => {
+        pointer(row.thread, "pointerdown", 0);
+        pointer(row.thread, "pointermove", 1);
+        row.thread.click();
+      });
+      expect(primary).toHaveBeenCalledOnce();
+      primary.mockClear();
+      await act(async () => {
+        pointer(row.thread, "pointerdown", 0);
+        pointer(row.thread, "pointermove", side === "left" ? -300 : 300);
+        pointer(row.thread, "pointerup", side === "left" ? -300 : 300);
+      });
+      expect(hide).toHaveBeenCalledOnce();
+      expect(primary).not.toHaveBeenCalled();
+      await act(async () => {
+        pointer(row.thread, "pointerdown", 0);
+        pointer(row.thread, "pointermove", side === "left" ? 300 : -300);
+        pointer(row.thread, "pointerup", side === "left" ? 300 : -300);
+      });
+      expect(primary).toHaveBeenCalledOnce();
+      expect(hide).toHaveBeenCalledOnce();
     },
   );
 

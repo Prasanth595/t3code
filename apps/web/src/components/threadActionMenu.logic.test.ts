@@ -27,6 +27,20 @@ const baseState: ThreadActionMenuState = {
 
 describe("buildThreadActionMenuItems", () => {
   it.each([false, true])(
+    "allows device-local visibility changes without server permission: %s",
+    (hidden) => {
+      const items = buildThreadActionMenuItems({
+        ...baseState,
+        canOperate: false,
+        isHidden: hidden,
+      });
+      const visibility = items.find((item) => item.id === (hidden ? "unhide" : "hide"));
+      expect(visibility?.label).toBe(hidden ? "Restore on this device" : "Hide on this device");
+      expect(visibility?.disabled).not.toBe(true);
+    },
+  );
+
+  it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {
       const items = buildThreadActionMenuItems({
