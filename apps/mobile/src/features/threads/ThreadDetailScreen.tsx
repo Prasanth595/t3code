@@ -16,7 +16,6 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
-  describeSnoozeWakeReason,
   effectiveSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -158,7 +157,6 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -681,27 +679,6 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     if (contentPresentationKind === "ready" && (snoozed || settled || woke)) {
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
       const replySnoozed = snoozed && props.selectedThread.snoozeWakeOn === "pull-request-reply";
-      const wokeReason =
-        state === "woke" && props.selectedThread.snoozeWakeReason
-          ? describeSnoozeWakeReason(props.selectedThread.snoozeWakeReason)
-          : null;
-      if (wokeReason) {
-        return {
-          kind: "lifecycle",
-          state,
-          reply: true,
-          label: wokeReason.label,
-          action: {
-            label: wokeReason.actionLabel,
-            accessibilityLabel: wokeReason.actionLabel,
-            disabled: statusPending,
-            onPress: () => {
-              void tryOpenExternalUrl(wokeReason.url, "pull-request");
-              void runStatusAction("dismiss");
-            },
-          },
-        };
-      }
       const label = replySnoozed
         ? "Snoozed until a maintainer replies"
         : snoozed && snoozedUntil !== null
