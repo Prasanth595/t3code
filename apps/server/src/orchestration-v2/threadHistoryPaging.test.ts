@@ -2,8 +2,10 @@ import {
   MessageId,
   NodeId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -152,6 +154,30 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
     visibleTurnItems,
     updatedAt: NOW,
   } as unknown as Parameters<typeof buildBoundedThreadProjection>[0]["projection"];
+}
+
+function makeNode(
+  id: string,
+  options?: Partial<Pick<OrchestrationV2ExecutionNode, "kind" | "status" | "parentNodeId">>,
+): OrchestrationV2ExecutionNode {
+  return {
+    id: NodeId.make(id),
+    threadId: THREAD,
+    runId: RUN,
+    parentNodeId: NodeId.make("root-node"),
+    rootNodeId: NodeId.make("root-node"),
+    kind: "tool_call",
+    status: "completed",
+    countsForRun: false,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    runtimeRequestId: null,
+    checkpointScopeId: null,
+    startedAt: NOW,
+    completedAt: NOW,
+    ...options,
+  };
 }
 
 describe("threadHistoryPaging", () => {
@@ -438,6 +464,78 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems.map((row) => row.position)).toEqual([0, 1, 2, 3, 4]);
     expect(bounded.latestLocalTurnOrdinal).toBe(40);
     expect(computeLatestLocalTurnOrdinal(full.turnItems)).toBe(40);
+  });
+
+  it("does not resend settled execution leaves outside the shipped history window", () => {
+    const kinds = ["tool_call", "assistant_message", "reasoning"] as const;
+    const nodes = Array.from({ length: 2_000 }, (_, index) =>
+      makeNode(`node-${index}`, { kind: kinds[index % kinds.length]! }),
+    );
+    const rows = nodes.map((node, index) => {
+      const row = makeRow(index);
+      return { ...row, item: { ...row.item, nodeId: node.id, runId: RUN } };
+    });
+    const base = makeProjection(rows);
+    const full = {
+      ...base,
+      nodes: [makeNode("root-node", { kind: "root_turn", parentNodeId: null }), ...nodes],
+      runs: [{ ...base.runs[0]!, id: RUN, status: "running" }],
+    } satisfies typeof base;
+
+    const bounded = buildBoundedThreadProjection({
+      projection: full,
+      snapshotSequence: 7,
+      policy: { maxItems: 5, maxEncodedBytes: 1_048_576 },
+    });
+
+    expect(bounded.projection.nodes.map((node) => node.id)).toEqual([
+      NodeId.make("root-node"),
+      ...nodes.slice(-5).map((node) => node.id),
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeLessThan(20_000);
+    expect(bounded.hasMoreHistory).toBe(true);
+    expect(full.nodes).toHaveLength(2_001);
+  });
+
+  it("keeps live controls and their execution ancestry when their history rows are paged out", () => {
+    const full = {
+      ...makeProjection([makeRow(0), makeRow(1)]),
+      nodes: [
+        makeNode("root-node", { kind: "root_turn", parentNodeId: null }),
+        makeNode("waiting-parent"),
+        makeNode("waiting-tool", {
+          status: "waiting",
+          parentNodeId: NodeId.make("waiting-parent"),
+        }),
+        makeNode("request-parent"),
+        makeNode("requested-tool", { parentNodeId: NodeId.make("request-parent") }),
+        makeNode("unreferenced-tool", { status: "failed" }),
+      ],
+      runtimeRequests: [
+        {
+          id: RuntimeRequestId.make("pending-input"),
+          nodeId: NodeId.make("requested-tool"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: NOW,
+          resolvedAt: null,
+        },
+      ],
+    } satisfies ReturnType<typeof makeProjection>;
+
+    const bounded = buildBoundedThreadProjection({
+      projection: full,
+      snapshotSequence: 7,
+      policy: { maxItems: 1, maxEncodedBytes: 1_048_576 },
+    });
+
+    expect(bounded.projection.nodes.map((node) => node.id)).toEqual(
+      full.nodes.slice(0, -1).map((node) => node.id),
+    );
+    expect(bounded.projection.runtimeRequests).toEqual(full.runtimeRequests);
   });
 
   it("carries a full-projection watermark when the bounded window is inherited-only", () => {

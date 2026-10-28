@@ -461,6 +461,58 @@ function messagesForBoundedProjection(
   );
 }
 
+const settledLeafNodeKinds = new Set(["tool_call", "assistant_message", "reasoning"]);
+const settledNodeStatuses = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
+function nodesForBoundedProjection(
+  projection: OrchestrationV2ThreadProjection,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): OrchestrationV2ThreadProjection["nodes"] {
+  const nodesById = new Map(projection.nodes.map((node) => [String(node.id), node]));
+  const retained = new Set<string>();
+  const pending: string[] = [];
+  const retain = (id: string | null | undefined) => {
+    if (id == null || retained.has(id)) return;
+    retained.add(id);
+    pending.push(id);
+  };
+
+  for (const id of [
+    ...turnItems.map((item) => item.nodeId),
+    ...visibleTurnItems.map((row) => row.item.nodeId),
+    ...projection.runs.map((run) => run.rootNodeId),
+    ...projection.attempts.map((attempt) => attempt.rootNodeId),
+    ...projection.subagents.flatMap((agent) => [agent.id, agent.parentNodeId]),
+    ...projection.providerThreads.map((thread) => thread.ownerNodeId),
+    ...projection.providerTurns.map((turn) => turn.nodeId),
+    ...projection.runtimeRequests.map((request) => request.nodeId),
+    ...projection.checkpointScopes.map((scope) => scope.nodeId),
+    ...projection.checkpoints.map((checkpoint) => checkpoint.nodeId),
+  ]) {
+    retain(id);
+  }
+  for (const node of projection.nodes) {
+    if (!settledLeafNodeKinds.has(node.kind) || !settledNodeStatuses.has(node.status)) {
+      retain(node.id);
+    }
+  }
+  for (let index = 0; index < pending.length; index += 1) {
+    const node = nodesById.get(pending[index]!);
+    if (node === undefined) continue;
+    retain(node.parentNodeId);
+    retain(node.rootNodeId);
+  }
+
+  return projection.nodes.filter((node) => retained.has(node.id));
+}
+
 /** Watermark prevents old missing updates from appending newest when bounded windows lack local rows. */
 export function computeLatestLocalTurnOrdinal(
   turnItems: ReadonlyArray<{ readonly ordinal: number }>,
@@ -602,6 +654,7 @@ export function buildBoundedThreadProjection(input: {
 
   const projection = {
     ...controlProjection,
+    nodes: nodesForBoundedProjection(controlProjection, turnItems, visibleTurnItems),
     plans,
     contextHandoffs,
     messages: messagesForBoundedProjection(controlProjection, turnItems),

@@ -1,5 +1,6 @@
 import {
   EventId,
+  NodeId,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
   TurnItemId,
@@ -226,6 +227,66 @@ describe("compact bounded snapshots", () => {
     Schema.toCodecJson(OrchestrationV2ThreadStreamItem),
   );
   const encodeStreamItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ThreadStreamItem));
+
+  it.each([false, true])(
+    "bounds execution-node bytes in encoded snapshots with compactTurnItems=%s",
+    (compactTurnItems) => {
+      const base = timelineProjection(2_000);
+      const turnItems = base.turnItems.map((item, index) => ({
+        ...item,
+        nodeId: NodeId.make(`node-${index}`),
+      }));
+      const projection: OrchestrationV2ThreadProjection = {
+        ...base,
+        thread: {
+          ...base.thread,
+          modelSelection: { instanceId: base.thread.providerInstanceId, model: "gpt-5" },
+        },
+        turnItems,
+        visibleTurnItems: base.visibleTurnItems.map((row, index) => ({
+          ...row,
+          item: turnItems[index]!,
+        })),
+        nodes: turnItems.map(
+          (item) =>
+            ({
+              id: item.nodeId!,
+              threadId: THREAD_ID,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: item.nodeId!,
+              kind: "tool_call",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: NOW,
+              completedAt: NOW,
+            }) satisfies OrchestrationV2ThreadProjection["nodes"][number],
+        ),
+      };
+
+      const snapshot = buildBoundedThreadStreamSnapshot({
+        snapshotSequence: 44,
+        projection,
+        compactTurnItems,
+      });
+      const encoded = encodeStreamItem(snapshot);
+      const rpcChunk = { _tag: "Chunk", requestId: "0", values: [encoded] };
+      expect(Buffer.byteLength(JSON.stringify(rpcChunk), "utf8")).toBeLessThan(160_000);
+      const decoded = decodeStreamItem(JSON.parse(JSON.stringify(encoded)));
+      if (decoded.kind !== "snapshot") throw new Error("Expected snapshot");
+      const restored = boundedSnapshotProjection(decoded);
+      expect(restored.nodes.map((node) => node.id)).toEqual(
+        projection.nodes.slice(-75).map((node) => node.id),
+      );
+      expect(restored.visibleTurnItems).toHaveLength(75);
+      expect(decoded.hasMoreHistory).toBe(true);
+    },
+  );
 
   function forkProjection(): OrchestrationV2ThreadProjection {
     const base = timelineProjection(6);
