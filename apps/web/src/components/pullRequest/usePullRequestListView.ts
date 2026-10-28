@@ -11,7 +11,6 @@ import {
 import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
-import { pullRequestSummaryKey, usePullRequestActionOverrides } from "~/state/pullRequests";
 import { useEnvironments } from "~/state/environments";
 import {
   applyPullRequestOverrides,
@@ -250,7 +249,6 @@ export function usePullRequestDisplayGroups({
   text: string;
   involvement: PullRequestInvolvement;
 }) {
-  const actionOverrides = usePullRequestActionOverrides();
   const [hostsState, setHostsState] = useState<{
     readonly source: MergedPullRequestList | null;
     readonly host: string | undefined;
@@ -267,38 +265,30 @@ export function usePullRequestDisplayGroups({
   const hosts = hostsState.hosts;
   const displayGroups = (() => {
     const enriched = groups.map((group) => {
-      const confirmed = applyPullRequestOverrides(
-        group.entries,
-        actionOverrides,
-        (entry) => pullRequestSummaryKey(entry.environmentId, entry),
-        "all",
-      );
       const overridden = applyPullRequestOverrides(
-        confirmed.map((entry) => withDiffStat(entry, statsByRow)),
+        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
         overrides,
         pullRequestEntryKey,
         state,
       );
       return {
         ...group,
-        entries: hasLocalFilters
-          ? overridden.filter((entry) =>
-              matchesPullRequestFilters(
-                entry,
-                localFilters,
-                pullRequestEntryViewer(entry, viewers),
-              ),
-            )
-          : overridden,
+        entries:
+          hasLocalFilters && overrides.size > 0
+            ? overridden.filter(
+                (entry) =>
+                  !overrides.has(pullRequestEntryKey(entry)) ||
+                  matchesPullRequestFilters(
+                    entry,
+                    localFilters,
+                    pullRequestEntryViewer(entry, viewers),
+                  ),
+              )
+            : overridden,
       };
     });
     return sortPullRequestGroups(
-      sort === "updated" && text.length === 0
-        ? enriched.map((group) => ({
-            ...group,
-            entries: group.entries.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-          }))
-        : enriched,
+      enriched,
       sort,
       text,
       (entry) =>

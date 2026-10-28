@@ -42,32 +42,20 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
 );
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  // Loaded pages past each listing's head; the head itself is patched where it is cached.
   actionResult: (target, result, registry) =>
     Effect.sync(() => {
-      if (target.input.expectedAccountId !== undefined) return;
       for (const atom of registry.getNodes().keys()) {
         if (typeof atom === "string") continue;
-        const listTarget = pullRequestListPagesTargets.get(atom);
-        if (listTarget?.environmentId !== target.environmentId) continue;
-        const pagesAtom = pullRequestListPagesFamily(pullRequestListPagesKey(listTarget));
-        const query = composerPullRequests.list(listTarget);
-        const head = Option.getOrNull(
-          Option.flatMap(
-            registry.getNodes().get(query)?.valueOption() ?? Option.none(),
-            (cached: Atom.Type<typeof query>) => AsyncResult.value(cached),
-          ),
-        );
-        registry.update(pagesAtom, (pages) =>
+        if (pullRequestListPagesTargets.get(atom)?.environmentId !== target.environmentId) continue;
+        const { state, isDraft, updatedAt, observedAt } = result;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) =>
           patchPullRequestListEntry(
             pages,
-            head,
+            null,
             target.input,
-            {
-              state: result.state,
-              isDraft: result.isDraft,
-              updatedAt: result.updatedAt,
-            },
-            result.observedAt,
+            { state, isDraft, updatedAt },
+            observedAt,
           ),
         );
       }

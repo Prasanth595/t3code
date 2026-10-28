@@ -162,9 +162,12 @@ export function ThreadDetailsPrRow({
     environmentId,
     reference,
     terminology,
-    onSuccess: () => {
-      detailQuery.refresh();
-      checksQuery.refresh();
+    onSuccess: (_action, result) => {
+      // A confirmed result has already patched the detail; checks follow the refresh event.
+      if (result == null) {
+        detailQuery.refresh();
+        checksQuery.refresh();
+      }
       onActed?.();
     },
   });

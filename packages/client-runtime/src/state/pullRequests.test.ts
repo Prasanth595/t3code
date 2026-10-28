@@ -1155,8 +1155,10 @@ it.effect("shows an action's confirmed state in mounted readers and list pages w
             nextCursors: { repo: "next" },
           }),
       });
+      const listAnswers: unknown[] = [];
       const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
         actionResult: (target, result) => Effect.sync(() => answers.push({ target, result })),
+        list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
       });
       const target = {
         environmentId: TARGET.environmentId,
@@ -1203,6 +1205,8 @@ it.effect("shows an action's confirmed state in mounted readers and list pages w
       ]);
       expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
       expect(answers).toEqual([{ target, result: confirmedActionResult }]);
+      // Snapshot writers see the confirmed rows the way they see an answer.
+      expect(listAnswers.slice(-2)).toMatchObject([[{ state: "merged" }], []]);
       expect(reads).toBe(2);
     }),
   ),

@@ -7,11 +7,10 @@ import {
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
-  comparePullRequestFreshness,
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
-  PullRequestListInput,
+  type PullRequestListInput,
   type PullRequestFilterOptionsInput,
   type PullRequestListStatsInput,
   type PullRequestListEntry,
@@ -33,16 +32,10 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   mergePullRequestLists,
-  applyPullRequestOverrides,
-  pullRequestResultOverride,
-  type PullRequestListOverride,
   type EnvironmentPullRequestStat,
   type MergedPullRequestList,
 } from "../components/pullRequest/pullRequestList.logic";
-import {
-  readPullRequestDetailSnapshot,
-  writePullRequestDetailSnapshot,
-} from "../components/pullRequest/pullRequestDetail.logic";
+import { writePullRequestDetailSnapshot } from "../components/pullRequest/pullRequestDetail.logic";
 import { pullRequestChecksState } from "../components/pullRequest/pullRequestPresentation";
 import { useGuideRunStore } from "../components/pullRequest/guide/guideRunStore";
 import { formatEnvironmentQueryError } from "./query";
@@ -57,7 +50,10 @@ export interface ObservedPullRequestSummary {
 function compareSummaries(current: PullRequestSummary, incoming: PullRequestSummary): number {
   const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
   if (merged !== 0) return merged;
-  return comparePullRequestFreshness(current, incoming);
+  const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+  if (updated !== 0) return updated;
+  if (current.observedAt === undefined && incoming.observedAt === undefined) return 0;
+  return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
 }
 
 export function newestPullRequestSummary(
@@ -91,40 +87,13 @@ export function pullRequestListEntryToSummary(entry: PullRequestListEntry): Pull
 }
 
 // Project ids pin the remote host; omit host so legacy, URL, and list references share entries.
-export function pullRequestSummaryKey(
-  environmentId: EnvironmentId,
-  reference: PullRequestRef,
-): string {
+function pullRequestSummaryKey(environmentId: EnvironmentId, reference: PullRequestRef): string {
   return JSON.stringify([
     environmentId,
     reference.projectId,
     reference.repository.toLowerCase(),
     reference.number,
   ]);
-}
-
-const pullRequestActionOverridesAtom = Atom.make<ReadonlyMap<string, PullRequestListOverride>>(
-  new Map(),
-);
-
-export function usePullRequestActionOverrides() {
-  return useAtomValue(pullRequestActionOverridesAtom);
-}
-
-function applyListActionOverrides(
-  target: EnvironmentQueryTarget<PullRequestListInput>,
-  answer: PullRequestListResult,
-  overrides: ReadonlyMap<string, PullRequestListOverride>,
-): PullRequestListResult {
-  if (overrides.size === 0) return answer;
-  const draft = target.input.filters?.draft;
-  const entries = applyPullRequestOverrides(
-    answer.entries,
-    overrides,
-    (entry) => pullRequestSummaryKey(target.environmentId, entry),
-    target.input.state,
-  ).filter((entry) => draft === undefined || entry.isDraft === (draft === "only"));
-  return { ...answer, entries };
 }
 
 export function newestPullRequestObservation(
@@ -204,12 +173,11 @@ export function observePullRequestChecks(
 export function observePullRequestMetadata(
   current: PullRequestObservations,
   incoming: ObservedPullRequestSummary,
-  recordChecks = true,
 ): PullRequestObservations {
   const metadata = newestPullRequestObservation(current.metadata, incoming);
   const next = metadata === current.metadata ? current : { ...current, metadata };
   const { checksState } = incoming.summary;
-  return !recordChecks || checksState === undefined
+  return checksState === undefined
     ? next
     : observePullRequestChecks(next, {
         checksState,
@@ -280,9 +248,6 @@ const encodeListScope = Schema.encodeOption(listScopeCodec);
 const decodeListScopeIndex = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(Schema.String)),
 );
-const decodeListScopeInput = Schema.decodeUnknownOption(
-  Schema.fromJsonString(PullRequestListInput),
-);
 const sweptStorages = new WeakSet<ListAnswerStorage>();
 
 /**
@@ -324,7 +289,6 @@ export function rememberPullRequestListAnswer(
   storage: ListAnswerStorage | undefined,
   target: EnvironmentQueryTarget<PullRequestListInput>,
   answer: PullRequestListResult,
-  overrides: ReadonlyMap<string, PullRequestListOverride> = new Map(),
 ): void {
   const { input } = target;
   if (storage === undefined || input.query !== undefined || input.cursors !== undefined) return;
@@ -348,11 +312,7 @@ export function rememberPullRequestListAnswer(
       [target.environmentId]: {
         ...answer,
         // The fresh rows come first, so retained rows only fill what is left of the page.
-        entries: applyListActionOverrides(
-          target,
-          { ...answer, entries: [...answer.entries, ...retained] },
-          overrides,
-        ).entries.slice(0, LIST_ANSWER_MAX_ENTRIES),
+        entries: [...answer.entries, ...retained].slice(0, LIST_ANSWER_MAX_ENTRIES),
         errors: [],
         nextCursors: {},
       },
@@ -410,12 +370,7 @@ export function restoredPullRequestList(
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
-      rememberPullRequestListAnswer(
-        snapshotStorage(),
-        { environmentId, input },
-        answer,
-        registry.get(pullRequestActionOverridesAtom),
-      );
+      rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);
       for (const entry of answer.entries) {
         observePullRequestSummary(
           registry,
@@ -425,88 +380,18 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
         );
       }
     }),
-  actionResult: ({ environmentId, input }, result, registry) =>
-    Effect.map(Clock.currentTimeMillis, (at) => {
-      if (input.expectedAccountId !== undefined) return;
-      const key = pullRequestSummaryKey(environmentId, input);
-      const previous = registry.get(pullRequestActionOverridesAtom).get(key);
-      if (previous !== undefined && comparePullRequestFreshness(previous, result) <= 0) return;
-      registry.update(pullRequestActionOverridesAtom, (current) => {
-        const next = new Map(current).set(key, pullRequestResultOverride(result, 0, at));
-        if (next.size > 256) next.delete(next.keys().next().value!);
-        return next;
-      });
-      recordObservation(registry, key, (current) => {
-        if (
-          current.metadata === null ||
-          comparePullRequestFreshness(current.metadata.summary, result) < 0
-        )
-          return current;
-        return observePullRequestMetadata(
-          current,
-          {
-            summary: { ...current.metadata.summary, ...result },
-            observedAt: result.observedAt,
-          },
-          false,
-        );
-      });
-      const storage = snapshotStorage();
-      if (storage === undefined) return;
-      try {
-        const overrides = registry.get(pullRequestActionOverridesAtom);
-        const scopes = Option.getOrElse(
-          decodeListScopeIndex(storage.getItem(LIST_SCOPE_INDEX_KEY)),
-          () => [],
-        );
-        for (const scopeKey of scopes) {
-          const input = Option.getOrNull(
-            decodeListScopeInput(scopeKey.slice(LIST_SCOPE_KEY_PREFIX.length)),
-          );
-          if (input === null) continue;
-          const scope = readListScope(storage, scopeKey);
-          const answer = scope[environmentId];
-          if (answer !== undefined) {
-            rememberPullRequestListAnswer(storage, { environmentId, input }, answer, overrides);
-          }
-        }
-        const detail = readPullRequestDetailSnapshot(storage, environmentId, input);
-        if (
-          detail !== null &&
-          comparePullRequestFreshness(detail, result) >= 0 &&
-          (detail.state !== "merged" || result.state === "merged")
-        ) {
-          writePullRequestDetailSnapshot(storage, environmentId, input, {
-            ...detail,
-            ...result,
-            autoMergeMethod: result.autoMergeMethod,
-          });
-        }
-      } catch {}
-    }),
-  detail: ({ environmentId, input }, detail, registry, freshRead) =>
+  detail: ({ environmentId, input }, detail, registry) =>
     Effect.map(Clock.currentTimeMillis, (at) => {
       // Only fresh reads seed the cold-start snapshot; a stale one could replace a newer record.
       if (input.allowStale === false) {
         writePullRequestDetailSnapshot(snapshotStorage(), environmentId, input, detail);
       }
-      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
-        const next = observePullRequestMetadata(
-          current,
-          {
-            summary: { ...detail, checksState: pullRequestChecksState(detail.checks) },
-            observedAt: at,
-          },
-          false,
-        );
-        return freshRead === null
-          ? next
-          : observePullRequestChecks(next, {
-              checksState: pullRequestChecksState(freshRead.checks),
-              readAt: freshRead.observedAt,
-              observedAt: at,
-            });
-      });
+      observePullRequestSummary(
+        registry,
+        pullRequestSummaryKey(environmentId, input),
+        { ...detail, checksState: pullRequestChecksState(detail.checks) },
+        at,
+      );
     }),
   checks: ({ environmentId, input }, checks, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
@@ -705,7 +590,7 @@ const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
   ({ environmentId }: EnvironmentQueryTarget<Readonly<Record<string, never>>>) =>
-    pullRequestEnvironment.refreshes.invalidations({ environmentId, input: {} }),
+    pullRequestEnvironment.invalidations({ environmentId }),
 );
 
 export function usePullRequestTurnRefreshes(
@@ -717,9 +602,7 @@ export function usePullRequestTurnRefreshes(
 }
 
 export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
-  const result = useAtomValue(
-    pullRequestEnvironment.refreshes.invalidations({ environmentId, input: {} }),
-  );
+  const result = useAtomValue(pullRequestEnvironment.invalidations({ environmentId }));
   return AsyncResult.getOrElse(result, () => null);
 }
 

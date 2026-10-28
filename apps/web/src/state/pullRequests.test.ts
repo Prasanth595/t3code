@@ -257,46 +257,6 @@ describe("pull request list answers across a reload", () => {
   const remote = EnvironmentId.make("env-remote");
   const input: PullRequestListInput = { state: "open", involvement: "all", limit: 99 };
 
-  it("saves an action's confirmed state so a reload shows it", () => {
-    const storage = makeStorage();
-    const row = listEntry(1);
-    const overrides = new Map([
-      [
-        JSON.stringify([local, row.projectId, row.repository, row.number]),
-        {
-          state: "closed" as const,
-          isDraft: false,
-          updatedAt: "2026-07-03T00:00:00Z",
-          observedAt: 300,
-          token: 0,
-          at: 300,
-        },
-      ],
-    ]);
-    rememberPullRequestListAnswer(
-      storage,
-      { environmentId: local, input },
-      answer([row]),
-      overrides,
-    );
-    expect(restorePullRequestList(storage, [{ environmentId: local, input }])?.entries).toEqual([]);
-    const all = { ...input, state: "all" as const };
-    rememberPullRequestListAnswer(
-      storage,
-      { environmentId: local, input: all },
-      answer([row, listEntry(2)]),
-      overrides,
-    );
-    expect(
-      restorePullRequestList(storage, [{ environmentId: local, input: all }])?.entries.map(
-        ({ number, state }) => [number, state],
-      ),
-    ).toEqual([
-      [1, "closed"],
-      [2, "open"],
-    ]);
-  });
-
   it("restores every environment's first page as one merged list without stale failures or cursors", () => {
     const storage = makeStorage();
     rememberPullRequestListAnswer(
