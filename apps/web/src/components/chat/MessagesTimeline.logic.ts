@@ -2043,8 +2043,7 @@ export function deriveMessagesTimelineRows(input: {
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
-    !input.pendingApprovalRequestIds?.size &&
-    (!hasActivityRow || latestToolFailed)
+    (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
   ) {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
