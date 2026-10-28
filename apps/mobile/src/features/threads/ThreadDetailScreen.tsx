@@ -188,7 +188,10 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
-import { THREAD_FLOATING_CONTROL_ROW_OFFSET } from "./ThreadFloatingControls";
+import {
+  THREAD_FLOATING_CONTROL_ROW_OFFSET,
+  THREAD_FLOATING_TOP_SCRIM_HEIGHT,
+} from "./ThreadFloatingControls";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
@@ -443,6 +446,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // With no header to measure, the floating controls make the feed and overlays
   // account for the status bar (and the pills) from the safe-area insets.
   const floatingHeaderInset = props.usesFloatingThreadControls === true ? insets.top : 0;
+  // Clear the top scrim so the first message never rests under its fade.
+  const floatingFeedTopInset =
+    props.usesFloatingThreadControls === true ? insets.top + THREAD_FLOATING_TOP_SCRIM_HEIGHT : 0;
   // Overlays that used to sit below the Material header measure from the status bar instead.
   const overlayHeaderInset = floatingHeaderInset > 0 ? floatingHeaderInset : navigationHeaderHeight;
   const [screenMetrics, setScreenMetrics] = useState<NativeLayoutMetrics | null>(null);
@@ -1330,7 +1336,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               ref={feedRef}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               keyboardOffset={composerKeyboardOffset}
-              contentTopInset={floatingHeaderInset}
+              contentTopInset={floatingFeedTopInset}
               contentBottomInset={
                 estimatedOverlayHeight +
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)

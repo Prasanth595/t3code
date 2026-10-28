@@ -15,6 +15,9 @@ export const THREAD_FLOATING_CONTROL_ROW_OFFSET =
   THREAD_FLOATING_CONTROL_TOP_GAP + THREAD_FLOATING_CONTROL_SIZE;
 /** Extra tail past the pill row where the top scrim finishes fading out. */
 const THREAD_FLOATING_TOP_SCRIM_TAIL = 24;
+/** Scrim height below the top safe-area inset; feed content starts below it at rest. */
+export const THREAD_FLOATING_TOP_SCRIM_HEIGHT =
+  THREAD_FLOATING_CONTROL_ROW_OFFSET + THREAD_FLOATING_TOP_SCRIM_TAIL;
 
 const CONTROLS_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const CONTROLS_EXITING = FadeOut.duration(160).reduceMotion(ReduceMotion.System);
@@ -31,7 +34,7 @@ const PILL_STYLE = { width: THREAD_FLOATING_CONTROL_SIZE, height: THREAD_FLOATIN
 export function ThreadFloatingTopScrim(): JSX.Element {
   const insets = useSafeAreaInsets();
   const theme = useUniwindTheme();
-  const height = insets.top + THREAD_FLOATING_CONTROL_ROW_OFFSET + THREAD_FLOATING_TOP_SCRIM_TAIL;
+  const height = insets.top + THREAD_FLOATING_TOP_SCRIM_HEIGHT;
   const topColor = themeColorWithAlpha(theme["--color-header"], 1);
   // Solid through the status bar and up to the pill row's top gap, then linear to clear.
   const backgroundImage = `linear-gradient(to bottom, ${topColor} 0px, ${topColor} ${
