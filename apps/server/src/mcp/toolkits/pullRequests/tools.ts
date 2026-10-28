@@ -316,7 +316,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. A merge or close wakes you once and ends the watch. After this call, end your turn. Other wakes leave the watch on, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
@@ -330,7 +330,8 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
 
 const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
-  description: "Stop watching a PR for this thread. It stays linked.",
+  description:
+    "Stop watching a PR for this thread. It stays linked. wasWatching is false when the watch already ended, as it does when the PR merges or closes.",
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,

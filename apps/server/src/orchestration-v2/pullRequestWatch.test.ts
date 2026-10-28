@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchEndMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -399,5 +400,44 @@ describe("evaluatePullRequestWatch", () => {
   it("never reports missing checks on a host where an empty list says nothing", () => {
     const silent = detail({ capabilities: capabilities(false), checks: [] });
     assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
+  });
+});
+
+describe("pullRequestWatchEndMessage", () => {
+  const url = "https://git.cafe/pingdotgg/t3code/pull/7";
+  const end = (overrides: Partial<Parameters<typeof pullRequestWatchEndMessage>[0]["detail"]>) =>
+    pullRequestWatchEndMessage({
+      number: 7,
+      url,
+      detail: { state: "merged", baseBranch: "main", ...overrides },
+    });
+  const mergeCommitSha = "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9";
+
+  it("says how the pull request ended, with the merge commit and merger the host reports", () => {
+    const merged = end({
+      mergeCommitSha,
+      mergedBy: { login: "juliusmarminge", name: null, avatarUrl: null },
+    });
+    assert.equal(
+      merged.text,
+      `Pull request #7 (${url}) was merged into main by juliusmarminge as 3b2f958, so T3 Code stopped watching it.`,
+    );
+    assert.deepEqual(merged.notification, {
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "#7: merged, stopped watching",
+    });
+    // GitCafe reports a merge made on GitHub without who made it.
+    assert.equal(
+      end({ mergeCommitSha }).text,
+      `Pull request #7 (${url}) was merged into main as 3b2f958, so T3 Code stopped watching it.`,
+    );
+
+    const closed = end({ state: "closed" });
+    assert.equal(
+      closed.text,
+      `Pull request #7 (${url}) was closed without merging, so T3 Code stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
+    );
+    assert.equal(closed.notification.summary, "#7: closed, stopped watching");
   });
 });
