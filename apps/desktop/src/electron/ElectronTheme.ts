@@ -26,7 +26,6 @@ export class ElectronTheme extends Context.Service<
     readonly shouldUseDarkColors: Effect.Effect<boolean>;
     readonly setSource: (theme: DesktopTheme) => Effect.Effect<void, ElectronThemeSetSourceError>;
     readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
-    /** The desktop's accent as `#rrggbb`, or null when the desktop shares none. */
     readonly accentColor: Effect.Effect<string | null>;
     readonly onAccentColorChanged: (
       listener: () => void,

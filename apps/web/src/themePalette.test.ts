@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { converter } from "culori/fn";
-import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEMES, SYSTEM_COLORS_THEME_ID } from "@t3tools/shared/themePalettes";
 
 import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
 
@@ -11,6 +11,11 @@ import {
   getThemeModes,
   getCustomThemes,
   getStandardThemeColors,
+  getStandardPaintedThemeColors,
+  getSystemColorsTheme,
+  getThemeDefinition,
+  setSystemAccentColor,
+  subscribeToCustomThemes,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
@@ -756,5 +761,40 @@ describe("stored theme preferences", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("System colors theme", () => {
+  const hex = (value: string | undefined) => themeColorToHex(value ?? "")?.slice(0, 7);
+
+  it("exists only on a desktop that can report its accent, in both appearances", () => {
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    expect(getThemeDefinition(SYSTEM_COLORS_THEME_ID)).toBeNull();
+
+    vi.stubGlobal("window", {
+      localStorage: { getItem: () => null },
+      desktopBridge: { getSystemAccentColor: () => "#3584e4" },
+    });
+    const theme = getThemeDefinition(SYSTEM_COLORS_THEME_ID);
+    expect(hex(theme?.colors.accent)).toBe("#3584e4");
+    expect(hex(theme?.variants?.dark?.accent)).toBe("#3584e4");
+    expect(theme?.colors.canvas).toBe(getStandardPaintedThemeColors("light").canvas);
+    expect(theme?.variants?.dark?.canvas).toBe(getStandardPaintedThemeColors("dark").canvas);
+    vi.unstubAllGlobals();
+  });
+
+  it("follows accent changes and falls back to the standard palette without one", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeToCustomThemes(listener);
+
+    setSystemAccentColor("#e66100");
+    setSystemAccentColor("#e66100");
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(hex(getSystemColorsTheme()?.colors.accent)).toBe("#e66100");
+
+    setSystemAccentColor(null);
+    expect(getSystemColorsTheme()?.colors).toEqual(getStandardPaintedThemeColors("light"));
+    expect(getSystemColorsTheme()?.variants?.dark).toEqual(getStandardPaintedThemeColors("dark"));
+    unsubscribe();
   });
 });

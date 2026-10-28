@@ -2,7 +2,6 @@ export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"]
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
-/** The desktop theme that recolors the standard palette with the OS accent. */
 export const SYSTEM_COLORS_THEME_ID = "t3-system-colors";
 
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;

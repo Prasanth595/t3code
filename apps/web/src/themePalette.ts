@@ -358,7 +358,6 @@ function systemColorsFor(appearance: ThemeAppearance, accent: string | null): Th
   return updateThemeColorFamily(appearance, withAccent, "messageAction", accent);
 }
 
-/** The standard palette with the desktop's accent, or null outside a desktop that can report it. */
 export function getSystemColorsTheme(): ThemeDefinition | null {
   const accent = readSystemAccentColor();
   if (accent === undefined) return null;

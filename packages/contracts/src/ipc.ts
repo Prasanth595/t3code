@@ -1078,7 +1078,7 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
-  /** The desktop's accent as `#rrggbb`, or null when it shares none; absent on older desktop builds. */
+  /** `#rrggbb`, or null when the OS sets no accent; absent on desktop builds predating it. */
   getSystemAccentColor?: () => string | null;
   onSystemAccentColorChange?: (listener: (accent: string | null) => void) => () => void;
   showContextMenu: <T extends string>(
