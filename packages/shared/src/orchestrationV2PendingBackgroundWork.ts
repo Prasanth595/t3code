@@ -112,7 +112,9 @@ type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "sta
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
->;
+> & {
+  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+};
 
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
@@ -287,13 +289,18 @@ export function derivePendingBackgroundWork(input: {
   return Array.from(byTaskId.values());
 }
 
-type PullRequestWatchLink = Pick<
-  ThreadPullRequestLink,
-  "host" | "repository" | "number" | "source" | "watch"
->;
+type WatchStateFields = Pick<ThreadPullRequestLink, "source" | "watch"> & {
+  readonly snapshot?: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+};
 
-const isWatchedLink = (link: Pick<ThreadPullRequestLink, "source" | "watch">) =>
-  link.watch !== undefined && link.source !== "stack-dismissed";
+type PullRequestWatchLink = Pick<ThreadPullRequestLink, "host" | "repository" | "number"> &
+  WatchStateFields;
+
+// The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+const isWatchedLink = (link: WatchStateFields) =>
+  link.watch !== undefined &&
+  link.source !== "stack-dismissed" &&
+  link.snapshot?.state !== "merged";
 
 // Links store their normalized identity, and this id only has to be unique within the
 // thread, so it reads those fields instead of parsing the URL.
