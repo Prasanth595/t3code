@@ -1,7 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { useState } from "react";
 import {
   formatThreadLink,
   guessThreadLinkRef,
@@ -52,15 +53,29 @@ export function MarkdownThreadLink(props: {
     (lookupFailed || (writtenMissing && decodedMissing)) &&
     props.link.environmentId === null;
   const refs = useThreadRefs(guess);
-  const remote = useThreadShell(
-    guess
-      ? guessThreadLinkRef(
-          props.link,
-          refs.filter((ref) => ref.environmentId !== environmentId),
-        )
-      : null,
-  );
-  const thread = local ?? remote;
+  const guessedRef = guess
+    ? guessThreadLinkRef(
+        props.link,
+        refs.filter((ref) => ref.environmentId !== environmentId),
+      )
+    : null;
+  const sourceKey = JSON.stringify([environmentId, props.link.threadId]);
+  const [remoteSelection, setRemoteSelection] = useState<{
+    sourceKey: string;
+    ref: ScopedThreadRef;
+  } | null>(null);
+  const rememberedRef = remoteSelection?.sourceKey === sourceKey ? remoteSelection.ref : null;
+  if (
+    guessedRef !== null &&
+    (rememberedRef?.environmentId !== guessedRef.environmentId ||
+      rememberedRef.threadId !== guessedRef.threadId)
+  ) {
+    setRemoteSelection({ sourceKey, ref: guessedRef });
+  }
+  const remoteRef = guess ? (guessedRef ?? rememberedRef) : null;
+  const remote = useThreadShell(remoteRef);
+  useThreadFamilyIfMissing(remoteRef, remoteRef !== null && remote === null);
+  const thread = local ?? (guessedRef === null ? null : remote);
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
