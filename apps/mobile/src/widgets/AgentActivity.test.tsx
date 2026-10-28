@@ -74,4 +74,12 @@ it("targets the first displayed attention thread when incoming rows are unordere
     name: "widgetURL",
     value: "t3code://threads/environment/newer",
   });
+  expect(layout.minimal).toMatchObject({
+    props: {
+      children: { props: { systemName: "alarm.fill" } },
+      modifiers: expect.arrayContaining([
+        { name: "widgetURL", value: "t3code://threads/environment/newer" },
+      ]),
+    },
+  });
 });
