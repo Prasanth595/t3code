@@ -4,7 +4,7 @@ import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { environmentsToAutoConnect } from "@t3tools/client-runtime/relay";
+import { environmentsToAutoConnect, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -35,6 +35,8 @@ import { resolveClerkSignInProps } from "../components/clerk/authRedirect";
 import { useCloudLinkController } from "./useCloudLinkController";
 
 const DISCOVERY_REFRESH_MS = 60_000;
+// An admin's change to the plan or limits shows up within this long.
+const ACCOUNT_REFRESH_MS = 30_000;
 
 /**
  * Keeps a signed-in account's computers in sync with no clicks: this desktop shares itself on
@@ -43,6 +45,9 @@ const DISCOVERY_REFRESH_MS = 60_000;
 export function MiraAccountSync() {
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const accountId = isSignedIn && userId ? userId : null;
+  // Clerk reports the sign-in before the relay session can mint tokens; requests sent in between fail.
+  const relaySession = useAtomValue(managedRelaySessionAtom);
+  const relayReady = accountId !== null && relaySession?.accountId === accountId;
   const clerk = useClerk();
   const openSignIn = useEffectEvent(() =>
     clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron)),
@@ -56,6 +61,8 @@ export function MiraAccountSync() {
       void miraChatHistory.setRemote(null);
       return;
     }
+    miraAccess.set({ signedIn: true, account: null, openSignIn: signIn });
+    if (!relayReady) return;
     let cancelled = false;
     const refresh = () =>
       fetchMiraAccount().then(
@@ -64,7 +71,6 @@ export function MiraAccountSync() {
         },
         (cause: unknown) => console.warn("[mira] Could not read the account", cause),
       );
-    miraAccess.set({ signedIn: true, account: null, openSignIn: signIn });
     void refresh();
     void miraChatHistory.setRemote(miraChatRemote(accountId));
     const onFocus = () => {
@@ -72,11 +78,23 @@ export function MiraAccountSync() {
       void miraChatHistory.sync();
     };
     window.addEventListener("focus", onFocus);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, ACCOUNT_REFRESH_MS);
+    // A finished reply used up part of the plan's allowance.
+    let replying = miraChatHistory.getSnapshot().streaming !== null;
+    const unsubscribe = miraChatHistory.subscribe(() => {
+      const nowReplying = miraChatHistory.getSnapshot().streaming !== null;
+      if (replying && !nowReplying) void refresh();
+      replying = nowReplying;
+    });
     return () => {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
+      clearInterval(interval);
+      unsubscribe();
     };
-  }, [accountId]);
+  }, [accountId, relayReady]);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(primaryEnvironmentId));
   const environmentIds = useEnvironmentIds();
