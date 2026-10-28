@@ -18,6 +18,7 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { makeZeroClawAdapterV2 } from "./adapter.ts";
 import { ProviderAdapterProtocolError } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -251,7 +252,23 @@ export const ZeroClawDriver: ProviderDriver<ZeroClawSettings, ZeroClawDriverEnv>
       displayName: input.displayName,
       accentColor: input.accentColor,
       enabled: input.enabled,
-      snapshot: { get: Effect.succeed(snapshot) } as never,
+      snapshot: {
+        getSnapshot: Effect.succeed(snapshot),
+        refresh: probeZeroClaw({
+          socketPath,
+          instanceId: input.instanceId,
+          cache,
+        }),
+        streamChanges: Stream.empty,
+        resolveMaintenance: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({
+              provider: DRIVER_KIND,
+              packageName: null,
+            }),
+          ),
+        applyUsageLimits: () => Effect.void,
+      },
       snapshotForCwd: () =>
         Effect.succeed({
           ...snapshot,
