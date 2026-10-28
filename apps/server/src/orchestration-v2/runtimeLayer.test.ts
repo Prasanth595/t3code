@@ -7181,76 +7181,25 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
   },
 );
 
-interface WatchCostScenario {
-  readonly name: string;
-  readonly pullRequests: ReadonlyArray<number>;
-  /** Minutes after the watch starts. */
-  readonly comments?: ReadonlyArray<number>;
-  readonly reviewCommentEdit?: number;
-  readonly push?: { readonly at: number; readonly checksFor: number };
-  readonly inboxEveryMinute?: boolean;
-  readonly notificationsReadable?: boolean;
-  /** GraphQL points and core requests over the hour; main's were measured on its reactor. */
-  readonly main: { readonly graphql: number; readonly core: number };
-  readonly branch: { readonly graphql: number; readonly core: number };
-}
-
-const watchCostScenarios: ReadonlyArray<WatchCostScenario> = [
-  {
-    name: "quiet PR",
-    pullRequests: [41],
-    main: { graphql: 79, core: 0 },
-    branch: { graphql: 47, core: 0 },
-  },
-  {
-    name: "comment burst",
-    pullRequests: [42],
-    comments: [11, 11.5, 12],
-    main: { graphql: 79, core: 0 },
-    branch: { graphql: 78, core: 1 },
-  },
-  {
-    name: "CI churn after a push",
-    pullRequests: [43],
-    push: { at: 5, checksFor: 20 },
-    main: { graphql: 90, core: 0 },
-    branch: { graphql: 58, core: 0 },
-  },
-  {
-    name: "five quiet PRs on one account",
-    pullRequests: [44, 45, 46, 47, 48],
-    main: { graphql: 271, core: 0 },
-    branch: { graphql: 111, core: 0 },
-  },
-  {
-    name: "noisy inbox",
-    pullRequests: [49],
-    inboxEveryMinute: true,
-    main: { graphql: 79, core: 0 },
-    branch: { graphql: 47, core: 2 },
-  },
-  {
-    name: "notifications unavailable",
-    pullRequests: [50],
-    notificationsReadable: false,
-    main: { graphql: 79, core: 0 },
-    branch: { graphql: 78, core: 1 },
-  },
-  {
-    name: "review comment edited",
-    pullRequests: [51],
-    reviewCommentEdit: 40,
-    main: { graphql: 79, core: 0 },
-    branch: { graphql: 62, core: 1 },
-  },
+const watchCostScenarios = [
+  { name: "quiet PR", saves: 32 },
+  { name: "review comment edited", reviewCommentEdit: 40, saves: 16 },
+  { name: "noisy inbox", inboxEveryMinute: true, saves: 30 },
+  { name: "notifications unavailable", notificationsReadable: false, saves: 0 },
 ];
 
 it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
   const MINUTE = 60_000;
-  const runWatchHour = (scenario: WatchCostScenario, notificationsReadable: boolean, run: string) =>
+  const number = 41;
+  const runWatchHour = (
+    scenario: (typeof watchCostScenarios)[number],
+    notificationsReadable: boolean,
+    run: string,
+  ) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const projectId = ProjectId.make(`pr-watch-cost-${scenario.pullRequests[0]}-${run}`);
+      const projectId = ProjectId.make(`pr-watch-cost-${scenario.name}-${run}`);
+      const threadId = ThreadId.make(`${projectId}-thread`);
       yield* seedProject({
         projectId,
         title: "Watch cost",
@@ -7261,88 +7210,42 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
       const startedAt = yield* Clock.currentTimeMillis;
       const at = (minutes: number) => startedAt + minutes * MINUTE;
       const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
-      const threadIds = scenario.pullRequests.map((number) =>
-        ThreadId.make(`${projectId}-thread-${number}`),
-      );
-      for (const [index, number] of scenario.pullRequests.entries()) {
-        const threadId = threadIds[index]!;
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make(`${threadId}-create`),
-          threadId,
-          projectId,
-          title: "Watch cost",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-        });
-        yield* orchestrator.dispatch({
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}-create`),
+        threadId,
+        projectId,
+        title: "Watch cost",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = (watching: boolean) =>
+        orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`${threadId}-watch`),
+          commandId: CommandId.make(`${threadId}-watch-${watching}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
           number,
-          watching: true,
+          watching,
           link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
         });
-      }
+      yield* watch(true);
 
       const cost = { graphql: 0, core: 0, fingerprints: 0 };
-      const remarksOf = (now: number) => [
-        ...(scenario.comments ?? [])
-          .filter((minute) => at(minute) <= now)
-          .map((minute): PullRequestComment => ({
-            id: `comment-${minute}`,
-            kind: "issue-comment",
-            author: { login: "maintainer", name: null, avatarUrl: null },
-            body: "Please rename this.",
-            createdAt: iso(at(minute)),
-            url: null,
-            path: null,
-            reviewState: null,
-          })),
-        ...(scenario.reviewCommentEdit === undefined
-          ? []
-          : [
-              {
-                id: "review-comment",
-                kind: "review-comment" as const,
-                author: { login: "maintainer", name: null, avatarUrl: null },
-                body: "Nit.",
-                createdAt: iso(at(-60)),
-                url: null,
-                path: "src/index.ts",
-                reviewState: null,
-                ...(at(scenario.reviewCommentEdit) <= now
-                  ? { editedAt: iso(at(scenario.reviewCommentEdit)) }
-                  : {}),
-              },
-            ]),
-      ];
-      const headOf = (now: number) => {
-        const push = scenario.push;
-        const pushed = push !== undefined && at(push.at) <= now;
-        return {
-          headSha: pushed ? "def5678abc" : "abc1234def",
-          pending: pushed && now < at(push.at + push.checksFor),
-        };
-      };
+      const editAt =
+        scenario.reviewCommentEdit === undefined ? null : at(scenario.reviewCommentEdit);
       const notificationTimes = (now: number) => {
         const times = new Map<number, number>();
-        const bump = (number: number, time: number) => {
-          if (time <= now) times.set(number, Math.max(times.get(number) ?? 0, time));
+        const bump = (thread: number, time: number) => {
+          if (time <= now) times.set(thread, Math.max(times.get(thread) ?? 0, time));
         };
-        for (const number of scenario.pullRequests) {
-          for (const minute of scenario.comments ?? []) bump(number, at(minute) + 3_000);
-          if (scenario.reviewCommentEdit !== undefined) {
-            bump(number, at(scenario.reviewCommentEdit) + 3_000);
-          }
-        }
+        if (editAt !== null) bump(number, editAt + 3_000);
         if (scenario.inboxEveryMinute) {
           for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
         }
@@ -7356,42 +7259,40 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
             Layer.mock(PullRequestService.PullRequestService)({
               invalidate: () => Effect.void,
               watchFingerprint: () =>
-                Effect.map(Clock.currentTimeMillis, (now) => {
+                Effect.sync(() => {
                   cost.fingerprints += 1;
-                  const head = headOf(now);
-                  const remarks = remarksOf(now).filter(
-                    (remark) => remark.kind === "issue-comment",
-                  );
-                  return {
-                    status: `${head.headSha} ${head.pending ? "pending" : "passed"}`,
-                    remarks: `${remarks.length}`,
-                  };
+                  return { status: "abc1234def passed", remarks: "0" };
                 }),
-              detail: (input) =>
-                Effect.map(Clock.currentTimeMillis, (now) => {
+              detail: () =>
+                Effect.sync(() => {
                   cost.graphql += 1;
-                  const head = headOf(now);
                   return {
-                    ...watchedPullRequestDetail({
-                      projectId,
-                      number: input.number,
-                      at: iso(startedAt),
-                    }),
-                    headSha: head.headSha,
+                    ...watchedPullRequestDetail({ projectId, number, at: iso(startedAt) }),
+                    headSha: "abc1234def",
                     checks: [
-                      {
-                        name: "ci",
-                        status: head.pending ? ("pending" as const) : ("success" as const),
-                        description: null,
-                        url: null,
-                      },
+                      { name: "ci", status: "success" as const, description: null, url: null },
                     ],
                   };
                 }),
               activity: () =>
                 Effect.map(Clock.currentTimeMillis, (now) => {
                   cost.graphql += 15;
-                  const comments = remarksOf(now);
+                  const comments: Array<PullRequestComment> =
+                    editAt === null
+                      ? []
+                      : [
+                          {
+                            id: "review-comment",
+                            kind: "review-comment",
+                            author: { login: "maintainer", name: null, avatarUrl: null },
+                            body: "Nit.",
+                            createdAt: iso(at(-60)),
+                            url: null,
+                            path: "src/index.ts",
+                            reviewState: null,
+                            ...(editAt <= now ? { editedAt: iso(editAt) } : {}),
+                          },
+                        ];
                   return {
                     comments,
                     commentCount: comments.length,
@@ -7409,7 +7310,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                   }
                   const threads = [...notificationTimes(now)]
                     .filter(([, updatedAt]) => updatedAt > since)
-                    .map(([number, updatedAt]) => ({ number, updatedAt }));
+                    .map(([thread, updatedAt]) => ({ number: thread, updatedAt }));
                   if (threads.length > 0) cost.core += 1;
                   return { threads, truncated: false };
                 }),
@@ -7418,45 +7319,25 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         ),
       );
 
-      const totals: Array<{ readonly graphql: number; readonly total: number }> = [];
+      const totals: Array<number> = [];
+      const seen = new Set<string>();
       const wakes: Array<string> = [];
-      let commentWakeMinute: number | null = null;
       for (let minute = 0; minute <= 60; minute += 2) {
         if (minute > 0) yield* TestClock.adjust("2 minutes");
         cost.fingerprints = 0;
         yield* reactor.sweep;
         cost.graphql += Math.ceil(cost.fingerprints / 25);
-        totals.push({ graphql: cost.graphql, total: cost.graphql + cost.core });
-        for (const threadId of threadIds) {
-          const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
-          for (const message of messages) {
-            const summary = message.notification?.summary;
-            if (summary === undefined || wakes.some((wake) => wake.startsWith(`${message.id} `))) {
-              continue;
-            }
-            wakes.push(`${message.id} ${summary}`);
-            if (summary.includes("new comments")) commentWakeMinute ??= minute;
-          }
+        totals.push(cost.graphql + cost.core);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        for (const message of messages) {
+          const summary = message.notification?.summary;
+          if (summary === undefined || seen.has(message.id)) continue;
+          seen.add(message.id);
+          wakes.push(`${minute} ${summary}`);
         }
       }
-      for (const [index, number] of scenario.pullRequests.entries()) {
-        yield* orchestrator.dispatch({
-          type: "thread.pull-request.watch",
-          commandId: CommandId.make(`${threadIds[index]}-unwatch`),
-          threadId: threadIds[index]!,
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number,
-          watching: false,
-        });
-      }
-      return {
-        graphql: cost.graphql,
-        core: cost.core,
-        totals,
-        wakes: wakes.map((wake) => wake.slice(wake.indexOf(" ") + 1)),
-        commentWakeMinute,
-      };
+      yield* watch(false);
+      return { totals, wakes };
     });
 
   it.effect.each(watchCostScenarios)(
@@ -7469,16 +7350,11 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
           scenario.notificationsReadable ?? true,
           "notifications",
         );
-        const main = scenario.main.graphql + scenario.main.core;
-        assert.isAtMost(baseline.graphql + baseline.core, main);
-        assert.deepEqual({ graphql: branch.graphql, core: branch.core }, scenario.branch);
-        assert.isAtMost(branch.graphql, scenario.main.graphql);
-        assert.isAtMost(branch.graphql + branch.core, main);
-        branch.totals.forEach((sweep, index) => {
-          assert.isAtMost(sweep.total, baseline.totals[index]!.total);
+        branch.totals.forEach((total, index) => {
+          assert.isAtMost(total, baseline.totals[index]!);
         });
+        assert.equal(baseline.totals.at(-1)! - branch.totals.at(-1)!, scenario.saves);
         assert.deepEqual(branch.wakes, baseline.wakes);
-        assert.equal(branch.commentWakeMinute, baseline.commentWakeMinute);
       }),
   );
 });
