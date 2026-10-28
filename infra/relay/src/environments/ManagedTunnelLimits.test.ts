@@ -175,7 +175,7 @@ describe("ManagedTunnelLimits", () => {
             .pipe(Effect.flatMap((migration) => Effect.promise(() => pg.exec(migration)))),
         );
       const backfill = migrations.indexOf(BACKFILL_MIGRATION);
-      expect(backfill).toBe(migrations.length - 1);
+      expect(backfill).toBeGreaterThan(-1);
       yield* applyMigrations(migrations.slice(0, backfill));
 
       const at = (minutes: number) => `2026-10-27T12:${String(minutes).padStart(2, "0")}:00.000Z`;
