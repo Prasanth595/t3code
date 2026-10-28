@@ -84,6 +84,10 @@ const approvalItem: OrchestrationV2TurnItem = {
   requestKind: "command",
   prompt: "rm -rf build",
   reason: "Clean the build",
+  options: [
+    { decision: "accept", label: "Allow" },
+    { decision: "acceptAlways", label: "Always allow" },
+  ],
 };
 const questionItem: OrchestrationV2TurnItem = {
   ...itemBase,
@@ -137,11 +141,17 @@ const call = (scope: McpInvocationContext.McpInvocationScope, args: Record<strin
     Effect.provideService(McpSchema.McpServerClient, mcpClient),
   );
 
+type StoredEvents = ReturnType<
+  ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
+>;
+
 const layerBox = (input: {
   readonly shell: OrchestrationV2ThreadShell;
   readonly requests: Ref.Ref<ReadonlyArray<OrchestrationV2RuntimeRequest>>;
+  readonly items: Ref.Ref<ReadonlyArray<OrchestrationV2TurnItem>>;
   readonly dispatched: Ref.Ref<ReadonlyArray<OrchestrationV2ServerCommand>>;
-  readonly requestRecorded: Stream.Stream<unknown>;
+  readonly requestRecorded: StoredEvents;
+  readonly itemRecorded: StoredEvents;
 }) =>
   McpHttpServer.layerThreadToolkit.pipe(
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -156,17 +166,15 @@ const layerBox = (input: {
         getThreadShell: (id) => Effect.succeed(id === threadId ? input.shell : liveThreadShell(id)),
         getThreadEventSequence: () => Effect.succeed(0),
         getProjectThreadRecords: () =>
-          Ref.get(input.requests).pipe(
-            Effect.map((runtimeRequests) => ({
+          Effect.all([Ref.get(input.requests), Ref.get(input.items)]).pipe(
+            Effect.map(([runtimeRequests, turnItems]) => ({
               ...idleThreadProjection(input.shell),
               runtimeRequests,
-              turnItems: [approvalItem, questionItem],
+              turnItems,
             })),
           ),
-        streamStoredEventsFrom: () =>
-          input.requestRecorded as ReturnType<
-            ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
-          >,
+        streamStoredEventsFrom: (query) =>
+          query?.eventType === "turn-item.updated" ? input.itemRecorded : input.requestRecorded,
         dispatch: (command) =>
           Ref.update(input.dispatched, (seen) => [...seen, command]).pipe(
             Effect.as({ sequence: 7, storedEvents: [] } as never),
@@ -179,21 +187,41 @@ const box = Effect.fn("box")(function* (
   options: {
     readonly linkOrigin?: OrchestrationV2ThreadShell["linkOrigin"];
     readonly requests?: ReadonlyArray<OrchestrationV2RuntimeRequest>;
+    readonly items?: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly requestRecorded?: (
       requests: Ref.Ref<ReadonlyArray<OrchestrationV2RuntimeRequest>>,
     ) => Stream.Stream<unknown>;
+    readonly itemRecorded?: OrchestrationV2TurnItem;
   } = {},
 ) {
   const requests = yield* Ref.make(options.requests ?? []);
+  const items = yield* Ref.make(options.items ?? [approvalItem, questionItem]);
   const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+  const { itemRecorded } = options;
   const layer = layerBox({
     shell: shell(options.linkOrigin ?? { sessionId: linkSession, label: "Laptop", access: "auto" }),
     requests,
+    items,
     dispatched,
-    requestRecorded: options.requestRecorded?.(requests) ?? Stream.never,
+    requestRecorded: (options.requestRecorded?.(requests) ?? Stream.never) as StoredEvents,
+    itemRecorded:
+      itemRecorded === undefined
+        ? Stream.never
+        : (Stream.fromEffect(
+            Ref.update(items, (current) => [...current, itemRecorded]).pipe(
+              Effect.as({
+                sequence: 1,
+                commandId: null,
+                event: { type: "turn-item.updated", payload: itemRecorded },
+              }),
+            ),
+          ) as never),
   });
   return { requests, dispatched, layer };
 });
+
+const watch = (layer: Layer.Layer<McpServer.McpServer>, args: Record<string, unknown> = {}) =>
+  call(link("auto"), { action: "watch", threadId, ...args }).pipe(Effect.provide(layer));
 
 it.effect(
   "a link watching a thread reads its live questions and approvals with their details",
@@ -219,6 +247,7 @@ it.effect(
           runId,
           detail: "rm -rf build",
           reason: "Clean the build",
+          options: [{ decision: "accept", label: "Allow" }],
         },
         {
           requestId: questionId,
@@ -240,13 +269,26 @@ it.effect("a watch reports a request recorded while it waits", () =>
           Ref.set(requests, [request(approvalId, "command"), request(questionId, "user_input")]),
         ),
     });
-    const { body } = yield* call(link("auto"), {
-      action: "watch",
-      threadId,
-      knownRequestIds: [approvalId],
-    }).pipe(Effect.provide(layer));
+    const known = (yield* watch(layer)).body.version;
+    const { body } = yield* watch(layer, { knownVersion: known });
     expect(body.requests.map((entry: { requestId: string }) => entry.requestId)).toEqual([
       approvalId,
+      questionId,
+    ]);
+  }),
+);
+
+it.effect("a watch reports a question whose details land after its request", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* box({
+      requests: [request(questionId, "user_input")],
+      items: [],
+      itemRecorded: questionItem,
+    });
+    const before = (yield* watch(layer)).body;
+    expect(before.requests).toEqual([]);
+    const { body } = yield* watch(layer, { knownVersion: before.version });
+    expect(body.requests.map((entry: { requestId: string }) => entry.requestId)).toEqual([
       questionId,
     ]);
   }),
@@ -255,14 +297,13 @@ it.effect("a watch reports a request recorded while it waits", () =>
 it.effect("a watch with nothing new answers with what the link knows once it times out", () =>
   Effect.gen(function* () {
     const { layer } = yield* box({ requests: [request(approvalId, "command")] });
-    const watching = yield* call(link("auto"), {
-      action: "watch",
-      threadId,
-      knownRequestIds: [approvalId],
-      timeoutMs: 1_000,
-    }).pipe(Effect.provide(layer), Effect.forkChild);
+    const known = (yield* watch(layer)).body.version;
+    const watching = yield* watch(layer, { knownVersion: known, timeoutMs: 1_000 }).pipe(
+      Effect.forkChild,
+    );
     yield* TestClock.adjust(1_000);
     const { body } = yield* Fiber.join(watching);
+    expect(body).toMatchObject({ version: known });
     expect(body.requests.map((entry: { requestId: string }) => entry.requestId)).toEqual([
       approvalId,
     ]);

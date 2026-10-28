@@ -1,6 +1,7 @@
 import {
   unansweredRemoteTaskRequests,
   type EnvironmentId,
+  type NodeId,
   type ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
@@ -33,6 +34,14 @@ export async function sendApprovalFeedback(
   return (await respond(approval.requestId, "decline", feedback.trim()))?._tag === "Success";
 }
 
+/** A message sent here redirects this thread's agent, never a task waiting in another environment. */
+export const redirectableApprovals = <Approval extends ThreadPendingApproval>(
+  approvals: ReadonlyArray<Approval>,
+): ReadonlyArray<Approval> =>
+  approvals.some((approval) => approval.remoteTaskId !== undefined)
+    ? approvals.filter((approval) => approval.remoteTaskId === undefined)
+    : approvals;
+
 /** Declines every approval a redirect replaces; any one still pending would block the agent. */
 export async function declinePendingApprovals(
   approvals: ReadonlyArray<ThreadPendingApproval>,
@@ -57,6 +66,7 @@ export interface ThreadPendingApproval {
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
+  readonly remoteTaskId?: NodeId;
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
@@ -83,6 +93,7 @@ export interface ThreadPendingUserInput {
   readonly responseCapability: OrchestrationV2RuntimeRequest["responseCapability"]["type"];
   readonly responseMode?: "message";
   readonly dismissible: boolean;
+  readonly remoteTaskId?: NodeId;
 }
 
 export interface PendingThreadRequests {
@@ -215,7 +226,6 @@ export function makeThreadRequestsResolvedAnnouncer(
   };
 }
 
-/** The questions and approvals of the thread's tasks in linked environments, mirrored on it. */
 type WithRemoteTaskRequests = {
   readonly thread?: Pick<OrchestrationV2AppThread, "remoteTaskRequests">;
 };
@@ -301,6 +311,7 @@ export function derivePendingThreadRequests(
         })),
         responseCapability: "live",
         dismissible: false,
+        remoteTaskId: request.taskId,
       });
       continue;
     }
@@ -312,6 +323,7 @@ export function derivePendingThreadRequests(
       ...(request.reason ? { reason: request.reason } : {}),
       ...(request.options === undefined ? {} : { options: request.options }),
       responseCapability: "live",
+      remoteTaskId: request.taskId,
     });
   }
 

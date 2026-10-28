@@ -30,7 +30,7 @@ import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
-import { LINK_REQUESTS_MAX_WAIT_MS } from "../mcp/toolkits/thread/tools.ts";
+import { FORWARDED_WAIT_CHUNK_MS } from "../mcp/toolkits/thread/tools.ts";
 import {
   resolveInteractionMode,
   resolveRuntimeMode,
@@ -61,6 +61,12 @@ export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>
 );
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
+
+/** What a task's relay has sent there, and the version of its requests it last mirrored. */
+interface RelayState {
+  readonly relayed: Set<RuntimeRequestId>;
+  version: string | undefined;
+}
 
 /**
  * `delegate_task` to a linked environment. The task's child is an ordinary
@@ -507,18 +513,11 @@ const make = Effect.gen(function* () {
   /** A task's thread there that ended without a reply. */
   const noReply = "(The thread in the linked environment ended without a reply.)";
 
-  /** Records on the parent what the task's thread there waits on, when that changed. */
   const mirrorRequests = Effect.fn("RemoteDelegation.mirrorRequests")(function* (
     parentThreadId: ThreadId,
     taskId: NodeId,
-    known: ReadonlyArray<RuntimeRequestId>,
     requests: ReadonlyArray<OrchestrationV2LinkedRequest>,
   ) {
-    if (
-      requests.length === known.length &&
-      requests.every((request) => known.includes(request.requestId))
-    )
-      return;
     const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     yield* threads.dispatch({
       type: "delegated_task.remote.requests",
@@ -579,13 +578,13 @@ const make = Effect.gen(function* () {
 
   /**
    * One pass of relaying requests for a task still running there: sends the answers given here
-   * that have not reached it, then waits until its thread there waits on something else or the
-   * user answers here. A peer from before `t3_link_requests` keeps its requests to itself.
+   * that have not reached it, then waits until what its thread there waits on changes or the
+   * user answers here.
    */
   const relayRequestsOnce = Effect.fn("RemoteDelegation.relayRequestsOnce")(function* (
     parentThreadId: ThreadId,
     taskId: NodeId,
-    relayed: Set<RuntimeRequestId>,
+    relay: RelayState,
   ) {
     const sequence = yield* threads.getThreadEventSequence(parentThreadId);
     const { thread, task } = yield* readTask(parentThreadId, taskId);
@@ -599,9 +598,9 @@ const make = Effect.gen(function* () {
       (request) => request.taskId === taskId,
     );
     for (const request of mirrored) {
-      if (request.response === undefined || relayed.has(request.requestId)) continue;
+      if (request.response === undefined || relay.relayed.has(request.requestId)) continue;
       if (yield* relayAnswer(parentThreadId, scope, remote, request)) {
-        relayed.add(request.requestId);
+        relay.relayed.add(request.requestId);
       }
     }
     const answeredHere = threads
@@ -618,29 +617,25 @@ const make = Effect.gen(function* () {
               (request) =>
                 request.taskId === taskId &&
                 request.response !== undefined &&
-                !relayed.has(request.requestId),
+                !relay.relayed.has(request.requestId),
             ),
         ),
         Stream.runHead,
         Effect.flatMap((answered) => (Option.isSome(answered) ? Effect.void : Effect.never)),
       );
-    const known = mirrored.map((request) => request.requestId);
     const watched = yield* forwarding
       .linkRequests(scope, remote.environmentId, {
         action: "watch",
         threadId: remote.threadId,
-        knownRequestIds: known,
-        timeoutMs: LINK_REQUESTS_MAX_WAIT_MS,
+        knownVersion: relay.version,
+        timeoutMs: FORWARDED_WAIT_CHUNK_MS,
       })
-      .pipe(
-        Effect.catchIf(
-          (error) => error.code === "invalid_request",
-          () => Effect.never,
-        ),
-        Effect.raceFirst(answeredHere),
-      );
-    if (watched === undefined || !("requests" in watched)) return;
-    yield* mirrorRequests(parentThreadId, taskId, known, watched.requests);
+      .pipe(Effect.raceFirst(answeredHere));
+    if (watched === undefined || !("requests" in watched) || watched.version === relay.version) {
+      return;
+    }
+    yield* mirrorRequests(parentThreadId, taskId, watched.requests);
+    relay.version = watched.version;
   });
 
   /**
@@ -648,11 +643,12 @@ const make = Effect.gen(function* () {
    * relays the user's answers given here, for as long as its follower runs.
    */
   const relayRequests = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<never> => {
-    const relayed = new Set<RuntimeRequestId>();
-    return relayRequestsOnce(parentThreadId, taskId, relayed).pipe(
-      Effect.forever,
-      // Its own back-off, so stepping the follower's retries never steps this one.
+    const relay: RelayState = { relayed: new Set(), version: undefined };
+    // Its own back-off, so stepping the follower's retries never steps this one. A peer from
+    // before `t3_link_requests` refuses every pass, and is asked again as it may update.
+    return relayRequestsOnce(parentThreadId, taskId, relay).pipe(
       Effect.retry(followBackoff),
+      Effect.forever,
       Effect.catchCause((cause) =>
         Effect.logWarning("remote-delegation.relay-requests-failed", { taskId, cause }).pipe(
           Effect.andThen(Effect.never),

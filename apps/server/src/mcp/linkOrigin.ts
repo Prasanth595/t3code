@@ -34,6 +34,10 @@ const fencingLinkOrigin = (caller: Pick<Caller, "scope" | "caller">) => {
   return origin !== undefined && linkOriginIsFenced(origin) ? origin : undefined;
 };
 
+/** Whether a link paired below full access limits what `caller` may change. */
+export const callerIsFenced = (caller: Pick<Caller, "scope" | "caller">) =>
+  fencingLinkOrigin(caller) !== undefined;
+
 const outsideLink = (origin: OrchestrationV2LinkOrigin, message: string) =>
   new OrchestratorMcpFailure({
     code: "capability_denied",

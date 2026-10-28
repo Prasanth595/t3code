@@ -304,8 +304,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
   const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
     getThreadEventSequence: () => Effect.succeed(0),
-    streamStoredEventsFrom: () =>
-      SubscriptionRef.changes(thread.requests).pipe(Stream.drop(1)) as never,
+    streamStoredEventsFrom: (input) =>
+      input?.eventType === "runtime-request.updated"
+        ? (SubscriptionRef.changes(thread.requests).pipe(Stream.drop(1)) as never)
+        : Stream.never,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     waitForThread: (input) =>

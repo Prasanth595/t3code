@@ -493,7 +493,6 @@ const OrchestrationV2RemoteTaskRequestJson = OrchestrationV2RemoteTaskRequest.ma
   (fields) => ({ ...fields, createdAt: Schema.DateTimeUtcFromString }),
 );
 
-/** The mirrored requests nobody here has answered yet. */
 export const unansweredRemoteTaskRequests = (
   thread: Pick<OrchestrationV2AppThread, "remoteTaskRequests">,
 ): ReadonlyArray<OrchestrationV2RemoteTaskRequest> =>

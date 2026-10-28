@@ -13,6 +13,7 @@ import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
+  redirectableApprovals,
   declinePendingApprovals,
   sendApprovalFeedback,
   makeThreadRequestsResolvedAnnouncer,
@@ -354,8 +355,10 @@ describe("pending v2 questions", () => {
         createdAt: "2026-06-20T00:00:00.000Z",
         detail: "pnpm test",
         responseCapability: "live",
+        remoteTaskId: "remote-task",
       },
     ]);
+    expect(redirectableApprovals(pending.approvals)).toEqual([]);
     expect(pending.userInputs).toEqual([
       {
         requestId: "remote-question",
@@ -365,6 +368,7 @@ describe("pending v2 questions", () => {
         ],
         responseCapability: "live",
         dismissible: false,
+        remoteTaskId: "remote-task",
       },
     ]);
   });

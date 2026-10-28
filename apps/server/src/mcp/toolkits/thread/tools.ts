@@ -146,8 +146,12 @@ const PendingRequestTool = Tool.make("t3_pending_request", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-/** A forwarded wait must answer within T3 Connect's idle limit; see `FORWARDED_WAIT_CHUNK_MS`. */
-export const LINK_REQUESTS_MAX_WAIT_MS = 50_000;
+/**
+ * A peer's `/mcp` holds a wait open for its whole timeout without sending
+ * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
+ * forwarded wait goes out in pieces no longer than this.
+ */
+export const FORWARDED_WAIT_CHUNK_MS = 50_000;
 
 /**
  * How the environment that delegated a task here mirrors its thread's questions and approvals
@@ -157,13 +161,13 @@ export const LINK_REQUESTS_MAX_WAIT_MS = 50_000;
 export const LinkRequestsTool = Tool.make("t3_link_requests", {
   ...commandTool,
   description:
-    "For linked T3 Code environments only. watch: the thread's live questions and approvals, once they differ from `knownRequestIds` or `timeoutMs` passes. respond: answer one.",
+    "For linked T3 Code environments only. watch: the thread's live questions and approvals, once their `version` differs from `knownVersion` or `timeoutMs` passes. respond: answer one.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "respond"]),
     threadId: ThreadId,
-    knownRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
+    knownVersion: Schema.optional(Schema.String),
     timeoutMs: Schema.optional(
-      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: LINK_REQUESTS_MAX_WAIT_MS })),
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: FORWARDED_WAIT_CHUNK_MS })),
     ),
     requestId: Schema.optional(RuntimeRequestId),
     decision: Schema.optional(ProviderApprovalDecision),
@@ -171,7 +175,10 @@ export const LinkRequestsTool = Tool.make("t3_link_requests", {
     clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   }),
   success: Schema.Union([
-    Schema.Struct({ requests: Schema.Array(OrchestrationV2LinkedRequestJson) }),
+    Schema.Struct({
+      requests: Schema.Array(OrchestrationV2LinkedRequestJson),
+      version: Schema.String,
+    }),
     OrchestrationV2DispatchCommandResult,
   ]),
 })

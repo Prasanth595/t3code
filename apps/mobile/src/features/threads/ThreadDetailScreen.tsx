@@ -53,6 +53,7 @@ import {
 } from "@t3tools/shared/codexArtifactTemplates";
 import {
   declinePendingApprovals,
+  redirectableApprovals,
   sendApprovalFeedback,
   type ApprovalResponder,
   type ThreadUserInputQuestion,
@@ -1080,12 +1081,15 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       : [];
   })();
 
+  const redirectedApprovals = redirectableApprovals(props.activePendingApprovals);
   const currentPendingApprovals = () =>
     props.selectedThreadDetailRef === null
       ? []
-      : (appAtomRegistry.get(
-          environmentThreadDetails.pendingRequestsAtom(props.selectedThreadDetailRef),
-        )?.approvals ?? []);
+      : redirectableApprovals(
+          appAtomRegistry.get(
+            environmentThreadDetails.pendingRequestsAtom(props.selectedThreadDetailRef),
+          )?.approvals ?? [],
+        );
   const handleSendMessage = async (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
@@ -1097,7 +1101,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     );
     // Runs only once the send path has validated the draft and is about to deliver it, so an
     // empty submit, a queued-message edit, or `/feedback` leaves approvals alone.
-    const approvalsToDecline = props.activePendingApprovals;
+    const approvalsToDecline = redirectedApprovals;
     const declineBeforeDispatch =
       approvalsToDecline.length > 0 && props.activePendingUserInput === null
         ? async (text: string, hasAttachmentsOrContext: boolean) => {
@@ -1577,8 +1581,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
                         placeholder={
-                          props.activePendingApproval
-                            ? props.activePendingApproval.supportsFeedback
+                          redirectedApprovals[0]
+                            ? redirectedApprovals[0].supportsFeedback
                               ? "Send feedback to decline this request"
                               : "Send a message to decline and redirect the agent"
                             : "Ask anything"
@@ -1609,8 +1613,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         interactionLocked={props.draftMode?.interactionLocked}
                         draftKey={props.composerDraftKey ?? undefined}
                         followUpBehavior={
-                          props.activePendingApprovals.length > 0 &&
-                          props.activePendingUserInput === null
+                          redirectedApprovals.length > 0 && props.activePendingUserInput === null
                             ? "steer"
                             : props.followUpBehavior
                         }

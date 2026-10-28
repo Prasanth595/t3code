@@ -9,13 +9,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Hash from "effect/Hash";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import { assertNotLinked } from "../../linkOrigin.ts";
+import { assertNotLinked, callerIsFenced } from "../../linkOrigin.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { dispatchFailure, loadCaller, threadNotFound, unavailable } from "../../threadAccess.ts";
-import { LINK_REQUESTS_MAX_WAIT_MS } from "./tools.ts";
+import { FORWARDED_WAIT_CHUNK_MS } from "./tools.ts";
 
 const requireLinkSession = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) =>
@@ -30,9 +31,13 @@ const requireLinkSession = McpInvocationContext.McpInvocationContext.pipe(
   ),
 );
 
-/** The questions and approvals `projection` waits on that an answer can still reach. */
+/**
+ * The questions and approvals `projection` waits on that an answer can still reach, without
+ * the choices a fenced link may not make.
+ */
 const linkedRequestsOf = (
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
+  fenced: boolean,
 ): ReadonlyArray<OrchestrationV2LinkedRequest> =>
   projection.runtimeRequests.flatMap((request): ReadonlyArray<OrchestrationV2LinkedRequest> => {
     if (request.status !== "pending" || request.responseCapability.type !== "live") return [];
@@ -57,6 +62,9 @@ const linkedRequestsOf = (
       (candidate) => candidate.type === "approval_request" && candidate.requestId === request.id,
     );
     const approval = item?.type === "approval_request" ? item : undefined;
+    const options = fenced
+      ? approval?.options?.filter((option) => option.decision !== "acceptAlways")
+      : approval?.options;
     return [
       {
         ...common,
@@ -64,7 +72,7 @@ const linkedRequestsOf = (
         ...(approval?.runId == null ? {} : { runId: approval.runId }),
         ...(approval?.prompt === undefined ? {} : { detail: approval.prompt }),
         ...(approval?.reason === undefined ? {} : { reason: approval.reason }),
-        ...(approval?.options === undefined ? {} : { options: approval.options }),
+        ...(options === undefined ? {} : { options }),
       },
     ];
   });
@@ -84,44 +92,55 @@ const linkedThread = Effect.fn("mcp.linkedThread")(function* (threadId: ThreadId
         turnItemTypes: ["user_input_request", "approval_request"],
       },
     )
-    .pipe(Effect.map(linkedRequestsOf), Effect.mapError(unavailable));
+    .pipe(
+      Effect.map((projection) => {
+        const requests = linkedRequestsOf(projection, callerIsFenced(caller));
+        return { requests, version: String(Hash.string(JSON.stringify(requests))) };
+      }),
+      Effect.mapError(unavailable),
+    );
   return { caller, readRequests };
 });
 
 /**
- * The thread's live requests once they differ from `knownRequestIds`, or as they are when
- * `timeoutMs` passes. One wait answers within a forwarded call's idle limit.
+ * The thread's live requests once their `version` differs from `knownVersion`, or as they are
+ * when `timeoutMs` passes. One wait answers within a forwarded call's idle limit.
  */
 export const watchLinkedRequests = Effect.fn("mcp.watchLinkedRequests")(function* (input: {
   readonly threadId: ThreadId;
-  readonly knownRequestIds?: ReadonlyArray<RuntimeRequestId> | undefined;
+  readonly knownVersion?: string | undefined;
   readonly timeoutMs?: number | undefined;
 }) {
   const { caller, readRequests } = yield* linkedThread(input.threadId);
-  const known = new Set(input.knownRequestIds ?? []);
-  const differs = (requests: ReadonlyArray<OrchestrationV2LinkedRequest>) =>
-    requests.length !== known.size || requests.some((request) => !known.has(request.requestId));
+  const differs = (read: { readonly version: string }) => read.version !== input.knownVersion;
   // Taken before the read, so a request recorded between the two still wakes the wait.
   const afterSequence = yield* caller.threads
     .getThreadEventSequence(input.threadId)
     .pipe(Effect.mapError(unavailable));
   const current = yield* readRequests;
-  if (differs(current)) return { requests: current };
-  const changed = yield* caller.threads
-    .streamStoredEventsFrom({
-      threadId: input.threadId,
-      afterSequence,
-      eventType: "runtime-request.updated",
-    })
-    .pipe(
-      Stream.mapError(unavailable),
-      Stream.mapEffect(() => readRequests),
-      Stream.filter(differs),
-      Stream.runHead,
-      Effect.timeoutOption(input.timeoutMs ?? LINK_REQUESTS_MAX_WAIT_MS),
-      Effect.map(Option.flatten),
-    );
-  return { requests: Option.getOrElse(changed, () => current) };
+  if (differs(current)) return current;
+  const updates = (eventType: "runtime-request.updated" | "turn-item.updated") =>
+    caller.threads.streamStoredEventsFrom({ threadId: input.threadId, afterSequence, eventType });
+  const changed = yield* Stream.merge(
+    updates("runtime-request.updated"),
+    // A request's question or approval details can land after the request itself.
+    updates("turn-item.updated").pipe(
+      Stream.filter(
+        ({ event }) =>
+          event.type === "turn-item.updated" &&
+          (event.payload.type === "approval_request" ||
+            event.payload.type === "user_input_request"),
+      ),
+    ),
+  ).pipe(
+    Stream.mapError(unavailable),
+    Stream.mapEffect(() => readRequests),
+    Stream.filter(differs),
+    Stream.runHead,
+    Effect.timeoutOption(input.timeoutMs ?? FORWARDED_WAIT_CHUNK_MS),
+    Effect.map(Option.flatten),
+  );
+  return Option.getOrElse(changed, () => current);
 });
 
 /**

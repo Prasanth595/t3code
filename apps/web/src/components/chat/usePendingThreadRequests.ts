@@ -12,6 +12,7 @@ import {
   derivePendingThreadRequests,
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
+  redirectableApprovals,
   seedUserInputDraftAnswers,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
@@ -254,6 +255,7 @@ export function usePendingThreadRequests(input: {
       respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
   const activePendingApproval = pendingApprovals[0] ?? null;
+  const composerApprovals = redirectableApprovals(pendingApprovals);
 
   const onRespondToApproval = async (
     requestId: RuntimeRequestId,
@@ -487,6 +489,7 @@ export function usePendingThreadRequests(input: {
 
   return {
     pendingApprovals,
+    composerApprovals,
     pendingUserInputs,
     activePendingApproval,
     activePendingUserInput,

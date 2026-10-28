@@ -21,17 +21,11 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
-import { LinkRequestsTool } from "../mcp/toolkits/thread/tools.ts";
+import { FORWARDED_WAIT_CHUNK_MS, LinkRequestsTool } from "../mcp/toolkits/thread/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
-/**
- * A peer's `/mcp` holds a wait open for its whole timeout without sending
- * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
- * forwarded wait goes out in pieces no longer than this.
- */
-export const FORWARDED_WAIT_CHUNK_MS = 50_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 

@@ -423,6 +423,14 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
+/** A `JSON.stringify` replacer whose output ignores the order keys were set in. */
+const sortObjectKeys = (_key: string, value: unknown) =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(
+        Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right)),
+      )
+    : value;
+
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
@@ -7897,7 +7905,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const { remoteTaskRequests: current = [], ...rest } = thread;
       const next = [...current.filter((request) => request.taskId !== taskId), ...requests];
       const fingerprint = (entries: ReadonlyArray<OrchestrationV2RemoteTaskRequest>) =>
-        JSON.stringify(entries.map((request) => [request.requestId, request.response]));
+        JSON.stringify(entries, sortObjectKeys);
       if (fingerprint(next) === fingerprint(current)) return;
       const now = yield* DateTime.now;
       yield* emit(
