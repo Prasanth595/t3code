@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -76,6 +77,7 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
 const layerWorkflowApprovalGateTest = WorkflowApprovalGate.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      McpProviderSessions.layer,
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getThreadRecords: () =>
           Effect.succeed({

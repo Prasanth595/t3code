@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 // @effect-diagnostics nodeBuiltinImport:off -- tests write the declared files an agent would.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -5812,7 +5813,15 @@ describe("workflow approval", () => {
             OrchestratorMcpService.layer,
             WorkflowApprovalService.layer,
           ).pipe(
-            Layer.provideMerge(WorkflowApprovalGate.layer),
+            Layer.provideMerge(
+              WorkflowApprovalGate.layer.pipe(
+                Layer.provide(
+                  Layer.mock(McpProviderSessions.McpProviderSessions)({
+                    read: () => Effect.succeed({ capabilities: new Set(["workflows"]) } as never),
+                  }),
+                ),
+              ),
+            ),
             Layer.provide(
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getThreadRecords: (threadId, fields, filter) =>

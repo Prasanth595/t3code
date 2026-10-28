@@ -8,7 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
@@ -231,12 +230,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     if (limited === undefined) return invalidModeLimit;
     const { linkedEnvironmentsEnabled: linkedEnvironments, workflows } = yield* featureSettings;
     const capabilities = new Set(limited.capabilities);
-    if (!workflows) capabilities.delete("workflows");
-    else if (limited.client !== undefined) capabilities.add("workflows");
+    if (limited.client !== undefined) {
+      if (workflows) capabilities.add("workflows");
+      else capabilities.delete("workflows");
+    }
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
+        capabilities,
         linkedEnvironments,
       }),
       Effect.map(normalizeMcpHttpResponse),
@@ -1025,39 +1027,21 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
 >(toolkit: Toolkit.Toolkit<Tools>, registration: Effect.Effect<A, E, R>) {
   const server = yield* McpServer.McpServer;
   const tools: Record<string, Tool.Any> = toolkit.tools;
-  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-  const scope = yield* Effect.scope;
   const advertisingServer = McpServer.McpServer.of({
     ...server,
     addTool: Effect.fn("McpServer.addTool")(function (options) {
       const tool = tools[options.tool.name];
-      if (tool === undefined) return server.addTool(options);
-      const variant = toolsWithoutWorkflows[tool.name];
-      const register = (workflows: boolean) =>
-        server.addTool({
-          ...options,
-          tool: new McpSchema.Tool({
-            ...options.tool,
-            inputSchema: advertisedJsonSchema(!workflows && variant !== undefined ? variant : tool),
-          }),
-        });
-      if (variant === undefined || Option.isNone(settings)) return register(false);
-      return Effect.gen(function* () {
-        const changes = yield* settings.value.subscribeChanges.pipe(
-          Effect.provideService(Scope.Scope, scope),
-        );
-        const initial = yield* settings.value.getSettings.pipe(
-          Effect.map((value) => value.workflows),
-          Effect.orElseSucceed(() => false),
-        );
-        yield* register(initial);
-        yield* changes.pipe(
-          Stream.map((value) => value.workflows),
-          Stream.changes,
-          Stream.runForEach(register),
-          Effect.forkIn(scope),
-        );
-      });
+      return server.addTool(
+        tool === undefined
+          ? options
+          : {
+              ...options,
+              tool: new McpSchema.Tool({
+                ...options.tool,
+                inputSchema: advertisedJsonSchema(tool),
+              }),
+            },
+      );
     }),
   });
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
@@ -1235,11 +1219,54 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const workflowDisabledSchemas = Object.fromEntries(
+  Object.entries(toolsWithoutWorkflows).map(([name, tool]) => [name, advertisedJsonSchema(tool)]),
+);
+
+/** The catalog schema and tool visibility follow the same authenticated caller capability. */
+export const toolsForCaller = Effect.fn("McpHttpServer.toolsForCaller")(function* (
+  tools: ReadonlyArray<McpSchema.Tool>,
+) {
+  const caller = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+  if (Option.isSome(caller) && caller.value.capabilities.has("workflows")) return tools;
+  return tools.map((tool) =>
+    workflowDisabledSchemas[tool.name] === undefined
+      ? tool
+      : new McpSchema.Tool({ ...tool, inputSchema: workflowDisabledSchemas[tool.name]! }),
+  );
+});
+
+// The SDK snapshots descriptors on registration; select schemas when it lists them per request.
+const callerSchemaProtocol: typeof McpProtocol.v2025_06_18 = {
+  ...McpProtocol.v2025_06_18,
+  installHandlers: (
+    core: {
+      readonly tools: {
+        readonly list: (profile: unknown) => Effect.Effect<ReadonlyArray<McpSchema.Tool>>;
+      };
+    },
+    lifecycle: unknown,
+    target: unknown,
+  ) =>
+    // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off anyUnknownInErrorContext:off -- The SDK erases handler requirements; this wrapper only reads optional auth context.
+    McpProtocol.v2025_06_18.installHandlers(
+      {
+        ...core,
+        tools: {
+          ...core.tools,
+          list: (profile: unknown) => core.tools.list(profile).pipe(Effect.flatMap(toolsForCaller)),
+        },
+      },
+      lifecycle,
+      target,
+    ) as Effect.Effect<void>,
+};
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
+  protocols: [callerSchemaProtocol],
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 

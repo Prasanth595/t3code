@@ -12,6 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as WorkflowApprovalGate from "./WorkflowApprovalGate.ts";
@@ -75,6 +76,7 @@ const NOTHING_STORED: Stored = { runs: [], items: [] };
 const makeLayer = (
   read: (id: ThreadId) => Effect.Effect<Stored, ProjectionStore.ProjectionStoreReadError>,
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+  sessionWorkflows = true,
 ) =>
   WorkflowApprovalGate.layer.pipe(
     Layer.provide(
@@ -95,6 +97,12 @@ const makeLayer = (
             ),
         }),
         ServerSettings.layerTest({ workflows: true, ...settings }),
+        Layer.mock(McpProviderSessions.McpProviderSessions)({
+          read: () =>
+            Effect.succeed({
+              capabilities: new Set(sessionWorkflows ? ["workflows"] : []),
+            } as never),
+        }),
       ),
     ),
   );
@@ -911,3 +919,32 @@ describe("after a restart", () => {
     }),
   );
 });
+
+it.effect.each([false, true])(
+  "steer notes and approvals follow the issued workflow capability (issued=%s)",
+  (issued) =>
+    Effect.gen(function* () {
+      const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
+      const note = yield* gate.observeSteer({
+        threadId,
+        messageId: MessageId.make("message:steer-capability"),
+        typedText: "Use a workflow",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(note?.startsWith("<t3-workflow>") === true, issued);
+      const reviewed = yield* review(gate, "review:capability", digestA);
+      assert.equal(reviewed.approvalRequired, issued);
+      if (issued)
+        yield* gate.approve({
+          environmentId,
+          threadId,
+          reviewId: "review:capability",
+          digest: digestA,
+        });
+    }).pipe(
+      Effect.provide(
+        makeLayer(() => Effect.succeed(NOTHING_STORED), { workflows: !issued }, issued),
+      ),
+    ),
+);

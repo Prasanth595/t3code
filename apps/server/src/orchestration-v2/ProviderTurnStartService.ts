@@ -49,6 +49,7 @@ import {
   workflowRequestOf,
 } from "@t3tools/provider-core/server/workflowTrigger";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -144,6 +145,7 @@ export const layer: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
+  | McpProviderSessions.McpProviderSessions
   | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderTurnStartServiceV2,
@@ -161,6 +163,7 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
@@ -771,11 +774,19 @@ export const layer: Layer.Layer<
       // workflow or ultracode note, and run execution shapes its text from this same snapshot, so a
       // settings change while the session recovers cannot lengthen delivery past the budget.
       // The gate answers `workflowRequestOf`, so asking here has no side effects.
+      const mcpSession = yield* mcpSessions.read(projection.thread.id);
       const turnTriggersResult = yield* serverSettings.getSettings.pipe(
         Effect.map((settings): RunExecutionService.RunExecutionTurnTriggers => {
-          const { workflows, workflowTriggers, ultracode, workflowPresets } =
-            resolveProjectSettings(settings, projection.thread.projectId).settings;
-          return { workflows, workflowTriggers, ultracode, workflowPresets };
+          const { workflowTriggers, ultracode, workflowPresets } = resolveProjectSettings(
+            settings,
+            projection.thread.projectId,
+          ).settings;
+          return {
+            workflows: mcpSession?.capabilities?.has("workflows") === true,
+            workflowTriggers,
+            ultracode,
+            workflowPresets,
+          };
         }),
         Effect.result,
       );

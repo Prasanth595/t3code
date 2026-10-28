@@ -8,6 +8,7 @@ import {
   EnvironmentId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  OrchestratorMcpDelegateTaskInput,
   PreviewTabId,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -1534,4 +1535,139 @@ it.effect("hides the image-returning preview tools from a member credential", ()
       expect(yield* session.call("memberToken", "preview_snapshot")).toContain("not found");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([false, true])(
+  "keeps provider workflow credentials fixed and applies live settings to external clients (issued=%s)",
+  (issued) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ workflows: issued });
+        const provider: McpInvocationContext.McpThreadInvocationScope = {
+          ...invocation,
+          capabilities: new Set(["orchestration", ...(issued ? ["workflows" as const] : [])]),
+        } as McpInvocationContext.McpThreadInvocationScope;
+        const external: McpInvocationContext.McpInvocationScope = {
+          ...provider,
+          thread: undefined,
+          client: { sessionId: "external-workflow", label: "External", access: "auto" },
+          capabilities: new Set(["orchestration", "workflows"]),
+        };
+        const Existing = Toolkit.make(
+          Tool.make("delegate_task", {
+            parameters: OrchestratorMcpDelegateTaskInput,
+            success: Schema.Boolean,
+          }),
+        );
+        const Workflow = Toolkit.make(Tool.make("workflow_probe", { success: Schema.Boolean }));
+        const server = Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(
+            Existing,
+            McpToolAccess.toLayer(Existing, {
+              delegate_task: McpToolAccess.reads(() => Effect.succeed(true)),
+            }),
+          ),
+          McpHttpServer.toolkitRegistration(
+            Workflow,
+            McpToolAccess.toLayer(Workflow, {
+              workflow_probe: McpToolAccess.reads(() => Effect.succeed(true)),
+            }),
+            "workflows",
+          ),
+        ).pipe(
+          Layer.provideMerge(McpHttpServer.layerMcpTransport),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (token) =>
+                Effect.succeed(token === "provider-workflow" ? provider : undefined),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+              authenticate: (request) =>
+                Effect.succeed(
+                  request.headers.authorization === "Bearer external-workflow"
+                    ? external
+                    : undefined,
+                ),
+            }),
+          ),
+        );
+        yield* HttpRouter.serve(server, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const http = yield* HttpClient.HttpClient;
+        const connect = (token: string) =>
+          Effect.gen(function* () {
+            const headers = {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+            };
+            const initialized = yield* http.post("/mcp", {
+              headers,
+              body: HttpBody.text(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "workflow-test", version: "1" },
+                  },
+                }),
+                "application/json",
+              ),
+            });
+            return (method: string, params: object = {}) =>
+              http
+                .post("/mcp", {
+                  headers: {
+                    ...headers,
+                    "mcp-session-id": initialized.headers["mcp-session-id"]!,
+                    "mcp-protocol-version": "2025-06-18",
+                  },
+                  body: HttpBody.text(
+                    JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                    "application/json",
+                  ),
+                })
+                .pipe(Effect.flatMap((response) => response.json));
+          });
+        const providerCall = yield* connect("provider-workflow");
+        const externalCall = yield* connect("external-workflow");
+        for (const current of [issued, !issued, issued]) {
+          yield* settings.updateSettings({ workflows: current });
+          for (const [call, enabled] of [
+            [providerCall, issued],
+            [externalCall, current],
+          ] as const) {
+            const body = (yield* call("tools/list")) as {
+              result: {
+                tools: Array<{
+                  name: string;
+                  inputSchema: { properties: Record<string, unknown> };
+                }>;
+              };
+            };
+            expect(body.result.tools.some((tool) => tool.name === "workflow_probe")).toBe(enabled);
+            expect(
+              "resultSchema" in
+                body.result.tools.find((tool) => tool.name === "delegate_task")!.inputSchema
+                  .properties,
+            ).toBe(enabled);
+            const called = yield* call("tools/call", { name: "workflow_probe", arguments: {} });
+            if (enabled)
+              expect(called).toMatchObject({
+                result: { content: [{ type: "text", text: "true" }] },
+              });
+            else
+              expect(called).toMatchObject({
+                error: { message: expect.stringContaining("not found") },
+              });
+          }
+        }
+      }),
+    ).pipe(Effect.provide(Layer.merge(ServerSettings.layerTest(), NodeHttpServer.layerTest))),
 );

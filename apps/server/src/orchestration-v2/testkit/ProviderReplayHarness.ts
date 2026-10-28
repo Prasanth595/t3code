@@ -396,7 +396,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(layerProvidedRegistry),
   );
   const layerWorkflowApprovalGateProvided = WorkflowApprovalGate.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerServerSettings)),
+    Layer.provide(Layer.mergeAll(layerStores, layerServerSettings, McpProviderSessions.layer)),
   );
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
@@ -430,6 +430,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
       ),
     ),
+    Layer.provide(McpProviderSessions.layer),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(

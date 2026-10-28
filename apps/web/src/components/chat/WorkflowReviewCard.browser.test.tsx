@@ -255,14 +255,14 @@ const approvalError = (reviewId: string, reason: OrchestrationV2WorkflowApproval
   new OrchestrationV2WorkflowApprovalError({ threadId: THREAD_ID, reviewId, reason });
 
 describe("workflow review card in the chat timeline", () => {
-  it("keeps historical plans visible without approval actions when workflows are off", async () => {
+  it("keeps an existing chat's workflow approval available after workflows are turned off", async () => {
     resetApp();
     app.workflows = false;
     await using screen = await renderReviewTurn({ record: { reviewId: "review-disabled" } });
     await vi.waitFor(() => expect(card(screen.container)).not.toBeNull());
-    expect(card(screen.container)!.dataset.workflowReviewStatus).toBe("read-only");
-    expect(card(screen.container)!.querySelectorAll("button")).toHaveLength(0);
-    expect(app.approve).not.toHaveBeenCalled();
+    expect(card(screen.container)!.dataset.workflowReviewStatus).toBe("ready");
+    await click(button(screen.container, "Approve & run"));
+    expect(app.approve).toHaveBeenCalledOnce();
   });
   it("shows the reviewed graph on a finished turn: tasks, order, workers and cost", async () => {
     resetApp();

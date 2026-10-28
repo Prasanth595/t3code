@@ -129,25 +129,28 @@ const codexAdditionalContext = (workflows = false) =>
 it.effect.each([false, true])("agent context matches upstream when workflows=%s", (workflows) =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
+    const advertised = yield* McpHttpServer.toolsForCaller(
+      mcp.tools
+        .filter(
+          ({ annotations }) =>
+            Context.getOrUndefined(
+              annotations,
+              McpSchema.EnabledWhen,
+            )?.(client.initializePayload) !== false,
+        )
+        .map(({ tool }) => tool),
+    );
     const measured = {
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend(workflows)),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext(workflows)),
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools
-            .filter(
-              ({ annotations }) =>
-                Context.getOrUndefined(
-                  annotations,
-                  McpSchema.EnabledWhen,
-                )?.(client.initializePayload) !== false,
-            )
-            .map(({ tool }) => ({
-              name: tool.name,
-              description: tool.description,
-              inputSchema: tool.inputSchema,
-            })),
+          advertised.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          })),
         ),
       ),
     };

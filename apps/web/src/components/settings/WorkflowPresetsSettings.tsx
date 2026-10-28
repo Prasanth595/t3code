@@ -87,7 +87,7 @@ export function WorkflowPresetsSettings({ environmentId }: { environmentId: Envi
       <SettingsSection id="workflows" title="Enable workflows">
         <SettingsRow
           title="Workflows"
-          description="Enable workflow tools, agent guidance and keyword triggers. Existing runs can finish when this is off. New agent turns use the current setting."
+          description="Enable workflow tools, agent guidance and keyword triggers. Applies to new chats. Existing chats keep their current tools and guidance."
           control={
             <Switch
               aria-label="Enable workflows"

@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -436,7 +437,15 @@ const steerOnce = (input: {
       get: () => Effect.succeedSome(runtime),
     });
     const layerGate = WorkflowApprovalGate.layer.pipe(
-      Layer.provide(Layer.merge(layerProjection, ServerSettings.layerTest({}))),
+      Layer.provide(
+        Layer.mergeAll(
+          layerProjection,
+          ServerSettings.layerTest({}),
+          Layer.mock(McpProviderSessions.McpProviderSessions)({
+            read: () => Effect.succeed({ capabilities: new Set(["workflows"]) } as never),
+          }),
+        ),
+      ),
     );
     const layerControl = ProviderTurnControlService.layer.pipe(
       Layer.provide(Layer.mergeAll(layerProjection, layerSessions, layerGate)),

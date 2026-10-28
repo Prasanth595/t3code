@@ -468,7 +468,6 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
-                    resolved.capabilities.has("workflows") === capabilities.has("workflows") &&
                     resolved.capabilities.has("orchestration") ===
                       capabilities.has("orchestration") &&
                     // A credential issued while the lineage read failed is replaced once it works.

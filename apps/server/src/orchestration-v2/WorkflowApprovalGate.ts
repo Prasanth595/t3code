@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -206,6 +207,7 @@ const armedOf = (request: PendingRequest | null | undefined): PendingRequest | n
 const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
   /**
    * A thread's latest request, or null once its latest message is known to ask for none. A
@@ -231,6 +233,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     const settings = yield* serverSettings.getSettings;
+    const mcpSession = yield* mcpSessions.read(threadId);
     const records = yield* projections.getThreadRecords(threadId, ["runs", "turnItems"], {
       turnItemTypes: ["user_message"],
     });
@@ -246,7 +249,7 @@ const make = Effect.gen(function* () {
       );
     for (const item of messages) {
       const request = workflowRequestOf({
-        workflows: settings.workflows,
+        workflows: mcpSession?.capabilities?.has("workflows") === true,
         workflowTriggers: settings.workflowTriggers,
         typedText: item.text,
         createdBy: item.createdBy,
@@ -311,8 +314,9 @@ const make = Effect.gen(function* () {
     const records = yield* projections
       .getThreadRecords(input.threadId, [])
       .pipe(Effect.mapError(unverified));
+    const mcpSession = yield* mcpSessions.read(input.threadId);
     const request = yield* observeTurn({
-      workflows: settings.workflows,
+      workflows: mcpSession?.capabilities?.has("workflows") === true,
       workflowTriggers: settings.workflowTriggers,
       typedText: input.typedText,
       createdBy: input.createdBy,
@@ -419,10 +423,6 @@ const make = Effect.gen(function* () {
         reason,
         ...(cause === undefined ? {} : { cause }),
       });
-    const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError((error) => refuse("unavailable", error)),
-    );
-    if (!settings.workflows) return yield* refuse("no-pending-request");
     yield* load(input.threadId).pipe(Effect.mapError((error) => refuse("unavailable", error)));
     const outcome = yield* Effect.sync(
       (): { readonly refused: ApprovalRefusal } | WorkflowApprovalGateDecision => {

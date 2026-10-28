@@ -46,12 +46,13 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { applyUltracode, ULTRACODE_TURN_NOTE } from "@t3tools/provider-core/server/ultracode";
+import { ULTRACODE_TURN_NOTE } from "@t3tools/provider-core/server/ultracode";
 import type { UltracodeMode } from "@t3tools/contracts/settings";
-import { personTypedWords } from "@t3tools/shared/workflowIntent";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { applyTurnTriggers } from "@t3tools/provider-core/server/workflowTrigger";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
@@ -74,9 +75,18 @@ const normalize = (target: string) => {
 const layerWorktreeLocation = (
   worktreesDir = managedWorktreesDir,
   settings = ServerSettings.layerTest({ workflows: true }),
+  sessionWorkflows?: boolean,
 ) =>
   Layer.mergeAll(
     Path.layer,
+    sessionWorkflows === undefined
+      ? McpProviderSessions.layer
+      : Layer.mock(McpProviderSessions.McpProviderSessions)({
+          read: () =>
+            Effect.succeed({
+              capabilities: new Set(sessionWorkflows ? ["workflows"] : []),
+            } as never),
+        }),
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
     settings,
   );
@@ -321,6 +331,8 @@ function makeLocalCommandHarness(input: {
   readonly attachments?: OrchestrationV2ThreadProjection["messages"][number]["attachments"];
   /** The ultracode setting on each successive read; the last value repeats. */
   readonly ultracodeReads?: ReadonlyArray<UltracodeMode>;
+  readonly workflowsSetting?: boolean;
+  readonly sessionWorkflows?: boolean;
   /** The resumed native session already holds this much of its context window. */
   readonly nativeContextUsage?: { readonly usedTokens: number; readonly maxTokens: number };
 }) {
@@ -735,11 +747,15 @@ function makeLocalCommandHarness(input: {
         providerThread: root.providerThread,
         message: {
           ...root.message,
-          text: applyUltracode({
-            mode: root.turnTriggers.ultracode,
+          text: applyTurnTriggers({
+            workflows: root.turnTriggers.workflows,
+            workflowTriggers: root.turnTriggers.workflowTriggers,
+            workflowPresets: root.turnTriggers.workflowPresets,
+            ultracode: root.turnTriggers.ultracode,
+            typedText: root.typedText,
             driver: root.providerThread.driver,
             text: root.message.text,
-            typedWords: personTypedWords(root.typedText),
+            resumesEarlierTurn: false,
             createdBy: root.message.createdBy,
             creationSource: root.message.creationSource,
             delegatedThread: false,
@@ -857,8 +873,9 @@ function makeLocalCommandHarness(input: {
         layerWorktreeLocation(
           input.worktreesDir,
           input.ultracodeReads === undefined
-            ? undefined
+            ? ServerSettings.layerTest({ workflows: input.workflowsSetting ?? true })
             : layerUltracodeReads(input.ultracodeReads, settingsReads),
+          input.sessionWorkflows ?? true,
         ),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -1741,4 +1758,26 @@ effectIt.effect("a turn the hook leaves alone is delivered unchanged after conte
       `${restartCancelledBackgroundWorkNote(RESTART_WORK)}\n\nUser message:\nPlain request`,
     );
   }),
+);
+
+effectIt.effect.each([
+  { issued: false, text: HOOKED_TEXT, note: ULTRACODE_TURN_NOTE },
+  { issued: true, text: HOOKED_TEXT, note: ULTRACODE_TURN_NOTE },
+  { issued: false, text: "Use a workflow to ship this", note: "<t3-workflow>" },
+  { issued: true, text: "Use a workflow to ship this", note: "<t3-workflow>" },
+])(
+  "turn notes follow the issued workflow capability instead of the live setting (issued=$issued, text=$text)",
+  ({ issued, text, note }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text,
+        previousTurn: COMPLETED_PREVIOUS_TURN,
+        delivery: { handoff: "injected" },
+        sessionWorkflows: issued,
+        workflowsSetting: !issued,
+      });
+      yield* harness.start;
+      expect(harness.startRootRun.mock.calls[0]?.[0].turnTriggers.workflows).toBe(issued);
+      expect(harness.deliveredTurns[0]?.message.text.includes(note)).toBe(issued);
+    }),
 );
