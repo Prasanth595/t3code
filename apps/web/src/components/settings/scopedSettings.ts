@@ -2,6 +2,7 @@ import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
+  type ExecutionEnvironmentCapabilities,
   globalIdleCompaction,
   idleCompactionPatch,
   isNullableProjectSettingsOverride,
@@ -35,7 +36,7 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly settingsKeys?: readonly string[] | undefined };
+      readonly capabilities: Partial<ExecutionEnvironmentCapabilities>;
     };
   } | null;
   /** Keys a save in this session showed the environment silently drops. */
