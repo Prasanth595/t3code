@@ -113,6 +113,7 @@ T3 Connect does not have an active link between your account and the host.
   device.** Sign out of T3 Connect and sign in again.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, then restart T3 Code on the host.
+  For a higher limit, [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat).
 
 ## The clock is off
 
@@ -129,7 +130,7 @@ This app needs a newer T3 Code on the host. Update T3 Code on the host. See
 
 | Error                                                     | Fix                                                                                                                                         |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment, then restart T3 Code on the host.                                                                             |
+| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment or link a paid T3 Chat account, then restart T3 Code on the host.                                              |
 | `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
 | Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
 | HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |
