@@ -131,6 +131,7 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -2285,7 +2286,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       if (clicked === "copy-thread") {
-        void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
+        void copyThreadReference(
+          threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+        );
         return;
       }
       if (clicked === "copy-thread-id") {

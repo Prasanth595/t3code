@@ -1,7 +1,8 @@
 import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { formatHostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import { configuredHostedAppUrl } from "./hostedPairing";
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
 export function projectPendingUserInputAnswer(
@@ -12,7 +13,9 @@ export function projectPendingUserInputAnswer(
   const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
   return replaceComposerContextReferences(answer, (reference) => {
     const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
-    return record ? formatThreadLink(record, reference.label) : reference.source;
+    return record
+      ? formatHostedThreadLink(record, reference.label, configuredHostedAppUrl())
+      : reference.source;
   });
 }
 

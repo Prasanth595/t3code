@@ -701,7 +701,12 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
       pasteContextListener?.invoke(payload)
       return true
     }
-    return pasteImagesOrInterceptedText()
+    if (pasteImagesOrInterceptedText()) return true
+    if (T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty())) {
+      pasteContextListener?.invoke(payload)
+      return true
+    }
+    return false
   }
 
   private fun pasteImagesOrInterceptedText(): Boolean {
