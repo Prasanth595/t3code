@@ -100,6 +100,17 @@ describe("threadRouteOpensDraft", () => {
     ).toBe(false);
   });
 
+  it("keeps the route while Reconnect retries a thread that failed to sync", () => {
+    const failedDetail = {
+      ...settled,
+      connectionState: "connecting" as const,
+      detailStatus: "empty" as const,
+      detailHasError: true,
+    };
+    expect(threadRouteIsHydrating(failedDetail)).toBe(false);
+    expect(threadRouteOpensDraft(failedDetail)).toBe(false);
+  });
+
   it("opens a draft once the thread can't arrive", () => {
     expect(
       threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),

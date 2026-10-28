@@ -44,11 +44,15 @@ export function threadRouteIsHydrating(input: {
 
 /**
  * Replacing the route with a draft can't be undone, so a thread that may still arrive keeps its
- * route: a reconnecting environment often delivers it moments later.
+ * route: a reconnecting environment often delivers it moments later, and Reconnect starts a
+ * fresh connecting attempt.
  */
 export function threadRouteOpensDraft(input: {
   readonly connectionState: EnvironmentConnectionPhase;
   readonly detailStatus: EnvironmentThreadStatus;
 }): boolean {
-  return input.connectionState !== "reconnecting" || input.detailStatus === "deleted";
+  if (input.detailStatus === "deleted") {
+    return true;
+  }
+  return input.connectionState !== "reconnecting" && input.connectionState !== "connecting";
 }
