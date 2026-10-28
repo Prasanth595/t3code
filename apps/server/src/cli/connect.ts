@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { describeClockSkew } from "@t3tools/shared/clockSkew";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -34,8 +35,9 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
+import { checkRelayClock } from "../cloud/relayClock.ts";
+import { filterRelayClient } from "../cloud/relayResponse.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
-import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
@@ -148,6 +150,7 @@ interface CloudCliStatus {
   readonly relayUrl: string | null;
   readonly publishAgentActivity: boolean;
   readonly relayClient: RelayClient.RelayClientStatus;
+  readonly clockSkewSeconds: number | null;
   readonly linkMode: CliState.CliDesiredLinkMode;
   /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
   readonly reachability: EnvironmentConnectReachability | null;
@@ -178,8 +181,11 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
-  if (options?.json) {
+function formatCloudStatus(
+  status: CloudCliStatus,
+  options: { readonly json?: boolean; readonly platform: NodeJS.Platform },
+): string {
+  if (options.json) {
     return JSON.stringify(status, null, 2);
   }
 
@@ -208,6 +214,9 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
+    ...(status.clockSkewSeconds === null
+      ? []
+      : ["", describeClockSkew(status.clockSkewSeconds, options.platform)]),
     ...(!status.desired || status.linkMode !== "managed"
       ? []
       : status.reachability === null
@@ -421,13 +430,12 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = filterRelayClient(yield* HttpClient.HttpClient);
   const response = yield* HttpClientRequest.delete(
     `${relayUrl}/v1/client/environment-links/${encodeURIComponent(environmentId)}`,
   ).pipe(
     HttpClientRequest.bearerToken(token.value.accessToken),
     httpClient.execute,
-    Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
     withRelayClientTracing,
   );
@@ -671,6 +679,16 @@ const connectStatusCommand = Command.make("status", {
           ],
           { concurrency: "unbounded" },
         );
+        // Before the first link succeeds only the configured relay is known,
+        // and a wrong clock is one reason that link keeps failing.
+        const clockRelayUrl = Option.isSome(relayUrl)
+          ? Option.some(bytesToString(relayUrl.value))
+          : desired
+            ? yield* relayUrlConfig.pipe(Effect.option)
+            : Option.none();
+        const clockSkewSeconds = Option.isSome(clockRelayUrl)
+          ? yield* checkRelayClock(clockRelayUrl.value)
+          : null;
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
@@ -685,10 +703,13 @@ const connectStatusCommand = Command.make("status", {
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
           relayClient: executable,
+          clockSkewSeconds,
           linkMode,
           reachability,
         };
-        yield* Console.log(formatCloudStatus(status, { json: flags.json }));
+        yield* Console.log(
+          formatCloudStatus(status, { json: flags.json, platform: yield* HostProcess.Platform }),
+        );
       }),
       {
         quietLogs: flags.json,

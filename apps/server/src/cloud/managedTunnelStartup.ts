@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
-import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
+import {
+  isRelayClockSkewError,
+  isRelayUnavailable,
+  relayRetryAfterMillis,
+} from "./relayResponse.ts";
 
 // Relinking revoked environments is the user's choice; startup takes no action.
 export type ManagedTunnelRegistrationResult =
@@ -122,7 +126,7 @@ export const retryDesiredLinkReconcile = <A, E, R>(
 ) =>
   retryAcrossWindow(reconcile, {
     while: isRetryable,
-    whilePastWindow: isRelayUnavailable,
+    whilePastWindow: (error) => isRelayUnavailable(error) || isRelayClockSkewError(error),
     onWindowExhausted: onRetryWindowExhausted,
   });
 
@@ -177,10 +181,14 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
   readonly isRetryable: (error: E) => boolean;
 }) {
   const lock = yield* Semaphore.make(1);
-  let lastRecoveryAtMillis = Number.NEGATIVE_INFINITY;
+  let lastRecoveryAtNanos: bigint | null = null;
   let cooldown = MANAGED_TUNNEL_RECOVERY_COOLDOWN;
   const waitForCooldown = Effect.gen(function* () {
-    const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
+    const now = yield* Clock.monotonicTimeNanos;
+    const elapsed =
+      lastRecoveryAtNanos === null
+        ? Number.POSITIVE_INFINITY
+        : Number(now - lastRecoveryAtNanos) / 1_000_000;
     cooldown = nextManagedTunnelRecoveryCooldown({
       current: cooldown,
       sinceLastRecovery: Duration.millis(elapsed),
@@ -190,10 +198,10 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
   });
   // Measured from the end: a recovery that retried through a long relay
   // outage must not look settled the moment it finishes.
-  const recordRecovery = Clock.currentTimeMillis.pipe(
+  const recordRecovery = Clock.monotonicTimeNanos.pipe(
     Effect.tap((now) =>
       Effect.sync(() => {
-        lastRecoveryAtMillis = now;
+        lastRecoveryAtNanos = now;
       }),
     ),
   );

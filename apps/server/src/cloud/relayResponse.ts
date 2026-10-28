@@ -1,17 +1,22 @@
 import { RelayProtectedError } from "@t3tools/contracts/relay";
+import { clockSkewFromDateHeader, describeClockSkew } from "@t3tools/shared/clockSkew";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
+import { probeRelayClock } from "./relayClock.ts";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
-/** Only unavailable is retryable. Descriptions expose relay explanations and trace IDs, never request details. */
+// Descriptions carry relay diagnostics and trace IDs, never request credentials.
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
   "RelayRequestError",
   {
     rejection: Schema.Literals(["unauthorized", "forbidden", "rejected", "unavailable"]),
     description: Schema.String,
+    clockSkewSeconds: Schema.optional(Schema.Number),
     /** How long the relay asked callers to wait (`Retry-After`) before retrying. */
     retryAfterMillis: Schema.optionalKey(Schema.Number),
   },
@@ -33,7 +38,13 @@ export function relayRequestError(cause: unknown): RelayRequestError {
 }
 
 export const shouldRetryRelayRequest = (error: unknown): boolean =>
-  !isRelayRequestError(error) || error.rejection === "unavailable";
+  !isRelayRequestError(error) ||
+  error.rejection === "unavailable" ||
+  error.clockSkewSeconds !== undefined;
+
+/** A relay refusal that came while this machine's clock was too far off to trust. */
+export const isRelayClockSkewError = (error: unknown): error is RelayRequestError =>
+  isRelayRequestError(error) && error.clockSkewSeconds !== undefined;
 
 /** The relay answered and asked to be retried later; nothing local is wrong. */
 export const isRelayUnavailable = (error: unknown): boolean =>
@@ -67,7 +78,7 @@ function recoveryHint(error: RelayProtectedError): string {
       return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart T3 Code after signing in.";
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
-      return "Check this machine's date and time, update T3 Code, then restart it.";
+      return "Check this machine's date and time. T3 Connect retries expired proofs automatically; update T3 Code if this continues.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";
   }
@@ -75,8 +86,15 @@ function recoveryHint(error: RelayProtectedError): string {
 
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
+  requestDurationMillis = 0,
+  requestStartedAtMillis?: number,
+  measuredClockSkewSeconds?: number,
 ) {
   if (response.status >= 200 && response.status < 300) return response;
+  const nowMillis = yield* Clock.currentTimeMillis;
+  const clockSkewSeconds =
+    measuredClockSkewSeconds ??
+    clockSkewFromDateHeader(response.headers.date, nowMillis, requestDurationMillis);
   const decoded = yield* HttpClientResponse.schemaBodyJson(RelayProtectedError)(response).pipe(
     Effect.option,
   );
@@ -85,20 +103,59 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   const description = Option.isSome(decoded)
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
+  // The proof predates any in-flight clock correction. Project the starting
+  // wall clock forward with monotonic time to check the clock that signed it.
+  if (
+    (response.status === 400 || response.status === 401) &&
+    clockSkewSeconds === null &&
+    requestStartedAtMillis !== undefined &&
+    clockSkewFromDateHeader(
+      response.headers.date,
+      requestStartedAtMillis + requestDurationMillis,
+      requestDurationMillis,
+    ) !== null
+  ) {
+    return yield* new RelayRequestError({
+      rejection: "unavailable",
+      description: `The host computer's clock changed during the T3 Connect relay request. T3 Connect will retry with a fresh proof. Relay response: ${
+        Option.isSome(decoded)
+          ? `${decoded.value.message}. Trace ID: ${decoded.value.traceId}.`
+          : `HTTP ${response.status}.${requestId}`
+      }`,
+    });
+  }
+  // Timestamp rejections can clear after clock sync; unrelated HTTP statuses stay permanent.
+  const clockSuspected =
+    clockSkewSeconds !== null && (response.status === 400 || response.status === 401);
+  const platform = yield* HostProcess.Platform;
+  const refusal = (rejection: RelayRequestError["rejection"]) =>
+    !clockSuspected
+      ? new RelayRequestError({ rejection, description })
+      : new RelayRequestError({
+          rejection,
+          // The relay's own recovery advice does not apply until the clock is
+          // fixed, so keep only what it said and its trace.
+          description: `${describeClockSkew(clockSkewSeconds, platform)} T3 Connect reconnects by itself once the clock is correct. Relay response: ${
+            Option.isSome(decoded)
+              ? `${decoded.value.message}. Trace ID: ${decoded.value.traceId}.`
+              : `HTTP ${response.status}.${requestId}`
+          }`,
+          clockSkewSeconds,
+        });
 
-  // Only a schema-decoded expired-proof 401 is retryable for clock skew; every other 401 is permanent.
+  // A decoded expired proof remains retryable even without a usable Date header.
   if (
     response.status === 401 &&
     Option.isSome(decoded) &&
     decoded.value._tag === "RelayEnvironmentLinkProofExpiredError"
   ) {
-    return yield* new RelayRequestError({ rejection: "unavailable", description });
+    return yield* refusal("unavailable");
   }
   if (response.status === 401) {
-    return yield* new RelayRequestError({ rejection: "unauthorized", description });
+    return yield* refusal("unauthorized");
   }
   if (response.status === 403) {
-    return yield* new RelayRequestError({ rejection: "forbidden", description });
+    return yield* refusal("forbidden");
   }
   if (
     response.status >= 400 &&
@@ -106,7 +163,7 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     response.status !== 408 &&
     response.status !== 429
   ) {
-    return yield* new RelayRequestError({ rejection: "rejected", description });
+    return yield* refusal("rejected");
   }
   const retryAfterMillis = parseRetryAfterMillis(
     response.headers["retry-after"],
@@ -118,3 +175,59 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     ...(retryAfterMillis === undefined ? {} : { retryAfterMillis }),
   });
 });
+
+export interface RelayRequestTiming {
+  readonly startedAtMillis: number;
+  readonly startedAtNanos: bigint;
+}
+
+export const filterRelayClient = (client: HttpClient.HttpClient, timing?: RelayRequestTiming) =>
+  HttpClient.transformResponse(client, (response) =>
+    Effect.gen(function* () {
+      const startedAtMillis = timing?.startedAtMillis ?? (yield* Clock.currentTimeMillis);
+      const startedAtNanos = timing?.startedAtNanos ?? (yield* Clock.monotonicTimeNanos);
+      const result = yield* response;
+      const checkClock = Effect.gen(function* () {
+        const elapsedMillis =
+          Number((yield* Clock.monotonicTimeNanos) - startedAtNanos) / 1_000_000;
+        if (
+          (result.status === 400 || result.status === 401) &&
+          Math.abs((yield* Clock.currentTimeMillis) - startedAtMillis - elapsedMillis) > 60_000
+        ) {
+          return yield* new RelayRequestError({
+            rejection: "unavailable",
+            description:
+              "The host clock changed during the T3 Connect proof request. T3 Connect will retry with a fresh proof.",
+          });
+        }
+        return elapsedMillis;
+      });
+      const elapsedMillis = yield* checkClock;
+      const now = yield* Clock.currentTimeMillis;
+      let measuredClockSkewSeconds: number | undefined;
+      if (
+        (result.status === 400 || result.status === 401) &&
+        clockSkewFromDateHeader(result.headers.date, now, elapsedMillis) === null &&
+        clockSkewFromDateHeader(result.headers.date, startedAtMillis) !== null
+      ) {
+        const measurement = yield* probeRelayClock(new URL(result.request.url).origin).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+        if (measurement === null) {
+          return yield* new RelayRequestError({
+            rejection: "unavailable",
+            description:
+              "Could not confirm the host clock after a delayed T3 Connect refusal. T3 Connect will retry.",
+          });
+        }
+        measuredClockSkewSeconds = measurement.clockSkewSeconds ?? undefined;
+      }
+      const totalElapsedMillis = yield* checkClock;
+      return yield* filterRelayResponse(
+        result,
+        totalElapsedMillis,
+        startedAtMillis,
+        measuredClockSkewSeconds,
+      );
+    }),
+  );

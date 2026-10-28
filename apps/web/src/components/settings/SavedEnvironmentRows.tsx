@@ -21,6 +21,7 @@ import {
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
+import { describeClockSkew } from "@t3tools/shared/clockSkew";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
@@ -484,6 +485,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     ? null
     : "Your session does not have permission to manage T3 Connect access.";
   const isBusy = isUpdating || isUpdatingPreference;
+  const clockSkewSeconds = primaryCloudLinkState.data?.clockSkewSeconds;
+  const clockSkewWarning =
+    clockSkewSeconds === undefined
+      ? null
+      : describeClockSkew(clockSkewSeconds, primaryCloudLinkState.data?.hostPlatform ?? "");
   const switchDisabled =
     !canManageRelay ||
     !isSignedIn ||
@@ -505,7 +511,12 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- 30 s interval that refreshes the cloud link reachability while mounted
   useEffect(() => {
     const interval = window.setInterval(() => refreshLinkState(), 30_000);
-    return () => window.clearInterval(interval);
+    const onFocus = () => refreshLinkState();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
   const reachability = managedTunnelActive ? primaryCloudLinkState.data?.reachability : undefined;
   const reachabilityStatus =
@@ -612,7 +623,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
                     ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
                     : "Make this environment available to your other devices through T3 Connect."
           }
-          status={operationError ?? primaryCloudLinkState.error ?? reachabilityStatus}
+          status={
+            operationError ?? clockSkewWarning ?? primaryCloudLinkState.error ?? reachabilityStatus
+          }
           control={
             signedOut ? (
               signInButton
@@ -626,10 +639,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
             )
           }
         />
-      ) : linkRevoked ? (
+      ) : linkRevoked || clockSkewWarning !== null ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description={
+            linkRevoked
+              ? "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+              : undefined
+          }
+          status={clockSkewWarning}
         />
       ) : null}
       {signedOut && isElectron ? null : (

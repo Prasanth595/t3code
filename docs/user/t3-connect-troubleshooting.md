@@ -118,7 +118,9 @@ T3 Connect does not have an active link between your account and the host.
 
 T3 Connect signs requests with short-lived proofs. When the clock on this
 device or the host is a few minutes wrong, T3 Connect rejects them. Turn on
-automatic date and time on both devices, then retry.
+automatic date and time on both devices, then retry. The host retries clock-related
+refusals automatically after its clock is corrected, without a restart.
+`t3 connect status` on the host reports significant clock errors.
 
 ## The host runs an older T3 Code
 
@@ -131,7 +133,7 @@ This app needs a newer T3 Code on the host. Update T3 Code on the host. See
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment, then restart T3 Code on the host.                                                                             |
 | `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
+| Expired or invalid link proof                             | Turn on automatic date and time on the host. T3 Code retries clock-related refusals automatically; update it if this continues.             |
 | HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |
 | HTTP 408, 429, or 5xx                                     | Wait a few minutes. T3 Code retries temporary failures on its own.                                                                          |
 
