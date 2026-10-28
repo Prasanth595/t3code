@@ -81,6 +81,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -13566,69 +13567,97 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : threadDispatch.withLock(parentThreadId, dispatch);
   });
 
-  // One admission pass at a time, so two finishing runs cannot both fill the same slot.
+  // One admission pass and one pending retry per environment.
   const admissionLock = yield* Semaphore.make(1);
-  /** Starts waiting delegated runs, oldest first, while the running limit has room. */
-  const admitWaitingDelegatedRuns = admissionLock
-    .withPermits(1)(
-      Effect.gen(function* () {
-        const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
-        const admission = yield* projectionStore.getDelegatedRunAdmission();
-        const free = Math.max(0, settings.maxRunningDelegatedTasks - admission.admitted);
-        for (const waiting of admission.waiting.slice(0, free)) {
-          const commandId = CommandId.make(`command:system:delegated-admission:${waiting.runId}`);
-          yield* dispatchWithReceipt({
-            type: "prepared-run.release",
-            commandId,
-            threadId: waiting.threadId,
-            runId: waiting.runId,
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.gen(function* () {
-                yield* Effect.logWarning("Failed to start a waiting delegated task", {
-                  runId: waiting.runId,
-                  cause,
-                });
-                const rejected =
-                  cause._tag === "OrchestratorCommandPreviouslyRejectedError" ||
-                  (yield* commandReceipts.getByCommandId(commandId).pipe(
-                    Effect.map(
-                      (receipt) =>
-                        Option.isSome(receipt) &&
-                        receipt.value.status === "rejected" &&
-                        receipt.value.threadId === waiting.threadId &&
-                        receipt.value.commandType === "prepared-run.release",
-                    ),
-                    Effect.orElseSucceed(() => false),
-                  ));
-                if (!rejected) return;
-                const reason =
-                  cause._tag === "OrchestratorDispatchError" ? (cause.cause ?? cause) : cause;
-                yield* dispatchWithReceipt({
-                  type: "prepared-run.fail",
-                  commandId: CommandId.make(
-                    `command:system:delegated-admission-failure:${waiting.runId}`,
+  const admissionScope = yield* Effect.scope;
+  let admissionRetry: { readonly token: object; readonly fiber: Fiber.Fiber<void> } | undefined;
+  let admissionRetryDelayMs = 1_000;
+  const admitWaitingDelegatedRuns: (retryToken?: object) => Effect.Effect<void> = Effect.fn(
+    "Orchestrator.admitWaitingDelegatedRuns",
+  )(function* (retryToken?: object): Effect.fn.Return<void> {
+    if (retryToken !== undefined && admissionRetry?.token !== retryToken) return;
+    const pending = admissionRetry;
+    admissionRetry = undefined;
+    if (retryToken === undefined) {
+      admissionRetryDelayMs = 1_000;
+      if (pending !== undefined) yield* Fiber.interrupt(pending.fiber);
+    }
+    let retryNeeded = false;
+    yield* Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      const admission = yield* projectionStore.getDelegatedRunAdmission();
+      const free = Math.max(0, settings.maxRunningDelegatedTasks - admission.admitted);
+      for (const waiting of admission.waiting.slice(0, free)) {
+        const commandId = CommandId.make(`command:system:delegated-admission:${waiting.runId}`);
+        yield* dispatchWithReceipt({
+          type: "prepared-run.release",
+          commandId,
+          threadId: waiting.threadId,
+          runId: waiting.runId,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning("Failed to start a waiting delegated task", {
+                runId: waiting.runId,
+                cause,
+              });
+              const rejected =
+                cause._tag === "OrchestratorCommandPreviouslyRejectedError" ||
+                (yield* commandReceipts.getByCommandId(commandId).pipe(
+                  Effect.map(
+                    (receipt) =>
+                      Option.isSome(receipt) &&
+                      receipt.value.status === "rejected" &&
+                      receipt.value.threadId === waiting.threadId &&
+                      receipt.value.commandType === "prepared-run.release",
                   ),
-                  threadId: waiting.threadId,
-                  runId: waiting.runId,
-                  failure: makeProviderFailure({
-                    cause,
-                    message: `Failed to start a waiting delegated task: ${reason instanceof Error ? reason.message : String(reason)}`,
-                    class: "validation_error",
-                    retryable: false,
-                  }),
-                });
-              }),
-            ),
-          );
-        }
-      }),
-    )
-    .pipe(
+                  Effect.orElseSucceed(() => false),
+                ));
+              if (!rejected) {
+                retryNeeded = true;
+                return;
+              }
+              const reason =
+                cause._tag === "OrchestratorDispatchError" ? (cause.cause ?? cause) : cause;
+              yield* dispatchWithReceipt({
+                type: "prepared-run.fail",
+                commandId: CommandId.make(
+                  `command:system:delegated-admission-failure:${waiting.runId}`,
+                ),
+                threadId: waiting.threadId,
+                runId: waiting.runId,
+                failure: makeProviderFailure({
+                  cause,
+                  message: `Failed to start a waiting delegated task: ${reason instanceof Error ? reason.message : String(reason)}`,
+                  class: "validation_error",
+                  retryable: false,
+                }),
+              });
+            }),
+          ),
+        );
+      }
+    }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to read delegated task admission", { cause }),
+        Effect.gen(function* () {
+          retryNeeded = true;
+          yield* Effect.logWarning("Failed to read delegated task admission", { cause });
+        }),
       ),
     );
+    if (!retryNeeded) {
+      admissionRetryDelayMs = 1_000;
+      return;
+    }
+    const token = {};
+    const delayMs = admissionRetryDelayMs;
+    admissionRetryDelayMs = Math.min(delayMs * 2, 30_000);
+    const fiber = yield* Effect.sleep(delayMs).pipe(
+      Effect.andThen(() => admitWaitingDelegatedRuns(token)),
+      Effect.forkIn(admissionScope),
+    );
+    admissionRetry = { token, fiber };
+  }, admissionLock.withPermits(1));
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
@@ -13683,7 +13712,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (delegatedTaskTerminalStatus(run.status) !== null ||
           (run.admission === "waiting" && run.workspacePreparation !== undefined))
       ) {
-        yield* admitWaitingDelegatedRuns;
+        yield* admitWaitingDelegatedRuns();
       }
     },
     (effect, stored) =>
@@ -13872,7 +13901,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
     // A run that finished while the server was down left its slot without a run update.
-    yield* admitWaitingDelegatedRuns;
+    yield* admitWaitingDelegatedRuns();
   });
 
   const delegatedTaskResultPending = Effect.fn("Orchestrator.delegatedTaskResultPending")(

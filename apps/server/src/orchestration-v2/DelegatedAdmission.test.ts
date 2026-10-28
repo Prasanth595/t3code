@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -288,58 +289,104 @@ it.effect.each([false, true])(
     }),
 );
 
-it.effect(
-  "retries a transient admission receipt-read failure without terminalizing the waiting task",
-  () =>
-    Effect.gen(function* () {
-      const blocked = yield* Ref.make<CommandId | null>(null);
-      const failures = yield* Ref.make(0);
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        yield* startParent;
-        const running = yield* delegate("running task");
-        const waiting = yield* delegate("retryable task");
-        const { run } = yield* firstRun(waiting);
-        yield* Ref.set(blocked, CommandId.make(`command:system:delegated-admission:${run.id}`));
-        yield* stop(running);
-        yield* orchestrator.recoverDelegatedTasks;
-        assert.isAbove(yield* Ref.get(failures), 0);
-        const pending = yield* firstRun(waiting);
-        assert.equal(pending.run.status, "preparing");
-        assert.equal(pending.run.admission, "waiting");
-        assert.isNull(pending.run.completedAt);
-        yield* Ref.set(blocked, null);
-        yield* orchestrator.recoverDelegatedTasks;
-        const retried = yield* firstRun(waiting);
-        assert.equal(retried.run.id, run.id);
-        assert.equal(retried.run.status, "starting");
-        assert.equal(retried.run.admission, "admitted");
-      }).pipe(
-        Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: "delegated-admission-transient" },
-            ProviderAdapterRegistry.layerFromAdapters([adapter]),
-            {
-              databaseLayer: SqlitePersistence.layerMemory,
-              runEffectWorker: false,
-              maxRunningDelegatedTasks: 1,
-              commandReceiptStoreOverride: (store) => ({
-                ...store,
-                getByCommandId: (commandId) =>
-                  Effect.gen(function* () {
-                    if ((yield* Ref.get(blocked)) === commandId) {
-                      yield* Ref.update(failures, (count) => count + 1);
-                      return yield* new CommandReceiptStore.CommandReceiptStoreReadError({
-                        commandId,
-                        cause: "temporary storage failure",
-                      });
-                    }
-                    return yield* store.getByCommandId(commandId);
-                  }),
-              }),
-            },
-          ),
+const withAdmissionReadFailure = <A, E>(
+  use: (input: {
+    readonly failures: Ref.Ref<number>;
+    readonly blocked: Ref.Ref<CommandId | null>;
+    readonly waiting: ThreadId;
+  }) => Effect.Effect<A, E, Orchestrator.OrchestratorV2>,
+) =>
+  Effect.gen(function* () {
+    const blocked = yield* Ref.make<CommandId | null>(null);
+    const failures = yield* Ref.make(0);
+    const failed = yield* Deferred.make<void>();
+    return yield* Effect.gen(function* () {
+      yield* startParent;
+      const running = yield* delegate("running task");
+      const waiting = yield* delegate("retryable task");
+      const { run } = yield* firstRun(waiting);
+      yield* Ref.set(blocked, CommandId.make(`command:system:delegated-admission:${run.id}`));
+      yield* stop(running);
+      yield* Deferred.await(failed);
+      // Wait for the whole pass, including its rejected-receipt check, to settle.
+      yield* TestClock.adjust(0);
+      return yield* use({ blocked, failures, waiting });
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "delegated-admission-transient" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          {
+            databaseLayer: SqlitePersistence.layerMemory,
+            runEffectWorker: false,
+            maxRunningDelegatedTasks: 1,
+            commandReceiptStoreOverride: (store) => ({
+              ...store,
+              getByCommandId: (commandId) =>
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(blocked)) === commandId) {
+                    yield* Ref.update(failures, (count) => count + 1);
+                    yield* Deferred.succeed(failed, undefined);
+                    return yield* new CommandReceiptStore.CommandReceiptStoreReadError({
+                      commandId,
+                      cause: "temporary storage failure",
+                    });
+                  }
+                  return yield* store.getByCommandId(commandId);
+                }),
+            }),
+          },
         ),
-      );
+      ),
+    );
+  });
+
+it.effect("automatically retries a transient admission failure without a recovery call", () =>
+  withAdmissionReadFailure(({ blocked, waiting }) =>
+    Effect.gen(function* () {
+      const pending = yield* firstRun(waiting);
+      assert.equal(pending.run.status, "preparing");
+      assert.equal(pending.run.admission, "waiting");
+      assert.isNull(pending.run.completedAt);
+      yield* Ref.set(blocked, null);
+      yield* TestClock.adjust("1 second");
+      const retried = yield* firstRun(waiting);
+      assert.equal(retried.run.id, pending.run.id);
+      assert.equal(retried.run.status, "starting");
+      assert.equal(retried.run.admission, "admitted");
     }),
+  ),
+);
+
+it.effect("backs off persistent admission failures up to thirty seconds without spinning", () =>
+  withAdmissionReadFailure(({ failures, waiting }) =>
+    Effect.gen(function* () {
+      let expected = yield* Ref.get(failures);
+      assert.equal(expected, 2);
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+        yield* TestClock.adjust(delay - 1);
+        assert.equal(yield* Ref.get(failures), expected);
+        yield* TestClock.adjust(1);
+        expected += 2;
+        assert.equal(yield* Ref.get(failures), expected);
+        assert.equal((yield* firstRun(waiting)).run.status, "preparing");
+      }
+    }),
+  ),
+);
+
+it.effect("a normal admission pass supersedes the single pending retry", () =>
+  withAdmissionReadFailure(({ failures }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const initial = yield* Ref.get(failures);
+      yield* TestClock.adjust(500);
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.equal(yield* Ref.get(failures), initial + 2);
+      yield* TestClock.adjust(500);
+      assert.equal(yield* Ref.get(failures), initial + 2);
+      yield* TestClock.adjust(500);
+      assert.equal(yield* Ref.get(failures), initial + 4);
+    }),
+  ),
 );
