@@ -80,6 +80,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
@@ -318,12 +319,16 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
     ),
   ),
 );
+const closedDeviceThreads: Array<ThreadId> = [];
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
   Layer.provideMerge(layerScheduledTasksTest),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
       Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+      Layer.mock(DeviceService.DeviceService)({
+        close: ({ threadId }) => Effect.sync(() => void closedDeviceThreads.push(threadId)),
+      }),
     ),
   ),
 );
@@ -490,6 +495,43 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           remainingIds,
         );
       }),
+  );
+
+  it.effect("archiving and deleting a thread close its devices through the effect worker", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("device-cleanup-thread");
+      const closes = () => closedDeviceThreads.filter((id) => id === threadId).length;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("device-cleanup-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("device-cleanup-project"),
+        title: "Device cleanup",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("device-cleanup-archive"),
+        threadId,
+      });
+      yield* worker.drain();
+      assert.equal(closes(), 1);
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("device-cleanup-delete"),
+        threadId,
+      });
+      yield* worker.drain();
+      assert.equal(closes(), 2);
+    }),
   );
 
   it.effect("waits for an in-flight thread update before planning deletion", () =>

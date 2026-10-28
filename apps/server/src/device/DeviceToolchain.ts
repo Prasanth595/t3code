@@ -209,6 +209,16 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
+/** The agent-device CLI entry when it is already installed; never installs it. */
+export const installedAgentDeviceEntry = Effect.fn("DeviceToolchain.installedAgentDeviceEntry")(
+  function* (baseDir: string) {
+    const path = yield* Path.Path;
+    return (yield* isAgentDeviceInstalled(baseDir))
+      ? deviceToolchainPaths(path, baseDir).agentDevice.entryPath
+      : null;
+  },
+);
+
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
   baseDir: string,
   running: { hub?: string; agent?: string } = {},

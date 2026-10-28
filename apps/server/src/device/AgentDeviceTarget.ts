@@ -7,11 +7,11 @@ import * as Path from "effect/Path";
 
 import type { AgentDaemonEndpoint } from "./DeviceHost.ts";
 
-const encodeEndpoint = Schema.encodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({ daemonBaseUrl: Schema.String, daemonAuthToken: Schema.String }),
-  ),
+const AgentDeviceConfigJson = Schema.fromJsonString(
+  Schema.Struct({ daemonBaseUrl: Schema.String, daemonAuthToken: Schema.String }),
 );
+const encodeEndpoint = Schema.encodeEffect(AgentDeviceConfigJson);
+export const decodeAgentDeviceConfig = Schema.decodeUnknownEffect(AgentDeviceConfigJson);
 
 const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
   const crypto = yield* Crypto.Crypto;
