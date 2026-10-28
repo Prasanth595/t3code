@@ -127,6 +127,10 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./voice-call": {
+      "types": "./src/voice-call/index.ts",
+      "default": "./src/voice-call/index.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
@@ -226,6 +230,10 @@
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"
+    },
+    "./state/realtime-voice": {
+      "types": "./src/state/realtimeVoice.ts",
+      "default": "./src/state/realtimeVoice.ts"
     },
     "./state/preview": {
       "types": "./src/state/preview.ts",

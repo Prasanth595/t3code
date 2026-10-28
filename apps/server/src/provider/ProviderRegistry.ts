@@ -310,7 +310,14 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  const { realtimeVoice } = source;
+  if (!realtimeVoice) return Effect.succeed(snapshot);
+  const supportsRealtimeVoice = realtimeVoice.supports(snapshot);
+  return Effect.succeed({
+    ...snapshot,
+    supportsRealtimeVoice,
+    ...(supportsRealtimeVoice && { realtimeVoices: realtimeVoice.voices }),
+  });
 };
 
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
@@ -324,6 +331,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
+  realtimeVoice: instance.realtimeVoice,
 });
 
 export const layer = Layer.effect(

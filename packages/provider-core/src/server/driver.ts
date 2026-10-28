@@ -8,6 +8,9 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  RealtimeVoiceError,
+  RealtimeVoiceStartInput,
+  RealtimeVoiceStartResult,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
@@ -32,6 +35,40 @@ export interface ProviderDriverMetadata {
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
 
+/** What lets a call act on a T3 thread: the instructions and the MCP server the voice agent is given. */
+export interface RealtimeVoiceThread {
+  readonly instructions: string;
+  readonly mcp: { readonly endpoint: string; readonly authorizationHeader: string };
+  /** MCP tools the call may use without asking; the call has no one to approve anything else. */
+  readonly tools: ReadonlyArray<string>;
+  /** Keeps spoken lines in the call's chat: `text` is a fragment to append, or the whole line when `final`. */
+  readonly transcript: (line: {
+    readonly role: "user" | "assistant";
+    readonly text: string;
+    readonly final: boolean;
+  }) => Effect.Effect<void>;
+  /** Must run when the call ends, however it ends. */
+  readonly release: Effect.Effect<void>;
+}
+
+/**
+ * Spoken calls between a client and the provider's realtime API. The client owns the WebRTC peer
+ * and audio; the provider only brokers the SDP exchange, so an implementation never handles audio.
+ */
+export interface ProviderRealtimeVoice {
+  /** Whether the instance's current snapshot (auth, plan) can start a call. */
+  readonly supports: (provider: ServerProvider) => boolean;
+  /** Voices a call may ask for. */
+  readonly voices: ReadonlyArray<string>;
+  readonly start: (
+    input: Omit<RealtimeVoiceStartInput, "instanceId" | "threadId" | "modelSelection"> & {
+      readonly thread?: RealtimeVoiceThread;
+    },
+  ) => Effect.Effect<RealtimeVoiceStartResult, RealtimeVoiceError>;
+  /** Ending an unknown or already-ended session succeeds. */
+  readonly stop: (sessionId: string) => Effect.Effect<void>;
+}
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -49,6 +86,7 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  readonly realtimeVoice?: ProviderRealtimeVoice;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

@@ -217,6 +217,10 @@ export const ServerProvider = Schema.Struct({
   supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  /** The signed-in account can start a spoken call (`realtimeVoice.start`). */
+  supportsRealtimeVoice: Schema.optional(Schema.Boolean),
+  /** Voices a call can speak with; set only while `supportsRealtimeVoice` is true. */
+  realtimeVoices: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,

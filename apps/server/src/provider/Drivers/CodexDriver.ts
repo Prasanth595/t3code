@@ -27,6 +27,7 @@ import {
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
+import { makeCodexRealtimeVoice } from "../CodexRealtimeVoice.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
@@ -339,6 +340,19 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
+    const realtimeVoice = yield* makeCodexRealtimeVoice({
+      instanceId,
+      launch: {
+        binaryPath: effectiveConfig.binaryPath,
+        homePath: effectiveConfig.homePath,
+        environment: processEnv,
+      },
+      launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+      enabled: effectiveConfig.voiceCalls,
+      voice: effectiveConfig.voice,
+      instructions: effectiveConfig.voiceInstructions,
+    });
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -349,6 +363,7 @@ export const CodexDriver: ProviderDriver<
       snapshot,
       snapshotForCwd,
       consumeResetCredit,
+      realtimeVoice,
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;

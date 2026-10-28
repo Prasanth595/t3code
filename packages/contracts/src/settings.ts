@@ -613,6 +613,43 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
+// Codex's realtime v3 voices; the app-server lists them through `thread/realtime/listVoices`.
+export const CODEX_REALTIME_VOICE_NAMES = [
+  "juniper",
+  "maple",
+  "spruce",
+  "ember",
+  "vale",
+  "breeze",
+  "arbor",
+  "sol",
+  "cove",
+  "aube",
+  "bubbie",
+  "haetsal",
+  "hanul",
+  "himari",
+  "leher",
+  "miko",
+  "neer",
+  "porto",
+  "rindo",
+  "rio",
+  "rivage",
+  "selva",
+  "sonna",
+  "tinta",
+  "viola",
+] as const;
+
+const CODEX_REALTIME_VOICES = [
+  { value: "", label: "Default" },
+  ...CODEX_REALTIME_VOICE_NAMES.map((voice) => ({
+    value: voice,
+    label: voice[0]!.toUpperCase() + voice.slice(1),
+  })),
+] as const;
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
@@ -663,9 +700,45 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    voiceCalls: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Voice calls",
+        description: "Offer spoken calls on this account when it is signed in with ChatGPT.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    voice: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Call voice",
+        description: "The voice Codex speaks with on this account.",
+        providerSettingsForm: {
+          control: "select",
+          options: CODEX_REALTIME_VOICES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    voiceInstructions: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Call instructions",
+        description: "Extra instructions for the voice agent, such as a language or tone.",
+        providerSettingsForm: { control: "textarea", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "shadowHomePath",
+      "launchArgs",
+      "voiceCalls",
+      "voice",
+      "voiceInstructions",
+    ],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

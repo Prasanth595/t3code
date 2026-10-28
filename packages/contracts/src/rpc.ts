@@ -339,6 +339,12 @@ import {
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
+import {
+  RealtimeVoiceError,
+  RealtimeVoiceStartInput,
+  RealtimeVoiceStartResult,
+  RealtimeVoiceStopInput,
+} from "./realtimeVoice.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
@@ -422,6 +428,8 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
+  realtimeVoiceStart: "realtimeVoice.start",
+  realtimeVoiceStop: "realtimeVoice.stop",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -651,6 +659,17 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
   payload: ProviderConsumeResetCreditInput,
   success: ProviderConsumeResetCreditResult,
   error: Schema.Union([ProviderSetupError, UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+const WsRealtimeVoiceStartRpc = Rpc.make(WS_METHODS.realtimeVoiceStart, {
+  payload: RealtimeVoiceStartInput,
+  success: RealtimeVoiceStartResult,
+  error: Schema.Union([RealtimeVoiceError, EnvironmentAuthorizationError]),
+});
+
+const WsRealtimeVoiceStopRpc = Rpc.make(WS_METHODS.realtimeVoiceStop, {
+  payload: RealtimeVoiceStopInput,
+  error: Schema.Union([RealtimeVoiceError, EnvironmentAuthorizationError]),
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1920,6 +1939,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
+  WsRealtimeVoiceStartRpc,
+  WsRealtimeVoiceStopRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,
