@@ -18,7 +18,10 @@ class FakeConnection extends EventTarget {
     void (this.remote = description);
   close = () => void (this.closed = true);
   connect() {
-    this.connectionState = "connected";
+    this.become("connected");
+  }
+  become(state: string) {
+    this.connectionState = state;
     this.dispatchEvent(new Event("connectionstatechange"));
   }
 }
@@ -54,6 +57,25 @@ const setup = () => {
 };
 
 describe("VoiceCall", () => {
+  it("ends a call whose connection stays down, but not one that recovers", async () => {
+    using _timers = { [Symbol.dispose]: () => void vi.useRealTimers() };
+    vi.useFakeTimers();
+    const { call, connection, signaling } = setup();
+    await call.start();
+    connection.connect();
+    connection.become("disconnected");
+    vi.advanceTimersByTime(5_000);
+    connection.connect();
+    vi.advanceTimersByTime(20_000);
+    expect(call.getSnapshot().phase).toBe("live");
+
+    connection.become("disconnected");
+    vi.advanceTimersByTime(20_000);
+    await vi.runAllTimersAsync();
+    expect(call.getSnapshot().phase).toBe("idle");
+    expect(signaling.stop).toHaveBeenCalledExactlyOnceWith("session-1");
+  });
+
   it("ends the server's call and the microphone when hung up while connecting", async () => {
     const { call, track, signaling } = setup();
     let opened!: () => void;

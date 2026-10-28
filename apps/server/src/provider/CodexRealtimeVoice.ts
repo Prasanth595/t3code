@@ -96,6 +96,12 @@ export const makeCodexRealtimeVoice = Effect.fn("CodexRealtimeVoice.make")(funct
       cwd: request.cwd ?? process.cwd(),
     }).pipe(Scope.provide(session.scope), Effect.provideContext(services));
 
+    // A process that dies without saying so would otherwise hold its slot until the duration cap.
+    yield* client.awaitTermination.pipe(
+      Effect.catch(() => endSession(session)),
+      Effect.forkIn(session.scope),
+    );
+
     const { account } = yield* client.request("account/read", {});
     if (account?.type !== "chatgpt") return yield* fail("notSignedIn");
 

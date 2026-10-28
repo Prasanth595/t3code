@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - The disconnect grace period is a bounded browser timeout.
 import { type AudioBands, SILENCE, SPEAKING_LEVEL } from "./audio-levels.ts";
 import {
   browserVoiceCallPlatform,
@@ -36,6 +37,8 @@ export interface VoiceCallSignaling {
 }
 
 const EVENTS_CHANNEL = "oai-events";
+// A dropped connection often recovers by itself; one that stays down ends the call.
+const DISCONNECT_GRACE_MS = 10_000;
 
 const messageOf = (cause: unknown) =>
   cause instanceof DOMException && cause.name === "NotAllowedError"
@@ -140,9 +143,11 @@ export class VoiceCall {
     };
     const stopWatchingLocal = this.platform.watchAudio(microphone, hear("local"));
     let released = false;
+    let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
     const teardown = async () => {
       if (!released) {
         released = true;
+        clearTimeout(disconnectTimer);
         stopRemote();
         stopWatchingLocal();
         microphone.getTracks().forEach((track) => track.stop());
@@ -165,9 +170,12 @@ export class VoiceCall {
       });
       connection.addEventListener("connectionstatechange", () => {
         if (generation !== this.generation) return;
-        if (connection.connectionState === "connected") this.set({ phase: "live" });
-        if (connection.connectionState === "failed" || connection.connectionState === "closed") {
-          void this.hangUp();
+        clearTimeout(disconnectTimer);
+        const { connectionState } = connection;
+        if (connectionState === "connected") this.set({ phase: "live" });
+        if (connectionState === "failed" || connectionState === "closed") void this.hangUp();
+        if (connectionState === "disconnected") {
+          disconnectTimer = setTimeout(() => void this.hangUp(), DISCONNECT_GRACE_MS);
         }
       });
 
