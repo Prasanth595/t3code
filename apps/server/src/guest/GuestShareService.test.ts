@@ -1006,6 +1006,18 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
     for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
       assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
     }
+
+    // A reply edited to drop its image stops allowing it.
+    yield* eventSink.write({
+      events: [
+        {
+          ...item("item:later-image", 1, { type: "assistant_message", text: "Gone." }, inFork),
+          id: EventId.make("event:later-image-edited"),
+        },
+      ],
+    });
+    yield* sentItem("item:later-image");
+    assert.equal((yield* Effect.flip(guestShares.media(session, later))).reason, "unavailable");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

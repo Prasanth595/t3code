@@ -502,10 +502,15 @@ const make = Effect.gen(function* () {
   };
   const rememberSent = (shareId: GuestShareId, items: Iterable<OrchestrationV2TurnItem>) => {
     for (const item of items) {
-      // Only replies with image syntax can show an image; the rest are not kept.
       if (item.type !== "assistant_message") continue;
-      if (!item.text.includes("![") && !/<img/i.test(item.text)) continue;
-      sentRecord(shareId).replies.set(`${item.threadId}\u0000${item.id}`, item);
+      const key = `${item.threadId}\u0000${item.id}`;
+      // Only replies with image syntax can show an image. One edited to drop its images stops
+      // allowing them.
+      if (item.text.includes("![") || /<img/i.test(item.text)) {
+        sentRecord(shareId).replies.set(key, item);
+      } else {
+        sentImageReplies.get(shareId)?.replies.delete(key);
+      }
     }
   };
 

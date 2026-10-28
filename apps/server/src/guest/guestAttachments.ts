@@ -52,13 +52,13 @@ const IMAGE_SIGNATURES: Readonly<Record<string, (header: Uint8Array) => boolean>
 export const matchesImageSignature = (mimeType: string, header: Uint8Array) =>
   IMAGE_SIGNATURES[mimeType]?.(header) === true;
 
-const IMAGE_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-};
+const IMAGE_TYPE_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"],
+  ["webp", "image/webp"],
+]);
 
 /**
  * The type of a host image a guest may ask for by path, or null. A network path never qualifies:
@@ -66,7 +66,7 @@ const IMAGE_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
  */
 export function guestHostImageType(path: string): string | null {
   if (!isAbsolutePath(path) || isNetworkPath(path)) return null;
-  return IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()] ?? null;
+  return IMAGE_TYPE_BY_EXTENSION.get(path.split(".").at(-1)!.toLowerCase()) ?? null;
 }
 
 /**

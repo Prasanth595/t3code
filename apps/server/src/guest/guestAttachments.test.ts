@@ -25,6 +25,7 @@ describe("guest host images", () => {
     ["![a](//host/s/x.png)", "//host/s/x.png", null],
     ["![a](\\\\host\\s\\x.png)", "\\\\host\\s\\x.png", null],
     ["![a](/w/a.svg)", "/w/a.svg", null],
+    ["![a](/w/a.constructor)", "/w/a.constructor", null],
   ])("%j serves %j as %j", (text, path, type) => {
     const served = guestHostImageType(path) !== null && repliesShowImage(path, [{ text }]);
     expect(served ? guestHostImageType(path) : null).toBe(type);
