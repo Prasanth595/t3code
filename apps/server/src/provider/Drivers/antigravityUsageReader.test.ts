@@ -6,12 +6,18 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import {
+  decodeAntigravityUsageCache,
+  encodeAntigravityUsageCache,
+  makeAntigravityUsageCache,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   const context = yield* Layer.build(NodeSqliteClient.layer({ filename }));
@@ -366,6 +372,38 @@ describe("readAntigravityUsage", () => {
         records(next).map((record) => record.dedupeKey),
         ["antigravity:11:r-1", "antigravity:11:r-2"],
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("restores a persisted cache without rereading unchanged databases", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const path = (yield* Path.Path).join(dir, "session-1.db");
+      yield* seedDatabase(path, (db) =>
+        db
+          .exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)")
+          .pipe(
+            Effect.andThen(
+              db.run("INSERT INTO gen_metadata VALUES (0, ?)", [antigravityGeneration("r-1")]),
+            ),
+          ),
+      );
+      const cache = makeAntigravityUsageCache();
+      const first = yield* readAntigravityUsage(dir, 0, cache);
+      const saved = yield* encodeAntigravityUsageCache(cache);
+      const restored = makeAntigravityUsageCache();
+      for (const [key, entry] of Object.entries(
+        (yield* decodeAntigravityUsageCache(saved)).databases,
+      )) {
+        restored.set(key, entry);
+      }
+      const [entry] = restored.values();
+      assert.deepStrictEqual(yield* readAntigravityUsage(dir, 0, restored), first);
+      assert.strictEqual([...restored.values()][0], entry);
+      // Unreadable files, and files written for another MODEL_IDS table, are not used.
+      for (const bad of ["{", saved.replace(/"models":"[^"]*"/, '"models":""')]) {
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(decodeAntigravityUsageCache(bad))));
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

@@ -6,6 +6,7 @@ import type {
   ProviderUsageReader,
   ProviderUsageScan,
 } from "@t3tools/provider-core/server/usage";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -15,7 +16,13 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import {
+  ANTIGRAVITY_USAGE_CACHE_FILE_NAME,
+  decodeAntigravityUsageCache,
+  encodeAntigravityUsageCache,
+  makeAntigravityUsageCache,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 export class AntigravityUsage extends Context.Service<
   AntigravityUsage,
@@ -33,6 +40,17 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
   const cache = makeAntigravityUsageCache();
+  const cachePath = path.join(host.paths.stateDir, ANTIGRAVITY_USAGE_CACHE_FILE_NAME);
+  // Restore decoded databases once, so a restart re-reads only changed ones.
+  const loadCache = yield* Effect.cached(
+    fileSystem.readFileString(cachePath).pipe(
+      Effect.flatMap(decodeAntigravityUsageCache),
+      Effect.map(({ databases }) => {
+        for (const [key, entry] of Object.entries(databases)) cache.set(key, entry);
+      }),
+      Effect.ignore,
+    ),
+  );
 
   const dataRoots = Effect.fn("AntigravityUsage.dataRoots")(function* (
     environment: NodeJS.ProcessEnv,
@@ -93,10 +111,23 @@ const make = Effect.gen(function* () {
         : resolvedRoot;
       conversationDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
+    yield* loadCache;
+    const before = new Map(cache);
     const result = yield* readAntigravityUsage([...conversationDirs], windowStartMs, cache).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+    if (
+      cache.size !== before.size ||
+      cache.entries().some(([key, entry]) => before.get(key) !== entry)
+    ) {
+      yield* encodeAntigravityUsageCache(cache).pipe(
+        Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.ignore,
+      );
+    }
     const scanned: ProviderUsageScan[] = [];
     for (const dir of conversationDirs) {
       const exists = yield* fileSystem
