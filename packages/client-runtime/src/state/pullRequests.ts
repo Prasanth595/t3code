@@ -234,7 +234,7 @@ function actionPatchedQuery<Input, A, E>(
           registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
           (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
         );
-        if (Option.isNone(shown)) return;
+        if (Option.isNone(shown)) return registry.refresh(atom);
         const patched = options.patch(target.input, shown.value, reference, result);
         if (patched === "refresh") return registry.refresh(atom);
         const next = reuseUnchanged(shown.value, patched);
