@@ -2905,6 +2905,7 @@ it.effect.each([
   "queued-completion",
   "released-completion",
   "repeated-close",
+  "contended-close",
   "newer-run",
   "newer-session",
 ] as const)(
@@ -2912,6 +2913,7 @@ it.effect.each([
   (owner) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2989,6 +2991,37 @@ it.effect.each([
             },
           ],
         });
+        let conflicts = 0;
+        let release: Fiber.Fiber<void> | undefined;
+        const raceWithCleanup: Effect.Effect<void> = Effect.gen(function* () {
+          conflicts++;
+          if (conflicts === 1) {
+            release = yield* manager
+              .release({ providerSessionId, reason: "manual_shutdown" })
+              .pipe(Effect.orDie, Effect.forkChild({ startImmediately: true }));
+          } else {
+            assert.isFalse(
+              yield* manager.isLive(providerSessionId),
+              "release must enter between retries",
+            );
+          }
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: {
+                  ...before,
+                  nativeMetadata: { ...before.nativeMetadata, title: `conflict ${conflicts}` },
+                },
+              },
+            ],
+          });
+          if (conflicts < 4) yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+        }).pipe(Effect.orDie);
         yield* subscription.events.pipe(
           Stream.tap(() =>
             Effect.gen(function* () {
@@ -2996,10 +3029,16 @@ it.effect.each([
                 yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
               if (owner === "queued-completion" || owner === "released-completion")
                 yield* restoreCompletion;
+              if (owner === "contended-close") {
+                yield* restoreCompletion;
+                yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+              }
             }),
           ),
           Stream.runHead,
         );
+        if (release !== undefined) yield* Fiber.join(release);
+        if (owner === "contended-close") assert.equal(conflicts, 4);
         if (owner === "repeated-close") {
           yield* restoreCompletion;
           yield* subscription.close;
@@ -3013,14 +3052,19 @@ it.effect.each([
           owner === "current" ||
             owner === "queued-completion" ||
             owner === "released-completion" ||
-            owner === "repeated-close"
+            owner === "repeated-close" ||
+            owner === "contended-close"
             ? {
                 ...before,
-                nativeMetadata: { ...before.nativeMetadata, acpInstructions: null },
+                nativeMetadata: {
+                  ...before.nativeMetadata,
+                  ...(owner === "contended-close" ? { title: "conflict 4" } : {}),
+                  acpInstructions: null,
+                },
               }
             : before,
         );
-      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnchangedWrite })));
     }),
 );
 

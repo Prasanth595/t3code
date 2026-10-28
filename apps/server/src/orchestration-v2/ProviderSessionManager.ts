@@ -1632,16 +1632,17 @@ export const layerWithOptions = (
                 yield* Queue.clear(queue);
                 yield* Queue.end(queue);
               }
-              // Completion can restore its cached receipt after an idle invalidation was persisted.
-              if (entry !== undefined) {
-                yield* Effect.forEach(
-                  entry.instructionInvalidations.values(),
-                  (offered) => persistInstructionInvalidation(entry, offered),
-                  { discard: true },
-                );
-              }
             });
             yield* entry === undefined ? release : entry.requestEventPermit.withPermits(1)(release);
+            // Completion can restore its cached receipt after an idle invalidation was persisted.
+            // Retry outside the cleanup lock so release can stop a competing runtime writer.
+            if (entry !== undefined) {
+              yield* Effect.forEach(
+                [...entry.instructionInvalidations.values()],
+                (offered) => persistInstructionInvalidation(entry, offered),
+                { discard: true },
+              );
+            }
           }).pipe(Effect.orDie);
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
@@ -1875,6 +1876,7 @@ export const layerWithOptions = (
         if (threadId === null || offered.nativeMetadata?.acpInstructions !== null) return;
         // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
         yield* Effect.gen(function* () {
+          if (entry.instructionInvalidations.get(offered.id) !== offered) return true;
           if (!entry.attachedThreadIds.has(threadId)) return true;
           const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
           const stored = projection.providerThreads.find(
@@ -1903,7 +1905,12 @@ export const layerWithOptions = (
           });
           return (yield* eventSink.writeIfProviderThreadUnchanged({ expected: stored, events }))
             .committed;
-        }).pipe(Effect.repeat({ until: (committed) => committed }));
+        }).pipe(
+          // Each comparison owns the permit; retries must let cleanup and newer receipts through.
+          entry.requestEventPermit.withPermits(1),
+          Effect.tap((committed) => (committed ? Effect.void : Effect.yieldNow)),
+          Effect.repeat({ until: (committed) => committed }),
+        );
       });
 
       const startEventPump = (entry: LiveSessionEntry) => {
@@ -1970,7 +1977,7 @@ export const layerWithOptions = (
                     event.type === "provider_thread.updated" &&
                     event.providerThread.nativeMetadata?.acpInstructions !== undefined
                   ) {
-                    yield* Effect.gen(function* () {
+                    yield* Effect.sync(() => {
                       if (event.providerThread.nativeMetadata?.acpInstructions === null) {
                         entry.instructionInvalidations.set(
                           event.providerThread.id,
@@ -1979,18 +1986,18 @@ export const layerWithOptions = (
                       } else {
                         entry.instructionInvalidations.delete(event.providerThread.id);
                       }
-                      yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderAdapter.ProviderAdapterEventStreamError({
-                              driver: entry.runtime.driver,
-                              providerSessionId: entry.runtime.providerSessionId,
-                              cause,
-                            }),
-                        ),
-                      );
-                      yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                     }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderAdapter.ProviderAdapterEventStreamError({
+                            driver: entry.runtime.driver,
+                            providerSessionId: entry.runtime.providerSessionId,
+                            cause,
+                          }),
+                      ),
+                    );
+                    yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                     return;
                   }
                   // Some providers can block before a run subscriber exists
