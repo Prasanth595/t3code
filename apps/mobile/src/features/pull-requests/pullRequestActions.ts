@@ -119,6 +119,16 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
 
 export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
 
+export function pullRequestMergeConfirmationAction(input: {
+  readonly bypass: boolean;
+  readonly requirementsUnmet: boolean;
+  readonly canConfirmAutoMerge: boolean;
+}) {
+  return input.bypass || !input.requirementsUnmet || !input.canConfirmAutoMerge
+    ? "merge"
+    : "enable-auto-merge";
+}
+
 export function mergeUnavailableReason(
   pr: ActionDetail,
   connectionAllowsWrites: boolean,
