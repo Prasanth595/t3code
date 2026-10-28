@@ -39,6 +39,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
+import { useComposerTypingGuard } from "./chat/useComposerTypingGuard";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -211,6 +212,7 @@ import {
 } from "../sidebarPendingFileDropStore";
 import {
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1314,6 +1316,10 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
     setThreadError,
   });
+  const typingGuard = useComposerTypingGuard(composerTargetKey(composerDraftTarget), [
+    ...pendingApprovals.map((request) => request.requestId),
+    ...pendingUserInputs.map((request) => request.requestId),
+  ]);
   const activeProposedPlan = (() => {
     if (!latestRunSettled) {
       return null;
@@ -3246,6 +3252,7 @@ export default function ChatView(props: ChatViewProps) {
             >
               <ThreadTimeline
                 pendingApprovals={pendingApprovals}
+                heldApprovalRequestIds={typingGuard.heldRequestIds}
                 respondingRequestIds={respondingRequestIds}
                 onRespondToApproval={onRespondToApprovalStable}
                 canOperateThread={canOperateThread}
@@ -3493,6 +3500,7 @@ export default function ChatView(props: ChatViewProps) {
                               environmentUnavailable={activeEnvironmentUnavailableState}
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
+                              typingGuard={typingGuard}
                               pendingUserInputs={pendingUserInputs}
                               activePendingProgress={activePendingProgress}
                               activePendingResolvedAnswers={activePendingResolvedAnswers}
