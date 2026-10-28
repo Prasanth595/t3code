@@ -69,18 +69,26 @@ class AgentNotificationsTest {
 
   @Test
   fun retainedUnreadResultHasNoTimeoutAndReadingItClearsTheCard() {
-    AgentNotifications.receive(context, update("done", true) + mapOf(
-      "activity_phase" to "completed",
-      "activity_expires_at" to "0",
-    ))
+    AgentNotifications.receive(
+      context,
+      update("done", true) + mapOf(
+        "activity_phase" to "completed",
+        "activity_expires_at" to "0",
+      )
+    )
     val card = manager.activeNotifications.single().notification
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) assertEquals(0L, card.timeoutAfter)
-    assertTrue(shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.isEmpty())
+    assertTrue(
+      shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.isEmpty()
+    )
     AgentNotifications.expire(context, System.currentTimeMillis() + 24 * 60 * 60 * 1000L)
     assertEquals(1, manager.activeNotifications.size)
-    AgentNotifications.receive(context, update("done-read", false) + mapOf(
-      "activity_expires_at" to "0",
-    ))
+    AgentNotifications.receive(
+      context,
+      update("done-read", false) + mapOf(
+        "activity_expires_at" to "0",
+      )
+    )
     assertEquals(0, manager.activeNotifications.size)
   }
 

@@ -268,6 +268,38 @@ describe("Android delivery routing", () => {
     },
   );
 
+  it.effect.each(["running", "completed"] as const)(
+    "an off-card %s update cannot consume a visible approval alert",
+    (phase) => {
+      const h = harness();
+      const failures = Array.from({ length: 5 }, (_, i) => ({
+        ...state,
+        threadId: ThreadId.make(`failure-${i}`),
+        phase: "failed" as const,
+        unread: false,
+        retained: true,
+      }));
+      h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnCompletion: false });
+      h.current.otherStates = [...failures, secondState];
+      h.current.target.last_aggregate_json = encodeJson(
+        aggregateFor([state, ...h.current.otherStates]),
+      );
+      h.current.state = { ...state, phase, unread: true, retained: true };
+      const approval = { ...secondState, phase: "waiting_for_approval" as const };
+      h.current.otherStates = [...failures, approval];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[0]?.data).toMatchObject({
+          alert_title: secondState.threadTitle,
+          alert_body: "Approval: Project",
+        });
+        yield* delivery.process({ ...h.job, state: approval });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
   it.effect("retains an unread result without an automatic Android expiry", () => {
     const h = harness();
     h.current.state = { ...state, phase: "completed", unread: true, retained: true };

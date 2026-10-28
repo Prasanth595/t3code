@@ -228,8 +228,11 @@ object AgentNotifications {
       ?: if (active) updatedAt + RUNNING_LIFETIME_MS else 0L
     // A retained unread result has no timeout; zero on an inactive payload still clears the card.
     val retained = active && expiresAt == 0L
-    val remainingMs = if (retained) 0L else
+    val remainingMs = if (retained) {
+      0L
+    } else {
       (expiresAt - System.currentTimeMillis()).coerceAtMost(MAX_LIFETIME_MS)
+    }
     val wasActive = prefs.getBoolean("lastActive", false)
     prefs.edit().putBoolean("lastActive", active).apply()
     if ((!retained && remainingMs <= 0) || !prefs.getBoolean("ongoing", false)) {
