@@ -339,7 +339,7 @@ const attachmentRoute = HttpRouter.add(
   }),
 );
 
-// Only an image an agent message embeds loads; anything else on the host is refused.
+// Only an image an agent reply shows loads; anything else on the host is refused.
 const mediaRoute = HttpRouter.add(
   "GET",
   GUEST_MEDIA_ROUTE,

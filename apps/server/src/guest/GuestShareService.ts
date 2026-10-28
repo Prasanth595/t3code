@@ -199,7 +199,7 @@ export class GuestShareService extends Context.Service<
       { readonly path: string; readonly attachment: ChatAttachment },
       GuestShareAccessError
     >;
-    /** An image on the host that an agent message in the shared thread embeds, and its type. */
+    /** An image on the host that an agent reply the guest sees shows, and its type. */
     readonly media: (
       session: string,
       path: string,
