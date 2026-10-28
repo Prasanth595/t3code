@@ -811,6 +811,103 @@ it.effect.each(["shutdown", "close"] as const)(
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
+it.effect("leaves a session its host leases to every thread open when one thread closes", () =>
+  Effect.gen(function* () {
+    const deviceId = DeviceId.make("33333333-3333-3333-3333-333333333333");
+    const http = HttpClient.make((request) =>
+      Effect.sync(() =>
+        new URL(request.url).pathname === "/api/devices"
+          ? HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                emulators: [],
+                simulators: [
+                  {
+                    id: deviceId,
+                    name: "iPhone",
+                    platform: "ios",
+                    version: "26",
+                    physical: false,
+                    booted: true,
+                  },
+                ],
+              }),
+            )
+          : HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId })),
+      ),
+    );
+    const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+    const ready: DeviceHost.DeviceHostAgentReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      devices: {
+        ...makeDeviceHubOperations({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          origin: "http://device.test",
+          http,
+          run,
+          androidAvailable: Effect.succeed(true),
+        }),
+        agentEndpoint: () =>
+          Effect.succeed({
+            baseUrl: "http://agent.test",
+            token: "agent-token",
+            agentDeviceId: null,
+            session: "lease-session",
+          }),
+      },
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+      run,
+      agentDevice: null,
+    };
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      label: "Pool",
+      summary: Effect.succeed({
+        id: LOCAL_DEVICE_HOST_ID,
+        kind: "local",
+        label: "Pool",
+        platforms: [{ platform: "ios", available: true }],
+        hubInstalled: true,
+        agentDeviceInstalled: true,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.succeed(ready),
+      current: Effect.succeed(ready),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const released: string[] = [];
+    const service = yield* DeviceService.makeWithHosts(
+      new Map([[host.id, host]]),
+      undefined,
+      () => Effect.succeed("agent-device.json"),
+      undefined,
+      {
+        bind: ({ session }) => Effect.succeed(session),
+        prune: () => Effect.void,
+        release: (launcher) => Effect.sync(() => void released.push(launcher)),
+      },
+    ).pipe(Effect.provide(NodeCrypto.layer));
+    const threads = [ThreadId.make("pool-a"), ThreadId.make("pool-b")];
+    for (const threadId of threads) {
+      yield* service.open({ threadId, deviceId, platform: "ios" });
+      const target = { threadId, hostId: LOCAL_DEVICE_HOST_ID, deviceId };
+      const agent = yield* service.agentTarget(target);
+      expect(agent.session).toBe("lease-session");
+      yield* service.agentLauncher({ ...target, targetArgs: agent.args });
+    }
+    yield* service.close({ threadId: threads[0]! });
+    expect(released).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+    Effect.scoped,
+  ),
+);
+
 it.effect.each([
   { hubReports: "off", outcome: "succeeds" },
   { hubReports: "booted", outcome: "fails" },

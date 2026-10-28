@@ -95,6 +95,8 @@ type Editing =
       readonly kind: "ssh";
       readonly host: SshDeviceHostConfig;
       readonly original: SshDeviceHostConfig | null;
+      /** Limits the save to these environments, for a host that differs between them. */
+      readonly only?: ReadonlySet<EnvironmentId>;
     }
   | { readonly kind: "eas"; readonly host: EasDeviceHostConfig; readonly isNew: boolean }
   | { readonly kind: "simlock"; readonly host: SimlockDeviceHostConfig; readonly isNew: boolean };
@@ -199,20 +201,27 @@ export function DeviceSourcesSettings(props: {
     return false;
   };
 
-  const saveSsh = async (host: SshDeviceHostConfig, remove: boolean, original = host) => {
+  const saveSsh = async (
+    host: SshDeviceHostConfig,
+    remove: boolean,
+    original = host,
+    only?: ReadonlySet<EnvironmentId>,
+  ) => {
     try {
       const saved = await write(
-        members.map((member) => ({
-          environmentId: member.environmentId,
-          patch: {
-            deviceHosts: updateDeviceHosts(
-              member.settings?.deviceHosts ?? [],
-              host,
-              remove,
-              original,
-            ),
-          },
-        })),
+        members
+          .filter((member) => !only || only.has(member.environmentId))
+          .map((member) => ({
+            environmentId: member.environmentId,
+            patch: {
+              deviceHosts: updateDeviceHosts(
+                member.settings?.deviceHosts ?? [],
+                host,
+                remove,
+                original,
+              ),
+            },
+          })),
         remove ? "Device host not removed everywhere" : "Device host not saved everywhere",
       );
       if (saved) setEditing(null);
@@ -230,19 +239,19 @@ export function DeviceSourcesSettings(props: {
     remove: boolean,
     previous?: EasDeviceHostConfig,
   ) => {
-    // A saved token arrives redacted. Environments that hold it keep it; one that does not falls
-    // back to its own server's Expo login rather than storing the redacted value.
-    const keptToken = previous !== undefined && host.accessToken === previous.accessToken;
+    const keepToken = previous !== undefined && host.accessToken === previous.accessToken;
     const saved = await write(
-      members.map((member) => {
-        const hosts = member.settings?.easDeviceHosts ?? [];
-        const holds = hosts.some((candidate) => candidate.id === host.id);
-        const forHere = !remove && keptToken && !holds ? { ...host, accessToken: "" } : host;
-        return {
-          environmentId: member.environmentId,
-          patch: { easDeviceHosts: updateEasDeviceHosts(hosts, forHere, remove) },
-        };
-      }),
+      members.map((member) => ({
+        environmentId: member.environmentId,
+        patch: {
+          easDeviceHosts: updateEasDeviceHosts(
+            member.settings?.easDeviceHosts ?? [],
+            host,
+            remove,
+            keepToken,
+          ),
+        },
+      })),
       remove ? "EAS host not removed everywhere" : "EAS host not saved everywhere",
     );
     if (saved) setEditing(null);
@@ -365,14 +374,15 @@ export function DeviceSourcesSettings(props: {
     }),
   });
 
+  const grouped = groupDeviceHosts(
+    members.map((member) => ({
+      environmentId: member.environmentId,
+      label: member.label,
+      hosts: member.settings?.deviceHosts ?? [],
+    })),
+  );
   const sshGroups =
-    groupDeviceHosts(
-      members.map((member) => ({
-        environmentId: member.environmentId,
-        label: member.label,
-        hosts: member.settings?.deviceHosts ?? [],
-      })),
-    ) ??
+    grouped ??
     // Hosts that cannot be matched across environments stay one row per environment.
     members.flatMap((member) =>
       (member.settings?.deviceHosts ?? []).map((host) => ({
@@ -382,6 +392,7 @@ export function DeviceSourcesSettings(props: {
     );
   for (const group of sshGroups) {
     const host = group.host;
+    const holders = new Set(group.members.map((member) => member.environmentId));
     rows.push({
       key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
@@ -413,8 +424,9 @@ export function DeviceSourcesSettings(props: {
         };
       }),
       actions: rowActions(
-        () => setEditing({ kind: "ssh", host, original: host }),
-        () => void saveSsh(host, true),
+        () =>
+          setEditing({ kind: "ssh", host, original: host, ...(grouped ? {} : { only: holders }) }),
+        () => void saveSsh(host, true, host, holders),
         <MenuItem onClick={() => void testSsh(host)}>Test connection</MenuItem>,
       ),
     });
@@ -549,7 +561,7 @@ export function DeviceSourcesSettings(props: {
           isNew={editing.original === null}
           targets={targets}
           busy={busy}
-          onSave={(host) => void saveSsh(host, false, editing.original ?? host)}
+          onSave={(host) => void saveSsh(host, false, editing.original ?? host, editing.only)}
           onClose={() => setEditing(null)}
         />
       ) : editing?.kind === "eas" && primary ? (

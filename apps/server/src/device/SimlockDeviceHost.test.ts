@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { SimlockDeviceHostConfig } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -44,7 +46,15 @@ const CATALOG = {
 };
 
 /** The gateway's HTTP API and T3's agent-device CLI, recording what was asked of them. */
-const fakePool = (options: { readonly failOpen?: boolean } = {}) =>
+const fakePool = (
+  options: {
+    readonly failOpen?: boolean;
+    readonly holdOpen?: {
+      readonly entered: Deferred.Deferred<void>;
+      readonly proceed: Deferred.Deferred<void>;
+    };
+  } = {},
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -90,6 +100,10 @@ const fakePool = (options: { readonly failOpen?: boolean } = {}) =>
                 stdoutInvalidUtf8: false,
                 stderrInvalidUtf8: false,
               };
+            }
+            if (options.holdOpen) {
+              yield* Deferred.succeed(options.holdOpen.entered, undefined);
+              yield* Deferred.await(options.holdOpen.proceed);
             }
             const dir = path.join(stateDir, "remote-connections");
             yield* fs.makeDirectory(dir, { recursive: true });
@@ -281,6 +295,26 @@ describe("Simlock device host", () => {
       );
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("returns a lease whose open finishes after the host stopped", () =>
+    Effect.gen(function* () {
+      const holdOpen = {
+        entered: yield* Deferred.make<void>(),
+        proceed: yield* Deferred.make<void>(),
+      };
+      const pool = yield* fakePool({ holdOpen });
+      const host = yield* makeHost(pool, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      const opening = yield* Effect.forkChild(ready.devices.boot(iphone!));
+      yield* Deferred.await(holdOpen.entered);
+      yield* host.stop;
+      yield* Deferred.succeed(holdOpen.proceed, undefined);
+      expect(Exit.isFailure(yield* Fiber.await(opening))).toBe(true);
+      expect(pool.ran("close")).toHaveLength(1);
+      expect((yield* ready.devices.list).devices.every((device) => !device.booted)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

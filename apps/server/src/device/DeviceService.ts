@@ -303,6 +303,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const launcherLock = yield* Semaphore.make(1);
   /** Launchers bound since startup, by agent-device session. */
   const boundLaunchers = new Map<string, string>();
+  /** Launchers on a session the host leases to every thread; the host ends it, not a retiring thread. */
+  const hostSessionLaunchers = new Set<string>();
   // Binding and pruning read sessions under the lock, so neither acts on a session list the other has outdated.
   // A retired session's agent-device session ends before its launcher goes, and a reopen of the same
   // device waits for the lock, so the close cannot end the reopened session.
@@ -317,9 +319,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       );
       const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
       for (const [session] of retired) boundLaunchers.delete(session);
+      const ending = retired.filter(([session]) => !hostSessionLaunchers.delete(session));
       const release = launchers.release;
       if (release)
-        yield* Effect.forEach(retired, ([, launcher]) => release(launcher), {
+        yield* Effect.forEach(ending, ([, launcher]) => release(launcher), {
           concurrency: "unbounded",
           discard: true,
         });
@@ -1051,11 +1054,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               };
             }),
           );
-        const session =
-          boundSession ??
-          (yield* agentDeviceSession(input.threadId, input.hostId, input.deviceId).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
-          ));
+        const ownSession = yield* agentDeviceSession(
+          input.threadId,
+          input.hostId,
+          input.deviceId,
+        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        if (boundSession) hostSessionLaunchers.add(ownSession);
+        const session = boundSession ?? ownSession;
         return {
           agentDeviceId,
           session,

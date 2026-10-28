@@ -106,6 +106,8 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const hostDir = path.join(server.stateDir, "device", "simlock", hostId);
   const leases = new Map<string, Lease>();
   let starting = 0;
+  // Bumped by every stop, so an open that finishes after one returns its lease instead of keeping it.
+  let stops = 0;
   const slotLock = yield* Semaphore.make(1);
   const keepAlive = yield* FiberMap.make<string>();
   let catalog: {
@@ -254,12 +256,13 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
 
   /** Renews until the lease ends on its own or reaches its maximum age, then releases it. */
   const renewLoop = Effect.fn("SimlockDeviceHost.renewLoop")(function* (lease: Lease) {
-    let left = Duration.toMillis(Duration.minutes(config.maxLeaseMinutes));
-    while (left > 0) {
-      const wait = Math.min(left, Duration.toMillis(RENEW_INTERVAL));
-      yield* Effect.sleep(Duration.millis(wait));
-      left -= wait;
-      if (left === 0) break;
+    const deadline =
+      (yield* Clock.currentTimeMillis) +
+      Duration.toMillis(Duration.minutes(config.maxLeaseMinutes));
+    while (true) {
+      const left = deadline - (yield* Clock.currentTimeMillis);
+      yield* Effect.sleep(Duration.millis(Math.min(left, Duration.toMillis(RENEW_INTERVAL))));
+      if ((yield* Clock.currentTimeMillis) >= deadline) break;
       const renewed = yield* request(
         "POST",
         `/v1/leases/${encodeURIComponent(lease.leaseId)}/renew`,
@@ -327,6 +330,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       ? yield* fs.realPath(context.workspaceRoot).pipe(Effect.orElseSucceed(() => dir))
       : dir;
     const pending = { session, configPath };
+    const stopsAtOpen = stops;
     return yield* Effect.gen(function* () {
       yield* agentDevice(pending, ["connect", "proxy", "--daemon-base-url", agentDeviceUrl]);
       yield* agentDevice(
@@ -350,6 +354,8 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         configPath,
         installDirectory,
       };
+      if (stops !== stopsAtOpen)
+        return yield* unavailable("Device support stopped while the device was opening.");
       leases.set(opened.leaseId, opened);
       yield* FiberMap.run(keepAlive, opened.leaseId, renewLoop(opened));
       return opened.leaseId;
@@ -502,6 +508,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   });
 
   const stopAll = Effect.gen(function* () {
+    stops++;
     yield* FiberMap.clear(keepAlive);
     yield* Effect.forEach([...leases.values()], release, { discard: true, concurrency: 4 });
   }).pipe(Effect.ignore);
