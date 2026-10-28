@@ -34,8 +34,7 @@ const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]
 // SQLite can create WAL/SHM beside the link on Windows. Route databases through
 // CODEX_SQLITE_HOME instead; never replace existing databases or live sidecars.
 const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/u;
-// Codex creates these runtime locks itself when it starts in a shadow home before the shared
-// home has one. They guard shared state, so a local copy is replaced with the shared link.
+// Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks", ".sqlite-maintenance.lock"]);
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {

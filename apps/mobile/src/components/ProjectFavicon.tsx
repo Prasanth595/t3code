@@ -56,8 +56,7 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     () => (isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl),
     [faviconUrl],
   );
-  // Inline images are self-contained; remote URLs key on their revision so signed-token
-  // rotation reuses the disk cache while a changed icon starts from the loading state.
+  // Key remote images by revision so token rotation reuses the cache while changed icons reload.
   const cacheKey = useMemo(
     () =>
       renderableFaviconUrl && props.workspaceRoot
@@ -164,13 +163,12 @@ function ProjectFaviconImage(props: {
     () => createProjectFaviconRequest(props.cacheKey, props.faviconUrl),
     [props.cacheKey, props.faviconUrl],
   );
-  const [activeFaviconRequest, setActiveFaviconRequest] = useState<typeof faviconRequest>(null);
+  // Registers with the module-level loader before the Image's native onLoad/onError can fire,
+  // so stale loads for a superseded URL under the same cacheKey are ignored.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks this favicon URL as the current request in the module registry before the native Image reports load or error
   useLayoutEffect(() => {
     if (faviconRequest === null) return;
-
-    const endRequest = beginProjectFaviconRequest(faviconRequest);
-    setActiveFaviconRequest(faviconRequest);
-    return endRequest;
+    return beginProjectFaviconRequest(faviconRequest);
   }, [faviconRequest]);
 
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
@@ -179,8 +177,7 @@ function ProjectFaviconImage(props: {
       : "loading",
   );
 
-  const requestIsActive = faviconRequest !== null && activeFaviconRequest === faviconRequest;
-  const showImage = requestIsActive && status === "loaded";
+  const showImage = faviconRequest !== null && status === "loaded";
   const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
 
   return (
@@ -203,7 +200,7 @@ function ProjectFaviconImage(props: {
         />
       )}
 
-      {requestIsActive ? (
+      {faviconRequest !== null ? (
         <Image
           key={faviconRequest.faviconUrl}
           source={
