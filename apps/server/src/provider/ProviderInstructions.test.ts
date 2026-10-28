@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the write is interrupted by spying on native chmod.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -8,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { vi } from "vite-plus/test";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,6 +23,11 @@ import * as Path from "effect/Path";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstructions from "./ProviderInstructions.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  return { ...actual, chmod: vi.fn(actual.chmod) };
+});
 
 const CODEX = ProviderInstanceId.make("codex");
 const CLAUDE = ProviderInstanceId.make("claude");
@@ -188,6 +197,35 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("ProviderInstruction
 
         expect(((yield* fileSystem.stat(file)).mode & 0o777).toString(8)).toBe("640");
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps an edit made while the replacement was being prepared", () =>
+    Effect.gen(function* () {
+      const { service, fileSystem, path, workspaceRoot } = yield* makeFixture;
+      const file = path.join(workspaceRoot, "AGENTS.md");
+      yield* fileSystem.writeFileString(file, "base");
+      const opened = yield* service.read({ instanceId: CODEX, projectId: PROJECT });
+      const actual = yield* Effect.promise(() =>
+        vi.importActual<typeof NodeFSP>("node:fs/promises"),
+      );
+      vi.mocked(NodeFSP.chmod).mockImplementationOnce(async (target, mode) => {
+        await actual.writeFile(file, "agent edit");
+        await actual.chmod(target, mode);
+      });
+
+      const exit = yield* Effect.exit(
+        service.write({
+          instanceId: CODEX,
+          projectId: PROJECT,
+          contents: "mine",
+          revision: opened.revision,
+        }),
+      );
+
+      expect(failureOf(exit)).toBe("ProviderInstructionsConflictError");
+      expect(yield* fileSystem.readFileString(file)).toBe("agent edit");
+      expect(yield* fileSystem.readDirectory(workspaceRoot)).toEqual(["AGENTS.md"]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("rejects a revision that was read from a different file", () =>

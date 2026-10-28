@@ -223,6 +223,16 @@ export const make = Effect.gen(function* () {
         mode: currentStat === null ? 0o666 : 0o600,
       });
       if (currentStat !== null) await NodeFSP.chmod(temporary, currentStat.mode & 0o777);
+      // Rename cannot compare-and-swap; checking again right before it narrows the window for an
+      // agent writing while the temp file was being prepared.
+      const latest = await NodeFSP.stat(destination).catch((error: unknown) => {
+        if (isErrno(error, "ENOENT")) return null;
+        throw error;
+      });
+      if (revisionOf(destination, latest) !== currentRevision) {
+        await NodeFSP.rm(temporary, { force: true });
+        return null;
+      }
       await NodeFSP.rename(temporary, destination);
     } catch (error) {
       await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
