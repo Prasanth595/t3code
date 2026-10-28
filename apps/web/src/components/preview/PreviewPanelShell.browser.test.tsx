@@ -1,8 +1,11 @@
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { PreviewPanelShell } from "./PreviewPanelShell";
+
+// The handle only has a hit area once the app stylesheet positions it.
+import "~/index.css";
 
 const WIDTH_STORAGE_KEY = "t3code:test:preview-panel-width";
 
@@ -28,9 +31,7 @@ describe("PreviewPanelShell", () => {
     )!;
     expect(panel.getBoundingClientRect().width).toBe(400);
 
-    screen.container
-      .querySelector('[role="separator"]')!
-      .dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await userEvent.dblClick(screen.getByRole("separator"));
 
     await vi.waitFor(() => expect(panel.getBoundingClientRect().width).toBe(600));
     expect(window.localStorage.getItem(WIDTH_STORAGE_KEY)).toBe("600");
