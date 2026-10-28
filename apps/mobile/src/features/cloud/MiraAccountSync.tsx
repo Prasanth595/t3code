@@ -4,7 +4,7 @@ import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { environmentsToAutoConnect } from "@t3tools/client-runtime/relay";
+import { environmentsToAutoConnect, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { AppState } from "react-native";
@@ -16,6 +16,9 @@ import { fetchMiraAccount, miraAccess, miraChatHistory, miraChatRemote } from ".
 import { useWorkspaceEnvironments } from "../../state/workspace";
 
 // SecureStore keys allow only letters, digits, ".", "-", and "_".
+// An admin's change to the plan or limits shows up within this long.
+const ACCOUNT_REFRESH_MS = 30_000;
+
 const autoAddedKey = (accountId: string) =>
   `mira.autoAddedComputers.${accountId.replace(/[^\w.-]/g, "_")}`;
 
@@ -34,6 +37,9 @@ async function readAutoAdded(accountId: string): Promise<ReadonlySet<string>> {
 export function MiraAccountSync() {
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const accountId = isSignedIn && userId ? userId : null;
+  // Clerk reports the sign-in before the relay session can mint tokens; requests sent in between fail.
+  const relaySession = useAtomValue(managedRelaySessionAtom);
+  const relayReady = accountId !== null && relaySession?.accountId === accountId;
   const environments = useWorkspaceEnvironments();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
@@ -54,6 +60,8 @@ export function MiraAccountSync() {
       void miraChatHistory.setRemote(null);
       return;
     }
+    miraAccess.set({ signedIn: true, account: null, openSignIn: null });
+    if (!relayReady) return;
     let cancelled = false;
     const refresh = () =>
       fetchMiraAccount().then(
@@ -62,7 +70,6 @@ export function MiraAccountSync() {
         },
         (cause: unknown) => console.warn("[mira] Could not read the account", cause),
       );
-    miraAccess.set({ signedIn: true, account: null, openSignIn: null });
     void refresh();
     void miraChatHistory.setRemote(miraChatRemote(accountId));
     const subscription = AppState.addEventListener("change", (state) => {
@@ -70,11 +77,23 @@ export function MiraAccountSync() {
       void refresh();
       void miraChatHistory.sync();
     });
+    const interval = setInterval(() => {
+      if (AppState.currentState === "active") void refresh();
+    }, ACCOUNT_REFRESH_MS);
+    // A finished reply used up part of the plan's allowance.
+    let replying = miraChatHistory.getSnapshot().streaming !== null;
+    const unsubscribe = miraChatHistory.subscribe(() => {
+      const nowReplying = miraChatHistory.getSnapshot().streaming !== null;
+      if (replying && !nowReplying) void refresh();
+      replying = nowReplying;
+    });
     return () => {
       cancelled = true;
       subscription.remove();
+      clearInterval(interval);
+      unsubscribe();
     };
-  }, [isLoaded, accountId]);
+  }, [isLoaded, accountId, relayReady]);
 
   useEffect(() => {
     if (accountId === null) return;
