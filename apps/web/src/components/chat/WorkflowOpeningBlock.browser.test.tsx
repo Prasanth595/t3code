@@ -33,7 +33,9 @@ import { WorkflowWaveCanvas } from "./WorkflowWaveCanvas";
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
-  useAtomValue: (() => []) as never,
+  // Applies the selector to no providers, as the avatar reads its name and icon through one.
+  useAtomValue: ((_atom: unknown, select?: (value: unknown) => unknown) =>
+    select === undefined ? [] : select([])) as never,
 }));
 vi.mock(import("../ChatMarkdown"), async () => {
   const { memo } = await import("react");
