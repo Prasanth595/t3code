@@ -404,8 +404,7 @@ const makeEventStore = Effect.gen(function* () {
     readonly limit: number;
     readonly maxPageBytes?: number;
   }) => {
-    const query = sql<ApplicationEventRow>`
-      SELECT
+    const columns = sql`
         sequence,
         event_id,
         command_id,
@@ -418,6 +417,8 @@ const makeEventStore = Effect.gen(function* () {
         application_event_version,
         causation_event_id,
         correlation_id
+    `;
+    const from = sql`
       FROM orchestration_events
       ${
         // Otherwise the sequence index wins and command lookups scan every V2 event.
@@ -442,18 +443,38 @@ const makeEventStore = Effect.gen(function* () {
           ...(input.commandId === undefined ? [] : [sql`command_id = ${input.commandId}`]),
           ...(input.eventType === undefined ? [] : [sql`event_type = ${input.eventType}`]),
         ])}
-      ORDER BY sequence ASC
-      LIMIT ${input.limit}
     `;
-    if (input.maxPageBytes === undefined) return query.pipe(NodeSqliteClient.readOnly);
+    if (input.maxPageBytes === undefined) {
+      return sql<ApplicationEventRow>`
+        SELECT ${columns} ${from} ORDER BY sequence ASC LIMIT ${input.limit}
+      `.pipe(NodeSqliteClient.readOnly);
+    }
+    // Materialize only candidate ids. Walk their restored sizes until the page
+    // fills (at most one overflow row), rather than restoring all 500 bodies.
+    // Prompt references must be sized after restoration, including JSON escaping.
     return sql<ApplicationEventRow>`
-      SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER (ORDER BY sequence) AS replay_row,
-          SUM(octet_length(payload_json) + octet_length(metadata_json))
-            OVER (ORDER BY sequence ROWS UNBOUNDED PRECEDING) AS replay_bytes
-        FROM (${query})
+      WITH RECURSIVE candidates AS MATERIALIZED (
+        SELECT sequence, ROW_NUMBER() OVER (ORDER BY sequence) AS ordinal
+        ${from} ORDER BY sequence ASC LIMIT ${input.limit}
+      ), replay_page(cursor, replay_bytes, row_count) AS (
+        SELECT orchestration_events.sequence,
+          octet_length(${restoredPayloadJson}) + octet_length(metadata_json), 1
+        FROM orchestration_events
+        JOIN candidates ON candidates.sequence = orchestration_events.sequence
+        WHERE candidates.ordinal = 1
+        UNION ALL
+        SELECT orchestration_events.sequence,
+          page.replay_bytes + octet_length(${restoredPayloadJson}) + octet_length(metadata_json),
+          page.row_count + 1
+        FROM replay_page AS page
+        JOIN candidates ON candidates.ordinal = page.row_count + 1
+        JOIN orchestration_events ON orchestration_events.sequence = candidates.sequence
+        WHERE page.replay_bytes < ${input.maxPageBytes}
       )
-      WHERE replay_row = 1 OR replay_bytes <= ${input.maxPageBytes}
+      SELECT ${columns}
+      FROM orchestration_events
+      JOIN replay_page ON replay_page.cursor = orchestration_events.sequence
+      WHERE replay_page.row_count = 1 OR replay_page.replay_bytes <= ${input.maxPageBytes}
       ORDER BY sequence
     `.pipe(NodeSqliteClient.readOnly);
   };
