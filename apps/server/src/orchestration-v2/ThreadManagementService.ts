@@ -38,6 +38,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -73,7 +74,11 @@ export function withCreationProvenance(
   provenance: ThreadManagementProvenance,
 ): OrchestrationV2Command {
   switch (command.type) {
-    case "thread.create":
+    case "thread.create": {
+      // Only the server stamps a link's origin, so a client cannot set one.
+      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
+      return { ...rest, ...provenance };
+    }
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":
@@ -107,6 +112,9 @@ function existingThreadIdsForCommand(
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
     case "delegated_task.completion-delivery.dispose":
+    case "delegated_task.remote.request":
+    case "delegated_task.remote.complete":
+    case "delegated_task.remote.stop":
       return [command.parentThreadId];
     case "thread.created.record":
       return command.parentThreadId === command.targetThreadId
@@ -155,6 +163,12 @@ export interface ThreadManagementWaitInput {
   readonly runId?: RunId;
   readonly timeoutMs: number;
   readonly terminalOnly?: boolean;
+  /**
+   * Also wait until the thread's own delegated work settles: an ended run
+   * still owes the thread's answer while a child, a background task or a
+   * completion delivery will wake it again, as a delegated task's result does.
+   */
+  readonly untilDelegatedWorkSettled?: boolean;
 }
 
 export interface ThreadManagementWaitResult {
@@ -163,6 +177,8 @@ export interface ThreadManagementWaitResult {
   readonly timedOut: boolean;
   readonly hasPendingQuestion: boolean;
   readonly pendingApproval: OrchestratorMcpThreadWaitResult["pendingApproval"];
+  /** With `untilDelegatedWorkSettled`, once settled: the run with the thread's final answer. */
+  readonly resultRun?: OrchestrationV2Run;
 }
 
 export interface ThreadManagementInterruptInput {
@@ -382,10 +398,6 @@ export interface ThreadManagementServiceShape {
     ProjectionRecords<K>,
     ThreadManagementProjectionLoadError | ThreadManagementThreadNotFoundError
   >;
-  readonly getProjectThread: (input: {
-    readonly projectId: ProjectId;
-    readonly threadId: ThreadId;
-  }) => Effect.Effect<OrchestrationV2ThreadProjection, ThreadManagementError>;
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
@@ -703,27 +715,6 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.dispatch(command)),
     );
 
-  const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
-    getThreadProjection(input.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ThreadManagementProjectionLoadError({
-            projectId: input.projectId,
-            threadId: input.threadId,
-            cause,
-          }),
-      ),
-      Effect.filterOrFail(
-        (projection) =>
-          projection.thread.projectId === input.projectId && projection.thread.deletedAt === null,
-        (_projection) =>
-          new ThreadManagementThreadNotFoundError({
-            projectId: input.projectId,
-            threadId: input.threadId,
-          }),
-      ),
-    );
-
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,
     fields,
@@ -874,7 +865,7 @@ const make = Effect.gen(function* () {
     const fields = input.terminalOnly
       ? (["runs"] as const)
       : (["runs", "nodes", "runtimeRequests", "turnItems"] as const);
-    const filter = { turnItemTypes: ["secret_request"] } as const;
+    const filter = { turnItemTypes: ["secret_request"], omitSettledLeafNodes: true } as const;
     const target = yield* getProjectThreadRecords(input, fields, filter);
     const selectedRun =
       input.runId === undefined
@@ -895,6 +886,7 @@ const make = Effect.gen(function* () {
         pendingApproval: null,
       };
     }
+    const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
     // A restart cuts a run and continues it as a new run. Follow that chain,
     // so a cut run is not the answer while its continuation is pending.
     // Runs per matching event and is already covered by the waitForThread span.
@@ -918,13 +910,14 @@ const make = Effect.gen(function* () {
       let hasPendingQuestion = false;
       let pendingApproval: ThreadManagementWaitResult["pendingApproval"] = null;
       let oldestApproval = Infinity;
-      if (!input.terminalOnly && !isTerminalRunStatus(run.status)) {
+      if (!input.terminalOnly && (!isTerminalRunStatus(run.status) || untilDelegatedWorkSettled)) {
         const blockingRuns = new Set(
           runs
             .filter(
               (candidate) =>
                 !isTerminalRunStatus(candidate.status) &&
-                (candidate.ordinal <= run.ordinal ||
+                (untilDelegatedWorkSettled ||
+                  candidate.ordinal <= run.ordinal ||
                   (run.status === "queued" && candidate.status !== "queued")),
             )
             .map((candidate) => candidate.id),
@@ -963,16 +956,51 @@ const make = Effect.gen(function* () {
           pendingApproval !== null,
       };
     });
-    const initial = yield* outcome(target);
-    if (initial.settled) {
-      return {
-        threadId: input.threadId,
-        run: initial.run,
-        timedOut: false,
-        hasPendingQuestion: initial.hasPendingQuestion,
-        pendingApproval: initial.pendingApproval,
-      };
-    }
+    const delegatedWorkResult = Effect.gen(function* () {
+      const records = yield* getProjectThreadRecords(
+        input,
+        ["runs", "messages", "subagents", "providerThreads"],
+        { messageRoles: ["user"] },
+      );
+      const progress = delegatedTaskProgress(records);
+      // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
+      if (
+        progress.resultRun === undefined &&
+        records.runs.every((run) => isTerminalRunStatus(run.status))
+      ) {
+        return latestRun(records);
+      }
+      if (progress.state !== "result_available") return undefined;
+      const pending = yield* orchestrator
+        .delegatedTaskResultPending(input.threadId)
+        .pipe(Effect.mapError(loadError));
+      return pending ? undefined : progress.resultRun;
+    });
+    const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
+      projection: Parameters<typeof outcome>[0],
+    ) {
+      const current = yield* outcome(projection);
+      if (
+        !current.settled ||
+        !untilDelegatedWorkSettled ||
+        current.hasPendingQuestion ||
+        current.pendingApproval !== null
+      ) {
+        return { ...current, resultRun: undefined };
+      }
+      const resultRun = yield* delegatedWorkResult;
+      return { ...current, settled: resultRun !== undefined, resultRun };
+    });
+    const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
+      threadId: input.threadId,
+      run: current.run,
+      timedOut: !current.settled,
+      hasPendingQuestion: current.hasPendingQuestion,
+      pendingApproval: current.pendingApproval,
+      ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
+    });
+    const initial = yield* evaluate(target);
+    if (initial.settled) return settledResult(initial);
 
     // A declined continuation records no event, so its effect settling wakes
     // the wait too.
@@ -989,6 +1017,15 @@ const make = Effect.gen(function* () {
             afterSequence,
             eventType: "thread.deleted",
           }),
+          ...(untilDelegatedWorkSettled
+            ? (["subagent.updated", "provider-thread.updated"] as const).map((eventType) =>
+                orchestrator.streamStoredEventsFrom({
+                  threadId: input.threadId,
+                  afterSequence,
+                  eventType,
+                }),
+              )
+            : []),
           input.terminalOnly
             ? Stream.empty
             : orchestrator.streamStoredEventsFrom({
@@ -1017,6 +1054,7 @@ const make = Effect.gen(function* () {
         Stream.mapError(loadError),
         Stream.filter(
           (stored) =>
+            untilDelegatedWorkSettled ||
             stored.event.type !== "run.updated" ||
             stored.event.payload.id === selectedRun.id ||
             stored.event.payload.restartContinuationOfRunId !== undefined,
@@ -1027,33 +1065,18 @@ const make = Effect.gen(function* () {
         : Stream.empty,
     ).pipe(
       Stream.mapEffect(() =>
-        getProjectThreadRecords(input, fields, filter).pipe(Effect.flatMap(outcome)),
+        getProjectThreadRecords(input, fields, filter).pipe(Effect.flatMap(evaluate)),
       ),
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
     );
     const waited = Option.flatten(yield* wait);
-    if (Option.isSome(waited)) {
-      return {
-        threadId: input.threadId,
-        run: waited.value.run,
-        timedOut: false,
-        hasPendingQuestion: waited.value.hasPendingQuestion,
-        pendingApproval: waited.value.pendingApproval,
-      };
-    }
+    if (Option.isSome(waited)) return settledResult(waited.value);
     // The run may have reached a terminal status while the timeout was
     // winning the race; the final projection read decides what actually
     // happened, so only a still-active run counts as timed out.
-    const final = yield* outcome(yield* getProjectThreadRecords(input, fields, filter));
-    return {
-      threadId: input.threadId,
-      run: final.run,
-      timedOut: !final.settled,
-      hasPendingQuestion: final.hasPendingQuestion,
-      pendingApproval: final.pendingApproval,
-    };
+    return settledResult(yield* evaluate(yield* getProjectThreadRecords(input, fields, filter)));
   });
 
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
@@ -1284,7 +1307,42 @@ const make = Effect.gen(function* () {
     > = [];
     const stoppedChildThreadIds = new Set<ThreadId>();
     for (const task of subagents) {
-      if (task.origin !== "app_owned" || task.childThreadId === null) continue;
+      if (task.origin !== "app_owned") continue;
+      if (task.childThreadId === null) {
+        // A task in a linked environment ends here; its follower then stops it there.
+        // One with its result keeps it, but its thread there may run follow-up work.
+        if (task.remoteChild === undefined) continue;
+        const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
+        yield* dispatch(
+          task.result === null
+            ? {
+                type: "delegated_task.remote.complete",
+                commandId,
+                parentThreadId: input.threadId,
+                taskId: task.id,
+                status: "interrupted",
+                result:
+                  input.reason === undefined
+                    ? "Stopped with its parent."
+                    : `Stopped with its parent: ${input.reason}`,
+              }
+            : {
+                type: "delegated_task.remote.stop",
+                commandId,
+                parentThreadId: input.threadId,
+                taskId: task.id,
+              },
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Unable to stop a delegated task", {
+              parentThreadId: input.threadId,
+              taskId: task.id,
+              error,
+            }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+          ),
+        );
+        continue;
+      }
       const threadId = task.childThreadId;
       // Follow-up tasks reuse a child thread; walk its subtree only once.
       if (stoppedChildThreadIds.has(threadId)) continue;
@@ -1363,7 +1421,6 @@ const make = Effect.gen(function* () {
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
-    getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
