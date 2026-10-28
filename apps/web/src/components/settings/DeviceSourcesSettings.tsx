@@ -98,7 +98,13 @@ type Editing =
       /** Limits the save to these environments, for a host that differs between them. */
       readonly only?: ReadonlySet<EnvironmentId>;
     }
-  | { readonly kind: "eas"; readonly host: EasDeviceHostConfig; readonly isNew: boolean }
+  | {
+      readonly kind: "eas";
+      readonly host: EasDeviceHostConfig;
+      readonly isNew: boolean;
+      /** Where the editor checks the Expo account: an environment that holds the host. */
+      readonly environmentId: EnvironmentId;
+    }
   | { readonly kind: "simlock"; readonly host: SimlockDeviceHostConfig; readonly isNew: boolean };
 
 /** What a configured host is doing on one environment, when it is not simply working. */
@@ -170,6 +176,7 @@ export function DeviceSourcesSettings(props: {
     patches: ReadonlyArray<{ environmentId: EnvironmentId; patch: ServerSettingsPatch }>,
     failedTitle: string,
   ) => {
+    if (projectScope) return false;
     const name = (environmentId: EnvironmentId) =>
       members.find((member) => member.environmentId === environmentId)?.label ?? environmentId;
     const unwritable = patches.filter(
@@ -438,6 +445,14 @@ export function DeviceSourcesSettings(props: {
       for (const host of member.settings?.easDeviceHosts ?? [])
         if (!easHosts.has(host.id)) easHosts.set(host.id, host);
     for (const host of easHosts.values()) {
+      const holders = members.filter((member) =>
+        (member.settings?.easDeviceHosts ?? []).some((candidate) => candidate.id === host.id),
+      );
+      const [firstHolder] = holders;
+      if (!firstHolder) continue;
+      const checkOn = (
+        holders.find((member) => member.environmentId === primary?.environmentId) ?? firstHolder
+      ).environmentId;
       rows.push({
         key: `eas:${host.id}`,
         shared: true,
@@ -461,7 +476,7 @@ export function DeviceSourcesSettings(props: {
           };
         }),
         actions: rowActions(
-          () => setEditing({ kind: "eas", host, isNew: false }),
+          () => setEditing({ kind: "eas", host, isNew: false, environmentId: checkOn }),
           () => void saveEas(host, true),
         ),
       });
@@ -497,7 +512,7 @@ export function DeviceSourcesSettings(props: {
                 ? ({
                     tone: "warning",
                     label: "No agent token",
-                    action: { label: "Add token", run: edit },
+                    ...(disabled ? {} : { action: { label: "Add token", run: edit } }),
                   } as const)
                 : hostStatus(member.state, host.id),
           };
@@ -530,7 +545,13 @@ export function DeviceSourcesSettings(props: {
         {props.supportsEas ? (
           <MenuItem
             onClick={() =>
-              setEditing({ kind: "eas", host: newEasDeviceHost(randomUUID()), isNew: true })
+              primary &&
+              setEditing({
+                kind: "eas",
+                host: newEasDeviceHost(randomUUID()),
+                isNew: true,
+                environmentId: primary.environmentId,
+              })
             }
           >
             EAS Simulator
@@ -564,10 +585,10 @@ export function DeviceSourcesSettings(props: {
           onSave={(host) => void saveSsh(host, false, editing.original ?? host, editing.only)}
           onClose={() => setEditing(null)}
         />
-      ) : editing?.kind === "eas" && primary ? (
+      ) : editing?.kind === "eas" ? (
         <EasDeviceHostEditor
           key={editing.host.id}
-          environmentId={primary.environmentId}
+          environmentId={editing.environmentId}
           host={editing.host}
           isNew={editing.isNew}
           busy={busy}
