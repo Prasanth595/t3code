@@ -76,9 +76,12 @@ export const hydrateCachedProvider = (input: {
   }
 
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
+  const { restrictedModels } = input.cachedProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
     models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
+    // Merging the pending snapshot over this one keeps these models hidden until the account is probed.
+    ...(restrictedModels ? { restrictedModels } : {}),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

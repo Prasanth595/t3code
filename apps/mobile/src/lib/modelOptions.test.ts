@@ -316,6 +316,50 @@ describe("mobile model options", () => {
     },
   );
 
+  it("never sends a model the organization turned off, and says why", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "claude_work",
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+          restrictedModels: [{ slug: "claude-fable-5-1", name: "Claude Fable 5.1" }],
+        },
+      ],
+      settings: { providerInstances: { claude_work: { driver: "claudeAgent" } } },
+    } as unknown as ServerConfig;
+    const instanceId = ProviderInstanceId.make("claude_work");
+    const turnedOff = { instanceId, model: "claude-fable-5-1" };
+
+    expect(isModelSelectionUnavailable(config, turnedOff, null)).toBe(true);
+    expect(describeUnavailableModelSelection(config, turnedOff, null).title).toBe(
+      "Model turned off by your organization",
+    );
+    const options = buildModelOptions(config, turnedOff, instanceId, null);
+    expect(options.find((option) => option.selection.model === turnedOff.model)).toMatchObject({
+      label: "Claude Fable 5.1",
+      isUnavailable: true,
+    });
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: resolveDefaultableModelSelection(config, turnedOff, null),
+        modelOptions: options,
+      }),
+    ).toMatchObject({ instanceId, model: "claude-opus-5-5" });
+  });
+
   it("rejects stored selections whose provider is not usable", () => {
     const config = {
       providers: [
