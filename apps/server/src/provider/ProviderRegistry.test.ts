@@ -1285,6 +1285,101 @@ it.layer(
       );
     });
 
+    it.effect("syncs presentation changes without probing providers", () =>
+      Effect.gen(function* () {
+        const codexDriver = ProviderDriverKind.make("codex");
+        const codexInstanceId = ProviderInstanceId.make("codex");
+        const initialProvider = {
+          instanceId: codexInstanceId,
+          driver: codexDriver,
+          status: "warning",
+          enabled: true,
+          installed: false,
+          auth: { status: "unknown" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: null,
+          message: "Checking Codex provider status.",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshCalls = yield* Ref.make(0);
+        const currentProvider = yield* Ref.make<ServerProvider>(initialProvider);
+        const registryChanges = yield* PubSub.unbounded<void>();
+        const instance = {
+          instanceId: codexInstanceId,
+          driverKind: codexDriver,
+          continuationIdentity: {
+            driverKind: codexDriver,
+            continuationKey: "codex:instance:codex",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: codexDriver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(currentProvider),
+            refresh: Ref.update(refreshCalls, (count) => count + 1).pipe(
+              Effect.andThen(Effect.never),
+            ),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.fromPubSub(registryChanges),
+            subscribeChanges: PubSub.subscribe(registryChanges),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-background-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
+          assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+
+          const updates = yield* Stream.toPull(registry.streamChanges);
+          for (const provider of [
+            { ...initialProvider, displayName: "Work", accentColor: "#654321" },
+            initialProvider,
+          ]) {
+            // Start the subscription before notifying the registry watcher.
+            const update = yield* updates.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Ref.set(currentProvider, provider);
+            yield* PubSub.publish(registryChanges, undefined);
+            const [providers] = yield* Fiber.join(update);
+            assert.deepStrictEqual(providers, [provider]);
+            assert.deepStrictEqual(yield* registry.getProviders, [provider]);
+            assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+          }
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect(
       "a second request for a cwd being scanned gets its result, even if the first leaves",
       () =>
