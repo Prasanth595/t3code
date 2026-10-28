@@ -1,4 +1,4 @@
-import { and, count, eq, gt, isNotNull, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, count, eq, exists, gt, gte, isNotNull, isNull, ne, not, or, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -105,36 +105,46 @@ const make = Effect.gen(function* () {
         );
         // Counts allocations, not links: a link is written only after its tunnel exists.
         // Excludes this environment so relinking at the limit stays idempotent.
+        const allocation = relayManagedEndpointAllocations;
+        const withdrawnLink = (since?: typeof allocation.updatedAt) =>
+          exists(
+            new QueryBuilder()
+              .select({ userId: relayEnvironmentLinks.userId })
+              .from(relayEnvironmentLinks)
+              .where(
+                and(
+                  eq(relayEnvironmentLinks.userId, allocation.userId),
+                  eq(relayEnvironmentLinks.environmentId, allocation.environmentId),
+                  or(
+                    isNotNull(relayEnvironmentLinks.revokedAt),
+                    eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
+                  ),
+                  since === undefined ? undefined : gte(relayEnvironmentLinks.updatedAt, since),
+                ),
+              ),
+          );
         const counted = yield* db
           .select({ activeTunnels: count() })
-          .from(relayManagedEndpointAllocations)
+          .from(allocation)
           .where(
             and(
-              eq(relayManagedEndpointAllocations.userId, input.userId),
-              ne(relayManagedEndpointAllocations.environmentId, input.environmentId),
+              eq(allocation.userId, input.userId),
+              ne(allocation.environmentId, input.environmentId),
               or(
-                gt(relayManagedEndpointAllocations.updatedAt, pendingCutoff),
+                // Reserved but not yet holding a tunnel. Release writes updatedAt = tunnelReleasedAt and
+                // a relink reserves before rewriting its link, so only a newer reservation counts here.
                 and(
-                  isNotNull(relayManagedEndpointAllocations.tunnelId),
-                  isNull(relayManagedEndpointAllocations.tunnelReleasedAt),
-                  notExists(
-                    new QueryBuilder()
-                      .select({ userId: relayEnvironmentLinks.userId })
-                      .from(relayEnvironmentLinks)
-                      .where(
-                        and(
-                          eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
-                          eq(
-                            relayEnvironmentLinks.environmentId,
-                            relayManagedEndpointAllocations.environmentId,
-                          ),
-                          or(
-                            isNotNull(relayEnvironmentLinks.revokedAt),
-                            eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
-                          ),
-                        ),
-                      ),
+                  gt(allocation.updatedAt, pendingCutoff),
+                  or(
+                    isNull(allocation.tunnelReleasedAt),
+                    gt(allocation.updatedAt, allocation.tunnelReleasedAt),
                   ),
+                  not(withdrawnLink(allocation.updatedAt)),
+                ),
+                and(
+                  isNotNull(allocation.tunnelId),
+                  isNull(allocation.tunnelReleasedAt),
+                  not(withdrawnLink()),
                 ),
               ),
             ),

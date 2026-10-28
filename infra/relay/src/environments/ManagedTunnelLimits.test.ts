@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -13,7 +14,7 @@ class FakeTransaction extends Context.Service<FakeTransaction, { holdsLock: bool
 ) {}
 
 // Models Postgres just enough: the advisory lock only works inside a transaction and is held until it ends.
-function makeFakeDb(reserved: ReadonlyArray<unknown>) {
+function makeFakeDb(reserved: ReadonlyArray<unknown>, countConditions: Array<unknown> = []) {
   const userLock = Semaphore.makeUnsafe(1);
   return {
     $client: {
@@ -39,10 +40,13 @@ function makeFakeDb(reserved: ReadonlyArray<unknown>) {
       }),
     select: () => ({
       from: (table: unknown) => ({
-        where: () =>
-          table === relayManagedEndpointAllocations
-            ? Effect.yieldNow.pipe(Effect.as([{ activeTunnels: reserved.length }]))
-            : { limit: () => Effect.succeed([]) },
+        where: (condition: unknown) => {
+          if (table !== relayManagedEndpointAllocations) {
+            return { limit: () => Effect.succeed([]) };
+          }
+          countConditions.push(condition);
+          return Effect.yieldNow.pipe(Effect.as([{ activeTunnels: reserved.length }]));
+        },
       }),
     }),
   } as unknown as RelayDb.RelayDb["Service"];
@@ -78,6 +82,32 @@ describe("ManagedTunnelLimits", () => {
       Effect.provide(
         ManagedTunnelLimits.layer.pipe(
           Layer.provide(Layer.succeed(RelayDb.RelayDb, makeFakeDb(reserved))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("pending reservations stop counting once released or withdrawn", () => {
+    const countConditions: Array<unknown> = [];
+
+    return Effect.gen(function* () {
+      const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+      yield* limits.withCapacity({ userId: "user-1", environmentId: "environment-1" }, Effect.void);
+
+      expect(countConditions).toHaveLength(1);
+      const query = new PgDialect().sqlToQuery(countConditions[0] as never);
+      // claimRelease writes updatedAt = tunnelReleasedAt; a later reserve moves updatedAt past it.
+      expect(query.sql).toContain(
+        '"relay_managed_endpoint_allocations"."updated_at" > "relay_managed_endpoint_allocations"."tunnel_released_at"',
+      );
+      // A link revoked or made publish-only after the last reservation no longer holds a slot.
+      expect(query.sql).toContain(
+        '"relay_environment_links"."updated_at" >= "relay_managed_endpoint_allocations"."updated_at"',
+      );
+    }).pipe(
+      Effect.provide(
+        ManagedTunnelLimits.layer.pipe(
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, makeFakeDb([], countConditions))),
         ),
       ),
     );
