@@ -1,3 +1,5 @@
+import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -174,4 +176,16 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function resolveToolCallDiffTarget(
+  target: ToolCallDiffTarget,
+  items: ReadonlyArray<ThreadStructureVisibleTurnItem>,
+): ToolCallDiffTarget {
+  const row = items.find(
+    (row) => row.sourceThreadId === target.threadId && row.sourceItemId === target.itemId,
+  );
+  if (row?.item.type !== "file_change") return target;
+  const revision = turnItemDetailRevision(row.item);
+  return revision === target.revision ? target : { ...target, revision };
 }

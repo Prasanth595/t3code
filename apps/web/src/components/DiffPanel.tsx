@@ -31,6 +31,7 @@ import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  resolveToolCallDiffTarget,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -49,7 +50,12 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
-import { useProject, useThreadCheckpointSummaries, useQuietThreadShell } from "../state/entities";
+import {
+  useProject,
+  useThreadCheckpointSummaries,
+  useQuietThreadShell,
+  useQuietThreadVisibleTurnItems,
+} from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
@@ -255,9 +261,13 @@ export default function DiffPanel({
   );
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
   const isGitSelection = diffSelection.kind === "branch" || diffSelection.kind === "unstaged";
+  const toolCallItems = useQuietThreadVisibleTurnItems(toolCallSelection ? routeThreadRef : null);
   const toolCallDetail = useTurnItemDetail(
     toolCallSelection && routeThreadRef
-      ? { ...toolCallSelection, environmentId: routeThreadRef.environmentId }
+      ? {
+          ...resolveToolCallDiffTarget(toolCallSelection, toolCallItems),
+          environmentId: routeThreadRef.environmentId,
+        }
       : null,
   );
   const toolCallItem = toolCallDetail.data?.item;
