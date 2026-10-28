@@ -766,6 +766,18 @@ export function NewTaskDraftScreen(props: {
           </Pressable>
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
         </View>
+        {flow.canStartWithoutProject && !incomingShare?.destination ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={isComposerInteractionLocked}
+            onPress={() => void flow.startWithoutProject()}
+            className="active:opacity-65"
+          >
+            <Text className="text-center text-sm text-foreground-muted">
+              or start without a project
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {environmentControl}

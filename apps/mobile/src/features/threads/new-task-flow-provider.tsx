@@ -167,6 +167,9 @@ type NewTaskFlowContextValue = {
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly setProject: (project: EnvironmentProject) => void;
+  /** Whether the selected machine can move this draft to its Scratch project. */
+  readonly canStartWithoutProject: boolean;
+  readonly startWithoutProject: () => Promise<void>;
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
   /**
@@ -674,6 +677,33 @@ export function NewTaskFlowProvider(
     return false;
   };
 
+  const canStartWithoutProject =
+    !isScratchDraft &&
+    scratchEnvironments.some((environment) => environment.environmentId === selectedEnvironmentId);
+  const scratchStartInFlightRef = useRef(false);
+  // Moves the draft, and what is typed in it, to the selected machine's Scratch project.
+  const startWithoutProject = async () => {
+    if (!canStartWithoutProject || selectedEnvironmentId === null) return;
+    if (scratchStartInFlightRef.current) return;
+    scratchStartInFlightRef.current = true;
+    const requestedProjectKey = readFlow().projectKey;
+    const result = await openScratch({ environmentId: selectedEnvironmentId, input: {} });
+    scratchStartInFlightRef.current = false;
+    if (result._tag === "Success") {
+      if (readFlow().projectKey === requestedProjectKey) setProject(result.value);
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not start without a project",
+        error instanceof Error
+          ? error.message
+          : "The folder for threads without a project could not be created.",
+      );
+    }
+  };
+
   const setWorkspaceMode = (mode: WorkspaceMode) => {
     if (!selectedProjectDraftKey) {
       return;
@@ -860,6 +890,8 @@ export function NewTaskFlowProvider(
     selectedProviderStatus,
     providerGroups,
     setProject,
+    canStartWithoutProject,
+    startWithoutProject,
     getSelectedProjectKey: () => readFlow().projectKey,
     missingRouteDraftId:
       routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
