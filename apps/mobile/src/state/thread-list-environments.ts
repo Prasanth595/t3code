@@ -12,15 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = [
-  "threadSettlement",
-  "threadSnooze",
-  "threadPinning",
-  "threadAutoSettleOptOut",
-  "threadPinReorder",
-  "threadActiveReorder",
-  "threadTitleRegeneration",
-] as const;
+const capabilityKeys = ["threadAutoSettleOptOut"] as const;
 
 function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
@@ -37,6 +29,7 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
     ),
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
+    snoozePresets: config.settings.snoozePresets,
   };
 }
 
@@ -65,35 +58,33 @@ function sameProviders(
 function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnvironment>) {
   const providersByEnvironmentId = new Map<EnvironmentId, ReadonlyArray<ThreadListProvider>>();
   const machineByEnvironmentId = new Map<EnvironmentId, EnvironmentMachineKind>();
-  const settlementEnvironmentIds = new Set<EnvironmentId>();
-  const snoozeEnvironmentIds = new Set<EnvironmentId>();
-  const pinningEnvironmentIds = new Set<EnvironmentId>();
+  // Every protocol-2 server supports these thread actions; they only wait for its config.
+  const loadedEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
-  const pinReorderEnvironmentIds = new Set<EnvironmentId>();
-  const activeReorderEnvironmentIds = new Set<EnvironmentId>();
-  const titleRegenerationEnvironmentIds = new Set<EnvironmentId>();
-  for (const [id, { providers, machineKind, capabilities, isConnected }] of environments) {
+  const reorderableEnvironmentIds = new Set<EnvironmentId>();
+  const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
+  for (const [
+    id,
+    { providers, machineKind, capabilities, isConnected, snoozePresets },
+  ] of environments) {
     providersByEnvironmentId.set(id, providers);
+    snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
-    if (capabilities.threadSettlement === true) settlementEnvironmentIds.add(id);
-    if (capabilities.threadSnooze === true) snoozeEnvironmentIds.add(id);
+    loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
-    if (capabilities.threadPinning === true) pinningEnvironmentIds.add(id);
-    if (isConnected && capabilities.threadPinReorder === true) pinReorderEnvironmentIds.add(id);
-    if (isConnected && capabilities.threadActiveReorder === true)
-      activeReorderEnvironmentIds.add(id);
-    if (capabilities.threadTitleRegeneration === true) titleRegenerationEnvironmentIds.add(id);
+    if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
     providersByEnvironmentId,
     machineByEnvironmentId,
-    settlementEnvironmentIds,
-    snoozeEnvironmentIds,
-    pinningEnvironmentIds,
+    settlementEnvironmentIds: loadedEnvironmentIds,
+    snoozeEnvironmentIds: loadedEnvironmentIds,
+    pinningEnvironmentIds: loadedEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
-    pinReorderEnvironmentIds,
-    activeReorderEnvironmentIds,
-    titleRegenerationEnvironmentIds,
+    pinReorderEnvironmentIds: reorderableEnvironmentIds,
+    activeReorderEnvironmentIds: reorderableEnvironmentIds,
+    titleRegenerationEnvironmentIds: loadedEnvironmentIds,
+    snoozePresetsByEnvironmentId,
   };
 }
 
@@ -114,11 +105,15 @@ export function createThreadListEnvironmentsAtom(
       if (prior && sameProviders(prior.providers, selected.providers)) {
         selected.providers = prior.providers;
       }
+      if (prior && JSON.stringify(prior.snoozePresets) === JSON.stringify(selected.snoozePresets)) {
+        selected.snoozePresets = prior.snoozePresets;
+      }
       const unchanged =
         prior &&
         prior.providers === selected.providers &&
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
+        prior.snoozePresets === selected.snoozePresets &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );

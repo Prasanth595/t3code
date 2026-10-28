@@ -177,20 +177,7 @@ describe("thread list reorder availability", () => {
     (section) => {
       const onlineId = EnvironmentId.make("online");
       const offlineId = EnvironmentId.make("offline");
-      const baseConfig = makeConfig([{ instanceId: "codex", driver: "codex" }]);
-      const config = {
-        ...baseConfig,
-        environment: {
-          ...baseConfig.environment,
-          capabilities: {
-            ...baseConfig.environment.capabilities,
-            threadPinning: true,
-            threadPinReorder: true,
-            threadActiveReorder: true,
-            threadSettlement: true,
-          },
-        },
-      };
+      const config = makeConfig([{ instanceId: "codex", driver: "codex" }]);
       const configs = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(
         new Map([
           [onlineId, config],
@@ -252,11 +239,28 @@ describe("thread list reorder availability", () => {
           canMoveDown: false,
         });
 
-        registry.set(connected, [onlineId, offlineId]);
+        const updatedConfig = {
+          ...config,
+          settings: {
+            ...config.settings,
+            snoozePresets: [{ kind: "after" as const, minutes: 90 }],
+          },
+        };
+        registry.set(
+          configs,
+          new Map([
+            [onlineId, config],
+            [offlineId, updatedConfig],
+          ]),
+        );
 
-        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toHaveLength(2);
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(true);
-        expect(registry.get(configs).get(offlineId)).toBe(config);
+        const updated = registry.get(environments);
+        expect(updated.snoozePresetsByEnvironmentId.get(offlineId)).toEqual(
+          updatedConfig.settings.snoozePresets,
+        );
+        expect(updated.pinReorderEnvironmentIds.has(offlineId)).toBe(false);
+        expect(updated.activeReorderEnvironmentIds.has(offlineId)).toBe(false);
+        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toBeNull();
 
         registry.set(
           configs,
@@ -265,19 +269,28 @@ describe("thread list reorder availability", () => {
             [
               offlineId,
               {
-                ...config,
-                environment: {
-                  ...config.environment,
-                  capabilities: {
-                    ...config.environment.capabilities,
-                    threadPinReorder: false,
-                    threadActiveReorder: false,
-                  },
+                ...updatedConfig,
+                settings: {
+                  ...updatedConfig.settings,
+                  snoozePresets: updatedConfig.settings.snoozePresets.map((preset) => ({
+                    ...preset,
+                  })),
                 },
               },
             ],
           ]),
         );
+        expect(registry.get(environments)).toBe(updated);
+
+        registry.set(connected, [onlineId, offlineId]);
+
+        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toHaveLength(2);
+        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(true);
+        expect(registry.get(environments).snoozePresetsByEnvironmentId.get(offlineId)).toBe(
+          updated.snoozePresetsByEnvironmentId.get(offlineId),
+        );
+
+        registry.set(configs, new Map([[onlineId, config]]));
 
         expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toBeNull();
         expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(false);
