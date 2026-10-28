@@ -14,6 +14,13 @@ import {
   registerHiddenUpdateTap,
   runAppUpdateCheck,
 } from "../updates/app-updates";
+import {
+  type ApkRelease,
+  checkForApkUpdate,
+  isApkUpdateSupported,
+  readMiraBuildInfo,
+} from "../updates/apk-updates";
+import { installApkRelease } from "../updates/MiraApkUpdatePrompt";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -45,7 +52,9 @@ function AppSettingsSection() {
   // Match app.config.ts's production fallback to avoid mislabeling builds as development.
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
-  const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
+  const releaseTag = readMiraBuildInfo()?.releaseTag.replace("mira-preview-", "");
+  const variantSuffix = releaseTag ?? variantLabel;
+  const versionLabel = variantSuffix ? `${version} · ${variantSuffix}` : version;
   const updateCheckAvailable = isAppUpdateCheckAvailable();
   const busy =
     updateState === "checking" || updateState === "downloading" || updateState === "restarting";
@@ -122,6 +131,7 @@ function AppSettingsSection() {
         target="SettingsOpenSourceLicenses"
       />
       <SettingsRow icon="doc.text" label="Informații legale" fullScreenTarget="SettingsLegal" />
+      {isApkUpdateSupported() ? <ApkUpdateRow /> : null}
       {updateCheckAvailable ? (
         <Pressable
           accessibilityLabel={`Versiunea ${versionLabel}`}
@@ -140,4 +150,62 @@ function AppSettingsSection() {
 
 function capitalize(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+type ApkUpdateState =
+  | { readonly kind: "idle" | "checking" | "current" | "installing" }
+  | { readonly kind: "available"; readonly release: ApkRelease };
+
+function ApkUpdateRow() {
+  const [state, setState] = useState<ApkUpdateState>({ kind: "idle" });
+
+  async function press() {
+    if (state.kind === "checking" || state.kind === "installing") return;
+    if (state.kind === "available") {
+      setState({ kind: "installing" });
+      await installApkRelease(state.release);
+      setState({ kind: "available", release: state.release });
+      return;
+    }
+    setState({ kind: "checking" });
+    try {
+      const release = await checkForApkUpdate();
+      setState(release ? { kind: "available", release } : { kind: "current" });
+    } catch (cause) {
+      setState({ kind: "idle" });
+      Dialog.alert(
+        "Nu am putut verifica actualizările",
+        cause instanceof Error ? cause.message : "Încearcă din nou.",
+      );
+    }
+  }
+
+  const detail =
+    state.kind === "checking"
+      ? "Se verifică…"
+      : state.kind === "current"
+        ? "Ai cea mai nouă versiune"
+        : state.kind === "installing"
+          ? "Se descarcă…"
+          : state.kind === "available"
+            ? `Versiune nouă: ${state.release.name}. Atinge ca s-o instalezi.`
+            : "Atinge ca să verifici";
+
+  return (
+    <Pressable accessibilityRole="button" onPress={() => void press()}>
+      <View className="flex-row items-center gap-4 p-4">
+        <SymbolView
+          name="arrow.down.circle"
+          size={22}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+          weight="regular"
+        />
+        <View className="flex-1">
+          <Text className="text-lg text-foreground">Actualizează aplicația</Text>
+          <Text className="text-xs text-foreground-muted">{detail}</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
 }

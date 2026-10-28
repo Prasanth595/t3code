@@ -279,6 +279,10 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
+    // In-app APK updates need each build to install over the last one.
+    ...(repoEnv.MIRA_ANDROID_VERSION_CODE
+      ? { versionCode: Number(repoEnv.MIRA_ANDROID_VERSION_CODE) }
+      : {}),
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
@@ -430,6 +434,12 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    // Set by the APK build so the app can offer newer GitHub releases of itself.
+    miraBuild: {
+      releaseTag: repoEnv.MIRA_RELEASE_TAG ?? null,
+      builtAt: repoEnv.MIRA_BUILT_AT ?? null,
+      repository: repoEnv.MIRA_RELEASE_REPOSITORY ?? "andreimironstv/mira-ai",
+    },
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
