@@ -68,6 +68,49 @@ const seedEvents = Effect.fn("test.seedSequenceEvents")(function* (
   `;
 });
 
+it.effect("fetches the next byte-bounded replay page after delivering the previous page", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("byte-paged-replay");
+    const rows = [1, 2].map((ordinal) => ({
+      ...eventRow(ordinal, "thread", 2, threadId),
+      payload_json: encodeJson({
+        providerSessionId: `session:${ordinal}:${"x".repeat(180_000)}`,
+        detachedAt: occurredAt,
+      }),
+    }));
+    const inserted = yield* seedEvents(rows);
+    const updatedPayload = {
+      providerSessionId: ProviderSessionId.make("session:updated"),
+      detachedAt: occurredAt,
+    };
+    const items = yield* store
+      .readAgentEvents({
+        threadId,
+        throughSequence: inserted[1]!.sequence,
+        maxPageBytes: 256 * 1024,
+      })
+      .pipe(
+        Stream.tap((item) =>
+          item.sequence === inserted[0]!.sequence
+            ? sql`UPDATE orchestration_events SET payload_json = ${encodeJson(updatedPayload)}
+              WHERE sequence = ${inserted[1]!.sequence}`
+            : Effect.void,
+        ),
+        Stream.runCollect,
+      );
+    assert.deepEqual(
+      items.map((item) => item.sequence),
+      inserted.map((item) => item.sequence),
+    );
+    assert.deepEqual(items[1]!.event.payload, {
+      ...updatedPayload,
+      detachedAt: DateTime.makeUnsafe(occurredAt),
+    });
+  }).pipe(Effect.provide(layerEventStore)),
+);
+
 it.effect("keeps application and scoped agent high-water marks separate from legacy history", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;

@@ -60,6 +60,8 @@ export class OrchestrationEventStore extends Context.Service<
       readonly eventType?: OrchestrationV2DomainEvent["type"];
       readonly limit?: number;
       readonly skipUnknownEventTypes?: boolean;
+      /** Bound fetched JSON per page, always allowing one indivisible event. */
+      readonly maxPageBytes?: number;
     }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
     readonly getAgentReplayStats: (input: {
@@ -392,8 +394,9 @@ const makeEventStore = Effect.gen(function* () {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     readonly onlyAgentEvents?: boolean;
     readonly limit: number;
-  }) =>
-    sql<ApplicationEventRow>`
+    readonly maxPageBytes?: number;
+  }) => {
+    const query = sql<ApplicationEventRow>`
       SELECT
         sequence,
         event_id,
@@ -433,7 +436,19 @@ const makeEventStore = Effect.gen(function* () {
         ])}
       ORDER BY sequence ASC
       LIMIT ${input.limit}
+    `;
+    if (input.maxPageBytes === undefined) return query.pipe(NodeSqliteClient.readOnly);
+    return sql<ApplicationEventRow>`
+      SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (ORDER BY sequence) AS replay_row,
+          SUM(octet_length(payload_json) + octet_length(metadata_json))
+            OVER (ORDER BY sequence ROWS UNBOUNDED PRECEDING) AS replay_bytes
+        FROM (${query})
+      )
+      WHERE replay_row = 1 OR replay_bytes <= ${input.maxPageBytes}
+      ORDER BY sequence
     `.pipe(NodeSqliteClient.readOnly);
+  };
 
   const appendAgentEvents: OrchestrationEventStore["Service"]["appendAgentEvents"] = (input) =>
     Effect.forEach(
@@ -556,6 +571,7 @@ const makeEventStore = Effect.gen(function* () {
           ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
           onlyAgentEvents: true,
           limit: pageLimit,
+          ...(input?.maxPageBytes === undefined ? {} : { maxPageBytes: input.maxPageBytes }),
         }).pipe(
           Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.readAgentEvents:query")),
           Effect.map((rows) => {
@@ -564,7 +580,7 @@ const makeEventStore = Effect.gen(function* () {
             return [
               rows,
               last === undefined ||
-              rows.length < pageLimit ||
+              (input?.maxPageBytes === undefined && rows.length < pageLimit) ||
               nextRemaining <= 0 ||
               (input?.throughSequence !== undefined && last.sequence >= input.throughSequence)
                 ? Option.none()
