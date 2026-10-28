@@ -1000,6 +1000,7 @@ describe("snapshotComposerSend", () => {
       previewAnnotations: [],
       reviewComments: [],
       threadContexts: [],
+      environmentContexts: [],
     });
 
     expect(snapshot.composerText).toBe("hello  ");
