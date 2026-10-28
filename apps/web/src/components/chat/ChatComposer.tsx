@@ -199,6 +199,8 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { isVoiceCallChat, useThreadVoiceCall } from "~/hooks/useVoiceCall";
+import { VoiceCallButton } from "./VoiceCallButton";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -711,6 +713,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
+  const voiceCall = useThreadVoiceCall(environmentId, routeThreadRef.threadId);
+  const typingReachesChatAgentOnly = isVoiceCallChat(voiceCall, routeThreadRef.threadId);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
@@ -3375,7 +3379,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : DEFAULT_COMPOSER_PLACEHOLDER
+                                : typingReachesChatAgentOnly
+                                  ? "Messages the chat's agent; the live voice call does not hear typed text"
+                                  : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={
                       projectSelectionRequired ||
@@ -3446,6 +3452,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  <VoiceCallButton
+                    environmentId={environmentId}
+                    cwd={gitCwd ?? undefined}
+                    threadId={activeThreadId ?? undefined}
+                    preferredInstanceId={selectedModelSelection.instanceId}
+                  />
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

@@ -222,6 +222,7 @@ import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { voiceCallSession } from "../state/voiceCallSession";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
@@ -1750,6 +1751,9 @@ export default function ChatView(props: ChatViewProps) {
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
       return;
+    // Stopping a call's chat ends the call, which would otherwise keep sending it work.
+    const call = voiceCallSession.getSnapshot();
+    if (call?.state.chatThreadId === activeThread.id) void call.call.hangUp();
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
