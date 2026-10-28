@@ -12,10 +12,8 @@ import {
   resolveEffectiveDefaultModelSelection,
 } from "../../modelSelection";
 import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -68,13 +66,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const selection = storedSelection
     ? resolveEffectiveDefaultModelSelection(modelSettings, providers, storedSelection)
     : null;
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      modelSettings,
-      projectId,
-    ),
-  );
+  const entries = providerInstanceEntriesFor(providers, modelSettings, projectId);
   const modelOptions = getCustomModelOptionsByInstance(
     modelSettings,
     providers,

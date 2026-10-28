@@ -241,6 +241,37 @@ describe("deriveMessagesTimelineRows", () => {
       expect(rows.some((row) => row.kind === "event")).toBe(false);
       expect(workRows[0]).not.toMatchObject({ expanded: true });
       expect(workRows[0]).not.toMatchObject({ isExpandedToolGroup: true });
+      const pendingRows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        pendingApprovalRequestIds: new Set([RuntimeRequestId.make("approval-request")]),
+        isWorking: status === "waiting",
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(pendingRows.filter((row) => row.kind === "work")).toContainEqual(
+        expect.objectContaining({
+          groupedEntries: [expect.objectContaining({ itemType: "approval_request" })],
+          isExpandedToolGroup: false,
+        }),
+      );
+      expect(
+        pendingRows
+          .filter((row) => row.kind === "work-live")
+          .flatMap((row) => row.groupedEntries)
+          .some((entry) => entry.itemType === "approval_request"),
+      ).toBe(false);
+      const approvalOnlyRows = deriveMessagesTimelineRows({
+        timelineEntries: entries.slice(1, 2),
+        pendingApprovalRequestIds: new Set([RuntimeRequestId.make("approval-request")]),
+        isWorking: status === "waiting",
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(approvalOnlyRows.some((row) => row.kind === "thinking")).toBe(false);
     },
   );
 
@@ -472,11 +503,7 @@ describe("deriveMessagesTimelineRows", () => {
         },
         "Context automatically compacted before cache expiry",
       ],
-      [
-        "onReturn",
-        { kind: "working", compacting: "Compacting after being idle…" },
-        "Context compacted after being idle",
-      ],
+      ["onReturn", { kind: "working", compacting: true }, "Context compacted before sending"],
       [undefined, { kind: "context-compaction", active: true }, undefined],
     ] as const) {
       const prompt = compactPrompt(reason);
@@ -629,9 +656,17 @@ describe("deriveMessagesTimelineRows", () => {
       },
     };
     const assistantItem = liveAssistant.item;
+    // The answer can come long after the turn starts; the row times the compaction itself.
+    const compactionStartedAt = DateTime.makeUnsafe(fixture.time(65));
     const compactionAt = (status: "running" | "completed") => ({
       ...liveAssistant,
-      item: { ...assistantItem, type: "compaction" as const, status, driver: null },
+      item: {
+        ...assistantItem,
+        type: "compaction" as const,
+        status,
+        driver: null,
+        startedAt: compactionStartedAt,
+      },
     });
     const rowsFor = (status: "running" | "completed", laterCompaction = false) =>
       deriveMessagesTimelineRows({
@@ -668,7 +703,7 @@ describe("deriveMessagesTimelineRows", () => {
       return rows.slice(rows.findIndex((row) => row.id.includes("live-user")) + 1);
     };
     expect(liveRows("running")).toMatchObject([
-      { kind: "working", compacting: "Compacting after 1h 5m idle…" },
+      { kind: "working", compacting: true, createdAt: DateTime.formatIso(compactionStartedAt) },
     ]);
     expect(liveRows("completed")).toMatchObject([
       { kind: "context-compaction", title: "Context compacted after 1h 5m idle" },
@@ -2608,6 +2643,15 @@ describe("v2 run and attempt history", () => {
     };
     const timelineEntries = [
       {
+        id: "context-handoff-entry",
+        kind: "event" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        attempt: supersededAttempt,
+        projectedItem: {
+          item: { type: "handoff", runId },
+        } as never,
+      },
+      {
         id: "initial-user-entry",
         kind: "message" as const,
         createdAt: "2026-01-01T00:00:00Z",
@@ -2709,6 +2753,7 @@ describe("v2 run and attempt history", () => {
 
     const collapsedRows = deriveMessagesTimelineRows(common);
     expect(collapsedRows.map((row) => row.id)).toEqual([
+      "context-handoff-entry",
       "initial-user-entry",
       `attempt-fold:${supersededAttemptId}`,
       "superseded-thread-created-entry",
@@ -2727,6 +2772,7 @@ describe("v2 run and attempt history", () => {
       expandedAttemptIds: new Set([supersededAttemptId]),
     });
     expect(expandedRows.map((row) => row.id)).toEqual([
+      "context-handoff-entry",
       "initial-user-entry",
       `attempt-fold:${supersededAttemptId}`,
       "superseded-assistant-entry",
@@ -3023,6 +3069,7 @@ describe("streaming v2 row projection", () => {
     const previous = deriveMessagesTimelineRowsWithState({
       ...initial.input,
       availableRevertTurnCounts: new Set([0]),
+      pendingApprovalRequestIds: new Set<RuntimeRequestId>(),
     });
     Object.freeze(previous.rows);
     for (const row of previous.rows) Object.freeze(row);
@@ -3040,6 +3087,7 @@ describe("streaming v2 row projection", () => {
       latestRun: { ...initial.input.latestRun },
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({ ...summary })),
       availableRevertTurnCounts: new Set([0]),
+      pendingApprovalRequestIds: new Set<RuntimeRequestId>(),
     };
     const next = deriveMessagesTimelineRowsWithState(input, previous);
     expect(next.rows).toEqual(

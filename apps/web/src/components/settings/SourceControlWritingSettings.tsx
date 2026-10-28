@@ -23,11 +23,7 @@ import {
 } from "./useScopedModelAvailability";
 import { targetStoresSettingKeys } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -112,12 +108,10 @@ export function SourceControlWritingSettingsSection() {
   const textGenerationProviders = writerModel.providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(textGenerationProviders),
-      writerModel.settings,
-      writerModel.projectId,
-    ),
+  const instanceEntries = providerInstanceEntriesFor(
+    textGenerationProviders,
+    writerModel.settings,
+    writerModel.projectId,
   );
   const projectEnabledInstanceIds = new Set(
     instanceEntries
@@ -165,12 +159,10 @@ export function SourceControlWritingSettingsSection() {
   const reviewGuideProviders = reviewGuideModel.providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const reviewGuideInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(reviewGuideProviders),
-      reviewGuideModel.settings,
-      reviewGuideModel.projectId,
-    ),
+  const reviewGuideInstanceEntries = providerInstanceEntriesFor(
+    reviewGuideProviders,
+    reviewGuideModel.settings,
+    reviewGuideModel.projectId,
   );
   const reviewGuideSelection = resolveAppModelSelectionState(
     {
