@@ -35,7 +35,7 @@ describe("buildRuntimeInstructions", () => {
       instructions,
       "After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>.",
     );
-    assert.include(instructions, "Never wait with sleep");
+    assert.include(instructions, "Never wait on a PR with sleep");
     assert.include(instructions, "call unwatch_pull_request");
   });
 });
