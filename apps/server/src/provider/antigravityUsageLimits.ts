@@ -279,11 +279,16 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
       decodeSummary(response).pipe(Effect.map(summaryWindows)),
     );
-    const windows = summary.length
+    // Some accounts get only the Claude & GPT buckets from the summary; Gemini quota is then only
+    // reported per model.
+    const windows = summary.some((window) => window.id.startsWith("gemini-"))
       ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+      : [
+          ...summary,
+          ...(yield* fetchWindows("fetchAvailableModels", (response) =>
+            decodeModels(response).pipe(Effect.map(modelWindows)),
+          )).filter((window) => summary.length === 0 || window.id.startsWith("gemini-")),
+        ];
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
