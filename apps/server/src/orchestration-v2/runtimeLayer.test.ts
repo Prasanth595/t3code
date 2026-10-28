@@ -6168,6 +6168,14 @@ it.layer(layerTest)("manual continuation and usage-limit recovery", (it) => {
         assert.lengthOf(after.runs, 3);
         assert.equal(after.runs[1]?.status, "queued");
         assert.equal(after.runs[2]?.status, "starting");
+        const resumeItems = after.turnItems.filter((item) => item.runId === after.runs[2]?.id);
+        assert.isFalse(resumeItems.some((item) => item.type === "user_message"));
+        assert.deepInclude(
+          resumeItems.flatMap((item) =>
+            item.type === "notification" ? [[item.summary, item.detail]] : [],
+          ),
+          ["T3 Code resumed", "Continue where you left off."],
+        );
         assert.equal(
           (yield* orchestrator.dispatch(resume("second")).pipe(Effect.exit))._tag,
           "Failure",
