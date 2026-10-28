@@ -32,6 +32,8 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
+import { newProviderSessionId, reusableProviderSessionId } from "./ProviderSessionIds.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -110,6 +112,7 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStoreV2
+  | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | RuntimePolicyV2
   | FileSystem.FileSystem
@@ -127,6 +130,7 @@ export const layer: Layer.Layer<
     const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
+    const providerAdapters = yield* ProviderAdapterRegistryV2;
     const runtimePolicy = yield* RuntimePolicyV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectStore.ProjectStoreV2;
@@ -240,10 +244,26 @@ export const layer: Layer.Layer<
         thread: context.thread,
         modelSelection,
       });
-      const existingSession = context.providerSession;
+      // Same session choice as a new turn: a thread still on its instance's shared
+      // session moves to its own when the provider runs one session per thread.
+      const providerSessionId =
+        reusableProviderSessionId(
+          ids,
+          providerThread.providerInstanceId,
+          providerThread.providerSessionId,
+        ) ??
+        (yield* newProviderSessionId({
+          adapter: yield* providerAdapters.get(providerThread.providerInstanceId),
+          idAllocator: ids,
+          providerInstanceId: providerThread.providerInstanceId,
+          threadId: input.threadId,
+        }));
+      const sessionProviderThread = { ...providerThread, providerSessionId };
+      const existingSession =
+        context.providerSession?.id === providerSessionId ? context.providerSession : undefined;
       const session = yield* sessions.open({
         threadId: input.threadId,
-        providerSessionId: providerThread.providerSessionId,
+        providerSessionId,
         modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
         ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
@@ -267,9 +287,9 @@ export const layer: Layer.Layer<
 
       const snapshot =
         runsToRollback.length === 0
-          ? { providerThread }
+          ? { providerThread: sessionProviderThread }
           : yield* session.rollbackThread({
-              providerThread,
+              providerThread: sessionProviderThread,
               target: rollbackTarget,
               providerThreadTurns,
             });
@@ -302,6 +322,7 @@ export const layer: Layer.Layer<
               occurredAt: now,
               payload: {
                 ...snapshot.providerThread,
+                providerSessionId,
                 lastRunOrdinal: targetOrdinal === 0 ? null : targetOrdinal,
                 updatedAt: now,
               },

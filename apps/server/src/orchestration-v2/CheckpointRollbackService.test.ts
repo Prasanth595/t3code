@@ -44,6 +44,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const unrelatedProject = Option.some({
@@ -55,6 +56,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
       NodeServices.layer,
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
+      Layer.mock(ProviderAdapterRegistryV2)({}),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
     ),
@@ -226,6 +228,7 @@ it.effect.each([
           NodeServices.layer,
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
           ServerSettings.layerTest(),
+          Layer.mock(ProviderAdapterRegistryV2)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id) => {
               assert.equal(id, projectId);
@@ -631,6 +634,115 @@ const seedRollbackHistory = Effect.gen(function* () {
     committed,
   };
 });
+
+it.effect.each([
+  { pooled: false, movesSession: true },
+  { pooled: true, movesSession: false },
+])(
+  "rolls back on the thread's own session unless the provider pools sessions ($pooled)",
+  ({ pooled, movesSession }) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:rollback-shared-session");
+      const providerThreadId = ProviderThreadId.make("provider-thread:rollback-shared-session");
+      const providerInstanceId = ProviderInstanceId.make("provider_rollback_shared_session");
+      const checkpointId = CheckpointId.make("checkpoint:rollback-shared-session");
+      const scopeId = CheckpointScopeId.make("checkpoint-scope:rollback-shared-session");
+      const sharedSessionId = IdAllocator.derive.providerSession({ providerInstanceId });
+      const opened: Array<string> = [];
+      const persisted: Array<string | null> = [];
+      const projection = {
+        thread: {
+          id: threadId,
+          worktreePath: null,
+          branch: null,
+          activeProviderThreadId: providerThreadId,
+          modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        },
+        providerThread: {
+          id: providerThreadId,
+          providerSessionId: sharedSessionId,
+          providerInstanceId,
+        },
+        providerSession: undefined,
+        checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+        scope: { id: scopeId, cwd: process.cwd() },
+        runsToRollback: [],
+        targetAttempt: undefined,
+        rolledBackAttemptIds: [],
+        staleCheckpoints: [],
+        rootNodes: [],
+        providerTurns: [],
+      } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
+      const testLayer = CheckpointRollbackService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            ThreadCommandExecutor.layer,
+            IdAllocator.layer,
+            ServerSettings.layerTest(),
+            Layer.mock(ServerConfig.ServerConfig)({
+              worktreesDir: "/synthetic-worktrees",
+            } as never),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ProjectStore.ProjectStoreV2)({}),
+            Layer.mock(CheckpointService.CheckpointServiceV2)({}),
+            Layer.mock(ProviderAdapterRegistryV2)({
+              get: () =>
+                Effect.succeed({
+                  getCapabilities: () =>
+                    Effect.succeed({
+                      sessions: { supportsMultipleProviderThreadsPerSession: pooled },
+                    }),
+                } as never),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: ({ events }) =>
+                Effect.sync(() => {
+                  for (const event of events) {
+                    if (event.type === "provider-thread.updated") {
+                      persisted.push(event.payload.providerSessionId);
+                    }
+                  }
+                  return [];
+                }),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(projection.thread),
+              getCheckpointRollbackContext: () => Effect.succeed(projection),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              open: (input) =>
+                Effect.sync(() => {
+                  opened.push(input.providerSessionId);
+                  return {} as never;
+                }),
+            }),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: () => Effect.succeed({ cwd: process.cwd() } as never),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        yield* service.execute({
+          threadId,
+          providerThreadId,
+          checkpointId,
+          scopeId,
+          restoreFiles: false,
+        });
+      }).pipe(Effect.provide(testLayer));
+
+      assert.lengthOf(opened, 1);
+      assert.deepEqual(persisted, opened);
+      if (movesSession) {
+        assert.notEqual(opened[0], sharedSessionId);
+      } else {
+        assert.deepEqual(opened, [sharedSessionId]);
+      }
+    }),
+);
 
 it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
   "rollback history reads",

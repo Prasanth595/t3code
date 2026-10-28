@@ -862,6 +862,93 @@ describe("CodexAdapterV2 process exit", () => {
   );
 });
 
+describe("CodexAdapterV2 replay testkit", () => {
+  it.effect("gives each session its own recorded connection and continues it on reopen", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const initialize = (userAgent: string, connection?: number) =>
+          [
+            {
+              type: "expect_outbound",
+              label: "initialize",
+              frame: { id: 1, method: "initialize", params: {} },
+              ...(connection === undefined ? {} : { connection }),
+            },
+            {
+              type: "emit_inbound",
+              label: "initialize",
+              frame: { id: 1, result: { userAgent } },
+              ...(connection === undefined ? {} : { connection }),
+            },
+          ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "testkit-session-connections",
+          entries: [
+            ...initialize("session A, first process"),
+            { type: "runtime_exit", status: "success" },
+            ...initialize("session A, after restart"),
+            ...initialize("session B", 1),
+          ],
+        });
+        const factory = yield* CodexAdapterV2Testkit.makeReplayClientFactory({ transcript });
+        const userAgent = (providerSessionId: string) =>
+          factory
+            .open({ providerSessionId: ProviderSessionId.make(providerSessionId) } as never)
+            .pipe(
+              Effect.flatMap((client) => client.raw.request("initialize", {})),
+              Effect.map((result) => (result as { readonly userAgent: string }).userAgent),
+            );
+
+        assert.equal(yield* userAgent("session-a"), "session A, first process");
+        assert.equal(yield* userAgent("session-b"), "session B");
+        assert.equal(yield* userAgent("session-a"), "session A, after restart");
+      }),
+    ),
+  );
+});
+
+describe("CodexAdapterV2 thread writer", () => {
+  const writerError = (message: string) =>
+    CodexError.CodexAppServerRequestError.fromProtocolError(
+      { code: -32600, message },
+      "thread/resume",
+      "3",
+    );
+
+  it.effect.each([
+    "thread saved-thread already has an active writer",
+    "thread history projection for saved-thread is behind durable rollout",
+  ])("retries while another app-server is busy with the thread: %s", (busyMessage) =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const request = Effect.suspend(() => {
+        attempts += 1;
+        return attempts === 1 ? Effect.fail(writerError(busyMessage)) : Effect.succeed("resumed");
+      });
+      const fiber = yield* CodexAdapterV2.retryWhileThreadBusyElsewhere(request).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      assert.equal(attempts, 1);
+      yield* TestClock.adjust("500 millis");
+      assert.equal(yield* Fiber.join(fiber), "resumed");
+      assert.equal(attempts, 2);
+    }),
+  );
+
+  it.effect("does not retry other request errors", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const request = Effect.suspend(() => {
+        attempts += 1;
+        return Effect.fail(writerError("thread not found: saved-thread"));
+      });
+      const error = yield* Effect.flip(CodexAdapterV2.retryWhileThreadBusyElsewhere(request));
+      assert.nestedPropertyVal(error, "errorMessage", "thread not found: saved-thread");
+      assert.equal(attempts, 1);
+    }),
+  );
+});
+
 describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,

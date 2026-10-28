@@ -184,6 +184,7 @@ const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
 const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       ProjectStore.layer,
       layerCheckpointServiceProvided,
       layerEventSink,

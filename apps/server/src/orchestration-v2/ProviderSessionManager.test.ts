@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -159,12 +160,12 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
-const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
-const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
-  ...CodexCapabilities,
+const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
+const PooledCapabilities: OrchestrationV2ProviderCapabilities = {
+  ...ExclusiveCapabilities,
   sessions: {
-    ...CodexCapabilities.sessions,
-    supportsMultipleProviderThreadsPerSession: false,
+    ...ExclusiveCapabilities.sessions,
+    supportsMultipleProviderThreadsPerSession: true,
   },
 };
 
@@ -213,7 +214,7 @@ function makeProviderSession(input: {
     status: "ready",
     cwd: process.cwd(),
     model: "gpt-5.4",
-    capabilities: input.capabilities ?? CodexCapabilities,
+    capabilities: input.capabilities ?? PooledCapabilities,
     createdAt: input.now,
     updatedAt: input.now,
     lastError: null,
@@ -225,6 +226,7 @@ function makeThreadCreatedEvent(input: {
   readonly threadId: ThreadId;
   readonly now: DateTime.Utc;
   readonly projectId?: ProjectId;
+  readonly subagentOf?: ThreadId;
 }) {
   return Effect.gen(function* () {
     const projectId =
@@ -250,9 +252,9 @@ function makeThreadCreatedEvent(input: {
       worktreePath: null,
       activeProviderThreadId: providerThreadId,
       lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: input.threadId,
+        parentThreadId: input.subagentOf ?? null,
+        relationshipToParent: input.subagentOf === undefined ? null : "subagent",
+        rootThreadId: input.subagentOf ?? input.threadId,
       },
       forkedFrom: null,
       createdAt: input.now,
@@ -336,6 +338,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly onScopeClose?: Effect.Effect<void>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -343,7 +346,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     Ref.update(state, (current) => ({
       ...current,
       closeCount: current.closeCount + 1,
-    })),
+    })).pipe(Effect.andThen(options.onScopeClose ?? Effect.void)),
   );
   // Register after countClose to wedge teardown before its finalizer, matching a provider stream that never yields.
   const hangClose = Effect.addFinalizer(() =>
@@ -355,7 +358,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
-    getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
+    getCapabilities: () => Effect.succeed(options.capabilities ?? PooledCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
@@ -483,6 +486,7 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly onScopeClose?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -520,6 +524,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.onScopeClose === undefined ? {} : { onScopeClose: input.onScopeClose }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -951,6 +956,62 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect.each([
+  { kind: "subagent", closesAfterMinutes: 2 },
+  { kind: "top-level", closesAfterMinutes: 30 },
+])(
+  "ProviderSessionManagerV2 releases an idle $kind thread session after $closesAfterMinutes minutes",
+  ({ kind, closesAfterMinutes }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closed = yield* Deferred.make<number>();
+      const onScopeClose = Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) => Deferred.succeed(closed, now)),
+        Effect.asVoid,
+      );
+
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread-provider-session-manager-idle-parent");
+        const threadId = ThreadId.make(`thread-provider-session-manager-idle-${kind}`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId,
+              now,
+              ...(kind === "subagent" ? { subagentOf: parentThreadId } : {}),
+            }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const openedAt = yield* Clock.currentTimeMillis;
+
+        yield* TestClock.adjust("30 minutes");
+        assert.equal((yield* Deferred.await(closed)) - openedAt, closesAfterMinutes * 60_000);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60_000,
+            capabilities: ExclusiveCapabilities,
+            spawnBeforeOpen: true,
+            onScopeClose,
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>

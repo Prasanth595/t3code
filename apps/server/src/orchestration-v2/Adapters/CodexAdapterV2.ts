@@ -91,6 +91,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -116,6 +117,7 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { codexAuthPath, openCodexHomeStartup } from "../../provider/CodexHomeStartup.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -152,6 +154,24 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
+
+// Another app-server may still hold a thread's writer lock (until it exits; after a T3 restart
+// the old shared one can take ~10 s) or be writing its history while a fork reads it.
+const isThreadBusyElsewhere = (error: CodexErrors.CodexAppServerError) =>
+  error._tag === "CodexAppServerRequestError" &&
+  (error.errorMessage.includes("already has an active writer") ||
+    error.errorMessage.includes("is behind durable rollout"));
+
+export const retryWhileThreadBusyElsewhere = <A, R>(
+  request: Effect.Effect<A, CodexErrors.CodexAppServerError, R>,
+) =>
+  request.pipe(
+    Effect.retry({
+      while: isThreadBusyElsewhere,
+      schedule: Schedule.spaced("500 millis"),
+      times: 60,
+    }),
+  );
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -234,7 +254,10 @@ const CODEX_CLIENT_CAPABILITIES = {
 
 export const CodexProviderCapabilitiesV2 = {
   sessions: {
-    supportsMultipleProviderThreadsPerSession: true,
+    // One app-server per thread: its tools share the thread's scope, so a memory
+    // kill stops only that thread and its native subagents. Requests that need a
+    // loaded thread (turns, revert, thread/sample) must use that thread's session.
+    supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: true,
@@ -1386,7 +1409,6 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     name: "codex",
     threadId: input.threadId,
     env: input.env,
-    shared: true,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
@@ -1397,6 +1419,9 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
     shell: spawnCommand.shell,
+    // Codex can take 45 s to exit after SIGTERM and keeps its threads' writer locks
+    // until then. The resume retry waits out the few seconds this leaves.
+    forceKillAfter: "3 seconds",
   });
 });
 
@@ -1642,14 +1667,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
-        const client = yield* clientFactory.open({
-          instanceId: adapterOptions.instanceId,
-          threadId: input.threadId,
-          providerSessionId: input.providerSessionId,
-          runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
-        });
+        const settings = resolvedRuntime?.config ?? adapterOptions.settings;
+        const environment = resolvedRuntime?.environment ?? adapterOptions.environment;
+        const homeStartup = yield* openCodexHomeStartup(
+          codexAuthPath(settings.homePath, environment),
+        ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+        const client = yield* clientFactory
+          .open({
+            instanceId: adapterOptions.instanceId,
+            threadId: input.threadId,
+            providerSessionId: input.providerSessionId,
+            runtimePolicy: input.runtimePolicy,
+            settings,
+            environment,
+          })
+          .pipe(Effect.onError(() => homeStartup.abandon));
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -1692,7 +1724,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         );
         const initialized = yield* Ref.make(false);
-        // Codex rejects a second initialize on the shared app-server.
+        // Codex rejects a second initialize on one app-server.
         const initializePermit = yield* Semaphore.make(1);
         const ensureInitialized = initializePermit.withPermit(
           Effect.gen(function* () {
@@ -1719,6 +1751,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* Ref.set(initialized, true);
           }),
         );
+        yield* homeStartup.start({
+          initialize: ensureInitialized,
+          refresh: client.request("account/read", { refreshToken: true }),
+        });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -6798,21 +6834,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
-              const resume = client.raw.request("thread/resume", {
-                threadId: nativeThreadId,
-                excludeTurns: true,
-                ...codexThreadRuntimeParams({
-                  mcpSession: yield* readMcpSession(
-                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  ),
-                  ...(threadInput.modelSelection === undefined
-                    ? {}
-                    : { modelSelection: threadInput.modelSelection }),
-                  ...(threadInput.runtimePolicy === undefined
-                    ? {}
-                    : { runtimePolicy: threadInput.runtimePolicy }),
+              const resume = retryWhileThreadBusyElsewhere(
+                client.raw.request("thread/resume", {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  ...codexThreadRuntimeParams({
+                    mcpSession: yield* readMcpSession(
+                      threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                    ),
+                    ...(threadInput.modelSelection === undefined
+                      ? {}
+                      : { modelSelection: threadInput.modelSelection }),
+                    ...(threadInput.runtimePolicy === undefined
+                      ? {}
+                      : { runtimePolicy: threadInput.runtimePolicy }),
+                  }),
                 }),
-              });
+              );
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
                   resume.pipe(
@@ -6825,9 +6863,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         ) {
                           return Effect.fail(cause);
                         }
-                        return client.raw
-                          .request("thread/unarchive", { threadId: nativeThreadId })
-                          .pipe(Effect.andThen(resume));
+                        return retryWhileThreadBusyElsewhere(
+                          client.raw.request("thread/unarchive", { threadId: nativeThreadId }),
+                        ).pipe(Effect.andThen(resume));
                       },
                     }),
                   ),
@@ -6989,7 +7027,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
-          // Dropping this connection's subscription lets the shared app-server
+          // Dropping this connection's subscription lets the app-server
           // shut the native thread (and its MCP servers) down once it is idle.
           unloadThread: Effect.fn("CodexAdapterV2.unloadThread")(
             function* (unloadInput) {
@@ -7584,15 +7622,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               // thread/revert requires the thread loaded in this app-server; resume after restart or idle release.
               if (!loaded) {
-                yield* client.raw.request("thread/resume", {
-                  threadId,
-                  excludeTurns: true,
-                  ...codexThreadRuntimeParams({
-                    mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: input.runtimePolicy,
+                yield* retryWhileThreadBusyElsewhere(
+                  client.raw.request("thread/resume", {
+                    threadId,
+                    excludeTurns: true,
+                    ...codexThreadRuntimeParams({
+                      mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
+                      modelSelection: input.modelSelection,
+                      runtimePolicy: input.runtimePolicy,
+                    }),
                   }),
-                });
+                );
               }
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(revertCodexThread(client, threadId, numTurns)),
@@ -7634,21 +7674,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  client.request("thread/fork", {
-                    threadId,
-                    ...(boundary.lastTurnId === undefined
-                      ? {}
-                      : { lastTurnId: boundary.lastTurnId }),
-                    ...codexThreadRuntimeParams({
-                      mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
-                      ...(threadInput.modelSelection === undefined
+                  retryWhileThreadBusyElsewhere(
+                    client.request("thread/fork", {
+                      threadId,
+                      ...(boundary.lastTurnId === undefined
                         ? {}
-                        : { modelSelection: threadInput.modelSelection }),
-                      ...(threadInput.runtimePolicy === undefined
-                        ? {}
-                        : { runtimePolicy: threadInput.runtimePolicy }),
+                        : { lastTurnId: boundary.lastTurnId }),
+                      ...codexThreadRuntimeParams({
+                        mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                        ...(threadInput.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: threadInput.modelSelection }),
+                        ...(threadInput.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: threadInput.runtimePolicy }),
+                      }),
                     }),
-                  }),
+                  ),
                 ),
                 Effect.mapError(
                   (cause) =>

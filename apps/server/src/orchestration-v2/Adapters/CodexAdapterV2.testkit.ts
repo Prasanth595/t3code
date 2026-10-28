@@ -4,7 +4,9 @@ import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -94,45 +96,101 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
   };
 }
 
+/** Serves recorded app-server connections to the sessions a replay test opens. */
+export const makeReplayClientFactory = Effect.fn("CodexAdapterV2Testkit.makeReplayClientFactory")(
+  function* (input: {
+    readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
+    readonly driver?: CodexReplay.CodexAppServerReplayDriver;
+  }) {
+    const connections = CodexReplay.splitReplayConnections(input.transcript);
+    // Each thread runs its own app-server, so each recorded connection belongs to one
+    // session: a session's first open takes the next connection, and a reopen continues
+    // its own (a recorded restart shows up there as a runtime_exit). A single-connection
+    // recording serves every session, as before. Only the caller's emit hook carries over.
+    const drivers =
+      connections.length <= 1
+        ? undefined
+        : yield* Effect.forEach(connections, (connection) =>
+            CodexReplay.makeReplayDriver(
+              connection,
+              input.driver?.beforeEmitInbound === undefined
+                ? {}
+                : { beforeEmitInbound: input.driver.beforeEmitInbound },
+            ),
+          );
+    const driverBySession = yield* Ref.make(
+      new Map<string, CodexReplay.CodexAppServerReplayDriver>(),
+    );
+    return CodexAdapterV2.CodexAppServerClientFactory.of({
+      open: (openInput) =>
+        Effect.gen(function* () {
+          const driver =
+            drivers === undefined
+              ? input.driver
+              : yield* Ref.modify(driverBySession, (assigned) => {
+                  const existing = assigned.get(openInput.providerSessionId);
+                  const next = existing ?? drivers[assigned.size];
+                  return next === undefined || existing !== undefined
+                    ? [next, assigned]
+                    : [next, new Map(assigned).set(openInput.providerSessionId, next)];
+                });
+          if (drivers !== undefined && driver === undefined) {
+            return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              providerSessionId: openInput.providerSessionId,
+              cause: `The replay recorded ${drivers.length} app-server connections, and every one already belongs to another session.`,
+            });
+          }
+          const layerReplay =
+            driver === undefined
+              ? CodexReplay.layerReplay(input.transcript)
+              : CodexReplay.layerReplayWithDriver(driver);
+          const context = yield* Layer.build(layerReplay).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                  providerSessionId: openInput.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+            Effect.map((client) => withCodexReplayChildMetadata(client, input.transcript)),
+            Effect.provide(context),
+          );
+        }),
+    });
+  },
+);
+
 export function layer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
 }) {
-  const layerReplay =
-    input.driver === undefined
-      ? CodexReplay.layerReplay(input.transcript)
-      : CodexReplay.layerReplayWithDriver(input.driver);
-  const layerReplayClientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
-    open: (openInput) =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(layerReplay).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-                providerSessionId: openInput.providerSessionId,
-                cause,
-              }),
-          ),
-        );
-        return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-          Effect.map((client) => withCodexReplayChildMetadata(client, input.transcript)),
-          Effect.provide(context),
-        );
-      }),
-  });
+  const layerReplayClientFactory = Layer.effect(
+    CodexAdapterV2.CodexAppServerClientFactory,
+    makeReplayClientFactory(input),
+  );
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
-    CodexAdapterV2.createCodexAdapterV2({
-      instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-      displayName: undefined,
-      environment: [],
-      enabled: true,
-      config: DEFAULT_CODEX_SETTINGS,
-    }).pipe(Effect.map((adapter) => [adapter])),
+    Effect.gen(function* () {
+      // Keeps replay sessions away from the developer's real ~/.codex/auth.json.
+      const codexHome = yield* (yield* FileSystem.FileSystem)
+        .makeTempDirectoryScoped()
+        .pipe(Effect.orDie);
+      const adapter = yield* CodexAdapterV2.createCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        displayName: undefined,
+        environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+        enabled: true,
+        config: DEFAULT_CODEX_SETTINGS,
+      });
+      return [adapter];
+    }),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(

@@ -54,6 +54,8 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// A subagent's own provider process is rarely reused once its task ends, so free it sooner.
+const SUBAGENT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
@@ -200,6 +202,7 @@ interface LiveSessionEntry {
   >;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
+  readonly idleTimeoutMs: number;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
@@ -1121,7 +1124,7 @@ export const layerWithOptions = (
                 pinnedForMs: now - pinnedSinceMs,
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+              yield* Effect.sleep(Duration.millis(entry.idleTimeoutMs));
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
@@ -1178,7 +1181,7 @@ export const layerWithOptions = (
 
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
-        const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+        const idleFiber = yield* Effect.sleep(Duration.millis(entry.idleTimeoutMs)).pipe(
           Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
           Effect.forkIn(layerScope),
         );
@@ -2143,6 +2146,15 @@ export const layerWithOptions = (
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+              const supportsMultipleProviderThreads =
+                runtime.providerSession.capabilities.sessions
+                  .supportsMultipleProviderThreadsPerSession;
+              const subagentSession =
+                !supportsMultipleProviderThreads &&
+                (yield* projectionStore.getThread(input.threadId).pipe(
+                  Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
+                  Effect.orElseSucceed(() => false),
+                ));
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
@@ -2150,14 +2162,15 @@ export const layerWithOptions = (
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
-                supportsMultipleProviderThreads:
-                  runtime.providerSession.capabilities.sessions
-                    .supportsMultipleProviderThreadsPerSession,
+                supportsMultipleProviderThreads,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
                 requestEventPermit: yield* Semaphore.make(1),
                 scope: sessionScope,
+                idleTimeoutMs: subagentSession
+                  ? Math.min(idleTimeoutMs, SUBAGENT_IDLE_TIMEOUT_MS)
+                  : idleTimeoutMs,
                 idleGeneration: 0,
                 busyTurns: new Set(),
                 idleFiber: null,

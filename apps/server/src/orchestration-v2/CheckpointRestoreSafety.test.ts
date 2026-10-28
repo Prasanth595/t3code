@@ -24,6 +24,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
@@ -96,6 +97,7 @@ it.effect.each([
           NodeServices.layer,
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
           ServerSettings.layerTest(),
+          Layer.mock(ProviderAdapterRegistryV2)({}),
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
