@@ -30,6 +30,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import { startSystemAccentSync } from "./hooks/useSystemColorsTheme";
 import {
   getClientSettings,
   startModelPreferencesMigration,
@@ -168,6 +169,7 @@ export function startAppServices(): AppRouter {
   startClientAppearance();
   startDocumentTitle();
   startEnvironmentThemeRepaint();
+  startSystemAccentSync();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();

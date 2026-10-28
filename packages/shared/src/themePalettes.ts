@@ -2,6 +2,9 @@ export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"]
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
+/** The desktop theme that recolors the standard palette with the OS accent. */
+export const SYSTEM_COLORS_THEME_ID = "t3-system-colors";
+
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
 
 /** Reserve appearance keywords, built-ins, and legacy aliases so custom themes cannot capture stored preferences. */
@@ -15,6 +18,7 @@ export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
   "t3-ocean",
   "t3-ember",
   "t3-iris",
+  SYSTEM_COLORS_THEME_ID,
 ]);
 
 /** The mobile default id is valid in saved themes but cannot be published because web/desktop cannot resolve it. */

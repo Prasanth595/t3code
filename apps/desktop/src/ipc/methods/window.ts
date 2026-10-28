@@ -264,6 +264,15 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const getSystemAccentColor = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_SYSTEM_ACCENT_COLOR_CHANNEL,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.getSystemAccentColor")(function* () {
+    const electronTheme = yield* ElectronTheme.ElectronTheme;
+    return yield* electronTheme.accentColor;
+  }),
+});
+
 export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,

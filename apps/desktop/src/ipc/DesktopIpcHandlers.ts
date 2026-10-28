@@ -38,6 +38,7 @@ import {
   getLocalEnvironmentBearerToken,
   getRelayTelemetryEnabled,
   getSystemLocale,
+  getSystemAccentColor,
   getWindowFullscreenState,
   openExternal,
   openSystemSettings,
@@ -94,6 +95,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getRelayTelemetryEnabled);
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getWindowFullscreenState);
+  yield* ipc.handleSync(getSystemAccentColor);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);

@@ -15,6 +15,7 @@ import {
   T3_CODE_LIGHT_THEME_COLORS,
   T3_CODE_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
+  SYSTEM_COLORS_THEME_ID,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -330,6 +331,48 @@ export const environmentThemeDefinitionsAtom = Atom.make((get) =>
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
+}
+
+// undefined until first read; null when the desktop shares no accent.
+let systemAccentColor: string | null | undefined;
+let systemColorsTheme: ThemeDefinition | null = null;
+
+function readSystemAccentColor(): string | null | undefined {
+  if (systemAccentColor === undefined && typeof window !== "undefined") {
+    systemAccentColor = window.desktopBridge?.getSystemAccentColor?.();
+  }
+  return systemAccentColor;
+}
+
+export function setSystemAccentColor(accent: string | null): void {
+  if (systemAccentColor === accent) return;
+  systemAccentColor = accent;
+  systemColorsTheme = null;
+  notifyCustomThemeListeners();
+}
+
+function systemColorsFor(appearance: ThemeAppearance, accent: string | null): ThemeColors {
+  const standard = getStandardPaintedThemeColors(appearance);
+  if (accent === null) return standard;
+  const withAccent = updateThemeColorFamily(appearance, standard, "accent", accent);
+  return updateThemeColorFamily(appearance, withAccent, "messageAction", accent);
+}
+
+/** The standard palette with the desktop's accent, or null outside a desktop that reports one. */
+export function getSystemColorsTheme(): ThemeDefinition | null {
+  const accent = readSystemAccentColor();
+  if (accent === undefined) return null;
+  return (systemColorsTheme ??= {
+    id: SYSTEM_COLORS_THEME_ID,
+    label: "System colors",
+    appearance: "light",
+    colors: systemColorsFor("light", accent),
+    variants: { dark: systemColorsFor("dark", accent) },
+  });
+}
+
+export function getSystemAccentColor(): string | null | undefined {
+  return readSystemAccentColor();
 }
 
 export function isReservedThemeId(themeId: string): boolean {
@@ -1176,6 +1219,7 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   const themeId = themeIdFromPreference(theme);
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
+    (themeId === SYSTEM_COLORS_THEME_ID ? getSystemColorsTheme() : null) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
     getEnvironmentThemes().find((definition) => definition.id === themeId) ??
     null

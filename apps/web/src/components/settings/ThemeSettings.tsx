@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
+import { useSystemColorsTheme } from "../../hooks/useSystemColorsTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
@@ -521,6 +522,7 @@ export function ThemeLibrary({
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const systemColorsTheme = useSystemColorsTheme();
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -740,6 +742,23 @@ export function ThemeLibrary({
             theme={standardTheme}
           />
         ))}
+        {systemColorsTheme ? (
+          <ThemeLibraryCard
+            activeModes={pickedModesFor(systemColorsTheme.id)}
+            isActive={false}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: systemColorsTheme.id,
+                seedName: `${systemColorsTheme.label} copy`,
+                initialAppearance,
+              })
+            }
+            onUse={() => persistTheme(systemColorsTheme.id)}
+            onUseMode={handlePairPick(systemColorsTheme.id)}
+            theme={getThemeCardDefinition(systemColorsTheme)}
+          />
+        ) : null}
         {MAINTAINER_THEMES.map((maintainerTheme) => {
           const card = getThemeCardDefinition(maintainerTheme);
           return (

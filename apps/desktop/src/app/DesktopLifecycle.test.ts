@@ -61,6 +61,8 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
+  accentColor: Effect.succeed(null),
+  onAccentColorChanged: () => Effect.void,
 });
 
 function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {

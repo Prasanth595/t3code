@@ -3,6 +3,7 @@ import { MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
+import { useSystemColorsTheme } from "../hooks/useSystemColorsTheme";
 import { useTheme } from "../hooks/useTheme";
 import { getThemeDefinition } from "../themePalette";
 import {
@@ -40,10 +41,16 @@ export function notifyThemeSaveFailure(): void {
 function useThemeCards() {
   const customThemes = useCustomThemes();
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const systemColorsTheme = useSystemColorsTheme();
   const seen = new Set<string>();
   return [
     ...STANDARD_THEME_CARDS.map((card) => ({ ...card, id: null })),
-    ...[...BUILT_IN_THEMES, ...customThemes, ...environmentThemes]
+    ...[
+      ...(systemColorsTheme ? [systemColorsTheme] : []),
+      ...BUILT_IN_THEMES,
+      ...customThemes,
+      ...environmentThemes,
+    ]
       .filter((definition) => {
         if (seen.has(definition.id)) return false;
         seen.add(definition.id);

@@ -187,6 +187,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  getSystemAccentColor: () => {
+    const accent: unknown = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_ACCENT_COLOR_CHANNEL);
+    return typeof accent === "string" ? accent : null;
+  },
+  onSystemAccentColorChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, accent: unknown) => {
+      listener(typeof accent === "string" ? accent : null);
+    };
+    ipcRenderer.on(IpcChannels.SYSTEM_ACCENT_COLOR_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SYSTEM_ACCENT_COLOR_CHANNEL, wrappedListener);
+    };
+  },
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,

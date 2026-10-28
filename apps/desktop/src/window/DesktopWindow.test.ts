@@ -191,6 +191,8 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
+  accentColor: Effect.succeed(null),
+  onAccentColorChanged: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
 const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(

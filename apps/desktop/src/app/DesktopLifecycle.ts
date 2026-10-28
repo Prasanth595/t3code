@@ -15,6 +15,7 @@ import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
@@ -249,6 +250,16 @@ export const make = DesktopLifecycle.of({
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
+      );
+    });
+    yield* electronTheme.onAccentColorChanged(() => {
+      void runEffect(
+        electronTheme.accentColor.pipe(
+          Effect.flatMap((accent) =>
+            electronWindow.sendAll(IpcChannels.SYSTEM_ACCENT_COLOR_CHANNEL, accent),
+          ),
+          Effect.withSpan("desktop.lifecycle.accentColorChanged"),
+        ),
       );
     });
     yield* electronApp.onBeforeQuitForUpdate(() => {
