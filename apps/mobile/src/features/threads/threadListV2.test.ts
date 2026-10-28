@@ -37,6 +37,7 @@ import {
   resolveThreadListV2ConnectionIssue,
   resolveThreadListV2LockedReason,
   resolveThreadListV2SnoozeMenuSelection,
+  resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
@@ -75,6 +76,22 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
         new Date(selectedAt.getTime() + 60 * 60 * 1_000).toISOString(),
       );
     }
+  });
+});
+
+describe("resolveThreadListV2SnoozePresets", () => {
+  it("reads preset times from the list minute, not the clock at first render", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
+    const laterMinute = new Date(2026, 4, 8, 19, 15).toISOString();
+
+    const presets = resolveThreadListV2SnoozePresets({ secondary: "snooze", now: laterMinute });
+
+    expect(presets.find((preset) => preset.id === "hour")?.snoozedUntil).toBe(
+      new Date(2026, 4, 8, 20, 15).toISOString(),
+    );
+    // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
+    expect(presets.map((preset) => preset.id)).not.toContain("evening");
   });
 });
 
@@ -769,7 +786,6 @@ describe("buildThreadListV2ListItems", () => {
           projectId: ProjectId.make("project-1"),
           projectTitle: undefined,
           projectCwd: undefined,
-          branch: null,
           title: "unsent",
           createdAt: NOW,
           draftKey: "new-task:unsent",

@@ -29,7 +29,7 @@ function sessionScopeAccess(
   return sessionGrantsScope(session, scope) ? "granted" : "denied";
 }
 
-function sessionHasScope(
+export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
