@@ -37,7 +37,8 @@ import {
   updateEasDeviceHosts,
 } from "./easDeviceHostsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsSection } from "./settingsLayout";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SimlockDeviceHostEditor } from "./SimlockDeviceHostEditor";
 import {
@@ -160,10 +161,8 @@ export function DeviceSourcesSettings(props: {
   // Environments with devices off are left out: the switch above already says so.
   const active = members.filter((member) => member.settings?.enableDeviceSupport);
   const simlockEnabled = members.some((member) => member.settings?.simlockDeviceHostsEnabled);
-  const offline = environments.filter(
-    (environment) => environment.connection.phase !== "connected",
-  );
-  const disabled = projectScope || busy || members.length === 0 || offline.length > 0;
+  // Like every scoped setting, a change reaches the connected environments and skips the rest.
+  const disabled = busy || members.length === 0;
 
   /** Writes one settings patch per environment; reports the environments it could not change. */
   const write = async (
@@ -539,19 +538,17 @@ export function DeviceSourcesSettings(props: {
     </Menu>
   );
 
+  if (projectScope)
+    return (
+      <SettingsSection id="device-sources" title="Device sources">
+        <SettingsScopeNotice inline target="environment">
+          Choose an environment to change its device sources.
+        </SettingsScopeNotice>
+      </SettingsSection>
+    );
+
   return (
     <SettingsSection id="device-sources" title="Device sources" headerAction={addMenu}>
-      {projectScope ? (
-        <SettingsRow
-          title="Set per environment"
-          description="Device sources belong to environments. Choose one above to change them."
-        />
-      ) : offline.length > 0 ? (
-        <SettingsRow
-          title={offline.length === 1 ? "Environment disconnected" : "Environments disconnected"}
-          description={`Reconnect ${offline.map(label).join(", ")} to change device sources.`}
-        />
-      ) : null}
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
       ))}
