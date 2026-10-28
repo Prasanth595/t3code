@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -323,11 +324,12 @@ describe("listPullRequestNotifications", () => {
       ]),
       json({ message: "Resource not accessible by personal access token" }, { status: 403 }),
     ];
+    let appSignedIn = true;
     const { layer, requests } = harness(
       () => answers.shift()!,
       Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
         enabled: true,
-        token: () => Effect.succeedSome("app"),
+        token: () => Effect.sync(() => (appSignedIn ? Option.some("app") : Option.none())),
         invalidate: () => Effect.void,
       }),
     );
@@ -336,6 +338,9 @@ describe("listPullRequestNotifications", () => {
       const list = makeListPullRequestNotifications(yield* GitHubRest.GitHubRest);
       const since = Date.parse("2026-10-05T11:55:00.400Z");
       const input = { host: "github.com", repository: "acme/web", since };
+      expect(yield* list(input)).toBeNull();
+      expect(requests).toEqual([]);
+      appSignedIn = false;
       expect(yield* list(input)).toEqual({ threads: [], truncated: false });
       expect(yield* list(input)).toEqual({
         threads: [{ number: 7, updatedAt: Date.parse("2026-10-05T11:58:03Z") }],

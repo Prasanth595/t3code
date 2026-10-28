@@ -32,23 +32,28 @@ export const makeListPullRequestNotifications = (rest: GitHubRest.GitHubRest["Se
     readonly since: number;
   }) {
     const since = DateTime.makeUnsafe(Math.floor(input.since / 1000) * 1000);
-    const response = yield* rest
-      .rest({
+    const response = yield* Effect.gen(function* () {
+      const [read, personal] = yield* Effect.all([
+        rest.credential(input.host),
+        rest.credential(input.host, { personal: true }),
+      ]);
+      if (read.fingerprint !== personal.fingerprint) return null;
+      return yield* rest.rest({
         host: input.host,
         operation: OPERATION,
         path: `repos/${input.repository}/notifications?all=true&participating=true&since=${DateTime.formatIso(since).replace(".000Z", "Z")}&per_page=${PAGE_SIZE}`,
         ifModifiedSince: DateTime.toDateUtc(since).toUTCString(),
         personal: true,
-      })
-      .pipe(
-        Effect.catchTags({
-          GitHubApiNotFoundError: () => Effect.succeed(null),
-          GitHubNotSignedInError: () => Effect.succeed(null),
-          GitHubCliMissingError: () => Effect.succeed(null),
-          GitHubApiResponseError: (error) =>
-            error.status === 403 ? Effect.succeed(null) : Effect.fail(error),
-        }),
-      );
+      });
+    }).pipe(
+      Effect.catchTags({
+        GitHubApiNotFoundError: () => Effect.succeed(null),
+        GitHubNotSignedInError: () => Effect.succeed(null),
+        GitHubCliMissingError: () => Effect.succeed(null),
+        GitHubApiResponseError: (error) =>
+          error.status === 403 ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
     if (response === null) return null;
     if (response.status === 304) {
       return { threads: [], truncated: false } satisfies ProviderChangeRequestNotifications;
