@@ -402,6 +402,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "usage-display",
+    title: "Show usage as",
+    to: "/settings/threads",
+    searchTerms: ["usage limits quota used left remaining percent subscription rate limit"],
+  },
+  {
     id: "snooze-limited-threads",
     title: "Snooze until limits reset",
     to: "/settings/threads",
