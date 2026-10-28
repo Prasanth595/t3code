@@ -903,6 +903,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       });
 
+    // Untraced: runs on every streamed text delta of a plan turn, inside the event's span.
     const emitProposedPlan = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
