@@ -15,9 +15,11 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2GetTurnItemResult,
+  type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -62,11 +64,11 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
-  agentMessagesShowImage,
   GUEST_UPLOAD_HEADER_BYTES,
   guestHostImageType,
   type GuestUpload,
   matchesImageSignature,
+  repliesShowImage,
 } from "./guestAttachments.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
@@ -74,6 +76,8 @@ const SHARE_ID_BYTES = 16;
 const INVITE_SIGNATURE_BYTES = 16;
 const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
+// Parsed replies kept across guest media requests; each holds only a reply's image sources.
+const PARSED_REPLY_LIMIT = 2_000;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
 // the host. Closing or replacing the link ends the main stream at once.
 const ACCESS_RECHECK_INTERVAL = Duration.seconds(30);
@@ -638,6 +642,25 @@ const make = Effect.gen(function* () {
     return exists ? { path, attachment: found } : yield* unavailable;
   });
 
+  // Each image on the guest page is its own request; a reply is parsed once per revision, not once
+  // per request, so a guest cannot keep the server parsing.
+  const parsedReplies = new Map<string, ReadonlyArray<string>>();
+  const imageSourcesOf = (
+    reply: Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>,
+  ) => {
+    // Length too, so a streaming reply that grows within one timestamp is parsed again.
+    const key = `${reply.threadId}\u0000${reply.id}\u0000${DateTime.toEpochMillis(reply.updatedAt)}\u0000${reply.text.length}`;
+    let sources = parsedReplies.get(key);
+    if (sources === undefined) {
+      sources = chatMarkdownImageSources(reply.text);
+      parsedReplies.set(key, sources);
+      if (parsedReplies.size > PARSED_REPLY_LIMIT) {
+        parsedReplies.delete(parsedReplies.keys().next().value!);
+      }
+    }
+    return sources;
+  };
+
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
     const { thread } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
@@ -650,9 +673,9 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(() => unavailable));
     const replies = projection.visibleTurnItems.flatMap(({ item }) =>
-      item.type === "assistant_message" ? [item.text] : [],
+      item.type === "assistant_message" ? [item] : [],
     );
-    if (!agentMessagesShowImage(path, replies)) return yield* unavailable;
+    if (!repliesShowImage(path, replies, imageSourcesOf)) return yield* unavailable;
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),

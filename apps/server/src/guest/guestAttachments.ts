@@ -69,16 +69,24 @@ export function guestHostImageType(path: string): string | null {
   return IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()] ?? null;
 }
 
-/** Whether an agent message shows the image at `path`, so the guest already sees it. */
-export function agentMessagesShowImage(path: string, agentMessages: ReadonlyArray<string>) {
-  // Parsing is the slow part, so only messages with an image and a run of the file's name are
+/**
+ * Whether an agent reply shows the image at `path`, so the guest already sees it. `imageSources`
+ * lets the caller reuse a reply's parse across requests.
+ */
+export function repliesShowImage<Reply extends { readonly text: string }>(
+  path: string,
+  replies: ReadonlyArray<Reply>,
+  imageSources: (reply: Reply) => ReadonlyArray<string> = (reply) =>
+    chatMarkdownImageSources(reply.text),
+) {
+  // Parsing is the slow part, so only replies with an image and a run of the file's name are
   // parsed. Not the whole name: markdown can escape or encode it (`shot\_1.png`, `caf%C3%A9.png`).
   const key = /[A-Za-z0-9]+/.exec(fileBasename(path))?.[0] ?? "";
-  return agentMessages.some(
-    (text) =>
-      (text.includes("![") || /<img/i.test(text)) &&
-      text.includes(key) &&
-      chatMarkdownImageSources(text).some((source) => markdownDestinationHostPath(source) === path),
+  return replies.some(
+    (reply) =>
+      (reply.text.includes("![") || /<img/i.test(reply.text)) &&
+      reply.text.includes(key) &&
+      imageSources(reply).some((source) => markdownDestinationHostPath(source) === path),
   );
 }
 
