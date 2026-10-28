@@ -1,9 +1,13 @@
 import { ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pickVoiceProvider, voiceCapableProviders } from "./VoiceCallButton.logic";
+import {
+  chatModelProviders,
+  pickVoiceProvider,
+  voiceCapableProviders,
+} from "./VoiceCallButton.logic";
 
-const provider = (id: string, patch: Partial<ServerProvider> = {}) =>
+const provider = (id: string, patch: object = {}) =>
   ({
     instanceId: ProviderInstanceId.make(id),
     enabled: true,
@@ -36,5 +40,35 @@ describe("voice call account", () => {
 
   it("drops a pick whose account no longer offers calls", () => {
     expect(pickVoiceProvider([plus], pro.instanceId, undefined)).toBe(plus);
+  });
+});
+
+describe("chat model choices", () => {
+  const model = (slug: string, isLegacy = false) => ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: null,
+    isLegacy,
+  });
+  const ready = (id: string, patch: Partial<ServerProvider> = {}) =>
+    provider(id, {
+      status: "ready",
+      installed: true,
+      models: [model("current"), model("old", true)],
+      ...patch,
+    });
+
+  it("lists only current models of enabled, installed, ready accounts", () => {
+    const listed = chatModelProviders([
+      ready("codex"),
+      ready("off", { enabled: false }),
+      ready("down", { status: "error" }),
+      ready("missing", { installed: false }),
+      ready("empty", { models: [model("old", true)] }),
+    ]);
+    expect(listed.map((entry) => [entry.instanceId, entry.models.map((m) => m.slug)])).toEqual([
+      ["codex", ["current"]],
+    ]);
   });
 });

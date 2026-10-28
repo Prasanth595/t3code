@@ -17,7 +17,11 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { VoiceCallIcon } from "./VoiceCallIcon";
 import { VoiceCallMenu } from "./VoiceCallMenu";
-import { pickVoiceProvider, voiceCapableProviders } from "./VoiceCallButton.logic";
+import {
+  chatModelProviders,
+  pickVoiceProvider,
+  voiceCapableProviders,
+} from "./VoiceCallButton.logic";
 
 interface VoiceCallButtonProps {
   environmentId: EnvironmentId;
@@ -54,7 +58,7 @@ export function VoiceCallButton({
       voices={voices}
       candidates={candidates}
       modelSelection={modelSelection}
-      modelProviders={providers?.filter((entry) => entry.enabled) ?? []}
+      modelProviders={chatModelProviders(providers)}
       onChoose={setChosen}
       onChooseVoice={setChosenVoice}
       onChooseModel={setModelSelection}

@@ -12,3 +12,13 @@ export const pickVoiceProvider = (
   candidates.find((provider) => provider.instanceId === chosen) ??
   candidates.find((provider) => provider.instanceId === preferred) ??
   candidates[0];
+
+/** Accounts that can run a chat right now, with the models the composer's picker lists as current. */
+export const chatModelProviders = (providers: ReadonlyArray<ServerProvider> | null) =>
+  (providers ?? [])
+    .filter((provider) => provider.enabled && provider.status === "ready" && provider.installed)
+    .map((provider) => ({
+      ...provider,
+      models: provider.models.filter((model) => !model.isLegacy),
+    }))
+    .filter((provider) => provider.models.length > 0);
