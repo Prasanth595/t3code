@@ -1753,17 +1753,32 @@ const make = Effect.gen(function* () {
         childThreadId === null
           ? TASK_WAKE_EVENTS.filter(({ thread }) => thread === "parent")
           : TASK_WAKE_EVENTS;
-      return yield* Stream.mergeAll(
-        wakeEvents.map(({ thread, eventType }) =>
-          threadManagement.streamStoredEventsFrom({
-            threadId:
-              thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
-            afterSequence,
-            eventType,
-          }),
-        ),
-        { concurrency: "unbounded" },
-      ).pipe(
+      const streams = wakeEvents.map(({ thread, eventType }) =>
+        threadManagement.streamStoredEventsFrom({
+          threadId:
+            thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
+          afterSequence,
+          eventType,
+        }),
+      );
+      if (childThreadId !== null) {
+        streams.push(
+          threadManagement
+            .streamStoredEventsFrom({
+              threadId: childThreadId,
+              afterSequence,
+              eventType: "turn-item.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "turn-item.updated" &&
+                  stored.event.payload.type === "secret_request",
+              ),
+            ),
+        );
+      }
+      return yield* Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
         Stream.filter(endsTaskWait),

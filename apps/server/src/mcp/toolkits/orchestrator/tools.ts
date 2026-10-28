@@ -281,7 +281,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait for a thread's run to finish or need a blocking live answer or approval. No `runId`: latest. Idle: at once. `hasPendingQuestion` or `pendingApproval` identifies input on this run or earlier unfinished work blocking it; status is unchanged. Async message questions do not end the wait. Read questions with t3_pending_request_list/read. Approvals need the human client; this grants no approval authority. On timeout, with `next` end your turn; without, call again.",
+    "Wait for completion/input. No runId: latest. Read: t3_pending_request. Timeout: next means end turn; else retry.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,
