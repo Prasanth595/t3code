@@ -271,6 +271,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   question={question}
                   questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
+                  attachable={props.pendingUserInput.remoteTaskId === undefined}
                   value={draft?.customAnswer ?? ""}
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
