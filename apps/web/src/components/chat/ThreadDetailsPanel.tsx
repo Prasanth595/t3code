@@ -24,7 +24,10 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
-import { resolveThreadDetailsSections } from "./threadDetailsSections";
+import {
+  resolveThreadDetailsSections,
+  threadDetailsSectionAvailability,
+} from "./threadDetailsSections";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -111,18 +114,18 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       handle={props.handle}
     >
       {(density) => {
-        const threadSectionsAvailable = density === "full" && !props.draftId;
-        const sections = resolveThreadDetailsSections(hiddenSections, {
-          environment: density === "full",
-          "open-in-editor": density !== "essential" && props.showOpenInPicker,
-          "project-scripts": props.activeProjectScripts !== undefined,
-          branch: props.gitCwd !== null && props.isGitRepo,
-          "git-actions": props.gitCwd !== null && props.activeProjectName !== undefined,
-          changes: props.gitCwd !== null && props.activeProjectName !== undefined,
-          servers: threadSectionsAvailable,
-          automations: threadSectionsAvailable,
-          lineage: threadSectionsAvailable,
-        });
+        const sections = resolveThreadDetailsSections(
+          hiddenSections,
+          threadDetailsSectionAvailability({
+            density,
+            isDraft: Boolean(props.draftId),
+            showOpenInPicker: props.showOpenInPicker,
+            hasProjectScripts: props.activeProjectScripts !== undefined,
+            hasGitCwd: props.gitCwd !== null,
+            isGitRepo: props.isGitRepo,
+            hasActiveProject: props.activeProjectName !== undefined,
+          }),
+        );
         return (
           <>
             {sections.workspace ? (
@@ -182,7 +185,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 showHeading={false}
                 separated={density === "full"}
               >
-                <div className="flex flex-col">
+                {/* Git actions can render nothing at compact density or before the first turn. */}
+                <div className="flex flex-col" data-thread-details-section-body>
                   {sections.shown.branch ? (
                     <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                   ) : null}

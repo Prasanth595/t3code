@@ -22,7 +22,11 @@ export function ThreadDetailsSection({
       {...props}
       aria-labelledby={showHeading ? headingId : undefined}
       aria-label={showHeading ? undefined : title}
-      className={cn("px-2 pt-2 pb-2.5", separated && "border-t border-border/65 first:border-t-0")}
+      className={cn(
+        "px-2 pt-2 pb-2.5 has-[>[data-thread-details-section-body]:empty]:hidden",
+        separated &&
+          "border-t border-border/65 first:border-t-0 [section:has(>[data-thread-details-section-body]:empty):first-child+&]:border-t-0",
+      )}
     >
       <div
         className={cn(

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { RIGHT_PANEL_SECTIONS, resolveThreadDetailsSections } from "./threadDetailsSections";
+import {
+  RIGHT_PANEL_SECTIONS,
+  resolveThreadDetailsSections,
+  threadDetailsSectionAvailability,
+} from "./threadDetailsSections";
 
 const allAvailable = {
   environment: true,
@@ -58,5 +62,22 @@ describe("resolveThreadDetailsSections", () => {
     });
 
     expect(result.versionControl).toBe(false);
+  });
+});
+
+describe("threadDetailsSectionAvailability", () => {
+  const repoThread = {
+    density: "full",
+    isDraft: false,
+    showOpenInPicker: true,
+    hasProjectScripts: true,
+    hasGitCwd: true,
+    isGitRepo: true,
+    hasActiveProject: true,
+  } as const;
+
+  it("keeps git actions but not Branch or Changes outside a repository", () => {
+    const available = threadDetailsSectionAvailability({ ...repoThread, isGitRepo: false });
+    expect(available).toEqual({ ...allAvailable, branch: false, changes: false });
   });
 });
