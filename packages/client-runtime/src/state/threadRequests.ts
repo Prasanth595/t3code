@@ -4,6 +4,7 @@ import {
   type NodeId,
   type ThreadId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
@@ -67,6 +68,7 @@ export interface ThreadPendingApproval {
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
   readonly remoteTaskId?: NodeId;
+  readonly remoteEnvironmentLabel?: string;
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
@@ -94,6 +96,7 @@ export interface ThreadPendingUserInput {
   readonly responseMode?: "message";
   readonly dismissible: boolean;
   readonly remoteTaskId?: NodeId;
+  readonly remoteEnvironmentLabel?: string;
 }
 
 export interface PendingThreadRequests {
@@ -228,6 +231,7 @@ export function makeThreadRequestsResolvedAnnouncer(
 
 type WithRemoteTaskRequests = {
   readonly thread?: Pick<OrchestrationV2AppThread, "remoteTaskRequests">;
+  readonly subagents?: ReadonlyArray<Pick<OrchestrationV2Subagent, "id" | "remoteChild">>;
 };
 
 export function pendingRuntimeRequestIds(
@@ -301,6 +305,12 @@ export function derivePendingThreadRequests(
 
   for (const request of remoteTaskRequestsOf(projection)) {
     const createdAt = DateTime.formatIso(request.createdAt);
+    const environmentLabel = projection.subagents?.find((task) => task.id === request.taskId)
+      ?.remoteChild?.label;
+    const remoteTask = {
+      remoteTaskId: request.taskId,
+      ...(environmentLabel === undefined ? {} : { remoteEnvironmentLabel: environmentLabel }),
+    };
     if (request.kind === "user_input") {
       userInputs.push({
         requestId: request.requestId,
@@ -311,7 +321,7 @@ export function derivePendingThreadRequests(
         })),
         responseCapability: "live",
         dismissible: false,
-        remoteTaskId: request.taskId,
+        ...remoteTask,
       });
       continue;
     }
@@ -323,7 +333,7 @@ export function derivePendingThreadRequests(
       ...(request.reason ? { reason: request.reason } : {}),
       ...(request.options === undefined ? {} : { options: request.options }),
       responseCapability: "live",
-      remoteTaskId: request.taskId,
+      ...remoteTask,
     });
   }
 

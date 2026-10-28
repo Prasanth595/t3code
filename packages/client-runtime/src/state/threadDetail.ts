@@ -370,7 +370,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
     let previous:
-      | (Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> & {
+      | (Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems" | "subagents"> & {
           readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "remoteTaskRequests">;
         })
       | null = null;
@@ -395,15 +395,21 @@ export function createEnvironmentThreadDetailAtoms<E>(
                 ids.has(item.requestId),
             );
       const remoteTaskRequests = projection.thread.remoteTaskRequests;
+      const subagents =
+        remoteTaskRequests === undefined
+          ? []
+          : projection.subagents.filter((task) => task.remoteChild !== undefined);
       if (
         previous === null ||
         !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
         !arrayElementsEqual(previous.turnItems, turnItems) ||
+        !arrayElementsEqual(previous.subagents, subagents) ||
         previous.thread.remoteTaskRequests !== remoteTaskRequests
       ) {
         previous = {
           runtimeRequests,
           turnItems,
+          subagents,
           thread: remoteTaskRequests === undefined ? {} : { remoteTaskRequests },
         };
         value = derivePendingThreadRequests(previous);

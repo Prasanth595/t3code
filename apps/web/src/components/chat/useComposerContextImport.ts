@@ -35,6 +35,7 @@ import {
   terminalContextDraftFromRecord,
   terminalContextRecord,
   terminalContextReference,
+  pastedContextRecordFits,
 } from "~/lib/composerContextRecords";
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
@@ -277,6 +278,10 @@ export function useComposerContextImport(input: {
     const rewritten = new Map<string, string>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
+    const target = {
+      answersQuestion: questionAttachmentTarget !== null,
+      takesAttachments: supportsQuestionAttachments,
+    };
     // Resolve annotations before their dependent screenshot records even if a foreign
     // clipboard producer emitted the records in a different order.
     const orderedRecords = records.toSorted((left, right) =>
@@ -338,6 +343,7 @@ export function useComposerContextImport(input: {
         continue;
       }
       const conflicts = existing !== undefined;
+      if (!pastedContextRecordFits(record.kind, target)) continue;
       switch (record.kind) {
         case "terminal": {
           const threadId = activeThread?.id ?? activeThreadId;
@@ -390,9 +396,7 @@ export function useComposerContextImport(input: {
           break;
         }
         case "environment": {
-          // A machine means the same machine from any thread, so a pasted one is kept,
-          // but not in an answer to an agent's question, which carries no machines.
-          if (questionAttachmentTarget !== null) break;
+          // A machine means the same machine from any thread, so a pasted one is kept.
           addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
@@ -402,7 +406,6 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
-          if (questionAttachmentTarget !== null && !supportsQuestionAttachments) break;
           if (sourceEnvironmentId === null && !conflicts) {
             rewritten.set(record.contextId, record.contextId);
             break;

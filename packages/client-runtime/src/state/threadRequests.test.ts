@@ -3,6 +3,7 @@ import {
   NodeId,
   ProviderSessionId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -321,6 +322,16 @@ describe("pending v2 questions", () => {
     const remote = {
       runtimeRequests: [],
       turnItems: [],
+      subagents: [
+        {
+          id: NodeId.make("remote-task"),
+          remoteChild: {
+            environmentId: EnvironmentId.make("environment-box"),
+            threadId: ThreadId.make("thread-on-the-box"),
+            label: "Box",
+          },
+        },
+      ],
       thread: {
         remoteTaskRequests: [
           {
@@ -356,6 +367,7 @@ describe("pending v2 questions", () => {
         detail: "pnpm test",
         responseCapability: "live",
         remoteTaskId: "remote-task",
+        remoteEnvironmentLabel: "Box",
       },
     ]);
     expect(redirectableApprovals(pending.approvals)).toEqual([]);
@@ -369,6 +381,7 @@ describe("pending v2 questions", () => {
         responseCapability: "live",
         dismissible: false,
         remoteTaskId: "remote-task",
+        remoteEnvironmentLabel: "Box",
       },
     ]);
   });
