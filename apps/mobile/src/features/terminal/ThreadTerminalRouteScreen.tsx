@@ -193,7 +193,6 @@ class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardRea
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
-  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -578,7 +577,6 @@ function ThreadTerminal(props: {
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
-      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "tilde", label: "~", data: "~" },
       { kind: "send", key: "pipe", label: "|", data: "|" },
@@ -641,9 +639,9 @@ function ThreadTerminal(props: {
     return result._tag === "Success";
   };
 
-  const pasteFromClipboard = async () => {
+  const pasteText = async (readText: () => Promise<string>) => {
     await pasteSession.paste({
-      readText: Clipboard.getStringAsync,
+      readText,
       write: writeInput,
       onReadError: (cause) => {
         console.error(new TerminalClipboardReadError({ terminalId, cause }));
@@ -664,7 +662,7 @@ function ThreadTerminal(props: {
       hostPlatform,
     });
     if (resolved.kind === "paste") {
-      void pasteFromClipboard();
+      void pasteText(Clipboard.getStringAsync);
       return;
     }
     void writeInput(resolved.data);
@@ -774,13 +772,12 @@ function ThreadTerminal(props: {
       return;
     }
 
-    if (action.kind === "paste") {
-      setPendingModifier(null);
-      void pasteFromClipboard();
-      return;
-    }
-
     writeModifiedInput(action.data);
+  };
+
+  const handlePaste = (readText: () => Promise<string>) => {
+    setPendingModifier(null);
+    void pasteText(readText);
   };
 
   const handleDismissKeyboard = () => {
@@ -949,6 +946,7 @@ function ThreadTerminal(props: {
                       Dialog.alert("No terminal output", "There is no visible output to attach.");
                   }}
                   onInput={handleInput}
+                  onPaste={(text) => handlePaste(async () => text)}
                   onResize={handleResize}
                   style={{ flex: 1 }}
                   terminalKey={terminalKey}
@@ -969,14 +967,19 @@ function ThreadTerminal(props: {
                     onPress={handleShowKeyboard}
                   />
                 </View>
-              ) : Platform.OS !== "android" && hasNativeTerminalSurface() ? (
+              ) : Platform.OS !== "android" &&
+                !keyboardState.isVisible &&
+                hasNativeTerminalSurface() ? (
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 py-2"
+                  className="px-4 pt-2"
+                  style={{
+                    paddingBottom: 8 + (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom),
+                  }}
                 >
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>
@@ -1022,6 +1025,12 @@ function ThreadTerminal(props: {
                           );
                         })}
                       </ComposerToolbarScroller>
+                      <ComposerToolbarButton
+                        accessibilityLabel="Paste"
+                        icon={{ ios: "doc.on.clipboard", android: "content_paste" }}
+                        onPress={() => handlePaste(Clipboard.getStringAsync)}
+                        showChevron={false}
+                      />
                       <ComposerToolbarButton
                         accessibilityLabel="Dismiss keyboard"
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
