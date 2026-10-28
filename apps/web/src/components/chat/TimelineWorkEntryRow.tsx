@@ -118,38 +118,29 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
 export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
+  // Long traces re-parse on every delta; deferring lets newer deltas interrupt a stale render.
+  // Defer the whole list so the commit that grows the text also reruns live-follow scrolling.
+  const deferredEntries = useDeferredValue(entries);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
   return (
-    <WorkLogDetails followLive={entries.some(isStreaming)}>
-      {entries.map((entry) => (
-        <ReasoningTraceMarkdown
+    <WorkLogDetails followLive={deferredEntries.some(isStreaming)}>
+      {deferredEntries.map((entry) => (
+        <ChatMarkdown
           key={entry.id}
+          className="text-foreground"
           text={entry.detail ?? ""}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          skills={ctx.skills}
           isStreaming={isStreaming(entry)}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onImageExpand={ctx.onImageExpand}
+          lineBreaks
         />
       ))}
     </WorkLogDetails>
-  );
-}
-
-function ReasoningTraceMarkdown({ text, isStreaming }: { text: string; isStreaming: boolean }) {
-  const ctx = use(TimelineRowCtx);
-  // Long traces re-parse on every delta; deferring lets newer deltas interrupt a stale render.
-  const deferredText = useDeferredValue(text);
-  return (
-    <ChatMarkdown
-      className="text-foreground"
-      text={deferredText}
-      cwd={ctx.markdownCwd}
-      threadRef={ctx.threadRef ?? undefined}
-      skills={ctx.skills}
-      isStreaming={isStreaming}
-      headingLevelOffset={MESSAGE_HEADING_LEVEL}
-      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-      onImageExpand={ctx.onImageExpand}
-      lineBreaks
-    />
   );
 }
 
