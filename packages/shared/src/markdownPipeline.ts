@@ -129,7 +129,9 @@ function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
       typeof candidate === "string" ? candidate.trim().split(/\s/, 1)[0]?.replace(/,+$/, "") : "";
     if (scheme && url) {
       const key = scheme.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
-      image.properties = { ...image.properties, [key]: url };
+      // The sanitizer reads a drive letter as a protocol; as a file URL it resolves to the same path.
+      const value = isWindowsDrivePathHref(url) ? `file:///${url.replaceAll("\\", "/")}` : url;
+      image.properties = { ...image.properties, [key]: value };
     }
   }
   picture.children = picture.children.filter((child) => child.tagName !== "source");

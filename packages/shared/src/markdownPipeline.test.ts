@@ -110,13 +110,16 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         "</picture>",
         "",
         '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
+        "",
+        String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
       ].join("\n"),
     ),
   ) as Node;
 
-  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img"]);
+  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
     { src: "docs/dark.webp" },
+    { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
 });

@@ -21,6 +21,11 @@ describe("guest host images", () => {
       "/w/dark.png",
       "image/png",
     ],
+    [
+      '<picture><source media="(prefers-color-scheme: dark)" srcset="C:\\w\\dark.png"><img src="C:\\w\\light.png"></picture>',
+      "C:/w/dark.png",
+      "image/png",
+    ],
     // Shown as a link, in code, or not at all: the guest sees no image, so none loads.
     ["[a](/w/link.png)", "/w/link.png", null],
     ["```\n![a](/w/code.png)\n```", "/w/code.png", null],
