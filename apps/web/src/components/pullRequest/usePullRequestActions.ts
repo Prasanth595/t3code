@@ -143,8 +143,12 @@ export function usePullRequestActionRunner({
   const [actionPending, setActionPending] = useState(false);
   const pendingRef = useRef(false);
 
-  const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
-    if (pendingRef.current || reference === null) return;
+  const perform = async (
+    action: PullRequestAction,
+    method?: PullRequestMergeMethod,
+    adminOverride = false,
+  ) => {
+    if (pendingRef.current || reference === null) return false;
     pendingRef.current = true;
     setActionPending(true);
     const result = await runAction({
@@ -152,6 +156,7 @@ export function usePullRequestActionRunner({
       input: {
         ...reference,
         action,
+        ...(adminOverride ? { adminOverride: true } : {}),
         ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
       },
     });
@@ -166,10 +171,11 @@ export function usePullRequestActionRunner({
           actionFailureHints(terminology.singular)[action],
         ),
       });
-      return;
+      return false;
     }
     toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
     onSuccess?.(action);
+    return true;
   };
 
   return { actionPending, perform };
