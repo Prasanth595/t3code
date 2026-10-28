@@ -2068,7 +2068,14 @@ export const layerWithOptions = (
                 () =>
                   markIdle(providerSessionId, providerThread.id, voiceOrdinal).pipe(Effect.ignore),
               );
-              return runtime.startVoiceSession({ providerThread, offerSdp: input.offerSdp });
+              const loadedThread = yield* runtime.resumeThread({
+                providerThread,
+                threadId: input.threadId,
+              });
+              return runtime.startVoiceSession({
+                providerThread: loadedThread,
+                offerSdp: input.offerSdp,
+              });
             }),
           ).pipe(
             Stream.mapError((cause) =>
@@ -2076,7 +2083,10 @@ export const layerWithOptions = (
                 ? cause
                 : new ProviderVoiceSessionError({
                     threadId: input.threadId,
-                    detail: cause.message,
+                    detail:
+                      cause._tag === "ProviderAdapterProtocolError"
+                        ? cause.detail
+                        : "The voice conversation could not continue.",
                     cause,
                   }),
             ),
