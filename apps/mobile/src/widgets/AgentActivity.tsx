@@ -318,7 +318,7 @@ function AgentActivity(
           minimumScaleFactor(0.7),
           multilineTextAlignment("trailing"),
           // Relative dates accept all proposed width; bound them so they cannot erase the titles.
-          frame({ width: 136, alignment: "trailing" }),
+          frame({ maxWidth: 136, alignment: "trailing" }),
         ]}
       />
     ) : (
