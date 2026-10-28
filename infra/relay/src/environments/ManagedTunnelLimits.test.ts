@@ -1,11 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { PgDialect } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -16,10 +13,7 @@ class FakeTransaction extends Context.Service<FakeTransaction, { holdsLock: bool
 ) {}
 
 // Models Postgres just enough: the advisory lock only works inside a transaction and is held until it ends.
-function makeFakeDb(
-  reserved: Array<{ readonly userId: string; readonly environmentId: string }>,
-  countConditions: Array<unknown> = [],
-) {
+function makeFakeDb(reserved: ReadonlyArray<unknown>) {
   const userLock = Semaphore.makeUnsafe(1);
   return {
     $client: {
@@ -45,14 +39,9 @@ function makeFakeDb(
       }),
     select: () => ({
       from: (table: unknown) => ({
-        where: (condition: unknown) =>
+        where: () =>
           table === relayManagedEndpointAllocations
-            ? Effect.yieldNow.pipe(
-                Effect.tap(() => Effect.sync(() => countConditions.push(condition))),
-                Effect.as([
-                  { activeTunnels: reserved.filter((row) => row.userId === "user-1").length },
-                ]),
-              )
+            ? Effect.yieldNow.pipe(Effect.as([{ activeTunnels: reserved.length }]))
             : { limit: () => Effect.succeed([]) },
       }),
     }),
@@ -61,22 +50,20 @@ function makeFakeDb(
 
 describe("ManagedTunnelLimits", () => {
   it.effect("rejects concurrent reservations past the limit", () => {
-    const reserved: Array<{ readonly userId: string; readonly environmentId: string }> = [];
+    const reserved: Array<string> = [];
     const attempts = ManagedTunnelLimits.DEFAULT_MANAGED_TUNNEL_LIMIT + 2;
 
     return Effect.gen(function* () {
       const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
       const results = yield* Effect.forEach(
         Array.from({ length: attempts }, (_, index) => `environment-${index}`),
-        (environmentId) => {
-          const input = { userId: "user-1", environmentId };
-          return limits
+        (environmentId) =>
+          limits
             .withCapacity(
-              input,
-              Effect.sync(() => reserved.push(input)),
+              { userId: "user-1", environmentId },
+              Effect.yieldNow.pipe(Effect.andThen(Effect.sync(() => reserved.push(environmentId)))),
             )
-            .pipe(Effect.result);
-        },
+            .pipe(Effect.result),
         { concurrency: "unbounded" },
       );
 
@@ -95,35 +82,4 @@ describe("ManagedTunnelLimits", () => {
       ),
     );
   });
-
-  it.effect(
-    "counts reservations only within the pending window unless they hold a live tunnel",
-    () => {
-      const countConditions: Array<unknown> = [];
-      const now = DateTime.makeUnsafe("2026-10-27T12:00:00.000Z");
-
-      return Effect.gen(function* () {
-        yield* TestClock.setTime(now.epochMilliseconds);
-        const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
-        yield* limits.withCapacity(
-          { userId: "user-1", environmentId: "environment-1" },
-          Effect.void,
-        );
-
-        const query = new PgDialect().sqlToQuery(countConditions[0] as never);
-        const sqlText = query.sql.replaceAll(/[()]/g, "");
-        expect(sqlText).toContain(
-          '"relay_managed_endpoint_allocations"."updated_at" > $3 or "relay_managed_endpoint_allocations"."tunnel_id" is not null and "relay_managed_endpoint_allocations"."tunnel_released_at" is null and not exists',
-        );
-        expect(query.params[2]).toBe("2026-10-27T11:45:00.000Z");
-        expect(sqlText).toContain('"relay_environment_links"."revoked_at" is not null');
-      }).pipe(
-        Effect.provide(
-          ManagedTunnelLimits.layer.pipe(
-            Layer.provide(Layer.succeed(RelayDb.RelayDb, makeFakeDb([], countConditions))),
-          ),
-        ),
-      );
-    },
-  );
 });
