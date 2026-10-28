@@ -663,8 +663,8 @@ const make = Effect.gen(function* () {
     return sources;
   };
 
-  // The replies in the rows the guest's stream opens with, so replies a fork inherits count too.
-  // Read again only when the thread changes, not for every image the page loads.
+  // The replies in the rows the guest's stream opens with, so replies a fork inherits count too,
+  // plus those read before. Read again only when the thread changes, not for every image.
   const repliesByThread = new Map<
     ThreadId,
     {
@@ -681,12 +681,20 @@ const make = Effect.gen(function* () {
         rowLimit: SNAPSHOT_ROW_LIMIT,
         userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
       });
-      // Only replies with image syntax can show an image; the rest are not kept.
-      const replies = projection.visibleTurnItems.flatMap(({ item }) =>
-        item.type === "assistant_message" && (item.text.includes("![") || /<img/i.test(item.text))
-          ? [item]
-          : [],
+      // Replies already read stay: an open guest page keeps rows that slide out of the window.
+      const kept = new Map(
+        (cached?.replies ?? []).map((reply) => [`${reply.threadId}\u0000${reply.id}`, reply]),
       );
+      for (const { item } of projection.visibleTurnItems) {
+        // Only replies with image syntax can show an image; the rest are not kept.
+        if (
+          item.type === "assistant_message" &&
+          (item.text.includes("![") || /<img/i.test(item.text))
+        ) {
+          kept.set(`${item.threadId}\u0000${item.id}`, item);
+        }
+      }
+      const replies = [...kept.values()];
       repliesByThread.delete(threadId);
       repliesByThread.set(threadId, { sequence, replies });
       if (repliesByThread.size > SHARED_THREAD_REPLIES_LIMIT) {

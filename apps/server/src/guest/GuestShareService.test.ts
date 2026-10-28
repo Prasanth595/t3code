@@ -971,5 +971,18 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
       ],
     });
     assert.equal((yield* guestShares.media(session, unnamed)).mimeType, "image/png");
+
+    // Enough new rows push the first reply out of the window, but the open page still shows it.
+    yield* eventSink.write({
+      events: Array.from({ length: 600 }, (_, index) =>
+        item(
+          `item:filler-${index}`,
+          index + 2,
+          { type: "assistant_message", text: "Working." },
+          { threadId: forkId, runId: forkRun.id },
+        ),
+      ),
+    });
+    assert.equal((yield* guestShares.media(session, shot)).mimeType, "image/png");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
