@@ -1,5 +1,4 @@
 import { useActiveNewTask } from "../../state/active-new-task";
-import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import {
@@ -762,7 +761,6 @@ function ThreadNavigationSidebarPane(
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>
-          <ThreadUndoNotice visible={props.visible} />
         </View>
       </>
     );
@@ -903,7 +901,6 @@ function ThreadNavigationSidebarPane(
           </View>
         </View>
       )}
-      <ThreadUndoNotice visible={props.visible} />
     </View>
   );
 }

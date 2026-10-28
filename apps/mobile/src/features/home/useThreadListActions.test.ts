@@ -150,7 +150,6 @@ vi.mock("../../state/threads", () => ({
   ),
 }));
 
-import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
@@ -195,8 +194,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  dismissThreadUndoNotice();
-  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -286,13 +283,13 @@ describe("pinned thread operation permissions", () => {
   });
 });
 
-describe("thread action undo", () => {
+describe("thread action deduplication", () => {
   it.each([
-    ["settleThread", "settle", "Settled", "unsettle"],
-    ["snoozeThread", "snooze", "Snoozed", "unsnooze"],
+    ["settleThread", "settle"],
+    ["snoozeThread", "snooze"],
   ] as const)(
-    "%s keeps the successful request's undo when a duplicate is rejected",
-    async (handler, action, notice, inverse) => {
+    "%s rejects a duplicate request while the first is in flight",
+    async (handler, action) => {
       const actions = useThreadListActions();
       const thread = makeThread();
       const first = actions[handler](thread, "2099-01-01T09:00:00.000Z");
@@ -300,23 +297,8 @@ describe("thread action undo", () => {
       expect(await actions[handler](thread, "2099-01-01T09:00:00.000Z")).toBe(false);
       expect(await first).toBe(true);
       expect(state.requests.map(({ action }) => action)).toEqual([action]);
-      expect(readThreadUndoNotice()?.action).toBe(notice);
-      await readThreadUndoNotice()!.undo();
-      expect(state.requests.map(({ action }) => action)).toEqual([action, inverse]);
     },
   );
-
-  it("keeps the latest unpin undo after concurrent unpin requests", async () => {
-    const actions = useThreadListActions();
-    const thread = makeThread();
-    expect(await Promise.all([actions.unpinThread(thread), actions.unpinThread(thread)])).toEqual([
-      true,
-      true,
-    ]);
-    expect(readThreadUndoNotice()?.action).toBe("Unpinned");
-    await readThreadUndoNotice()!.undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["unpin", "unpin", "pin"]);
-  });
 
   it("rejects a concurrent archive request without sending another mutation", async () => {
     const actions = useThreadListActions();
@@ -328,134 +310,6 @@ describe("thread action undo", () => {
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
   });
 
-  it("restores pin placement and snooze after settling, only once", async () => {
-    const thread = makeThread({
-      pinnedAt: "2026-09-02T00:00:00.000Z",
-      pinOrderKey: "m",
-      snoozedUntil: "2099-01-01T09:00:00.000Z",
-    });
-    expect(await useThreadListActions().settleThread(thread)).toBe(true);
-    const undo = readThreadUndoNotice()!.undo;
-    expect(readThreadUndoNotice()?.action).toBe("Settled");
-    await undo();
-    await undo();
-    expect(state.requests.map(({ action }) => action)).toEqual([
-      "settle",
-      "unsettle",
-      "pin",
-      "snooze",
-    ]);
-    expect(state.requests[2]?.input).toEqual({ threadId: thread.id, orderKey: "m" });
-    expect(state.requests[3]?.input).toEqual({
-      threadId: thread.id,
-      snoozedUntil: thread.snoozedUntil,
-    });
-    expect(readThreadUndoNotice()).toBeNull();
-  });
-
-  // regression: #21401 restore archive and thread action undo
-  it("wakes a snoozed thread through the undo action", async () => {
-    const thread = makeThread();
-    await useThreadListActions().snoozeThread(thread, "2099-01-01T09:00:00.000Z");
-    expect(readThreadUndoNotice()?.action).toBe("Snoozed");
-    await readThreadUndoNotice()!.undo();
-    expect(state.requests.at(-1)).toMatchObject({
-      action: "unsnooze",
-      environmentId: thread.environmentId,
-      input: { threadId: thread.id, reason: "user" },
-    });
-  });
-
-  it.each([null, "2099-01-01T09:00:00.000Z", "2000-01-01T09:00:00.000Z"])(
-    "restores an unpinned thread's previous position and unexpired snooze (%s)",
-    async (snoozedUntil) => {
-      const thread = makeThread({
-        pinnedAt: "2026-09-02T00:00:00.000Z",
-        pinOrderKey: "m",
-        snoozedUntil,
-      });
-      await useThreadListActions().unpinThread(thread);
-      expect(readThreadUndoNotice()?.action).toBe("Unpinned");
-      await readThreadUndoNotice()!.undo();
-      // 2099 is the unexpired case; 2000 has long passed.
-      const restoresSnooze = snoozedUntil === "2099-01-01T09:00:00.000Z";
-      expect(state.requests.map(({ action }) => action)).toEqual(
-        restoresSnooze ? ["unpin", "pin", "snooze"] : ["unpin", "pin"],
-      );
-      expect(state.requests[1]).toMatchObject({
-        action: "pin",
-        input: { threadId: thread.id, orderKey: "m" },
-      });
-      if (restoresSnooze) {
-        expect(state.requests[2]).toMatchObject({
-          action: "snooze",
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id, snoozedUntil },
-        });
-      }
-    },
-  );
-
-  // regression: #21401 restore archive and thread action undo
-  it("does not restore snooze if undoing an unpin fails", async () => {
-    const thread = makeThread({
-      pinnedAt: "2026-09-02T00:00:00.000Z",
-      snoozedUntil: "2099-01-01T09:00:00.000Z",
-    });
-    await useThreadListActions().unpinThread(thread);
-    state.failedAction = "pin";
-    await readThreadUndoNotice()!.undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["unpin", "pin"]);
-  });
-
-  it("invalidates a retained undo when another hook pins the thread", async () => {
-    const thread = makeThread();
-    await useThreadListActions().unpinThread(thread);
-    const undo = readThreadUndoNotice()!.undo;
-    await useThreadListActions().pinThread(thread);
-    await undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["unpin", "pin"]);
-    expect(readThreadUndoNotice()).toBeNull();
-  });
-
-  // regression: #21401 restore archive and thread action undo
-  it("does not offer undo for a failed action", async () => {
-    state.failedAction = "settle";
-    expect(await useThreadListActions().settleThread(makeThread())).toBe(false);
-    expect(readThreadUndoNotice()).toBeNull();
-  });
-
-  it("stops restoring after a failed inverse command", async () => {
-    const thread = makeThread({
-      pinnedAt: "2026-09-02T00:00:00.000Z",
-      snoozedUntil: "2099-01-01T09:00:00.000Z",
-    });
-    await useThreadListActions().settleThread(thread);
-    state.failedAction = "unsettle";
-    await readThreadUndoNotice()!.undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle"]);
-    expect(state.alerts.at(-1)?.title).toBe("Could not un-settle thread");
-  });
-
-  it("rechecks the destination permission before undoing", async () => {
-    await useThreadListActions().unpinThread(makeThread());
-    state.scopes.get(primaryEnvironmentId)!.clear();
-    await readThreadUndoNotice()!.undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
-  });
-
-  // regression: #21401 restore archive and thread action undo
-  it("expires undo after five seconds", async () => {
-    vi.useFakeTimers();
-    await useThreadListActions().unpinThread(makeThread());
-    const undo = readThreadUndoNotice()!.undo;
-    vi.advanceTimersByTime(5_000);
-    expect(readThreadUndoNotice()).toBeNull();
-    await undo();
-    expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
-  });
-
-  // regression: #21401 restore archive and thread action undo
   it("refreshes the archive after archiving on a settlement-capable server", async () => {
     await useThreadListActions().archiveThread(makeThread());
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
