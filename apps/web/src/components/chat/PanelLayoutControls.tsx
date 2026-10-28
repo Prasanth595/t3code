@@ -71,7 +71,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         )}
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        Thread details
+        Toggle thread details
         {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
       </TooltipPopup>
     </Tooltip>
