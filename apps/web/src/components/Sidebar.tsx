@@ -79,7 +79,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
 import {
@@ -380,6 +379,23 @@ function resolveDraggedOrders(input: {
           inboxReturns.returnedAt,
         ).map(threadShellKey)
       : undefined,
+  };
+}
+
+function createDepartureStore() {
+  let threadKey: string | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => threadKey,
+    set(next: string | null) {
+      if (next === threadKey) return;
+      threadKey = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
   };
 }
 
@@ -1116,14 +1132,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
-  const [departingThreadKey, setDepartingThreadKey] = useState<string | null>(null);
-  if (departingThreadKey !== null && departingThreadKey !== routeThreadKey) {
-    setDepartingThreadKey(null);
-  }
-  const departRouteThread = (threadKey: string) =>
-    flushSync(() => setDepartingThreadKey(threadKey));
-  const stayOnRouteThread = (threadKey: string) =>
-    setDepartingThreadKey((current) => (current === threadKey ? null : current));
+  const [departure] = useState(createDepartureStore);
+  const departingThreadKey = useSyncExternalStore(departure.subscribe, departure.get);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forgets the departed thread once the route has left it, so returning to it shows its shelf row again
+  useEffect(() => {
+    if (departure.get() !== routeThreadKey) departure.set(null);
+  }, [departure, routeThreadKey]);
+  const departRouteThread = (threadKey: string) => departure.set(threadKey);
+  const stayOnRouteThread = (threadKey: string) => {
+    if (departure.get() === threadKey) departure.set(null);
+  };
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
