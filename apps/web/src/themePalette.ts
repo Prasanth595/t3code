@@ -351,16 +351,16 @@ export function setSystemAccentColor(accent: string | null): void {
   notifyCustomThemeListeners();
 }
 
-function systemColorsFor(appearance: ThemeAppearance, accent: string | null): ThemeColors {
+function systemColorsFor(appearance: ThemeAppearance, accent: string): ThemeColors {
   const standard = getStandardPaintedThemeColors(appearance);
-  if (accent === null) return standard;
   const withAccent = updateThemeColorFamily(appearance, standard, "accent", accent);
   return updateThemeColorFamily(appearance, withAccent, "messageAction", accent);
 }
 
 export function getSystemColorsTheme(): ThemeDefinition | null {
   const accent = readSystemAccentColor();
-  if (accent === undefined) return null;
+  // Without an accent it would duplicate the standard theme, so a saved choice falls back to it.
+  if (accent == null) return null;
   return (systemColorsTheme ??= {
     id: SYSTEM_COLORS_THEME_ID,
     label: "System colors",

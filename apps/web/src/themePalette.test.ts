@@ -783,7 +783,7 @@ describe("System colors theme", () => {
     vi.unstubAllGlobals();
   });
 
-  it("follows accent changes and falls back to the standard palette without one", () => {
+  it("follows accent changes and disappears while the desktop reports none", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeToCustomThemes(listener);
 
@@ -793,8 +793,10 @@ describe("System colors theme", () => {
     expect(hex(getSystemColorsTheme()?.colors.accent)).toBe("#e66100");
 
     setSystemAccentColor(null);
-    expect(getSystemColorsTheme()?.colors).toEqual(getStandardPaintedThemeColors("light"));
-    expect(getSystemColorsTheme()?.variants?.dark).toEqual(getStandardPaintedThemeColors("dark"));
+    expect(getThemeDefinition(SYSTEM_COLORS_THEME_ID)).toBeNull();
+
+    setSystemAccentColor("#3584e4");
+    expect(hex(getThemeDefinition(SYSTEM_COLORS_THEME_ID)?.colors.accent)).toBe("#3584e4");
     unsubscribe();
   });
 });

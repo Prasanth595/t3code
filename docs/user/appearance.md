@@ -6,9 +6,8 @@ the corresponding preview within each theme. Appearance preferences are saved se
 device or browser.
 
 On desktop, the **System colors** theme is T3 Code's standard theme in your operating system's
-accent color, and it recolors when you change the accent. On Linux, the accent comes from desktops
-that publish one through the desktop portal, such as GNOME and KDE. Without one, it matches the
-standard theme.
+accent color, and it recolors when you change the accent. It appears only while your operating
+system reports an accent color; otherwise a saved System colors choice shows the standard theme.
 
 On web and desktop, use **Change theme** in the command palette to select a theme without leaving chat.
 Press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to open the theme picker directly.
