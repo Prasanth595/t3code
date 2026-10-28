@@ -31,6 +31,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import {
+  isNonRepositoryGitStderr,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
@@ -122,6 +123,15 @@ const makeDriverReleasingLock = (
     );
     return { driver, failures };
   });
+
+it("treats a .git file that points to a missing folder as no repository", () => {
+  // Git 2.56 and later; older Git says "not a git repository" for the same case.
+  assert.isTrue(
+    isNonRepositoryGitStderr(
+      "fatal: gitfile does not point to a valid repository: /tmp/removed/.git/worktrees/feature\n",
+    ),
+  );
+});
 
 describe("Git output collection", () => {
   // Git writes in arbitrary chunk sizes; one byte per chunk splits every
