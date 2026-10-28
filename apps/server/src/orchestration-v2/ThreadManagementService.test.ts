@@ -53,7 +53,8 @@ it("stamps authoritative provenance on commands that create threads or messages"
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    // A client cannot claim a linked environment's origin, or a parent there.
+    // A client cannot claim a linked environment's origin, a parent there, or a parent here.
+    parentThreadId: ThreadId.make("thread:thread-management:parent"),
     linkOrigin: { sessionId: "forged", label: "Somewhere else" },
     delegatedFrom: {
       environmentId: EnvironmentId.make("environment:elsewhere"),
@@ -72,6 +73,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("parentThreadId");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

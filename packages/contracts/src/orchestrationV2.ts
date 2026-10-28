@@ -138,6 +138,10 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
+/** The realtime voice account that speaks for this chat: a voice call's chat is marked with it. */
+export const OrchestrationV2VoiceCall = Schema.Struct({ instanceId: ProviderInstanceId });
+export type OrchestrationV2VoiceCall = typeof OrchestrationV2VoiceCall.Type;
+
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
@@ -451,6 +455,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  voiceCall: Schema.optional(OrchestrationV2VoiceCall),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -2038,6 +2043,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  voiceCall: Schema.optional(OrchestrationV2VoiceCall),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2860,10 +2866,14 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /** Only the server sets this: the thread this one is a subagent of, as a voice call's chat is. */
+    parentThreadId: Schema.optional(ThreadId),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    /** Only the server sets this: the voice account a call opened this chat for. */
+    voiceCall: Schema.optional(OrchestrationV2VoiceCall),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3482,6 +3492,20 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * One spoken line of a voice call, kept in the call's chat without starting a run. Internal so
+   * a transcript always comes from a call the server is relaying.
+   */
+  Schema.Struct({
+    type: Schema.Literal("voice_transcript.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    role: Schema.Literals(["user", "assistant"]),
+    text: TrimmedNonEmptyString,
+    /** Still being spoken: a later command with the same message id replaces the text. */
+    streaming: Schema.Boolean,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
