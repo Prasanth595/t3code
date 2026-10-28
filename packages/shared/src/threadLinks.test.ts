@@ -154,6 +154,7 @@ describe("thread links", () => {
       "[Open][ref]",
       "",
       "[ref]: t3-thread://v2/local/t1",
+      "[two]: t3-thread://v2/local/t2",
     ].join("\n");
     expect(relabelThreadLinks(markdown, local, () => "New")).toBe(
       [
@@ -169,11 +170,15 @@ describe("thread links", () => {
         "[Open][ref]",
         "",
         "[ref]: t3-thread://v2/local/t1",
+        "[two]: t3-thread://v2/local/t2",
       ].join("\n"),
     );
-    expect(threadLinkRefs("Stray `\n\n[old](t3-thread://v1/t1) `code`", local)).toEqual([
-      ref("local", "t1"),
-    ]);
+    for (const live of [
+      "Stray `\n\n[old](t3-thread://v1/t1) `code`",
+      "Summary\n[Agent]: [old](t3-thread://v1/t1)",
+    ]) {
+      expect(threadLinkRefs(live, local)).toEqual([ref("local", "t1")]);
+    }
     expect(threadLinkRefs("`first line\nt3-thread://v2/local/t1`", local)).toEqual([]);
     expect(
       threadLinkRefs("[open](https://example.com/?redirect=t3-thread://v1/t1)", local),
