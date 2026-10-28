@@ -265,7 +265,7 @@ export const make = Effect.gen(function* () {
   /** The latest full read of each pull request, so a reply snooze reuses a watch's read. */
   const sharedReads = new Map<string, SharedRead>();
   const replyChecks = new Map<string, ReplyCheck>();
-  const notified = new Set<string>();
+  const notified = new Map<string, number>();
   const notificationPolls = new Map<
     string,
     { readonly nextAt: number; readonly seen: ReadonlyMap<string, string> }
@@ -709,7 +709,9 @@ export const make = Effect.gen(function* () {
           if (seen.get(pullRequest) === changed.updatedAt) continue;
           seen.set(pullRequest, changed.updatedAt);
           for (const group of members) {
-            if (group.pullRequest === pullRequest) notified.add(group.key);
+            if (group.pullRequest === pullRequest) {
+              notified.set(group.key, Date.parse(changed.updatedAt));
+            }
           }
         }
         notificationPolls.set(host, { nextAt: now + interval * 1000, seen });
@@ -734,7 +736,11 @@ export const make = Effect.gen(function* () {
   ) {
     const check = replyChecks.get(group.key);
     const shared = sharedReads.get(group.key);
-    if (shared !== undefined && (check === undefined || shared.at > check.checkedAt)) {
+    if (
+      shared !== undefined &&
+      (check === undefined || shared.at > check.checkedAt) &&
+      shared.at > (notified.get(group.key) ?? Number.NEGATIVE_INFINITY)
+    ) {
       replyChecks.set(group.key, {
         checkedAt: shared.at,
         readAt: shared.at,
@@ -815,7 +821,7 @@ export const make = Effect.gen(function* () {
       }
     }
     for (const key of replyChecks.keys()) if (!groups.has(key)) replyChecks.delete(key);
-    for (const key of notified) if (!groups.has(key)) notified.delete(key);
+    for (const key of notified.keys()) if (!groups.has(key)) notified.delete(key);
     yield* pollNotifications([...groups.values()], sinceMs, now);
     const reads = new Map<string, ReplyWakeRead>();
     yield* Effect.forEach(

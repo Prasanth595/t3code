@@ -5887,6 +5887,29 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         snoozeWakeOn: "pull-request-reply",
         snoozedUntil: thread.snoozedUntil,
       });
+      // A read that finishes after its pull request was unlinked must not wake the thread.
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-unlinked-reply"),
+        threadId,
+        reason: "pull-request-reply",
+        snoozedAt: DateTime.formatIso(thread.snoozedAt!),
+        wakeReason,
+      });
+      assert.deepInclude((yield* orchestrator.getThreadProjection(threadId)).thread, {
+        snoozeWakeOn: "pull-request-reply",
+        snoozedUntil: thread.snoozedUntil,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-link"),
+        threadId,
+        host: "github.com",
+        repository: "acme/app",
+        number: 7,
+        url: wakeReason.pullRequestUrl,
+        source: "manual",
+      });
       yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",

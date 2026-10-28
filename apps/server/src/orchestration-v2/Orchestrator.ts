@@ -3284,7 +3284,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               thread.snoozedAt != null &&
               DateTime.toEpochMillis(thread.snoozedAt) === Date.parse(command.snoozedAt) &&
               thread.snoozedUntil != null &&
-              DateTime.toEpochMillis(thread.snoozedUntil) > DateTime.toEpochMillis(now);
+              DateTime.toEpochMillis(thread.snoozedUntil) > DateTime.toEpochMillis(now) &&
+              visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
+                (link) => link.url === command.wakeReason.pullRequestUrl,
+              );
             if (!sameSnooze) return thread;
             // Clients read an elapsed snoozedUntil as a wake, so this looks like the timer firing now.
             return {
