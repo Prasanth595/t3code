@@ -10,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -20,7 +19,6 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/shar
 import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
-import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -83,22 +81,23 @@ export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
-  | GitHubCliFailedError
-  | GitHubAppSignIn.GitHubAppSessionError;
+  | GitHubCliFailedError;
 
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
-    /** `repositories` (`owner/name`) keep the app sign-in off ones it cannot reach. */
     readonly get: (
       host: string,
-      repositories?: string | ReadonlyArray<string> | null,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
-    /** `rejected` is the token GitHub refused, so only the source holding it is refreshed. */
-    readonly invalidate: (
+    /** The token saved in Settings for `host`, which outranks every other source. */
+    readonly saved: (
       host: string,
-      rejected?: Redacted.Redacted<string>,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<
+      Option.Option<GitHubCredential>,
+      GitHubHostDisabledError | GitHubNotSignedInError
+    >;
+    readonly fingerprint: (host: string, token: string) => Effect.Effect<string>;
+    readonly invalidate: (host: string) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
@@ -137,7 +136,6 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const crypto = yield* Crypto.Crypto;
-  const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
 
@@ -235,56 +233,38 @@ export const make = Effect.gen(function* () {
           : MISSING_TTL,
   });
 
+  const saved = Effect.fn("GitHubCredentials.saved")(function* (rawHost: string) {
+    const host = normalizeHost(rawHost);
+    if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
+    if ((yield* hostChoice(host))?.enabled === false) {
+      return yield* new GitHubHostDisabledError({ host });
+    }
+    const token = yield* savedToken(host);
+    if (token === null) return Option.none<GitHubCredential>();
+    return Option.some<GitHubCredential>({
+      host,
+      token: Redacted.make(token),
+      source: "settings",
+      fingerprint: yield* fingerprintOf(host, token),
+    });
+  });
+
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, repositories) {
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
-      if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
-      const choice = yield* hostChoice(host);
-      if (choice?.enabled === false) {
-        return yield* new GitHubHostDisabledError({ host });
-      }
-      const saved = yield* savedToken(host);
-      if (saved !== null) {
-        return {
-          host,
-          token: Redacted.make(saved),
-          source: "settings",
-          fingerprint: yield* fingerprintOf(host, saved),
-        } satisfies GitHubCredential;
-      }
-      const personal = Cache.get(cache, cacheKey(host, choice?.account));
-      const session = yield* Effect.result(appSignIn.token(host));
-      if (Result.isFailure(session)) {
-        // An app session that cannot refresh right now steps aside for the user's own credential.
-        return yield* personal.pipe(Effect.mapError(() => session.failure));
-      }
-      if (Option.isNone(session.success)) return yield* personal;
-      const app = {
-        host,
-        token: Redacted.make(session.success.value),
-        source: "app",
-        fingerprint: yield* fingerprintOf(host, session.success.value),
-      } satisfies GitHubCredential;
-      const scope = typeof repositories === "string" ? [repositories] : (repositories ?? []);
-      const reachesAll = yield* Effect.forEach(scope, (repository) =>
-        appSignIn.access(host, repository),
-      ).pipe(Effect.map((answers) => !answers.includes("not-covered")));
-      if (reachesAll) return app;
-      // The user's own credential reaches what they can; the app token still reads public repositories.
-      return yield* personal.pipe(Effect.orElseSucceed(() => app));
+      const fromSettings = yield* saved(host);
+      if (Option.isSome(fromSettings)) return fromSettings.value;
+      return yield* Cache.get(cache, cacheKey(host, (yield* hostChoice(host))?.account));
     }),
-    invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost, rejected) {
+    saved,
+    fingerprint: fingerprintOf,
+    invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost) {
       const host = normalizeHost(rawHost);
-      return (
-        rejected === undefined ? Effect.void : appSignIn.invalidate(host, Redacted.value(rejected))
-      ).pipe(
-        Effect.andThen(hostChoice(host)),
+      return hostChoice(host).pipe(
         Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
       );
     }),
   });
 });
 
-export const layer = Layer.effect(GitHubCredentials, make).pipe(
-  Layer.provideMerge(GitHubAppSignIn.layer),
-);
+export const layer = Layer.effect(GitHubCredentials, make);

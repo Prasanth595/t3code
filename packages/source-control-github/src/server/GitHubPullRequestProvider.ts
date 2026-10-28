@@ -16,7 +16,6 @@ import type {
 
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
-import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -729,5 +728,5 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("setThreadResolution"))),
   };
 
-  return GitHubRequestPolicy.scopeMethodsToRepository(provider);
+  return provider;
 });
