@@ -925,12 +925,7 @@ export const layer: Layer.Layer<
           return handoffBudget({
             tokenCap,
             modelContextWindow,
-            userText:
-              restartNote === ""
-                ? turnText
-                : `${restartNote}
-
-${turnText}`,
+            userText: restartNote === "" ? turnText : `${restartNote}\n\n${turnText}`,
             attachments: message.attachments,
             providerThread: budgetProviderThread,
             nativeContextEstimate:
@@ -1433,10 +1428,7 @@ ${turnText}`,
               text:
                 context === "" || goalCommand
                   ? turnText
-                  : `${context}
-
-User message:
-${turnText}`,
+                  : `${context}\n\nUser message:\n${turnText}`,
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.

@@ -49,11 +49,9 @@ export interface WorkflowPresetWriteProblem {
 }
 
 /**
- * What a settings write may not introduce into the workflow profiles: a name longer than
- * `WORKFLOW_PRESET_NAME_MAX_CHARS`, or one another profile already has (compared ignoring
- * case). Presets saved before these rules keep working: a profile whose id and name already
- * stand in `current` is never reported, so an unrelated edit is not blocked by old data.
- * The settings service and the settings page both call this; the decode schema does not.
+ * What a settings write may not introduce into the workflow profiles: a name over
+ * `WORKFLOW_PRESET_NAME_MAX_CHARS` or one another profile has (case-insensitive). A profile whose
+ * id and name already stand in `current` is never reported, so old data blocks no unrelated edit.
  */
 export function workflowPresetsWriteProblems(
   next: WorkflowPresets,

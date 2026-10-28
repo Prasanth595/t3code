@@ -1,12 +1,7 @@
 /**
- * Ultracode for every provider: a turn that opts in carries a note asking the agent to
- * orchestrate substantive work as a T3 workflow. Claude Code has its own ultracode, which the
- * keyword in the message already starts, so a Claude turn only gets the keyword added when the
- * setting opts it in without the user typing it.
- *
- * A delegated or workflow child thread never opts in on its own: its messages come from the
- * agent that started it, so a setting or a keyword in that agent's text would let every child
- * start another fan-out. Only a person typing the keyword into the child opts it in.
+ * Ultracode for every provider: an opted-in turn carries a note asking the agent to run
+ * substantive work as a T3 workflow (Claude only gets the keyword, which starts its own).
+ * A delegated or workflow child never opts in on its own: only a person typing the keyword does.
  */
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import type { OrchestrationV2CreationSource } from "@t3tools/contracts";

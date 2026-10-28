@@ -1,40 +1,8 @@
 /**
- * The approval gate for workflows. When a person's message asks for a workflow, the thread's
- * agent plans it with graph_review and the person approves the reviewed graph in the client;
- * until then graph_start and workflow_start are refused here, on the server.
- *
- * One owner for the state and for the rule behind it. The state is per thread and in memory:
- * the request that armed the gate, the reviews graph_review produced for it, and the digests
- * the person approved. It is never an event, a projection or a stored approval, so it cannot
- * outlive the server and nothing else can grant it. A restart drops it. The next time a start
- * is checked, the gate is armed again from the thread's latest started person-typed message,
- * asked with the same rule turn start uses (`workflowRequestOf`), and every review and approval
- * must be made again. A request that was dismissed or already started is armed again too.
- *
- * A request is armed until it is settled, and only an armed request refuses anything:
- * - Dismiss settles it at once. Starts run as on a thread nobody asked for a workflow on.
- * - A successful start of the approved digest settles it. Until then every other digest, and
- *   every script, stays refused.
- * - The person's next message settles it too: a plain one lifts it, a triggering one replaces it.
- * A settled request keeps what a retry needs: its reviews (a repeated Dismiss is the same
- * Dismiss) and its approvals (a retried start of an approved digest is the same start).
- *
- * Every approved start carries one start key, made here from the thread, the request message
- * and the digest. The caller's own key is replaced by it, so a start that committed its workflow
- * and then failed or was interrupted can be retried, with any key or none, and finds that
- * workflow. The key does not depend on the decision, so it survives a restart: a fresh review
- * and approval of the same request and digest finds the workflow the first one began, running
- * or finished. Running the same graph again takes a new message from the person, which is a new
- * request. A restart does not make the key an approval: the approval itself is in memory and
- * must be made again before any start runs.
- *
- * Two identities, kept apart. The decision id names the message sent to the agent about one
- * decision (the approval service builds it from thread, request and decision); a decision made
- * after a restart is a new decision and is told again. The start key names the launch.
- *
- * State changes are synchronous steps on a plain map, so no fiber can interleave inside one;
- * the only awaits are the persisted read that arms a thread after a restart and the caller's
- * own work, and neither is held between a check and the change it guards.
+ * The approval gate for workflows: graph_start and workflow_start are refused until the person
+ * approves the reviewed graph. State is per thread and in memory, so it cannot outlive the server
+ * and nothing else can grant it; a restart re-arms from the latest person-typed request and every
+ * review and approval is redone. Approved starts share one start key, so a retry finds its workflow.
  */
 import {
   type EnvironmentId,
@@ -206,12 +174,9 @@ export class WorkflowApprovalGate extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<void, WorkflowApprovalRequiredError>;
     /**
-     * graph_start, around the whole start, before the graph is rebuilt from what the agent
-     * sent. `start` receives the start key it must use as its clientRequestId, or undefined to
-     * keep the caller's own. While a request is armed it runs only for a digest the person
-     * approved, with that digest's start key; a success settles the request. After the request is
-     * settled, a digest the person approved keeps its key, so a retry of an approved start finds
-     * the workflow it began; any other start runs as on a thread nobody asked a workflow on.
+     * graph_start, around the whole start. `start` gets the key to use as its clientRequestId, or
+     * undefined to keep the caller's. While a request is armed it runs only for an approved digest
+     * and a success settles it; afterwards an approved digest keeps its key so a retry finds it.
      */
     readonly guardGraphStart: <A, E, R>(
       input: { readonly threadId: ThreadId; readonly digest: string },

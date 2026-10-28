@@ -1599,13 +1599,10 @@ const make = Effect.gen(function* () {
     | { readonly target: undefined; readonly blocker: string };
 
   /**
-   * Picks a profile's model: the first entry of its preference order whose provider instance
-   * is enabled for the project and serves the exact model with the entry's options. An entry
-   * that cannot be served is skipped with the reason it gave. `frozen` is the entry an
-   * earlier review chose, compared whole (provider instance, model and options, so two entries
-   * for one model stay distinct): only that entry may run and none is tried in its place, so a
-   * start never moves to another model than the one reviewed. If the profile no longer lists
-   * the entry, nothing runs. `advertisedModel` asks for the stricter check graph review applies.
+   * Picks a profile's model: the first entry whose provider instance is enabled for the project and
+   * serves the exact model with the entry's options; others are skipped with their reason. `frozen`
+   * is the entry a review chose, compared whole: only it may run, and if the profile no longer lists
+   * it nothing runs. `advertisedModel` asks for the stricter check graph review applies.
    */
   const resolveProfile = Effect.fn("OrchestratorMcpService.resolveProfile")(function* (input: {
     readonly parent: CallerProjection;
@@ -3960,11 +3957,9 @@ const make = Effect.gen(function* () {
     graphStart: Effect.fn("OrchestratorMcpService.graphStart")(function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope, "graph_start");
-      // The gate comes first and wraps the whole start: the graph the agent sends back is rebuilt
-      // only for a digest the user approved, so a rebuilt graph can never stand in for approval.
-      // An approved start runs under the approval's own key, whatever key the agent sent, and in
-      // a namespace of its own, so a retry finds the workflow the first attempt committed even
-      // from another provider session.
+      // The gate wraps the whole start: the graph the agent sends back is rebuilt only for a digest
+      // the user approved. An approved start runs under the approval's own key in a namespace of
+      // its own, so a retry finds its workflow even from another provider session.
       return yield* workflowApprovalGate
         .guardGraphStart(
           { threadId: scope.thread.threadId, digest: input.acceptedDigest },

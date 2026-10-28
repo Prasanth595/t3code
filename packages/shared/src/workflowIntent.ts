@@ -1,23 +1,8 @@
 /**
- * Whether a person's message asks for a workflow: the one detector the server (to arm graph
- * planning) and the composer (to show the chip) share, so they cannot disagree.
- *
- * It matches the built-in word "workflow" and the user's extra words or phrases as literal,
- * case-insensitive whole words in person-typed text. Composer context chips are stripped
- * first, using their owning parser. Whether the sender or thread may trigger anything is
- * decided by the caller, not here.
- *
- * Each occurrence is judged on its own, so an excluded one never hides a valid one elsewhere:
- * - code: inline code (also across a line break), fenced blocks (also inside quotes and list
- *   items) and indented blocks, as the Markdown parser reads them;
- * - URLs, paths, file names and identifiers (`workflow_start`, `.github/workflows/ci.yml`):
- *   a match must be the whole whitespace-delimited token, apart from quotes, brackets and
- *   sentence punctuation;
- * - CI compounds: "CI", "GitHub Actions", "pipeline", "build", "release" or "deploy"
- *   workflow, and workflow "file", "yaml", "yml" or "dispatch".
- *
- * Phrases are compared token by token, never compiled into a pattern, so a custom phrase
- * cannot inject pattern syntax.
+ * Whether a person's message asks for a workflow: the one detector the server and the composer
+ * share. It matches "workflow" and the user's extra phrases as literal whole words in
+ * person-typed text, judging each occurrence alone and skipping code, URLs, paths, identifiers
+ * and CI compounds ("GitHub Actions workflow", "workflow file"). Phrases are never compiled.
  */
 import type { Nodes } from "mdast";
 import remarkParse from "remark-parse";

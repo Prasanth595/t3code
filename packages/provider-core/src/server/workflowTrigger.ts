@@ -1,17 +1,7 @@
 /**
- * Per-turn hooks that start orchestration from a person's words. A message that asks for a
- * workflow ("workflow" or the user's own trigger words) puts the coordinator into graph
- * planning; that note wins over the ultracode note, whose advice is to run a script at once.
- *
- * Only a person's message on a thread that is not a delegated task can ask for a workflow.
- * Agent text, server wakes, canned replies, schedules and restart continuations never do, or
- * every child and every wake could start another fan-out. A person's steer into running work
- * does, like any message. The note is the same for every
- * driver and names graph_review; it never adds a provider's own trigger word.
- *
- * This module only adds planning guidance to the turn and answers whether a message asks for a
- * workflow. The server refuses graph_start and workflow_start until the user approves, through
- * the approval gate that asks the same question (`orchestration-v2/WorkflowApprovalGate.ts`).
+ * Per-turn hooks that turn a person's workflow request into graph planning, which wins over the
+ * ultracode note. Only a person's message on a non-delegated thread can ask. The server refuses
+ * graph_start and workflow_start until the user approves (`orchestration-v2/WorkflowApprovalGate.ts`).
  */
 import type {
   OrchestrationV2Actor,

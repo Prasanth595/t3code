@@ -90,8 +90,13 @@ export function resolveInteractionMode(
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
-export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
-  return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+export function taskPrompt(
+  input: Pick<OrchestratorMcpDelegateTaskInput, "task" | "role" | "resultSchema">,
+): string {
+  return withResultSchema(
+    input.role === undefined || input.role === "general"
+      ? input.task
+      : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`,
+    input.resultSchema,
+  );
 }

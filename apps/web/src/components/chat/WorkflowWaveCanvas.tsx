@@ -120,7 +120,7 @@ export function WorkflowWaveCanvas(props: {
   );
   // Hovering or focusing a node highlights it, what it depends on and what depends on it.
   const [highlighted, setHighlighted] = useState<string | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to the scroll container's scroll and resize events, which only the DOM reports.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the scroll container's scroll and resize events, which only the DOM reports.
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (element === null) return;
@@ -160,7 +160,7 @@ export function WorkflowWaveCanvas(props: {
         ]);
   // Tabbing onto a placeholder draws that card in full; focus then moves to its main control.
   const focusRequest = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- moves DOM focus after the highlighted card has rendered in full; focus cannot be set during render.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus after the highlighted card has rendered in full; focus cannot be set during render.
   useLayoutEffect(() => {
     const key = focusRequest.current;
     if (key === null || key !== highlighted) return;

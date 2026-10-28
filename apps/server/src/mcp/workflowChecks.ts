@@ -1,9 +1,7 @@
 /**
- * Checks and file scopes for workflow agents. The rules follow the omx graph's protected
- * verifiers (~/.agents/graph/omx-upgrade/src/team/protected-verifier.ts): a process check is
- * an argv run without a shell and judged by its exit code; a structured check reads JSON
- * pointers from the agent's structured result; a judgment check asks a separate agent to
- * grade the result against a rubric. Limits match the graph's contract.
+ * Checks and file scopes for workflow agents, following the omx graph's protected verifiers: a
+ * process check is an argv run without a shell and judged by exit code; a structured check reads
+ * JSON pointers from the agent's result; a judgment check has a separate agent grade a rubric.
  */
 import * as NodeUtil from "node:util";
 

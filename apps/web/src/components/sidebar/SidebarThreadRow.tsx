@@ -39,7 +39,6 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
-  UserRoundIcon,
   XIcon,
 } from "lucide-react";
 import {

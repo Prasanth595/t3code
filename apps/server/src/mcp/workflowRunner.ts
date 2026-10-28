@@ -141,12 +141,9 @@ export function presetPreference(preset: WorkflowPresets["presets"][number]): Wo
 }
 
 /**
- * Select one whole request before the provider resolver applies caller inheritance.
- *
- * A preset selected without a frozen snapshot also reports its `preference`: the model
- * preference order the caller may resolve (review, workflow start). `target` is always the
- * first entry, which is all a script run with no snapshot (stored before profiles) uses.
- * A snapshot is the resolved choice and carries no order, so a resume never re-reads one.
+ * Select one whole request before the provider resolver applies caller inheritance. A preset
+ * without a frozen snapshot also reports its `preference` order, whose first entry is `target`;
+ * a snapshot is the resolved choice and carries no order, so a resume never re-reads one.
  */
 export function selectWorkflowTarget(
   own: {

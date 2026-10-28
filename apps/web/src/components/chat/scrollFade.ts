@@ -36,7 +36,7 @@ export function scrollFadeStyle(edges: ScrollEdges): CSSProperties | undefined {
 export function useScrollEdges(ref: RefObject<HTMLElement | null>): ScrollEdges {
   const [edges, setEdges] = useState<ScrollEdges>({ right: false, bottom: false });
   const last = useRef(edges);
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to the scroll container's scroll and resize events, which only the DOM reports.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the scroll container's scroll and resize events, which only the DOM reports.
   useLayoutEffect(() => {
     const element = ref.current;
     if (element === null) return;

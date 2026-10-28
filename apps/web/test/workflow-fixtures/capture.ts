@@ -1,14 +1,7 @@
 /**
- * Screenshot helper for the workflow fixture browser tests.
- *
- * `captureSurface` renders one surface state in every theme and width of the QA matrix, checks
- * that the selector matched an element (zero matches throw), and, when the QA CLI asks for it
- * (`VITE_T3_WORKFLOW_QA=1`), saves each frame as a PNG with a JSON sidecar under
- * `.logs/workflow-qa/frames`. A plain test run renders one light frame per state and runs the
- * same checks, so a fixture that stops matching its component fails in CI, not at capture time.
- *
- * Surfaces from later UI work add their own fixtures and call this helper; nothing here knows
- * which components exist.
+ * Screenshot helper for the workflow fixture browser tests: renders one surface state in every
+ * theme and width of the QA matrix and throws when the selector matches nothing. With
+ * `VITE_T3_WORKFLOW_QA=1` it also saves each frame as a PNG with a JSON sidecar.
  */
 import type { ReactNode } from "react";
 import {
@@ -122,11 +115,9 @@ async function recordFrame(
   const element = frameSelector === spec.selector ? subject : one(frameSelector);
   await document.fonts.ready;
   const html = document.documentElement;
-  // The subject is measured at the matrix viewport, which is what the frame claims. The iframe
-  // paints nothing below its own viewport, so an element screenshot of a taller subject comes
-  // out blank past it; a tall subject gets a viewport as high as itself for the photograph
-  // alone. Its layout must not change with that, or the picture would not show what the matrix
-  // viewport renders (`layout-shift`).
+  // Measured at the matrix viewport. The iframe paints nothing below its viewport, so a taller
+  // subject is photographed in a viewport as high as itself, and its layout must not change
+  // with that (`layout-shift`).
   const rect = element.getBoundingClientRect();
   const layoutHeight = window.innerHeight;
   const needed = Math.ceil(rect.top + window.scrollY + rect.height);

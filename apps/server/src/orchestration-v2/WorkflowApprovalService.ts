@@ -1,10 +1,7 @@
 /**
- * The person's decision on a reviewed workflow graph: the gate records it, then the agent is
- * told in a canned message so its next turn acts on it. The gate owns what is approved; this
- * only carries the decision to the agent.
- *
- * The canned message is the person's own word made by the server, so it is `user` from the
- * `server` source: it is not a typed request, and the turn trigger never reads it as one.
+ * The person's decision on a reviewed graph: the gate records it, then a canned `user` message
+ * from the `server` source tells the agent. It is not a typed request, so the turn trigger never
+ * reads it as one.
  */
 import {
   CommandId,
@@ -43,11 +40,9 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
 
   /**
-   * Ids come from the request and the gate's decision id, so a second click, or a retry after
-   * the first send failed, is the same command and the orchestrator answers it from its receipt
-   * instead of adding a second message. The decision id is new for a decision made after a
-   * restart, so that one is not answered from the receipt of an earlier one. The gate answers
-   * every call with the same ids, so a retry always reaches the receipt or sends what is missing.
+   * Ids come from the request and the gate's decision id, so a repeated click or retry is the
+   * same command and is answered from its receipt. A decision made after a restart has a new
+   * decision id, so an earlier receipt never answers it.
    */
   const tellAgent = (
     input: OrchestrationV2ApproveWorkflowReviewInput | OrchestrationV2DismissWorkflowReviewInput,

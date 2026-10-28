@@ -18,12 +18,8 @@ const problem = (kind: WorkflowQaProblem["kind"], message: string): WorkflowQaPr
 
 /**
  * What is wrong with the picture of one frame; empty when it covers its subject. A missing PNG is
- * reported elsewhere (`not-on-disk`) and skipped here.
- *
- * - `uncovered`: the picture is shorter than the subject, so part of it was never photographed.
- * - `blank-band`: everything below the matrix viewport is one flat colour. A subject taller than
- *   the viewport it was photographed in comes out this way, because nothing past the viewport is
- *   painted. Rows above the viewport may be flat legitimately; rows below it never should be.
+ * reported elsewhere (`not-on-disk`). `uncovered`: shorter than the subject. `blank-band`: flat
+ * below the matrix viewport, where nothing was painted.
  */
 export function framePixelProblems(
   frame: WorkflowQaFrame,
