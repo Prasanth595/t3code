@@ -2893,7 +2893,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
     regenerateTitle: Schema.optional(Schema.Boolean),
-    /** Move an idle thread to another project; clears branch and worktree unless also given. */
+    /** Move an idle thread to another project; clears its branch and worktree. */
     projectId: Schema.optional(ProjectId),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

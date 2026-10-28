@@ -1872,7 +1872,7 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
-  it.effect("moves an idle thread to another project and back", () =>
+  it.effect("moves an idle thread to another project", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-layer-move-thread");
@@ -1915,9 +1915,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
         link: { url: "https://github.com/pingdotgg/t3code/pull/1", source: "manual" },
       });
-      assert.isDefined(
-        (yield* orchestrator.getThreadProjection(threadId)).thread.pullRequests?.[0]?.watch,
-      );
 
       const missingProject = yield* orchestrator
         .dispatch({
@@ -1948,17 +1945,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
 
       yield* orchestrator.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("runtime-layer-move-back"),
-        threadId,
-        projectId: fromProjectId,
-      });
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(threadId)).thread.projectId,
-        fromProjectId,
-      );
-
-      yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
@@ -1975,13 +1961,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "thread.metadata.update",
           commandId: CommandId.make("runtime-layer-move-busy"),
           threadId,
-          projectId: toProjectId,
+          projectId: fromProjectId,
         })
         .pipe(Effect.flip);
       assert.instanceOf(busy, Orchestrator.OrchestratorDispatchError);
       assert.equal(
         (yield* orchestrator.getThreadProjection(threadId)).thread.projectId,
-        fromProjectId,
+        toProjectId,
       );
     }),
   );

@@ -2941,28 +2941,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
-    const movesProject =
-      command.type === "thread.metadata.update" &&
-      command.projectId !== undefined &&
-      command.projectId !== thread.projectId;
-    if (
-      command.type === "thread.metadata.update" &&
-      command.projectId !== undefined &&
-      command.projectId !== thread.projectId
-    ) {
-      if (thread.lineage.relationshipToParent === "subagent") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} is a subagent and moves with its parent.`,
-        });
-      }
-      const project = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+    const targetProjectId =
+      command.type === "thread.metadata.update" && command.projectId !== thread.projectId
+        ? command.projectId
+        : undefined;
+    const movesProject = targetProjectId !== undefined;
+    if (targetProjectId !== undefined) {
+      const project = yield* projects.get(targetProjectId).pipe(mapDispatchError(command));
       if (Option.isNone(project) || project.value.deletedAt !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Project ${command.projectId} does not exist.`,
+          cause: `Project ${targetProjectId} does not exist.`,
         });
       }
       const records = yield* projectionStore
@@ -2975,18 +2965,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         )
         .pipe(mapDispatchError(command));
-      // Children inherit the parent's project and workspace; moving only the parent would strand them.
-      if (records.subagents.some((task) => task.childThreadId !== null)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} has child threads and cannot move to another project.`,
-        });
-      }
+      const latestRun = latestExecutedRun(records.runs);
+      // Children share the project; failed worktree setup would retry in the old repo.
       if (
-        records.runs.some((run) =>
-          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
-        ) ||
+        thread.lineage.relationshipToParent === "subagent" ||
+        records.subagents.some((task) => task.childThreadId !== null) ||
+        records.runs.some((run) => isBlockingRun(run) || run.status === "queued") ||
         records.runtimeRequests.some((request) => request.status === "pending") ||
         derivePendingBackgroundWork({
           latestRun: records.runs.findLast((run) => run.status !== "queued"),
@@ -2994,25 +2978,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItems: records.turnItems,
           activeProviderThreadId: thread.activeProviderThreadId,
           runs: records.runs,
-        }).length > 0
+        }).length > 0 ||
+        ((latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+          latestRun.workspacePreparation?.type === "worktree" &&
+          thread.worktreePath === null)
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} is busy. Stop it or clear its queue before moving it.`,
-        });
-      }
-      // Failed worktree setup holds the queue and would retry in the old project's repo.
-      const latestRun = latestExecutedRun(records.runs);
-      if (
-        (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
-        latestRun.workspacePreparation?.type === "worktree" &&
-        thread.worktreePath === null
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} has failed worktree setup. Retry it or continue locally before moving.`,
+          cause: `Thread ${command.threadId} must be idle, top-level, and without child threads or failed worktree setup to move.`,
         });
       }
     }
@@ -3465,13 +3439,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
-            ...(command.projectId === undefined || command.projectId === thread.projectId
+            ...(targetProjectId === undefined
               ? {}
-              : {
-                  projectId: command.projectId,
-                  branch: command.branch ?? null,
-                  worktreePath: command.worktreePath ?? null,
-                }),
+              : { projectId: targetProjectId, branch: null, worktreePath: null }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
