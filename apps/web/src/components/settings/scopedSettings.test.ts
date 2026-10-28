@@ -12,6 +12,12 @@ import * as Cause from "effect/Cause";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import {
+  droppedSettingKeysAtom,
+  droppedSettingKeysFor,
+  recordDroppedSettingKeys,
+} from "./droppedSettingKeys";
 import {
   persistScopedSettingsPatch,
   planProjectOverridesClear,
@@ -854,6 +860,52 @@ describe("environments that cannot store a setting", () => {
         reviewGuidesEnabled: false,
       }).serverWrites.map(({ label }) => label),
     }).toEqual({ droppedKeys: ["reviewGuidesEnabled"], mixed: false, secondClick: ["Laptop"] });
+  });
+
+  // regression: a dropped nullable object reported its leaves, which the learned cache ignored
+  it("learns a whole dropped object setting until the environment's server version changes", async () => {
+    const fresh = environment("Laptop");
+    const legacy = environment("Server");
+    const first = await persistScopedSettingsPatch(
+      planScopedSettingsPatch(all, [fresh, legacy], {
+        sourceControlWriterModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        },
+      }),
+      async ({ environmentId, input }) => ({
+        _tag: "Success" as const,
+        value:
+          environmentId === fresh.environmentId
+            ? applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, input.patch)
+            : DEFAULT_SERVER_SETTINGS,
+      }),
+      vi.fn(),
+    );
+    for (const { environmentId, droppedKeys } of first.failedEnvironments) {
+      recordDroppedSettingKeys(environmentId, "1.0.0", droppedKeys);
+    }
+    const dropped = appAtomRegistry.get(droppedSettingKeysAtom);
+    const learned = droppedSettingKeysFor(dropped, legacy.environmentId, "1.0.0");
+    const afterFirstSave = [
+      fresh,
+      environment("Server", learned ? { unsupportedSettingKeys: learned } : {}),
+    ];
+
+    expect({
+      learned: learned && [...learned],
+      secondClick: planScopedSettingsPatch(all, afterFirstSave, {
+        sourceControlWriterModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-mini",
+        },
+      }).serverWrites.map(({ label }) => label),
+      afterUpdate: droppedSettingKeysFor(dropped, legacy.environmentId, "1.1.0"),
+    }).toEqual({
+      learned: ["sourceControlWriterModelSelection"],
+      secondClick: ["Laptop"],
+      afterUpdate: undefined,
+    });
   });
 
   it("asks to update T3 Code when no selected environment can store the key", () => {

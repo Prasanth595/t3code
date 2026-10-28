@@ -1,14 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
-  type ProviderInstanceId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
-import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
   resolveEffectiveDefaultModelSelection,
@@ -19,8 +17,6 @@ import {
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -32,6 +28,10 @@ import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
+import {
+  useScopedModelDisabledReason,
+  useScopedModelProviders,
+} from "./useScopedModelAvailability";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -51,19 +51,11 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
 }
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
-  const { scope, target, targets, connectedEnvironments } = useSettingsScope();
+  const { scope, target, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environments } = useEnvironments();
-  const providersByEnvironment = useEnvironmentProviders();
-  const representative = target
-    ? environments.find((environment) => environment.environmentId === target.environmentId)
-    : undefined;
-  const providers =
-    (representative?.serverConfig
-      ? providersByEnvironment.get(representative.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const { environmentId, providers, projectId } = useScopedModelProviders("defaultModelSelection");
   const storedSelection = resolveDefaultProviderModelSelection(
     providers,
     settings.defaultModelSelection,
@@ -72,11 +64,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
     : null;
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      settings,
-      target?.projectId ?? null,
-    ),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, projectId),
   );
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -99,34 +87,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
-    const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
-    for (const candidate of targets) {
-      const environment = environments.find(
-        (entry) => entry.environmentId === candidate.environmentId,
-      );
-      const providers = providersByEnvironment.get(candidate.environmentId);
-      if (!environment?.serverConfig || !providers) continue;
-      const entry = applyProviderInstanceSettings(
-        deriveProviderInstanceEntries(providers),
-        candidate.settings,
-        candidate.projectId,
-      ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
-        mergeEnvironmentSettings(candidate.settings, settings),
-        providers,
-      ).get(instanceId);
-      if (
-        !entry?.enabled ||
-        !entry.isAvailable ||
-        entry.driverKind !== sourceEntry?.driverKind ||
-        !options?.some((option) => option.slug === model && !option.isUnavailable)
-      ) {
-        return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
-      }
-    }
-    return null;
-  }
+  const modelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    entries,
+    "defaultModelSelection",
+  );
 
   const setModel = (value: ModelSelection | null) => {
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
@@ -163,7 +128,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         selection && activeEntry ? (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
-              environmentId={representative?.environmentId ?? null}
+              environmentId={environmentId}
               activeInstanceId={selection.instanceId}
               model={selection.model}
               lockedProvider={null}
@@ -173,10 +138,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
               getModelDisabledReason={modelDisabledReason}
               onOpenProviderSetup={(instanceId) => {
-                if (representative)
+                if (environmentId)
                   void navigate({
                     to: "/settings/providers",
-                    search: { environmentId: representative.environmentId, instanceId },
+                    search: { environmentId, instanceId },
                   });
               }}
               onInstanceModelChange={(instanceId, model) =>

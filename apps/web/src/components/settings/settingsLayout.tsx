@@ -25,6 +25,7 @@ import {
   scopedSettingsAreMixed,
   scopedSettingsSource,
   targetStoresSettingKeys,
+  environmentsStoringSettingKeys,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
@@ -330,10 +331,12 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0
       ? context.targets.filter((target) => !targetStoresSettingKeys(target, settingKeys))
       : [];
+  const outdatedLabels = [...new Set(outdatedTargets.map(({ label }) => label))].join(", ");
   // Writes skip environments that cannot store the row's keys, so permission does too.
-  const permissionTargets = (context?.connectedEnvironments ?? []).filter(
-    (environment) =>
-      !outdatedTargets.some((target) => target.environmentId === environment.environmentId),
+  const permissionTargets = environmentsStoringSettingKeys(
+    context?.connectedEnvironments ?? [],
+    outdatedTargets,
+    settingKeys,
   );
   const writableIds = useEnvironmentsWithScope(permissionTargets, AuthSettingsWriteScope);
   const canWriteSettings = context
@@ -342,7 +345,7 @@ export function SettingsRow({
     : primaryCanWrite;
   const updateMessage =
     outdatedTargets.length > 0 && outdatedTargets.length === context?.targets.length
-      ? `Update T3 Code on ${[...new Set(outdatedTargets.map(({ label }) => label))].join(", ")} to use this setting.`
+      ? `Update T3 Code on ${outdatedLabels} to use this setting.`
       : null;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();
@@ -451,7 +454,13 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
-        summary={inheritance.summary}
+        summary={
+          updateMessage
+            ? `Not supported on ${outdatedLabels}`
+            : outdatedTargets.length > 0
+              ? `${inheritance.summary} · Not supported on ${outdatedLabels}`
+              : inheritance.summary
+        }
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}

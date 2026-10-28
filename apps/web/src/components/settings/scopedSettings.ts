@@ -79,11 +79,35 @@ function supportedPatch(
   ) as ServerSettingsPatch;
 }
 
+/** The representative when it can store the key, otherwise the first target that can. */
+export function settingKeyRepresentative<
+  T extends Pick<ScopedSettingsTarget, "unsupportedSettingKeys">,
+>(representative: T | null, targets: readonly T[], key: keyof ServerSettings): T | null {
+  if (!representative || targetStoresSettingKeys(representative, [key])) return representative;
+  return targets.find((target) => targetStoresSettingKeys(target, [key])) ?? representative;
+}
+
 export function targetStoresSettingKeys(
   target: Pick<ScopedSettingsTarget, "unsupportedSettingKeys">,
   keys: readonly (keyof ServerSettings)[],
 ) {
   return keys.some((key) => target.unsupportedSettingKeys?.has(key) !== true);
+}
+
+/** Drops environments whose target cannot store any of `keys`; writes skip those environments. */
+export function environmentsStoringSettingKeys<T extends { readonly environmentId: EnvironmentId }>(
+  environments: readonly T[],
+  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "unsupportedSettingKeys">[],
+  keys: readonly (keyof ServerSettings)[],
+): T[] {
+  return environments.filter(
+    (environment) =>
+      !targets.some(
+        (target) =>
+          target.environmentId === environment.environmentId &&
+          !targetStoresSettingKeys(target, keys),
+      ),
+  );
 }
 
 export function isConnectedWithConfig(
@@ -514,6 +538,10 @@ function droppedSettingPaths(
 ): string[] {
   if (value === null) return before != null && Equal.equals(saved, before) ? [path] : [];
   if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {
+    // A whole new object that never landed is one dropped setting, not a set of dropped leaves.
+    if (!isPlainObject(before) && Object.keys(value).length > 0 && Equal.equals(saved, before)) {
+      return [path];
+    }
     const field = (source: unknown, key: string) =>
       isPlainObject(source) ? source[key] : undefined;
     return Object.entries(value).flatMap(([key, next]) =>

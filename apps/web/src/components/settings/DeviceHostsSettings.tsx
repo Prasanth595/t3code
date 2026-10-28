@@ -29,6 +29,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
 
 import { useSettingsScope } from "./SettingsScopeContext";
+import { environmentsStoringSettingKeys } from "./scopedSettings";
 import { toastManager } from "../ui/toast";
 import {
   groupDeviceHosts,
@@ -44,7 +45,7 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
-  const { scope, environments, connectedEnvironments } = useSettingsScope();
+  const { scope, environments, connectedEnvironments, targets: scopeTargets } = useSettingsScope();
   const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -64,11 +65,15 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
     hosts: environment.serverConfig?.settings.deviceHosts ?? [],
   }));
   const groupedHosts = groupDeviceHosts(hostEnvironments);
+  // Same eligibility as the row's permission check: skip environments that cannot store hosts.
+  const hostDestinations = environmentsStoringSettingKeys(environments, scopeTargets, [
+    "deviceHosts",
+  ]);
   const save = async (host: SshDeviceHostConfig, remove = false, original = host) => {
-    if (!props.environmentId || projectScope) return;
+    if (!props.environmentId || projectScope || hostDestinations.length === 0) return;
     setBusy(true);
     const results = await Promise.allSettled(
-      environments.map(async (environment) => {
+      hostDestinations.map(async (environment) => {
         if (environment.connection.phase !== "connected" || !environment.serverConfig) {
           throw new Error("Environment disconnected");
         }
@@ -91,7 +96,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
       }),
     );
     setBusy(false);
-    const failed = environments.filter((_, index) => {
+    const failed = hostDestinations.filter((_, index) => {
       const result = results[index];
       return result?.status !== "fulfilled" || result.value._tag === "Failure";
     });
