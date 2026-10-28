@@ -28,6 +28,7 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  shouldNavigateOnThreadClick,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -976,6 +977,18 @@ describe("navigation after parking a thread", () => {
       ).toBe(expected);
     },
   );
+});
+
+describe("shouldNavigateOnThreadClick", () => {
+  it.each([
+    [1, false, true],
+    [1, true, true],
+    [2, false, true],
+    [3, false, true],
+    [2, true, false],
+  ] as const)("detail %i on the open row %s navigates: %s", (detail, isOpen, expected) => {
+    expect(shouldNavigateOnThreadClick(detail, isOpen)).toBe(expected);
+  });
 });
 
 describe("unseen completion with background work", () => {

@@ -711,6 +711,11 @@ export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
 
+// Retries within the double-click interval also report detail > 1, so only the open row skips them.
+export function shouldNavigateOnThreadClick(detail: number, isOpen: boolean): boolean {
+  return !isOpen || !isTrailingDoubleClick(detail);
+}
+
 function nodeClosest(node: object | null, selector: string): unknown {
   if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
   return node.closest(selector);

@@ -180,7 +180,6 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   isSidebarNestedLinkClick,
-  isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
@@ -192,6 +191,7 @@ import {
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
+  shouldNavigateOnThreadClick,
   sidebarListItemId,
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
@@ -1512,7 +1512,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       rangeSelectTo(threadKey, orderedThreadKeysRef.current);
       return;
     }
-    if (isTrailingDoubleClick(event.detail)) {
+    if (!shouldNavigateOnThreadClick(event.detail, readRouteThreadKey(router) === threadKey)) {
       return;
     }
     navigateToThread(threadRef);
