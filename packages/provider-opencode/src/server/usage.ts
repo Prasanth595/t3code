@@ -451,7 +451,7 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
       });
       yield* encodeCacheFile(Object.fromEntries(tables)).pipe(
         Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
-        Effect.ignore,
+        Effect.ignore({ log: true }),
       );
     }
     return scans;
