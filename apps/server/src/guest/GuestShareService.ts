@@ -642,17 +642,17 @@ const make = Effect.gen(function* () {
     const { thread } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
     if (mimeType === null) return yield* unavailable;
-    const { messages } = yield* orchestrator
-      .getThreadRecords(thread.id, ["messages"], { messageRoles: ["assistant"] })
+    // The rows the guest's stream opens with, so replies a fork inherits count too.
+    const { projection } = yield* orchestrator
+      .getThreadSnapshotWindow(thread.id, {
+        rowLimit: SNAPSHOT_ROW_LIMIT,
+        userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
+      })
       .pipe(Effect.mapError(() => unavailable));
-    if (
-      !agentMessagesShowImage(
-        path,
-        messages.map((message) => message.text),
-      )
-    ) {
-      return yield* unavailable;
-    }
+    const replies = projection.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "assistant_message" ? [item.text] : [],
+    );
+    if (!agentMessagesShowImage(path, replies)) return yield* unavailable;
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),

@@ -843,55 +843,99 @@ it.effect("serves the shared thread's files to its guest, never another thread's
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("serves an image on the host only when an agent message embeds it", () =>
+it.effect("serves an image on the host only when an agent reply the guest sees shows it", () =>
   Effect.gen(function* () {
-    const { guestShares, session } = yield* joinedGuest;
+    const { orchestrator, guestShares } = yield* shareThread;
     const runId = yield* ownerRun;
     const fileSystem = yield* FileSystem.FileSystem;
     const directory = yield* fileSystem.makeTempDirectoryScoped();
     const shot = `${directory}/my shot.png`;
-    const linked = `${directory}/linked.png`;
+    const fileUrl = `${directory}/file-url.png`;
     const page = `${directory}/page.png`;
     const fromUser = `${directory}/from-user.png`;
     const unnamed = `${directory}/unnamed.png`;
-    for (const path of [shot, linked, fromUser, unnamed]) yield* fileSystem.writeFile(path, PNG);
+    for (const path of [shot, fileUrl, fromUser, unnamed]) yield* fileSystem.writeFile(path, PNG);
     yield* fileSystem.writeFileString(page, "<script>alert(1)</script>");
     const eventSink = yield* EventSink.EventSinkV2;
     const now = yield* DateTime.now;
-    const message = (id: string, role: "user" | "assistant", text: string) => ({
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0];
+    const item = (
+      id: string,
+      ordinal: number,
+      fields:
+        | { readonly type: "assistant_message"; readonly text: string }
+        | { readonly type: "user_message"; readonly text: string },
+    ) => ({
       id: EventId.make(`event:${id}`),
-      type: "message.updated" as const,
+      type: "turn-item.updated" as const,
       threadId,
-      runId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
       occurredAt: now,
       payload: {
-        id: MessageId.make(id),
+        id: TurnItemId.make(id),
         threadId,
         runId,
         nodeId: null,
-        role,
-        text,
-        attachments: [],
-        streaming: false,
-        createdBy: role === "user" ? ("user" as const) : ("agent" as const),
-        creationSource: "server" as const,
-        createdAt: now,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
         updatedAt: now,
+        messageId: MessageId.make(id),
+        ...(fields.type === "assistant_message"
+          ? { ...fields, streaming: false }
+          : {
+              ...fields,
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              inputIntent: "turn_start" as const,
+              attachments: [],
+            }),
       },
     });
     yield* eventSink.write({
       events: [
-        message(
-          "message:agent-images",
-          "assistant",
-          `Done: ![Shot](<${shot}>) ![Other](file://${encodeURI(linked)}) ![Page](${page})`,
-        ),
+        item("item:agent-images", 1, {
+          type: "assistant_message",
+          text: `Done: ![Shot](<${shot}>) ![Other](file://${encodeURI(fileUrl)}) ![Page](${page})`,
+        }),
         // A guest's sent message is a user message; it must not open files on the host.
-        message("message:guest-image", "user", `![Mine](${fromUser})`),
+        item("item:guest-image", 2, { type: "user_message", text: `![Mine](${fromUser})` }),
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated" as const,
+          threadId,
+          runId,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run!, status: "completed" as const, completedAt: now },
+        },
       ],
     });
+    // The guest watches a fork, which shows these replies as inherited history.
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
 
-    for (const path of [shot, linked]) {
+    for (const path of [shot, fileUrl]) {
       assert.deepStrictEqual(yield* guestShares.media(session, path), {
         path,
         mimeType: "image/png",
