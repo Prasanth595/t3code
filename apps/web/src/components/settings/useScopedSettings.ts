@@ -14,20 +14,14 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
-import {
-  persistClientSettingsPatch,
-  useMergedSettings,
-  useMigrateModelPreferences,
-} from "../../hooks/useSettings";
+import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
-import { recordDroppedSettingKeys } from "./droppedSettingKeys";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
   planProjectOverridesClear,
-  scopedDisplaySettings,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
@@ -39,12 +33,8 @@ import {
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  const { target, targets } = useSettingsScope();
-  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
-  return useMergedSettings(
-    target ? scopedDisplaySettings(target, targets) : DEFAULT_SERVER_SETTINGS,
-    selector,
-  );
+  const { target } = useSettingsScope();
+  return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
@@ -59,7 +49,6 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  const environments = useOptionalSettingsScope()?.environments;
   return (plan: ReturnType<typeof planScopedSettingsPatch>) => {
     if (plan.unavailableReason) {
       toastManager.add({
@@ -89,12 +78,6 @@ function useRunScopedPlan() {
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
       if (failedEnvironments.length === 0) return;
-      for (const { environmentId, droppedKeys } of failedEnvironments) {
-        const serverVersion = environments?.find(
-          (environment) => environment.environmentId === environmentId,
-        )?.serverConfig?.environment.serverVersion;
-        if (serverVersion) recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
-      }
       toastManager.add({
         type: "error",
         title:
@@ -139,14 +122,11 @@ export function useClearProjectOverrides() {
   };
 }
 
-export function useScopedSettingsWriteAllowed(keys: readonly (keyof ServerSettings)[] = []) {
-  const { connectedEnvironments, targets } = useSettingsScope();
-  const destinations =
-    keys.length > 0
-      ? targets.filter((target) => keys.some((key) => !target.unsupportedSettingKeys?.has(key)))
-      : connectedEnvironments;
-  const writable = useEnvironmentsWithScope(destinations, AuthSettingsWriteScope);
+export function useScopedSettingsWriteAllowed() {
+  const { connectedEnvironments } = useSettingsScope();
+  const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
   return (
-    destinations.length > 0 && destinations.every((target) => writable.has(target.environmentId))
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((target) => writable.has(target.environmentId))
   );
 }

@@ -65,6 +65,14 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "path", attrs: { d: "m22 10-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 10" } },
   ],
+  "message-square": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
+      },
+    },
+  ],
   "message-square-plus": [
     {
       tag: "path",
@@ -109,6 +117,12 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       },
     },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
+  ],
+  "user-plus": [
+    { tag: "path", attrs: { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" } },
+    { tag: "circle", attrs: { cx: "9", cy: "7", r: "4" } },
+    { tag: "line", attrs: { x1: "19", x2: "19", y1: "8", y2: "14" } },
+    { tag: "line", attrs: { x1: "22", x2: "16", y1: "11", y2: "11" } },
   ],
   "folder-tree": [
     {
@@ -477,9 +491,7 @@ export function showContextMenuFallback<T extends string>(
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
-    // Only one fallback menu can be open at a time: a new show must dismiss
-    // any prior one, or its DOM and listeners leak and close() can only ever
-    // reach the newest menu.
+    // Dismiss the prior menu before replacing its only cleanup handle, or its DOM and listeners leak.
     if (activeContextMenuDismiss) {
       activeContextMenuDismiss();
     }

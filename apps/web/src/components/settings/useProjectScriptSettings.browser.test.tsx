@@ -1,20 +1,15 @@
+import { act, render } from "../../../test/render";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
-  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { NewProjectScriptInput } from "../projectScriptEditor";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { droppedSettingKeysAtom, droppedSettingKeysFor } from "./droppedSettingKeys";
-import { resolveUnsupportedSettingKeys } from "./scopedSettings";
 
 const commands = vi.hoisted(() => ({
   updateSettings: vi.fn(),
@@ -46,17 +41,10 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: keyof typeof commands) => commands[command]) as never,
 }));
-vi.mock(import("./SettingsScopeContext"), async (original) => ({
-  ...(await original()),
-  useOptionalSettingsScope: (() => ({
-    environments: [{ environmentId, serverConfig: { environment: { serverVersion: "old" } } }],
-  })) as never,
-}));
 
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 
 const environmentId = EnvironmentId.make("remote");
-const projectId = ProjectId.make("project");
 const lint: ProjectScript = {
   id: "lint",
   name: "Lint",
@@ -77,172 +65,98 @@ const lintBinding: ResolvedKeybindingsConfig = [
     },
   },
 ];
-const input = (keybinding: string | null): NewProjectScriptInput => ({
+const input: NewProjectScriptInput = {
   name: lint.name,
   command: lint.command,
   icon: lint.icon,
   runOnWorktreeCreate: false,
   waitForSetup: false,
   runOnSettle: false,
-  keybinding,
   previewUrl: null,
   autoOpenPreview: false,
-});
+};
 
 type ProjectScriptSettings = ReturnType<typeof useProjectScriptSettings>;
 
 function Probe(props: {
-  keybindings: ResolvedKeybindingsConfig;
-  projectScope: boolean;
+  targets: Parameters<typeof useProjectScriptSettings>[0];
   onResult: (settings: ProjectScriptSettings) => void;
 }) {
-  props.onResult(
-    useProjectScriptSettings([
-      {
-        environmentId,
-        settings: DEFAULT_SERVER_SETTINGS,
-        keybindings: props.keybindings,
-        ...(props.projectScope ? { project: { id: projectId, scripts: [lint] } } : {}),
-      },
-    ]),
-  );
+  props.onResult(useProjectScriptSettings(props.targets));
   return null;
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
-async function renderSettings(keybindings: ResolvedKeybindingsConfig, projectScope = true) {
+async function renderSettings(
+  keybindings: ResolvedKeybindingsConfig,
+  scope: "project" | "environment" = "project",
+) {
   let settings: ProjectScriptSettings | undefined;
-  await act(async () =>
-    root.render(
-      <Probe
-        keybindings={keybindings}
-        projectScope={projectScope}
-        onResult={(next) => (settings = next)}
-      />,
-    ),
+  const screen = await render(
+    <Probe
+      targets={[
+        {
+          environmentId,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            defaultProjectScripts: scope === "environment" ? [lint] : [],
+          },
+          keybindings,
+          ...(scope === "project"
+            ? { project: { id: ProjectId.make("project"), scripts: [lint] } }
+            : {}),
+        },
+      ]}
+      onResult={(next) => (settings = next)}
+    />,
   );
-  return settings!;
+  return {
+    ...screen,
+    get settings() {
+      return settings!;
+    },
+  };
 }
 
-async function submitInAct(submit: ProjectScriptSettings["submit"], keybinding: string | null) {
+async function submitInAct(
+  submit: ProjectScriptSettings["submit"],
+  changes: Partial<NewProjectScriptInput>,
+) {
   let result: Awaited<ReturnType<typeof submit>> | undefined;
   await act(async () => {
-    result = await submit(lint.id, input(keybinding));
+    result = await submit(lint.id, { ...input, ...changes });
   });
   return result!;
 }
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   vi.clearAllMocks();
-  appAtomRegistry.set(droppedSettingKeysAtom, new Map());
-  for (const command of Object.values(commands)) {
+  for (const command of Object.values(commands))
     command.mockResolvedValue(AsyncResult.success(undefined));
-  }
-  commands.updateSettings.mockImplementation(
-    ({ input }: { input: { patch: ServerSettingsPatch } }) =>
-      AsyncResult.success({ ...DEFAULT_SERVER_SETTINGS, ...input.patch }),
-  );
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  appAtomRegistry.set(droppedSettingKeysAtom, new Map());
-});
+}
 
 describe("useProjectScriptSettings", () => {
-  it.each([
-    { scope: "project", dropped: "array" },
-    { scope: "project", dropped: "runOnSettle" },
-    { scope: "environment", dropped: "runOnSettle" },
-  ])(
-    "reports a dropped $dropped at $scope scope without changing shortcuts",
-    async ({ scope, dropped }) => {
-      const projectScope = scope === "project";
-      commands.updateSettings.mockImplementation(
-        ({ input: { patch } }: { input: { patch: ServerSettingsPatch } }) => {
-          if (dropped === "array") return AsyncResult.success(DEFAULT_SERVER_SETTINGS);
-          const requested = projectScope
-            ? patch.projectSettingsOverrides?.[projectId]?.defaultProjectScripts
-            : patch.defaultProjectScripts;
-          const saved = requested!.map(({ runOnSettle: _runOnSettle, ...script }) => script);
-          return AsyncResult.success({
-            ...DEFAULT_SERVER_SETTINGS,
-            ...(projectScope
-              ? { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: saved } } }
-              : { defaultProjectScripts: saved }),
-          });
-        },
-      );
-      const { submit } = await renderSettings([], projectScope);
-      let result: Awaited<ReturnType<typeof submit>> | undefined;
+  it.each(["project", "environment"] as const)(
+    "preserves the shortcut for %s action name and command edits",
+    async (scope) => {
+      setup();
+      await using screen = await renderSettings(lintBinding, scope);
+      const { submit } = screen.settings;
+      const changes = { name: "Lint and fix", command: "vp lint --fix" };
 
-      await act(async () => {
-        result = await submit(null, {
-          ...input("mod+shift+k"),
-          runOnSettle: dropped === "runOnSettle",
-        });
-      });
+      const result = await submitInAct(submit, changes);
 
-      expect(commands.updateSettings).toHaveBeenCalledOnce();
-      const requested = [
-        ...(projectScope ? [lint] : []),
-        {
-          ...lint,
-          id: projectScope ? "lint-2" : "lint",
-          ...(dropped === "runOnSettle" ? { runOnSettle: true } : {}),
-        },
-      ];
-      expect(commands.updateSettings).toHaveBeenCalledWith({
+      expect(result._tag).toBe("Success");
+      const scripts = [expect.objectContaining({ id: lint.id, ...changes })];
+      expect(commands.updateSettings).toHaveBeenCalledExactlyOnceWith({
         environmentId,
         input: {
-          patch: projectScope
-            ? { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: requested } } }
-            : { defaultProjectScripts: requested },
+          patch:
+            scope === "project"
+              ? { projectSettingsOverrides: { project: { defaultProjectScripts: scripts } } }
+              : { defaultProjectScripts: scripts },
         },
       });
-      expect.soft(result?._tag).toBe("Failure");
-      expect.soft(commands.upsertKeybinding).not.toHaveBeenCalled();
       expect(commands.removeKeybinding).not.toHaveBeenCalled();
-      const unsupported = resolveUnsupportedSettingKeys(
-        undefined,
-        droppedSettingKeysFor(appAtomRegistry.get(droppedSettingKeysAtom), environmentId, "old"),
-      );
-      expect(unsupported).toEqual(
-        new Set(dropped === "array" ? ["projectSettingsOverrides.defaultProjectScripts"] : []),
-      );
+      expect(commands.upsertKeybinding).not.toHaveBeenCalled();
     },
   );
-
-  it("saves a recorded action shortcut", async () => {
-    const { submit } = await renderSettings([]);
-
-    const result = await submitInAct(submit, "mod+shift+k");
-
-    expect(result._tag).toBe("Success");
-    expect(commands.upsertKeybinding).toHaveBeenCalledWith({
-      environmentId,
-      input: expect.objectContaining({ key: "mod+shift+k", command: "script.lint.run" }),
-    });
-  });
-
-  it("removes a cleared action shortcut", async () => {
-    const { submit } = await renderSettings(lintBinding);
-
-    const result = await submitInAct(submit, null);
-
-    expect(result._tag).toBe("Success");
-    expect(commands.removeKeybinding).toHaveBeenCalledWith({
-      environmentId,
-      input: expect.objectContaining({ key: "mod+shift+k", command: "script.lint.run" }),
-    });
-    expect(commands.upsertKeybinding).not.toHaveBeenCalled();
-  });
 });

@@ -37,37 +37,36 @@ export function ProjectActionsSettings() {
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const actionTargets = targets.filter(
-    (candidate) =>
-      !candidate.unsupportedSettingKeys?.has("defaultProjectScripts") &&
-      (!isProjectScope ||
-        (!candidate.unsupportedSettingKeys?.has("projectSettingsOverrides") &&
-          environments.find((environment) => environment.environmentId === candidate.environmentId)
-            ?.serverConfig?.environment.capabilities.projectSettingsOverrides === true)),
-  );
-  const actionTarget = actionTargets.find((candidate) => candidate === target) ?? actionTargets[0];
-  const representativeConfig = actionTarget
-    ? environments.find((environment) => environment.environmentId === actionTarget.environmentId)
+  const representativeConfig = target
+    ? environments.find((environment) => environment.environmentId === target.environmentId)
         ?.serverConfig
     : undefined;
-  const scripts = actionTarget?.settings.defaultProjectScripts ?? [];
+  const scripts = target?.settings.defaultProjectScripts ?? [];
   const keybindings = representativeConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
-  const mixed = actionTargets.some(
+  const mixed = targets.some(
     (candidate) =>
       JSON.stringify(candidate.settings.defaultProjectScripts) !== JSON.stringify(scripts),
   );
-  const canWriteSettings = useScopedSettingsWriteAllowed(["defaultProjectScripts"]);
+  const canWriteSettings = useScopedSettingsWriteAllowed();
   const [request, setRequest] = useState<ProjectScriptEditorRequest | null>(null);
   const memberById = new Map(
     isProjectScope ? scope.members.map((member) => [member.id, member]) : [],
   );
   const { saving, persist, submit } = useProjectScriptSettings(
-    actionTargets.flatMap((candidate) => {
+    targets.flatMap((candidate) => {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
       if (!environment?.serverConfig) return [];
       const member = candidate.projectId ? memberById.get(candidate.projectId) : undefined;
+      // Older servers ignore override records; exclude them from edits and retain their legacy per-project
+      // map.
+      if (
+        member &&
+        environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true
+      ) {
+        return [];
+      }
       return [
         {
           environmentId: candidate.environmentId,
@@ -79,9 +78,7 @@ export function ProjectActionsSettings() {
     }),
   );
 
-  const representativeMember = actionTarget?.projectId
-    ? memberById.get(actionTarget.projectId)
-    : undefined;
+  const representativeMember = target?.projectId ? memberById.get(target.projectId) : undefined;
   const t3File = useT3ProjectFileState(
     representativeMember?.environmentId ?? EnvironmentId.make("none"),
     representativeMember?.workspaceRoot ?? null,
@@ -136,7 +133,7 @@ export function ProjectActionsSettings() {
                       id="import-scripts"
                       size="xs"
                       variant="ghost"
-                      disabled={saving || !canWriteSettings || actionTargets.length === 0}
+                      disabled={saving || !canWriteSettings}
                       type="button"
                     />
                   }
@@ -172,7 +169,7 @@ export function ProjectActionsSettings() {
             <Button
               size="xs"
               variant="outline"
-              disabled={saving || !canWriteSettings || actionTargets.length === 0}
+              disabled={saving || !canWriteSettings || targets.length === 0}
               onClick={() => setRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })}
             >
               <PlusIcon className="size-3.5" />
@@ -190,7 +187,7 @@ export function ProjectActionsSettings() {
         <ProjectActionsList
           scripts={scripts}
           keybindings={keybindings}
-          disabled={saving || !canWriteSettings || actionTargets.length === 0}
+          disabled={saving || !canWriteSettings}
           onEdit={(script) => setRequest(editorRequestForScript(script, keybindings))}
         />
       )}
@@ -201,9 +198,9 @@ export function ProjectActionsSettings() {
           className="text-warning"
         />
       ) : null}
-      {actionTarget && (
+      {target && (
         <ProjectScriptEditorDialog
-          environmentId={actionTarget.environmentId}
+          environmentId={target.environmentId}
           editScope={AuthSettingsWriteScope}
           request={request}
           scripts={scripts}
