@@ -1011,7 +1011,11 @@ describe("buildThreadFeed", () => {
       buildThreadFeed(
         [
           prompt("launch", 1, "2026-06-20T00:00:00.000Z"),
-          runless(command("2026-06-20T00:00:04.000Z"), "launch-ls", 2),
+          runless(
+            { ...command("2026-06-20T00:00:04.000Z"), input: "cat /skills/git/SKILL.md" },
+            "launch-ls",
+            2,
+          ),
           answer("launch-answer", 3, "2026-06-20T00:00:08.000Z"),
           prompt("resume", 4, "2026-06-20T00:01:12.000Z"),
           resumeRunning
@@ -1044,6 +1048,16 @@ describe("buildThreadFeed", () => {
     ]);
     const launchFold = settled.find((entry) => entry.type === "run-fold");
     if (launchFold?.type !== "run-fold") throw new Error("Expected the launch fold");
+    expect(launchFold.trajectory).toEqual([
+      { kind: "skills", label: "Used 1 skill", title: "Skills used", details: ["git"] },
+      { kind: "tools", label: "Called 1 tool", title: "Tool calls", details: ["Shell · 1 call"] },
+    ]);
+    const resumeFold = settled.find(
+      (entry) => entry.type === "run-fold" && entry.runId !== launchFold.runId,
+    );
+    expect(resumeFold?.type === "run-fold" ? resumeFold.trajectory : null).toEqual([
+      { kind: "tools", label: "Called 1 tool", title: "Tool calls", details: ["Shell · 1 call"] },
+    ]);
     expect(
       shape(deriveThreadFeedPresentation(feed(false), null, new Set([launchFold.runId]))),
     ).toEqual([

@@ -4,6 +4,11 @@ import type {
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  summarizeAgentTrajectory,
+  trajectorySummariesEqual,
+  type AgentTrajectorySummary,
+} from "@t3tools/client-runtime/work-log/trajectory-summary";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -235,6 +240,7 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId;
       readonly label: string;
+      readonly trajectory: AgentTrajectorySummary;
       readonly expanded: boolean;
     }
   | {
@@ -1087,6 +1093,7 @@ interface ThreadFeedRunFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+  readonly trajectory: AgentTrajectorySummary;
 }
 
 export function failedFeedRunIds(
@@ -1278,6 +1285,13 @@ function deriveThreadFeedRunFolds(
       runId,
       createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
+      trajectory: summarizeAgentTrajectory(
+        group.entries.flatMap((entry) =>
+          entry.type === "activity-group"
+            ? entry.activities.map((activity) => activity.projectedItem.item)
+            : [],
+        ),
+      ),
       label: interrupted
         ? duration
           ? `You stopped after ${duration}`
@@ -1502,6 +1516,7 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
+        !trajectorySummariesEqual(row.trajectory, fold.trajectory) ||
         row.expanded !== expanded
       ) {
         row = {
@@ -1510,6 +1525,7 @@ export function deriveThreadFeedPresentation(
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,
+          trajectory: fold.trajectory,
           expanded,
         };
         runFoldRowsCache.set(entry, row);

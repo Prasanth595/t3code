@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import { splitCompactLabel } from "@t3tools/client-runtime/work-log/trajectory-summary";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -74,7 +75,11 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import { TooltipScrollDismissArea } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea } from "../ui/tooltip";
+import {
+  AgentTrajectorySegments,
+  AgentTrajectorySegmentsMeasurement,
+} from "./AgentTrajectorySegments";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -1550,21 +1555,86 @@ function ContextCompactionTimelineRow({
   );
 }
 
+function TurnFoldButtonContent({
+  row,
+  compact,
+}: {
+  row: Extract<TimelineRow, { kind: "turn-fold" }>;
+  compact: boolean;
+}) {
+  const labelParts = splitCompactLabel(row.label);
+  return (
+    <>
+      <span>{labelParts && compact ? labelParts.value : row.label}</span>
+      <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+    </>
+  );
+}
+
+function useFittedInlineContent() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [fits, setFits] = useState(false);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+    const measure = () => setFits(content.scrollWidth <= container.clientWidth);
+    measure();
+    return observeResize([container, content], measure);
+  }, []);
+
+  return { containerRef, contentRef, fits };
+}
+
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { containerRef, contentRef, fits } = useFittedInlineContent();
+  const compact = !fits;
 
   return (
-    <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
-      <button
-        type="button"
-        aria-expanded={row.expanded}
-        data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.runId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+    <div className="group/timeline-row relative flex items-start gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
+      <div
+        ref={containerRef}
+        className="relative flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-0.5"
       >
-        <span>{row.label}</span>
-        <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
-      </button>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none invisible absolute left-0 top-0 h-0 w-0 overflow-hidden"
+        >
+          <span
+            ref={contentRef}
+            className="inline-flex w-max items-center gap-x-1 whitespace-nowrap text-sm leading-relaxed text-muted-foreground tabular-nums"
+          >
+            <span className="inline-flex items-center gap-1 px-1">
+              <TurnFoldButtonContent row={row} compact={false} />
+            </span>
+            <AgentTrajectorySegmentsMeasurement summary={row.trajectory} />
+          </span>
+        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-expanded={row.expanded}
+                aria-label={row.label}
+                data-scroll-anchor-ignore
+                onClick={() => ctx.onToggleTurnFold(row.runId)}
+                className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+              />
+            }
+          >
+            <TurnFoldButtonContent row={row} compact={compact} />
+          </TooltipTrigger>
+          <TooltipPopup>
+            Elapsed time for this response, including thinking and tool calls. Click to{" "}
+            {row.expanded ? "hide" : "show"} the activity.
+          </TooltipPopup>
+        </Tooltip>
+        <AgentTrajectorySegments summary={row.trajectory} compact={compact} />
+      </div>
       <TimelineRowTimestamp
         createdAt={row.createdAt}
         timestampFormat={ctx.timestampFormat}

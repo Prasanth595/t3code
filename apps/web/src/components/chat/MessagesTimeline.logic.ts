@@ -1,4 +1,9 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  summarizeAgentTrajectory,
+  trajectorySummariesEqual,
+  type AgentTrajectorySummary,
+} from "@t3tools/client-runtime/work-log/trajectory-summary";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -539,6 +544,7 @@ type MessagesTimelineRowContent =
       kind: "working";
       id: string;
       createdAt: string | null;
+      trajectory?: AgentTrajectorySummary;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
       compacting?: string;
     }
@@ -570,6 +576,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       runId: RunId;
       label: string;
+      trajectory: AgentTrajectorySummary;
       expanded: boolean;
     }
   | {
@@ -733,6 +740,20 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
+function summarizeTimelineTrajectory(entries: ReadonlyArray<TimelineEntry>) {
+  return summarizeAgentTrajectory(
+    entries.flatMap((entry) => {
+      const item =
+        entry.kind === "work"
+          ? entry.entry.structuredPayload
+          : entry.kind === "event"
+            ? entry.projectedItem.item
+            : undefined;
+      return item ? [item] : [];
+    }),
+  );
+}
+
 interface TurnFold {
   runId: RunId;
   anchorEntryId: string;
@@ -741,6 +762,7 @@ interface TurnFold {
   /** Every entry in the segment, including the cards a fold never hides. */
   entryIds: ReadonlySet<string>;
   label: string;
+  trajectory: AgentTrajectorySummary;
 }
 
 interface SupersededAttemptFold {
@@ -1183,6 +1205,7 @@ function deriveTurnFolds(input: {
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
       label,
+      trajectory: summarizeTimelineTrajectory(group.entries),
     });
     for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
       const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
@@ -1200,6 +1223,7 @@ function deriveTurnFolds(input: {
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
         label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        trajectory: summarizeTimelineTrajectory(entries),
       });
     }
   }
@@ -1630,6 +1654,7 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt ?? null,
+      trajectory: summarizeTimelineTrajectory(timelineEntries.slice(activeTurnHeaderIndex)),
       ...(compactingLabel ? { compacting: compactingLabel } : {}),
     });
   };
@@ -1684,6 +1709,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
+        trajectory: turnFold.trajectory,
         expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
       });
     }
@@ -2366,7 +2392,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "turn-fold": {
       const bf = b as typeof a;
-      return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+      return (
+        a.createdAt === bf.createdAt &&
+        a.label === bf.label &&
+        a.expanded === bf.expanded &&
+        trajectorySummariesEqual(a.trajectory, bf.trajectory)
+      );
     }
 
     case "attempt-fold": {

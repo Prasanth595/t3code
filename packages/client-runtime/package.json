@@ -359,6 +359,10 @@
       "types": "./src/work-log/itemDetail.ts",
       "default": "./src/work-log/itemDetail.ts"
     },
+    "./work-log/trajectory-summary": {
+      "types": "./src/work-log/trajectorySummary.ts",
+      "default": "./src/work-log/trajectorySummary.ts"
+    },
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
