@@ -397,11 +397,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
   const openRelatedThreadGenerationRef = useRef(0);
-  const onOpenRelatedThread = async (threadId: ThreadId) => {
+  // A task delegated to a linked environment opens by its own ref: it lives there, not here.
+  const openRelatedThread = async (threadRef: ScopedThreadRef) => {
     const generation = ++openRelatedThreadGenerationRef.current;
-    const threadRef = scopeThreadRef(environmentId, threadId);
     const isEnvironmentLive = () =>
-      appAtomRegistry.get(environmentShell.stateValueAtom(environmentId)).status === "live";
+      appAtomRegistry.get(environmentShell.stateValueAtom(threadRef.environmentId)).status ===
+      "live";
     // The shell can leave idle subagent children out, so absence is not deletion there: the
     // route decides from the thread's own detail.
     const shellOmitsChildren = serverConfig?.shellThreadFamilies === true;
@@ -427,14 +428,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       params: buildThreadRouteParams(threadRef),
     });
   };
+  const onOpenRelatedThread = (threadId: ThreadId) =>
+    openRelatedThread(scopeThreadRef(environmentId, threadId));
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
+  const openRelatedThreadStable = useStableCallback(openRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
   const childInputNow = childInputNowItem({
     childThreadInputs,
     parentAwaitingUser: Boolean(
       activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
     ),
-    onOpenThread: onOpenRelatedThreadStable,
+    onOpenThread: openRelatedThreadStable,
   });
 
   const sendStandaloneCommand = async (text: string, failureMessage: string) => {

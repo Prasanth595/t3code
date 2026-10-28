@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
+  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -31,11 +32,14 @@ import type { ThreadNowItem } from "./ThreadNow";
 export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  /** A child can be a task delegated to a linked environment, so it opens by its own ref. */
+  readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
 }): ThreadNowItem | null {
   const { childThreadInputs, onOpenThread } = input;
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
+  const open = (child: EnvironmentThreadShell) =>
+    onOpenThread({ environmentId: child.environmentId, threadId: child.id });
   return {
     id: `child-input:${first.id}`,
     // The only line at the end of the timeline that needs you gets the info color.
@@ -49,7 +53,7 @@ export function childInputNowItem(input: {
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
         <span className="whitespace-nowrap">
-          <InlineButton tone="muted" onClick={() => onOpenThread(child.id)}>
+          <InlineButton tone="muted" onClick={() => open(child)}>
             {child.title}
           </InlineButton>
           {index < childThreadInputs.length - 1 ? "," : null}
@@ -57,7 +61,7 @@ export function childInputNowItem(input: {
       </Fragment>
     )),
     actions: (
-      <InlineButton onClick={() => onOpenThread(first.id)}>
+      <InlineButton onClick={() => open(first)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
       </InlineButton>
     ),
