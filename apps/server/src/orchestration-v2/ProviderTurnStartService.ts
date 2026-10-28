@@ -44,6 +44,11 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import {
+  applyTurnTriggers,
+  workflowRequestOf,
+} from "@t3tools/provider-core/server/workflowTrigger";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -155,6 +160,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
@@ -761,6 +767,40 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
+      // Run execution adds the workflow or ultracode note to this text before delivery. Budget the
+      // text with the note, or a resume that fits without it passes the preflight and then fails
+      // delivery instead of falling back to a fresh session. The gate answers `workflowRequestOf`,
+      // so asking it here has no side effects.
+      const preparedText = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => {
+          const turnSettings = resolveProjectSettings(
+            settings,
+            projection.thread.projectId,
+          ).settings;
+          const request = {
+            workflowTriggers: turnSettings.workflowTriggers,
+            typedText: message.text,
+            createdBy: message.createdBy,
+            creationSource: message.creationSource,
+            scheduledTaskId: message.scheduledTaskId,
+            senderThreadId: message.senderThreadId,
+            delegatedThread: projection.thread.lineage.relationshipToParent === "subagent",
+            resumesEarlierTurn: run.restartContinuationOfRunId !== undefined,
+          };
+          return applyTurnTriggers(
+            {
+              ...request,
+              ultracode: turnSettings.ultracode,
+              workflowPresets: turnSettings.workflowPresets,
+              driver: session.driver,
+              text: userText,
+            },
+            workflowRequestOf(request),
+          );
+        }),
+        // Run execution fails the start on the same read; budget the plain text until then.
+        Effect.orElseSucceed(() => userText),
+      );
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
@@ -944,7 +984,7 @@ export const layer: Layer.Layer<
           legacyInputRunIds,
           missedRuns,
           missedRunIds,
-          budget: budgetFor(userText),
+          budget: budgetFor(preparedText),
           budgetFor,
         };
       };
@@ -1385,7 +1425,7 @@ export const layer: Layer.Layer<
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
-            budget: turnText === userText ? budget : budgetFor(turnText),
+            budget: turnText === preparedText ? budget : budgetFor(turnText),
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined
               ? {}

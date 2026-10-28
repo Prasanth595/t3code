@@ -101,6 +101,7 @@ function startWithMissingWorktree(
     thread: {
       id: threadId,
       projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
       branch: "feature/restore",
       worktreePath,
     },
@@ -303,6 +304,8 @@ function makeLocalCommandHarness(input: {
     readonly handoff?: "injected" | "inline";
   };
   readonly attachments?: OrchestrationV2ThreadProjection["messages"][number]["attachments"];
+  /** The resumed native session already holds this much of its context window. */
+  readonly nativeContextUsage?: { readonly usedTokens: number; readonly maxTokens: number };
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -372,6 +375,7 @@ function makeLocalCommandHarness(input: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
       projectId: ProjectId.make("project-native-account-command"),
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
     } as OrchestrationV2ThreadProjection["thread"],
@@ -559,6 +563,9 @@ function makeLocalCommandHarness(input: {
             nativeId: "existing-native-conversation",
             strength: "strong",
           },
+          ...(input.nativeContextUsage === undefined
+            ? {}
+            : { contextUsage: input.nativeContextUsage }),
         },
       ],
       providerTurns: [
@@ -635,6 +642,7 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const freshSession = vi.fn(() => Effect.succeed(providerThread));
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
@@ -671,7 +679,7 @@ function makeLocalCommandHarness(input: {
                     updatedAt: now,
                     lastError: null,
                   },
-                  ensureThread: () => Effect.succeed(providerThread),
+                  ensureThread: freshSession,
                   resumeThread: () => Effect.succeed(projection.providerThreads[0]),
                   ...(input.delivery === undefined
                     ? {}
@@ -797,11 +805,31 @@ function makeLocalCommandHarness(input: {
       ),
     }),
   );
+  // What a fresh session is given when a resume cannot take the pending context.
+  const recoveryHandoff = {
+    id: ContextHandoffId.make("handoff-recovery"),
+    threadId,
+    targetRunId: runId,
+    fromProviderThreadIds: [providerThreadId],
+    toProviderThreadId: providerThreadId,
+    coveredRunOrdinals: { from: 1, to: 1 },
+    strategy: "full_thread_summary",
+    status: "ready",
+    summaryMessageId: null,
+    summaryText: "",
+    history: { messages: [], coverage: "Recovered conversation.", omittedItems: 0 },
+    createdByProviderInstanceId: null,
+    createdAt: now,
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection["contextHandoffs"][number];
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
-          prepareProviderHandoff: () => Effect.die("history read must fail first"),
+          prepareProviderHandoff: () =>
+            input.delivery === undefined
+              ? Effect.die("history read must fail first")
+              : Effect.succeed(recoveryHandoff),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           writeIfRunCurrent,
@@ -879,6 +907,7 @@ function makeLocalCommandHarness(input: {
     open,
     writeIfRunCurrent,
     startRootRun,
+    freshSession,
     deliveredTurns,
     injectHistory,
     interruptTurn,
@@ -1622,6 +1651,29 @@ effectIt.effect("the delivery wrapper keeps the hook's note after inline handoff
     expect(text.split("User message:\n")).toHaveLength(2);
     expect(text.split(ULTRACODE_TURN_NOTE)).toHaveLength(2);
   }),
+);
+
+// A 128,000-token window holding 95,000 leaves the handoff 971 tokens for a short message, and 529
+// once the ultracode note is added. The pending history fits only without the note.
+effectIt.effect(
+  "a resume that cannot take the pending context with the turn's note falls back to a fresh session",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: HOOKED_TEXT,
+        previousTurn: COMPLETED_PREVIOUS_TURN,
+        delivery: { handoff: "inline" },
+        nativeContextUsage: { usedTokens: 95_000, maxTokens: 128_000 },
+      });
+
+      yield* harness.start;
+
+      expect(harness.freshSession).toHaveBeenCalledOnce();
+      expect(harness.deliveredTurns).toHaveLength(1);
+      const text = harness.deliveredTurns[0]!.message.text;
+      expect(text).toContain("Recovered conversation.");
+      expect(text.split(ULTRACODE_TURN_NOTE)).toHaveLength(2);
+    }),
 );
 
 effectIt.effect("a turn the hook leaves alone is delivered unchanged after context", () =>
