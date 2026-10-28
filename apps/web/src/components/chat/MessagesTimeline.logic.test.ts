@@ -3048,6 +3048,7 @@ describe("streaming v2 row projection", () => {
     const previous = deriveMessagesTimelineRowsWithState({
       ...initial.input,
       availableRevertTurnCounts: new Set([0]),
+      pendingApprovalRequestIds: new Set<RuntimeRequestId>(),
     });
     Object.freeze(previous.rows);
     for (const row of previous.rows) Object.freeze(row);
@@ -3065,6 +3066,7 @@ describe("streaming v2 row projection", () => {
       latestRun: { ...initial.input.latestRun },
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({ ...summary })),
       availableRevertTurnCounts: new Set([0]),
+      pendingApprovalRequestIds: new Set<RuntimeRequestId>(),
     };
     const next = deriveMessagesTimelineRowsWithState(input, previous);
     expect(next.rows).toEqual(
