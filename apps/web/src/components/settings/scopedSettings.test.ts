@@ -935,6 +935,9 @@ describe("environments that cannot store a setting", () => {
       environmentWideWrites: planScopedSettingsPatch(all, afterFirstSave, {
         defaultAutoPull: false,
       }).serverWrites.map(({ label }) => label),
+      projectReset: planScopedSettingsClear(project, afterFirstSave, [
+        "defaultAutoPull",
+      ]).serverWrites.map(({ label }) => label),
     }).toEqual({
       failed: ["Server"],
       projectSecondClick: ["Laptop"],
@@ -942,6 +945,7 @@ describe("environments that cannot store a setting", () => {
       serverCheckout: "Update T3 Code on Server to use this setting.",
       environmentWideMixed: true,
       environmentWideWrites: ["Laptop", "Server"],
+      projectReset: ["Laptop"],
     });
   });
 });

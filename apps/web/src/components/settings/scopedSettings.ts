@@ -459,9 +459,12 @@ export function planScopedSettingsClear(
 ) {
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
-      ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
-          clearProjectSettingsOverrides(settings, projectId, keys),
-        )
+      ? projectOverrideWrites(scope, environments, (_current, settings, projectId, environment) => {
+          const unsupported = resolveUnsupportedSettingKeys(environment, true);
+          return keys.every((key) => unsupported.has(key))
+            ? undefined
+            : clearProjectSettingsOverrides(settings, projectId, keys);
+        })
       : [];
   return {
     clientPatch: {} as ClientSettingsPatch,
