@@ -5874,7 +5874,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         reviewState: "approved",
         url: "https://github.com/acme/app/pull/7#pullrequestreview-1",
       } as const;
-      // A wake read for an earlier snooze must not end this one.
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-stale-reply"),
@@ -5887,7 +5886,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         snoozeWakeOn: "pull-request-reply",
         snoozedUntil: thread.snoozedUntil,
       });
-      // A read that finishes after its pull request was unlinked must not wake the thread.
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-unlinked-reply"),
@@ -5910,6 +5908,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         url: wakeReason.pullRequestUrl,
         source: "manual",
       });
+      const beforeWake = yield* orchestrator.getThreadProjection(threadId);
       yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",
@@ -5927,6 +5926,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         snoozedAt: thread.snoozedAt,
         snoozeWakeOn: null,
         snoozeWakeReason: wakeReason,
+        updatedAt: beforeWake.thread.updatedAt,
       });
 
       yield* orchestrator.dispatch({

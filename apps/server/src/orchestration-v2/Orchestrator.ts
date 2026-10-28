@@ -3289,13 +3289,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (link) => link.url === command.wakeReason.pullRequestUrl,
               );
             if (!sameSnooze) return thread;
-            // Clients read an elapsed snoozedUntil as a wake, so this looks like the timer firing now.
             return {
               ...thread,
               snoozedUntil: now,
               snoozeWakeOn: null,
               snoozeWakeReason: command.wakeReason,
-              updatedAt: now,
             };
           }
           const alreadyAwake = thread.snoozedUntil == null;
@@ -12839,7 +12837,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
-          // A reply read can land after the snooze it saw already ended.
           (command.type === "thread.unsnooze" && command.reason === "pull-request-reply"),
         (_planned) =>
           new OrchestratorDispatchError({
