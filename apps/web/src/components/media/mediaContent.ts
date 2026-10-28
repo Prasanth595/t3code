@@ -12,14 +12,16 @@ async function readMediaBlob(src: string): Promise<Blob> {
     response = await fetch(src);
   } catch (cause) {
     throw new Error(
-      "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
+      "Fișierul nu a putut fi descărcat. Gazda poate bloca accesul din browser (CORS) sau conexiunea nu e disponibilă.",
       { cause },
     );
   }
-  if (!response.ok) throw new Error(`The file could not be fetched (HTTP ${response.status}).`);
+  if (!response.ok) throw new Error(`Fișierul nu a putut fi descărcat (HTTP ${response.status}).`);
   const blob = await response.blob();
   if (blob.type.split(";", 1)[0] === "text/html") {
-    throw new Error("This link returned a web page instead of media. Open the original URL.");
+    throw new Error(
+      "Link-ul a returnat o pagină web în loc de fișier media. Deschide adresa originală.",
+    );
   }
   return blob;
 }
@@ -48,7 +50,7 @@ export async function readMediaPng(src: string): Promise<Blob> {
       await image.decode();
     } catch (cause) {
       throw new Error(
-        "The browser could not decode this image for copying. Try saving it instead.",
+        "Browserul nu a putut decoda imaginea pentru copiere. Încearcă s-o salvezi.",
         {
           cause,
         },
@@ -57,19 +59,19 @@ export async function readMediaPng(src: string): Promise<Blob> {
     const { naturalWidth: width, naturalHeight: height } = image;
     if (width <= 0 || height <= 0 || width * height > 64_000_000) {
       throw new Error(
-        "This image is too large or has no usable dimensions. Try saving it instead.",
+        "Imaginea e prea mare sau nu are dimensiuni utilizabile. Încearcă s-o salvezi.",
       );
     }
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("Image copying is unavailable in this browser.");
+    if (!context) throw new Error("Copierea imaginilor nu e disponibilă în acest browser.");
     context.drawImage(image, 0, 0);
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
         (png) =>
-          png ? resolve(png) : reject(new Error("The image could not be converted to PNG.")),
+          png ? resolve(png) : reject(new Error("Imaginea nu a putut fi convertită în PNG.")),
         "image/png",
       );
     });

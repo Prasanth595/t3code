@@ -70,7 +70,7 @@ export function useMediaActions(source: MediaActionSource) {
     (fileSession.error === null && fileSession.data !== null && allowsHostMedia(fileSession.data));
   const assertCanReadMedia = () => {
     if (!canReadHostMedia(hostEnvironmentId)) {
-      throw new Error("This connection cannot read host files.");
+      throw new Error("Această conexiune nu poate citi fișierele.");
     }
   };
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -80,17 +80,18 @@ export function useMediaActions(source: MediaActionSource) {
   const actionUrl = async () => {
     assertCanReadMedia();
     if (!source.asset) {
-      if (!source.src) throw new Error("This media is unavailable. Try reopening the preview.");
+      if (!source.src)
+        throw new Error("Fișierul media nu e disponibil. Încearcă să redeschizi previzualizarea.");
       return source.src;
     }
     const { environmentId, resource } = source.asset;
     const connection = readPreparedConnection(environmentId);
-    if (!connection) throw new Error("Reconnect to this environment and try again.");
+    if (!connection) throw new Error("Reconectează-te la mediu și încearcă din nou.");
     const result = await createAssetUrl({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     assertCanReadMedia();
     const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
-    if (!url) throw new Error("The environment returned an invalid media URL.");
+    if (!url) throw new Error("Mediul a returnat o adresă media invalidă.");
     return url;
   };
   const save = async () => {
@@ -100,7 +101,7 @@ export function useMediaActions(source: MediaActionSource) {
     assertCanReadMedia();
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
       throw new Error(
-        "Image copying is unavailable. Use a secure browser connection or save the image.",
+        "Copierea imaginii nu e disponibilă. Folosește o conexiune securizată sau salvează imaginea.",
       );
     }
     // Start the clipboard write in the user gesture; fetching/decoding may finish later.
@@ -129,7 +130,7 @@ export function MediaActions({
     if (!api || menuOpen.current) return;
     menuOpen.current = true;
     setTooltipOpen(false);
-    let failureTitle = "Could not open media menu";
+    let failureTitle = "Meniul media nu a putut fi deschis";
     let progressToast: ReturnType<typeof toastManager.add> | undefined;
     const result = await settlePromise(async () => {
       const noun = source.kind === "image" ? "image" : "video";
@@ -140,26 +141,26 @@ export function MediaActions({
         typeof ClipboardItem !== "undefined";
       const items: ContextMenuItem<MediaActionId>[] = [];
       if (reference?.kind === "file") {
-        items.push({ id: "copy-full-path", label: "Copy full path" });
+        items.push({ id: "copy-full-path", label: "Copiază calea completă" });
         if (reference.relativePath)
-          items.push({ id: "copy-relative-path", label: "Copy relative path" });
+          items.push({ id: "copy-relative-path", label: "Copiază calea relativă" });
       } else if (reference?.kind === "url") {
-        items.push({ id: "copy-url", label: "Copy URL" });
+        items.push({ id: "copy-url", label: "Copiază adresa" });
       }
       if (source.onOpenFile)
-        items.push({ id: "open-file", label: "Open in file viewer", disabled: !canReadMedia });
-      items.push({ id: "save", label: `Save ${noun}`, disabled: unavailable });
+        items.push({ id: "open-file", label: "Deschide în vizualizator", disabled: !canReadMedia });
+      items.push({ id: "save", label: `Salvează ${noun}`, disabled: unavailable });
       if (source.kind === "image") {
         items.push({
           id: "copy-image",
-          label: "Copy image",
+          label: "Copiază imaginea",
           disabled: unavailable || !canCopyImage,
         });
       }
 
       const action = await api.contextMenu.show(items, position);
       if (!action) return;
-      failureTitle = `Could not ${items.find((item) => item.id === action)?.label.toLowerCase() ?? "complete media action"}`;
+      failureTitle = `Acțiunea nu a putut fi finalizată: ${items.find((item) => item.id === action)?.label.toLowerCase() ?? "media"}`;
       const text =
         action === "copy-full-path" && reference?.kind === "file"
           ? reference.path
@@ -174,7 +175,7 @@ export function MediaActions({
         await writeTextToClipboard(clipboardText, reference?.kind === "file" ? "file path" : "URL");
         toastManager.add({
           type: "success",
-          title: action === "copy-url" ? "URL copied" : "Path copied",
+          title: action === "copy-url" ? "Adresă copiată" : "Cale copiată",
         });
       } else if (action === "open-file") {
         assertCanReadMedia();
@@ -182,12 +183,12 @@ export function MediaActions({
       } else if (action === "save" || action === "copy-image") {
         progressToast = toastManager.add({
           type: "loading",
-          title: action === "save" ? `Preparing ${noun} download…` : "Copying image…",
+          title: action === "save" ? `Se pregătește descărcarea…` : "Se copiază imaginea…",
         });
         await (action === "save" ? save() : copyImage());
         toastManager.update(progressToast, {
           type: "success",
-          title: action === "save" ? "Download started" : "Image copied",
+          title: action === "save" ? "Descărcarea a început" : "Imagine copiată",
         });
       }
     });
@@ -196,7 +197,7 @@ export function MediaActions({
       const toast = stackedThreadToast({
         type: "error",
         title: failureTitle,
-        description: error instanceof Error ? error.message : "The media action failed.",
+        description: error instanceof Error ? error.message : "Acțiunea media a eșuat.",
       });
       if (progressToast) toastManager.update(progressToast, toast);
       else toastManager.add(toast);

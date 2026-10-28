@@ -31,7 +31,7 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not open the linked prompt",
+            title: "Promptul din link nu a putut fi deschis",
             description: parsed.error,
           }),
         );

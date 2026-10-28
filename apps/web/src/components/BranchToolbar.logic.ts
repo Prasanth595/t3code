@@ -50,7 +50,7 @@ export function resolveEnvironmentOptionLabel(input: {
       if (!label) return false;
       return !GENERIC_LOCAL_ENVIRONMENT_LABELS.has(label.toLowerCase());
     });
-    return preferredLocalLabel ?? "This device";
+    return preferredLocalLabel ?? "Acest dispozitiv";
   }
 
   return runtimeLabel ?? savedLabel ?? input.environmentId;
@@ -93,17 +93,17 @@ export function resolveContextStripLabelsCompact(input: {
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
-  return mode === "worktree" ? "New worktree" : "Current checkout";
+  return mode === "worktree" ? "Worktree nou" : "Checkout curent";
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
-  recursive: "Recursive",
+  recursive: "Recursiv",
   "top-level": "Top level only",
-  none: "Skip",
+  none: "Sari peste",
 };
 
 export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+  return activeWorktreePath ? "Worktree curent" : resolveEnvModeLabel("local");
 }
 
 export function resolveLockedWorkspaceLabel(
@@ -111,7 +111,7 @@ export function resolveLockedWorkspaceLabel(
   effectiveEnvMode: EnvMode,
 ): string {
   if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Checkout local";
 }
 
 export interface PreviousWorktreeSeed {
@@ -153,7 +153,7 @@ export function resolvePreviousWorktreeSeed(input: {
 }
 
 export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
+  return seed.branch ? `Worktree anterior (${seed.branch})` : "Worktree anterior";
 }
 
 export function resolveEffectiveEnvMode(input: {
@@ -215,13 +215,13 @@ export function resolveBranchTriggerLabel(input: {
     startFromOrigin,
   } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return "Alege branch-ul";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     // Only the server can determine a local branch's configured remote.
     return startFromOrigin && resolvedActiveBranchIsRemote === false
-      ? `From ${resolvedActiveBranch} (remote)`
-      : `From ${resolvedActiveBranch}`;
+      ? `Din ${resolvedActiveBranch} (remote)`
+      : `Din ${resolvedActiveBranch}`;
   }
   return resolvedActiveBranch;
 }

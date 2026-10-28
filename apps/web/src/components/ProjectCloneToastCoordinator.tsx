@@ -59,7 +59,7 @@ async function runCloneAction(
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       }),
     );
   }
@@ -119,13 +119,13 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       if (clone.phase === "running") {
         const options = stackedThreadToast({
           type: "loading",
-          title: `Cloning ${name}`,
+          title: `Se clonează ${name}`,
           description: projectCloneProgressSummary(clone),
           timeout: 0,
           actionProps: {
-            children: "Cancel",
+            children: "Anulează",
             onClick: () => {
-              void runCloneAction("Failed to cancel clone", () =>
+              void runCloneAction("Clonarea nu a putut fi anulată", () =>
                 cancelClone({ environmentId, input: { projectId: clone.projectId } }),
               );
             },
@@ -145,11 +145,11 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       if (clone.phase === "done") {
         const options = stackedThreadToast({
           type: "success",
-          title: `Cloned ${name}`,
+          title: `${name} a fost clonat`,
           description: clone.destinationPath,
           timeout: 8_000,
           actionProps: {
-            children: "Open project",
+            children: "Deschide proiectul",
             onClick: () => {
               closeToast();
               openProject(clone.projectId);
@@ -170,13 +170,13 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       const cancelled = clone.phase === "cancelled";
       const options = stackedThreadToast({
         type: cancelled ? "info" : "error",
-        title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
-        description: cancelled ? clone.destinationPath : (clone.error ?? "The clone failed."),
+        title: cancelled ? `Clonarea ${name} a fost anulată` : `Clonarea ${name} a eșuat`,
+        description: cancelled ? clone.destinationPath : (clone.error ?? "Clonarea a eșuat."),
         timeout: 0,
         actionProps: {
-          children: "Retry",
+          children: "Reîncearcă",
           onClick: () => {
-            void runCloneAction("Failed to retry clone", () =>
+            void runCloneAction("Clonarea nu a putut fi reluată", () =>
               retryClone({ environmentId, input: { projectId: clone.projectId } }),
             );
           },
@@ -184,7 +184,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         data: {
           ...(cancelled ? { hideCopyButton: true } : {}),
           secondaryActionProps: {
-            children: "Remove project",
+            children: "Elimină proiectul",
             onClick: () => {
               void removeClonedProject({ environmentId, projectId: clone.projectId });
             },

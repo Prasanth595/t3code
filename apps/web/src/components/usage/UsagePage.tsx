@@ -334,13 +334,13 @@ export function UsagePage() {
 
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
-      ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
-      : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
+      ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} – ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
+      : `${formatDayShort(shownWindow.sinceDay)} – ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
-          <h1>Usage</h1>
+          <h1>Utilizare</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
         <WorkspaceBreadcrumbItem className="min-w-10 shrink">
@@ -372,7 +372,7 @@ export function UsagePage() {
       ) : null}
       <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
         <ToggleGroup
-          aria-label="Usage metric"
+          aria-label="Metrică"
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
@@ -387,7 +387,7 @@ export function UsagePage() {
           ))}
         </ToggleGroup>
         <ToggleGroup
-          aria-label="Usage period"
+          aria-label="Perioadă"
           variant="segmented"
           value={[String(windowDays)]}
           disabled={showingLimits}
@@ -406,7 +406,7 @@ export function UsagePage() {
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={showingLimits ? "Reîmprospătează limitele" : "Reîmprospătează utilizarea"}
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -423,7 +423,7 @@ export function UsagePage() {
           }}
         >
           <SelectTrigger
-            aria-label="Usage metric"
+            aria-label="Metrică"
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
@@ -446,7 +446,7 @@ export function UsagePage() {
           onValueChange={(value) => selectWindow(Number(value))}
         >
           <SelectTrigger
-            aria-label="Usage period"
+            aria-label="Perioadă"
             size="compact"
             variant="ghost"
             className={cn("w-auto min-w-0", showingLimits && "redesign:hidden")}
@@ -469,7 +469,7 @@ export function UsagePage() {
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={showingLimits ? "Reîmprospătează limitele" : "Reîmprospătează utilizarea"}
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -482,7 +482,7 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label="Usage">
+    <AppRouteModal label="Utilizare">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
@@ -494,8 +494,8 @@ export function UsagePage() {
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
-                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
-                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
+                  ? `Conectează un mediu ca să vezi ${showingLimits ? "limitele" : "utilizarea"}.`
+                  : `Alege un mediu ca să vezi ${showingLimits ? "limitele" : "utilizarea"}.`}
               </p>
             ) : showingLimits ? (
               <UsageLimitsSection
@@ -663,7 +663,7 @@ function UsageOverview({
                   <PopoverTrigger
                     openOnHover
                     render={<InlineButton tone="muted" />}
-                    aria-label="Unpriced usage details"
+                    aria-label="Detalii utilizare fără preț"
                   >
                     <InfoIcon className="size-3" aria-hidden />
                   </PopoverTrigger>
@@ -732,8 +732,8 @@ function UsageOverview({
                   )}
                 >
                   {metric === "cost"
-                    ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                    ? `${formatPercent(share)} din cost · ${formatTokens(totals?.totalTokens ?? 0)} tokeni`
+                    : `${formatPercent(share)} din tokeni · ${formatUsd(totals?.costUsd ?? 0)}`}
                 </span>
               </div>
             );
@@ -742,7 +742,7 @@ function UsageOverview({
 
         <div className="flex min-w-0 flex-col gap-3">
           <h2 className="text-sm font-medium text-foreground">
-            {shownHourly ? "Hourly" : "Daily"} {metric === "tokens" ? "processed tokens" : "cost"}
+            {metric === "tokens" ? "Tokeni procesați" : "Cost"} {shownHourly ? "pe oră" : "pe zi"}
           </h2>
           <UsageProviderChart
             providers={activeProviders}
@@ -765,27 +765,27 @@ function UsageOverview({
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
           <Metric
             loading={loadingPartial}
-            label="Processed tokens"
+            label="Tokeni procesați"
             value={formatTokens(merged.totalTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Cached input"
+            label="Intrare din cache"
             value={formatTokens(merged.cachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Uncached input"
+            label="Intrare fără cache"
             value={formatTokens(merged.uncachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Output"
+            label="Ieșire"
             value={formatTokens(merged.outputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Cache savings"
+            label="Economii din cache"
             value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           />
         </div>
@@ -797,20 +797,20 @@ function UsageOverview({
         >
           {metric === "tokens" ? (
             <UsageShareBar
-              label="Tokens by type"
+              label="Tokeni după tip"
               segments={tokenTypeSegments(merged)}
               format={formatTokens}
             />
           ) : (
             <>
               <UsageShareBar
-                label="Cost by type"
+                label="Cost după tip"
                 segments={costTypeSegments(merged.categoryCost)}
                 format={formatUsd}
               />
               {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label="Cost by speed"
+                  label="Cost după viteză"
                   segments={speedCostSegments(merged.speedCost)}
                   format={formatUsd}
                   aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
@@ -825,7 +825,7 @@ function UsageOverview({
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
           <ToggleGroup
-            aria-label="Usage breakdown"
+            aria-label="Detalii utilizare"
             variant="segmented"
             value={[breakdown]}
             onValueChange={(next) => {

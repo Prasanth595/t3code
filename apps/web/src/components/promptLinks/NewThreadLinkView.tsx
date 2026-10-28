@@ -136,7 +136,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       replace: true,
     }).catch(() => null);
     if (opened === null) {
-      setState({ status: "failed", message: "Mira could not open a new thread." });
+      setState({ status: "failed", message: "Mira nu a putut deschide o conversație nouă." });
       return;
     }
     setState({ status: "opened" });
@@ -159,8 +159,8 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       if (resolved === null || !resolved.exact) {
         notes.push(
           resolved === null
-            ? `The link asked for ${link.provider}, which is not set up here, so your default model is used.`
-            : `The link asked for ${link.model}, which ${link.provider} does not offer here, so its default model is used.`,
+            ? `Link-ul cere ${link.provider}, care nu e configurat aici, așa că se folosește modelul implicit.`
+            : `Link-ul cere ${link.model}, pe care ${link.provider} nu îl oferă aici, așa că se folosește modelul lui implicit.`,
         );
       }
     }
@@ -180,7 +180,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     if (project === null) {
       setState({
         status: "failed",
-        message: "None of your machines can start a thread without a project right now.",
+        message: "Niciun calculator nu poate porni acum o conversație fără proiect.",
       });
       return;
     }
@@ -207,7 +207,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({
         status: "failed",
         message:
-          "This machine cannot clone from a link. Update Mira on it, or clone the repository from the command palette.",
+          "Acest calculator nu poate clona dintr-un link. Actualizează Mira pe el sau clonează repository-ul din paleta de comenzi.",
       });
       return;
     }
@@ -229,8 +229,8 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Clone failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Clonarea a eșuat",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -241,14 +241,14 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       () => null,
     );
     if (project === null) {
-      setState({ status: "failed", message: "The clone started, but its project did not appear." });
+      setState({ status: "failed", message: "Clonarea a pornit, dar proiectul nu a apărut." });
       return;
     }
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
-        title: `Cloning ${repository.owner}/${repository.name}`,
-        message: "Open this link again when the clone finishes.",
+        title: `Se clonează ${repository.owner}/${repository.name}`,
+        message: "Deschide din nou link-ul după ce se termină clonarea.",
       });
       return;
     }
@@ -333,10 +333,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
 
   switch (state.status) {
     case "opening":
-      return <LinkPage title="Opening the link..." />;
+      return <LinkPage title="Se deschide link-ul..." />;
     case "opened":
       return (
-        <LinkPage title="This link is open">
+        <LinkPage title="Link-ul e deschis">
           <Button
             size="sm"
             variant="outline"
@@ -346,26 +346,29 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
               setState({ status: "opening" });
             }}
           >
-            Open it again
+            Deschide-l din nou
           </Button>
         </LinkPage>
       );
     case "failed":
       return (
-        <LinkPage title={state.title ?? "Could not open the link"} description={state.message} />
+        <LinkPage
+          title={state.title ?? "Link-ul nu a putut fi deschis"}
+          description={state.message}
+        />
       );
     case "missing-repository": {
       const name = `${state.repository.owner}/${state.repository.name}`;
       return (
         <LinkPage
-          title={`You don't have ${name}`}
-          description="Clone it to work on it here, or start without a project."
+          title={`Nu ai ${name}`}
+          description="Clonează-l ca să lucrezi aici sau pornește fără proiect."
         >
           <Button size="sm" onClick={() => void cloneRepository(state.repository)}>
             Clone {name}
           </Button>
           <Button size="sm" variant="outline" onClick={openWithoutProject}>
-            Use without project
+            Folosește fără proiect
           </Button>
         </LinkPage>
       );
@@ -402,8 +405,8 @@ function PullRequestLinkCheckout({
   const { owner, name, number } = link.pullRequest;
   return (
     <LinkPage
-      title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      title={`Comuți pe ${owner}/${name}#${number}?`}
+      description="Codul pull request-ului va fi pus într-un worktree nou și se va rula scriptul de configurare al proiectului."
     >
       <Button
         size="sm"
@@ -415,7 +418,7 @@ function PullRequestLinkCheckout({
           )
         }
       >
-        {handoff !== null ? "Checking out..." : "Check out"}
+        {handoff !== null ? "Se comută..." : "Comută"}
       </Button>
     </LinkPage>
   );

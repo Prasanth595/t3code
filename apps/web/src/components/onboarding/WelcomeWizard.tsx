@@ -31,7 +31,7 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 
 type WizardStep = "account" | "agents";
 
-const ONBOARDING_STAGES = ["Account", "Model"] as const;
+const ONBOARDING_STAGES = ["Cont", "Model"] as const;
 const STEP_ORDER: readonly WizardStep[] = ["account", "agents"];
 
 export function WelcomeWizard({
@@ -72,8 +72,8 @@ export function WelcomeWizard({
       .catch(() => {
         const errorToast = {
           type: "error",
-          title: "Could not finish setup",
-          description: "Your settings could not be saved. Try again.",
+          title: "Configurarea nu a putut fi finalizată",
+          description: "Setările nu au putut fi salvate. Încearcă din nou.",
         } as const;
         if (completionErrorToastIdRef.current === null) {
           completionErrorToastIdRef.current = toastManager.add(errorToast);
@@ -102,7 +102,7 @@ export function WelcomeWizard({
     >
       <WizardPopup size="wide" bottomStickOnMobile={false}>
         <WizardHeader
-          title="Set up Mira"
+          title="Configurează Mira"
           identity={<span className="text-2xl font-semibold tracking-tight">Mira</span>}
         >
           <WizardSteps
@@ -155,13 +155,14 @@ function AccountStep({ onContinue }: { readonly onContinue: () => void }) {
 
   return (
     <StepShell
-      title="Sign in to Mira"
-      description="Your Mira account includes the coding model, your plan's monthly usage, and access to your computers from anywhere."
+      title="Autentifică-te în Mira"
+      description="Contul Mira include modelul de programare, utilizarea lunară din plan și accesul la calculatoarele tale de oriunde."
     >
       {!cloudEnabled ? (
         <Alert className="mt-5" variant="warning">
           <AlertDescription>
-            This build has no Mira account service configured. Set it up before shipping.
+            Această versiune nu are configurat serviciul de conturi Mira. Configurează-l înainte de
+            publicare.
           </AlertDescription>
         </Alert>
       ) : (
@@ -169,40 +170,40 @@ function AccountStep({ onContinue }: { readonly onContinue: () => void }) {
           <CloudIcon className="size-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <span className="block text-sm font-medium text-foreground">
-              {account?.email ?? (isSignedIn ? "Signed in" : "Mira account")}
+              {account?.email ?? (isSignedIn ? "Autentificat" : "Cont Mira")}
             </span>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {error ??
                 (account
-                  ? `${account.plan.name} plan · ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokens a month`
+                  ? `Planul ${account.plan.name} · ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokeni pe lună`
                   : isSignedIn
-                    ? "Loading your plan…"
-                    : "Free to create. Paid plans add more usage.")}
+                    ? "Se încarcă planul…"
+                    : "Gratuit la creare. Planurile plătite oferă mai multă utilizare.")}
             </p>
           </div>
           {isSignedIn ? (
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
               <CheckIcon className="size-3.5" />
-              Signed in
+              Autentificat
             </span>
           ) : (
             <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
-              {isLoaded ? "Sign in or create account" : "Loading sign-in…"}
+              {isLoaded ? "Autentifică-te sau creează cont" : "Se încarcă autentificarea…"}
             </Button>
           )}
         </div>
       )}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          Mira collects anonymous usage data to help us improve it. To read more about how your data
-          is used and how to opt out, see our{" "}
+          Mira colectează date anonime de utilizare ca s-o putem îmbunătăți. Ca să afli cum sunt
+          folosite datele și cum poți renunța, citește{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}
             target="_blank"
             rel="noreferrer noopener"
           >
-            privacy policy
+            politica de confidențialitate
           </a>
           .
         </p>
@@ -230,8 +231,8 @@ function AgentsStep({
   const { environments } = useEnvironments();
   return (
     <StepShell
-      title="Connect the Mira model"
-      description="Pi comes with Mira. Each computer runs it on your Mira account's model."
+      title="Conectează modelul Mira"
+      description="Pi vine cu Mira. Fiecare calculator îl rulează cu modelul contului tău Mira."
     >
       <div className="mt-5 space-y-1.5">
         {environmentIds.map((environmentId) => (
@@ -240,7 +241,7 @@ function AgentsStep({
             environmentId={environmentId}
             machineLabel={
               environments.find((environment) => environment.environmentId === environmentId)
-                ?.label ?? "Computer"
+                ?.label ?? "Calculator"
             }
           />
         ))}
@@ -286,7 +287,7 @@ function MiraModelCard({
     } else {
       setPhase("failed");
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not connect the model.");
+      setError(failure instanceof Error ? failure.message : "Modelul nu a putut fi conectat.");
     }
   };
 
@@ -301,12 +302,12 @@ function MiraModelCard({
         <span className="block text-sm font-medium text-foreground">{machineLabel}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words text-muted-foreground">
           {connected
-            ? "Ready to code with Mira."
+            ? "Gata de lucru cu Mira."
             : phase === "failed"
               ? error
               : serverConfig === null
-                ? "Waiting for this computer…"
-                : "Connecting the Mira model…"}
+                ? "Se așteaptă acest calculator…"
+                : "Se conectează modelul Mira…"}
         </p>
       </div>
       <div className="shrink-0">
@@ -322,7 +323,7 @@ function MiraModelCard({
             disabled={phase === "connecting" || serverConfig === null}
             onClick={() => void connect()}
           >
-            {phase === "failed" ? "Retry" : "Connect now"}
+            {phase === "failed" ? "Reîncearcă" : "Conectează acum"}
           </Button>
         )}
       </div>

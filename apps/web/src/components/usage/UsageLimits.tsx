@@ -42,9 +42,9 @@ import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+  ahead: { label: "Peste ritm: consumi mai repede decât trece intervalul", icon: TrendingUpIcon },
+  on: { label: "În ritm cu intervalul", icon: GaugeIcon },
+  under: { label: "Sub ritm: ai rezervă pentru restul intervalului", icon: TrendingDownIcon },
 };
 
 export function barColor(driver: ServerProvider["driver"]): string {
@@ -129,7 +129,7 @@ function WindowBar({
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
   const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
+    timeLeft === null ? "" : `, ${timeLeft}% din interval rămas`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -166,7 +166,7 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {remaining}% rămas{timeLeft !== null ? ` · ${timeLeft}% din interval rămas` : ""}
           </span>
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
@@ -227,10 +227,10 @@ export function LimitWindows({
 }
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
+  reset: "Resetare aplicată. Limitele au fost golite.",
+  nothingToReset: "Nimic de resetat acum.",
+  noCredit: "Nu mai ai credite de resetare.",
+  alreadyRedeemed: "Creditul a fost deja folosit.",
 };
 
 export function useResetCredit(
@@ -257,7 +257,7 @@ export function useResetCredit(
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
         ? result.cause.error.message
-        : "Could not use the reset credit.",
+        : "Creditul de resetare nu a putut fi folosit.",
     );
   };
 
@@ -281,16 +281,16 @@ export function ResetCreditDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
+          <AlertDialogTitle>Folosești un credit de resetare?</AlertDialogTitle>
           <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
-            cannot be undone.
+            Se folosește un credit din cont și se golesc limitele curente. Acțiunea nu poate fi
+            anulată.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>Anulează</AlertDialogClose>
           <Button disabled={disabled} onClick={onConfirm}>
-            Use credit
+            Folosește creditul
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -306,11 +306,11 @@ export function resetCreditsSummary(
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
     : null;
-  if (credits.availableCount === 0) return "No reset credits banked";
+  if (credits.availableCount === 0) return "Niciun credit de resetare";
   if (compact)
-    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
+    return `${credits.availableCount} disponibile${expiresIn ? ` · expiră în ${expiresIn}` : ""}`;
   return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · next expires in ${expiresIn}` : ""
+    expiresIn ? ` · următorul expiră în ${expiresIn}` : ""
   }`;
 }
 
@@ -342,7 +342,7 @@ export function ResetCredits({
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
           }}
         >
-          {busy ? "Using…" : "Use reset"}
+          {busy ? "Se folosește…" : "Resetează"}
         </Button>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}

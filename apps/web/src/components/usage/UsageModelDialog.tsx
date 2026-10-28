@@ -58,10 +58,10 @@ export function UsageModelDialog({
   const hitRate = cacheHitRate(model);
   const perMillion = costPerMillionTokens(model);
   const stats = [
-    { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
-    { label: "Tokens", value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: "Per 1M tokens", value: formatUsd(perMillion) },
-    hitRate === null ? null : { label: "Cache hit", value: formatPercent(hitRate) },
+    { label: "Cost", value: costUnknown ? "Fără preț" : formatUsd(model.costUsd) },
+    { label: "Tokeni", value: formatTokens(model.totalTokens) },
+    perMillion === null ? null : { label: "Per 1M tokeni", value: formatUsd(perMillion) },
+    hitRate === null ? null : { label: "Rată cache", value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
   return (
@@ -83,7 +83,7 @@ export function UsageModelDialog({
           </div>
           <DialogDescription>
             {presentation.label}
-            {costUnknown ? "" : ` · ${formatPercent(model.costShare)} of cost`}
+            {costUnknown ? "" : ` · ${formatPercent(model.costShare)} din cost`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -114,19 +114,19 @@ export function UsageModelDialog({
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
               {costUnknown ? null : (
                 <UsageShareBar
-                  label="Cost by type"
+                  label="Cost după tip"
                   segments={costTypeSegments(usage.categoryCost)}
                   format={formatUsd}
                 />
               )}
               <UsageShareBar
-                label="Tokens by type"
+                label="Tokeni după tip"
                 segments={tokenTypeSegments(model.tokens)}
                 format={formatTokens}
               />
               {usage.speedCost.fast + usage.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label="Cost by speed"
+                  label="Cost după viteză"
                   segments={speedCostSegments(usage.speedCost)}
                   format={formatUsd}
                   aside={<SpeedPremium premiumUsd={usage.speedCost.premium} />}
@@ -140,7 +140,7 @@ export function UsageModelDialog({
             <span className="text-xs text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
-            <Button onClick={onSetPrice}>Set price</Button>
+            <Button onClick={onSetPrice}>Setează prețul</Button>
           </DialogFooter>
         ) : null}
       </DialogPopup>

@@ -73,17 +73,17 @@ export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null):
 
 export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
   if (!shouldShowArm64IntelBuildWarning(state)) {
-    return "This install is using the correct architecture.";
+    return "Această instalare folosește arhitectura corectă.";
   }
 
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
-    return "This Mac has Apple Silicon, but Mira is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
+    return "Acest Mac are Apple Silicon, dar Mira rulează versiunea Intel prin Rosetta. Descarcă actualizarea ca să treci la versiunea nativă Apple Silicon.";
   }
   if (action === "install") {
-    return "This Mac has Apple Silicon, but Mira is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
+    return "Acest Mac are Apple Silicon, dar Mira rulează versiunea Intel prin Rosetta. Repornește ca să instalezi versiunea Apple Silicon descărcată.";
   }
-  return "This Mac has Apple Silicon, but Mira is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+  return "Acest Mac are Apple Silicon, dar Mira rulează versiunea Intel prin Rosetta. Următoarea actualizare o va înlocui cu versiunea nativă Apple Silicon.";
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
@@ -92,39 +92,39 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     (state.status === "available" || state.status === "downloaded") &&
     getDesktopUpdateDownloadedVersion(state) === state.notAppliedVersion
   ) {
-    return `Update ${state.notAppliedVersion} did not apply. Click to retry.`;
+    return `Actualizarea ${state.notAppliedVersion} nu s-a aplicat. Apasă ca să reîncerci.`;
   }
   if (state.status === "available") {
-    return `Update ${state.availableVersion ?? "available"} ready to download`;
+    return `Actualizarea ${state.availableVersion ?? ""} e gata de descărcat`;
   }
   if (state.status === "downloading") {
     const progress =
       typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
-    return `Downloading update${progress}`;
+    return `Se descarcă actualizarea${progress}`;
   }
   if (state.status === "downloaded") {
-    return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
+    return `Actualizarea ${state.downloadedVersion ?? state.availableVersion ?? ""} a fost descărcată. Apasă ca să repornești și să instalezi.`;
   }
   if (state.status === "error") {
     if (state.errorContext === "download" && state.availableVersion) {
-      return `Download failed for ${state.availableVersion}. Click to retry.`;
+      return `Descărcarea ${state.availableVersion} a eșuat. Apasă ca să reîncerci.`;
     }
     if (state.errorContext === "install" && state.downloadedVersion) {
-      return `Install failed for ${state.downloadedVersion}. Click to retry.`;
+      return `Instalarea ${state.downloadedVersion} a eșuat. Apasă ca să reîncerci.`;
     }
     if (state.downloadedVersion) {
-      return `Update ${state.downloadedVersion} downloaded. Click to restart and install.`;
+      return `Actualizarea ${state.downloadedVersion} a fost descărcată. Apasă ca să repornești și să instalezi.`;
     }
-    return state.message ?? "Update failed";
+    return state.message ?? "Actualizarea a eșuat";
   }
-  return "Up to date";
+  return "La zi";
 }
 
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  return `Install update${version ? ` ${version}` : ""} and restart Mira?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+  return `Instalezi actualizarea${version ? ` ${version}` : ""} și repornești Mira?\n\nSarcinile în curs vor fi întrerupte. Asigură-te că ești pregătit înainte să continui.`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
@@ -149,7 +149,7 @@ export function getDesktopUpdateDisabledReason(
   state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
 ): string | null {
   if (!state || (state.enabled && state.status !== "disabled")) return null;
-  return state.message?.trim() || "Automatic updates are not available in this build.";
+  return state.message?.trim() || "Actualizările automate nu sunt disponibile în această versiune.";
 }
 
 export function getDesktopUpdateIdleTooltip(
@@ -157,6 +157,6 @@ export function getDesktopUpdateIdleTooltip(
 ) {
   const disabledReason = getDesktopUpdateDisabledReason(state);
   return disabledReason
-    ? { title: "Updates unavailable", detail: disabledReason }
-    : { title: "Check for updates", detail: null };
+    ? { title: "Actualizări indisponibile", detail: disabledReason }
+    : { title: "Verifică actualizările", detail: null };
 }

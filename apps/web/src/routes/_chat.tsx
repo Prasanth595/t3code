@@ -137,8 +137,8 @@ function ChatRouteGlobalShortcuts() {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Preview is desktop-only",
-              description: "Open Mira in the desktop app to use the in-app preview.",
+              title: "Previzualizarea e doar pe desktop",
+              description: "Deschide Mira în aplicația desktop ca să folosești previzualizarea.",
             }),
           );
           return;

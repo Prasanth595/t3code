@@ -735,7 +735,7 @@ function useSidebarLookups() {
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
   const projectScopeItems = [
-    { value: "all", label: "All projects" },
+    { value: "all", label: "Toate proiectele" },
     ...projectGroups.map((project) => ({ value: project.projectKey, label: project.displayName })),
   ];
   return {
@@ -774,8 +774,8 @@ function checkThreadOperations(
   if (canOperateThreads(threads)) return true;
   toastManager.add({
     type: "error",
-    title: "Thread action unavailable",
-    description: "This connection cannot change one or more selected threads.",
+    title: "Acțiune indisponibilă",
+    description: "Această conexiune nu poate modifica una sau mai multe conversații selectate.",
   });
   return false;
 }
@@ -825,7 +825,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     onCopy: ({ path }) => {
       toastManager.add({
         type: "success",
-        title: "Path copied",
+        title: "Cale copiată",
         description: path,
       });
     },
@@ -833,8 +833,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy path",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Calea nu a putut fi copiată",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     },
@@ -844,7 +844,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     onCopy: ({ branch }) => {
       toastManager.add({
         type: "success",
-        title: "Branch copied",
+        title: "Branch copiat",
         description: branch,
       });
     },
@@ -852,8 +852,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy branch",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Branch-ul nu a putut fi copiat",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     },
@@ -862,7 +862,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     onCopy: ({ threadId }) => {
       toastManager.add({
         type: "success",
-        title: "Thread ID copied",
+        title: "ID-ul conversației a fost copiat",
         description: threadId,
       });
     },
@@ -870,8 +870,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy thread ID",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "ID-ul conversației nu a putut fi copiat",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     },
@@ -1346,7 +1346,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const trimmed = title.trim();
       setRenamingThreadKey(null);
       if (trimmed.length === 0) {
-        toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+        toastManager.add({ type: "warning", title: "Titlul conversației nu poate fi gol" });
         return;
       }
       if (trimmed === originalTitle) return;
@@ -1359,8 +1359,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to rename thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi redenumită",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1431,8 +1431,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to settle thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Conversația nu a putut fi finalizată",
+              description: error instanceof Error ? error.message : "A apărut o eroare.",
             }),
           );
         }
@@ -1468,8 +1468,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to un-settle thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi redeschisă",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1483,8 +1483,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to wake thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi reactivată",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1548,7 +1548,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     const threads = contextDragThreads();
     const title =
-      threadByKeyRef.current.get(contextDragKeyRef.current ?? "")?.title.trim() || "Thread";
+      threadByKeyRef.current.get(contextDragKeyRef.current ?? "")?.title.trim() || "Conversație";
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };
@@ -1655,8 +1655,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to pin thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi fixată",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1670,8 +1670,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to unpin thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi defixată",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1924,7 +1924,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             stackedThreadToast({
               type: "error",
               title,
-              description: error instanceof Error ? error.message : "An error occurred.",
+              description: error instanceof Error ? error.message : "A apărut o eroare.",
             }),
           );
         }
@@ -1934,9 +1934,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         case "settle": {
           settlingThreadKeysRef.current.add(activeKey);
           const navigateAfterSettle = planForwardNavigation(activeKey);
-          const settled = await run(settleThread(threadRef), "Failed to settle thread").finally(
-            () => settlingThreadKeysRef.current.delete(activeKey),
-          );
+          const settled = await run(
+            settleThread(threadRef),
+            "Conversația nu a putut fi finalizată",
+          ).finally(() => settlingThreadKeysRef.current.delete(activeKey));
           if (
             settled &&
             shouldNavigateAfterThreadPark({
@@ -1951,20 +1952,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         case "move-active":
-          if (plan.unpin && !(await run(unpinThread(threadRef), "Failed to unpin thread"))) return;
           if (
-            plan.unsettle &&
-            !(await run(unsettleThread(threadRef), "Failed to un-settle thread"))
+            plan.unpin &&
+            !(await run(unpinThread(threadRef), "Conversația nu a putut fi defixată"))
           )
             return;
-          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), "Failed to wake thread")))
+          if (
+            plan.unsettle &&
+            !(await run(unsettleThread(threadRef), "Conversația nu a putut fi redeschisă"))
+          )
+            return;
+          if (
+            plan.unsnooze &&
+            !(await run(unsnoozeThread(threadRef), "Conversația nu a putut fi reactivată"))
+          )
             return;
           break;
         case "pin":
           if (
             !(await run(
               pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
-              "Failed to pin thread",
+              "Conversația nu a putut fi fixată",
             ))
           )
             return;
@@ -1983,8 +1991,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               assignment.orderKey,
             ),
             plan.kind === "move-active"
-              ? "Failed to reorder active threads"
-              : "Failed to reorder pinned threads",
+              ? "Conversațiile active nu au putut fi reordonate"
+              : "Conversațiile fixate nu au putut fi reordonate",
           ))
         )
           return;
@@ -2033,9 +2041,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to snooze thread",
+            title: "Conversația nu a putut fi amânată",
             description:
-              outcome.error instanceof Error ? outcome.error.message : "An error occurred.",
+              outcome.error instanceof Error ? outcome.error.message : "A apărut o eroare.",
           }),
         );
         return;
@@ -2095,14 +2103,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               : []),
             {
               id: "settle",
-              label: `Settle (${count})`,
+              label: `Finalizează (${count})`,
               disabled: settlingThreads.length === 0 || !canOperateThreads(settlingThreads),
             },
             ...(canSnoozeSelection
               ? [
                   {
                     id: "snooze",
-                    label: `Snooze (${count})`,
+                    label: `Amână (${count})`,
                     disabled: !canOperateThreads(selectedThreads),
                     children: [
                       ...snoozePresets.map((preset) => ({
@@ -2112,7 +2120,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       })),
                       {
                         id: "snooze:custom",
-                        label: "Custom…",
+                        label: "Personalizat…",
                         separatorBefore: true,
                         disabled: !canOperateThreads(selectedThreads),
                       },
@@ -2130,10 +2138,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   },
                 ]
               : []),
-            { id: "mark-unread", label: `Mark unread (${count})` },
+            { id: "mark-unread", label: `Marchează necitite (${count})` },
             {
               id: "delete",
-              label: `Delete (${count})`,
+              label: `Șterge (${count})`,
               destructive: true,
               disabled: !canOperateThreads(selectedThreads),
             },
@@ -2186,10 +2194,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 type: "error",
                 title:
                   snoozedThreadRefs.length > 0
-                    ? `Failed to snooze ${failures.length} thread${failures.length === 1 ? "" : "s"}`
-                    : "Failed to snooze threads",
+                    ? `${failures.length === 1 ? "O conversație nu a putut fi amânată" : `${failures.length} conversații nu au putut fi amânate`}`
+                    : "Conversațiile nu au putut fi amânate",
                 description:
-                  firstError instanceof Error ? firstError.message : "An error occurred.",
+                  firstError instanceof Error ? firstError.message : "A apărut o eroare.",
               }),
             );
           }
@@ -2215,8 +2223,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to regenerate thread titles",
-                description: error instanceof Error ? error.message : "An error occurred.",
+                title: "Titlurile nu au putut fi regenerate",
+                description: error instanceof Error ? error.message : "A apărut o eroare.",
               }),
             );
           }
@@ -2247,8 +2255,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
             [
-              `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-              "This permanently clears conversation history for these threads.",
+              `Ștergi ${count === 1 ? "conversația" : `${count} conversații`}?`,
+              "Se șterge definitiv istoricul acestor conversații.",
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -2279,8 +2287,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to delete threads",
-            description: firstError instanceof Error ? firstError.message : "An error occurred.",
+            title: "Conversațiile nu au putut fi șterse",
+            description: firstError instanceof Error ? firstError.message : "A apărut o eroare.",
           }),
         );
       }
@@ -2464,8 +2472,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Could not create thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "Conversația nu a putut fi creată",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
             }
@@ -2497,8 +2505,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Failed to update auto-settle",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "Finalizarea automată nu a putut fi schimbată",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
             }
@@ -2521,8 +2529,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Failed to regenerate thread title",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "Titlul nu a putut fi regenerat",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
             }
@@ -2536,8 +2544,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Path unavailable",
-                  description: "This thread does not have a workspace path to copy.",
+                  title: "Cale indisponibilă",
+                  description: "Conversația nu are o cale de copiat.",
                 }),
               );
               return;
@@ -2555,7 +2563,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+                api.dialogs.confirm(`Arhivezi conversația „${thread.title}”?`),
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;
             }
@@ -2571,9 +2579,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: didArchive
-                    ? "Thread archived, but navigation failed"
-                    : "Failed to archive thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                    ? "Conversația a fost arhivată, dar navigarea a eșuat"
+                    : "Conversația nu a putut fi arhivată",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
               return;
@@ -2585,8 +2593,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(
                   [
-                    `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
+                    `Ștergi conversația „${thread.title}”?`,
+                    "Se șterge definitiv istoricul acestei conversații.",
                   ].join("\n"),
                   { variant: "destructive" },
                 ),
@@ -2599,8 +2607,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Failed to delete thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "Conversația nu a putut fi ștearsă",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
               return;
@@ -2747,8 +2755,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <SidebarHeaderIconButton
                         label={
                           scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
-                            : "Filter threads by project"
+                            ? `Filtrează după proiect: ${scopedProjectGroup.displayName}`
+                            : "Filtrează după proiect"
                         }
                       />
                     }
@@ -2767,8 +2775,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
                   >
                     <ComboboxSearchInput
-                      aria-label="Search projects"
-                      placeholder="Search projects..."
+                      aria-label="Caută proiecte"
+                      placeholder="Caută proiecte..."
                       value={projectScopeMenuState.query}
                       onKeyDown={(event) => {
                         if (
@@ -2792,7 +2800,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         })
                       }
                     />
-                    <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+                    <ComboboxEmpty>Niciun proiect găsit.</ComboboxEmpty>
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number]) => {
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
@@ -2824,7 +2832,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 variant="ghost-muted"
                                 tabIndex={-1}
                                 aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
+                                title={`Setările proiectului ${project.displayName}`}
                                 className="ml-auto"
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
@@ -2883,7 +2891,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <ul
                   id="sidebar-thread-search-results"
                   role="listbox"
-                  aria-label="Thread search results"
+                  aria-label="Rezultatele căutării"
                   className="flex flex-col gap-px"
                 >
                   {threadSearchResults.map((thread, index) => {
@@ -2937,7 +2945,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {threadSearch.isPending ? "Se caută în mesaje…" : "Nicio conversație găsită"}
               </p>
             )
           ) : null}
@@ -3103,7 +3111,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
-                                label="Pinned"
+                                label="Fixate"
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
@@ -3144,7 +3152,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="working-shelf-header"
                                 marker="working-header"
                                 className="mt-auto"
-                                label="Working"
+                                label="În lucru"
                                 count={workingThreads.length}
                                 toggle={{
                                   expanded: workingShelfExpanded,
@@ -3159,7 +3167,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
-                                label="Snoozed"
+                                label="Amânate"
                                 count={snoozedThreads.length}
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
@@ -3176,7 +3184,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(
                                   workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
                                 )}
-                                label="Settled"
+                                label="Finalizate"
                                 count={settledCount}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
@@ -3192,7 +3200,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
-                                label="Settled"
+                                label="Finalizate"
                                 showHint={
                                   from !== null &&
                                   (renderedSettledThreads.length === 0 ||
@@ -3227,10 +3235,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             className="hidden size-4 shrink-0 redesign:block"
                           />
                           {olderSettledShelf.loading
-                            ? "Loading"
+                            ? "Se încarcă"
                             : olderSettledShelf.failed
-                              ? "Could not load older threads. Retry"
-                              : `Show ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more`}
+                              ? "Conversațiile mai vechi nu au putut fi încărcate. Reîncearcă"
+                              : `Arată încă ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)}`}
                         </button>
                       </li>
                     ) : null}
@@ -3250,20 +3258,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
-                  <span>No projects yet</span>
+                  <span>Niciun proiect încă</span>
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
-                    Add project
+                    Adaugă proiect
                   </button>
                 </>
               ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+                `Nicio conversație în ${scopedProjectGroup.displayName} încă`
               ) : (
-                "No threads yet"
+                "Nicio conversație încă"
               )}
             </div>
           ) : null}
