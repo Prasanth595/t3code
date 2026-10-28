@@ -139,8 +139,6 @@ export function backgroundWorkNowItem(input: {
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
   const label = (row: (typeof rows)[number]) =>
     row.isRawCommand ? <span className="font-mono">{row.task.label}</span> : row.task.label;
-  const showsRunningState =
-    only !== undefined && only.task.named && only.activity === null && !presentation.waiting;
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
@@ -150,15 +148,14 @@ export function backgroundWorkNowItem(input: {
     ) : (
       <CircleDashedIcon />
     ),
-    title:
-      only?.task.named === true ? (
-        <>
-          {presentation.waiting ? "Waiting on " : null}
-          <span className="text-foreground/80">{label(only)}</span>
-        </>
-      ) : (
-        <span className="text-foreground/80">{presentation.title}</span>
-      ),
+    title: (
+      <>
+        {presentation.waiting ? "Waiting on " : "Running in background "}
+        <span className="text-foreground/80">
+          {only?.task.named === true ? label(only) : presentation.subject}
+        </span>
+      </>
+    ),
     description: only
       ? only.activity
       : newest
@@ -171,12 +168,6 @@ export function backgroundWorkNowItem(input: {
           )),
     actions: (
       <>
-        {/* Outside the truncating title, so a long name cannot cut the state off. */}
-        {showsRunningState ? (
-          <span className="text-muted-foreground/60 light:text-muted-foreground/80">
-            running in background
-          </span>
-        ) : null}
         {startedAtMs === null ? null : (
           <>
             <span

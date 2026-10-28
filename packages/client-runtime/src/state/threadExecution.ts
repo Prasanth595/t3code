@@ -304,6 +304,8 @@ export interface PendingBackgroundWorkItem {
 
 export interface PendingBackgroundWorkPresentation {
   readonly title: string;
+  /** What is running or waited on: a label, "a command", or "2 commands". */
+  readonly subject: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   readonly waiting: boolean;
 }
@@ -343,14 +345,13 @@ export function presentPendingBackgroundWork(
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const { named } = only;
+    const subject = named ? only.label : `a ${noun}`;
     const title = waiting
       ? named
         ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running in background: ${only.label}`
-        : `A ${noun} running in background`;
-    return { title, items, waiting };
+        : `Waiting on ${subject}`
+      : `Running in background: ${subject}`;
+    return { title, subject, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -360,7 +361,8 @@ export function presentPendingBackgroundWork(
   });
   const groupsText = joinWithAnd(groups);
   return {
-    title: waiting ? `Waiting on ${groupsText}` : `${groupsText} running in background`,
+    title: waiting ? `Waiting on ${groupsText}` : `Running in background: ${groupsText}`,
+    subject: groupsText,
     items,
     waiting,
   };
