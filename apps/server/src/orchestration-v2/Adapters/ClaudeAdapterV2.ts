@@ -3604,6 +3604,7 @@ function buildAssistantArtifacts(input: {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeItemId: string;
   readonly text: string;
+  readonly localCommand?: string;
   readonly ordinal: number;
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
@@ -3657,6 +3658,7 @@ function buildAssistantArtifacts(input: {
       nodeId,
       role: "assistant",
       text: input.text,
+      ...(input.localCommand === undefined ? {} : { localCommand: input.localCommand }),
       attachments: [],
       streaming: false,
       createdAt: input.completedAt,
@@ -3680,6 +3682,7 @@ function buildAssistantArtifacts(input: {
       type: "assistant_message",
       messageId,
       text: input.text,
+      ...(input.localCommand === undefined ? {} : { localCommand: input.localCommand }),
       streaming: false,
     },
   };
@@ -3740,6 +3743,7 @@ interface ActiveClaudeTurnContext {
   readonly assistant: {
     fallbackText: string;
     fallbackNativeItemId: string;
+    localCommand: string | undefined;
     emittedNativeItemIds: Set<string>;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
@@ -7104,7 +7108,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (
-            input.context.assistant.emittedNativeItemIds.size === 0 &&
+            (input.context.assistant.emittedNativeItemIds.size === 0 ||
+              input.context.assistant.localCommand !== undefined) &&
             input.context.assistant.fallbackText.length > 0
           ) {
             const ordinal = yield* resolveItemOrdinal(
@@ -7117,6 +7122,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerTurnId: input.context.providerTurnId,
               nativeItemId: input.context.assistant.fallbackNativeItemId,
               text: input.context.assistant.fallbackText,
+              ...(input.context.assistant.localCommand === undefined
+                ? {}
+                : { localCommand: input.context.assistant.localCommand }),
               ordinal,
               startedAt: input.context.startedAt,
               completedAt: input.completedAt,
@@ -8910,14 +8918,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
-          // Claude Code echoes /compact's stdout ("Not enough messages to compact.") as a
-          // synthetic assistant message. The compaction item reports that outcome; it is not a
-          // reply.
           if (
-            message.type === "assistant" &&
-            "local_command_source" in message &&
-            isCompactionCommandMessage({ role: "user", ...context.input.message })
+            (message.type === "system" && message.subtype === "local_command_output") ||
+            (message.type === "assistant" && "local_command_source" in message)
           ) {
+            if (isCompactionCommandMessage({ role: "user", ...context.input.message })) return;
+            const text = message.type === "system" ? message.content : assistantText?.text;
+            if (text !== undefined && text.length > 0) {
+              // Buffer the CLI's duplicate echoes until the result supplies the command name.
+              if (context.assistant.fallbackText.length === 0) {
+                context.assistant.fallbackText = text;
+                context.assistant.fallbackNativeItemId = message.uuid;
+              }
+              context.assistant.localCommand ??= "";
+            }
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
@@ -8970,6 +8984,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               terminalStatusFromResult(message) === "failed")
               ? null
               : resultTextFromSdkMessage(message);
+          if (
+            message.type === "result" &&
+            message.subtype === "success" &&
+            message.local_command !== undefined
+          ) {
+            if (message.local_command === "compact") {
+              context.assistant.fallbackText = "";
+              context.assistant.localCommand = undefined;
+            } else {
+              context.assistant.localCommand = message.local_command;
+            }
+          }
           if (
             // A /compact's result text reports the compaction ("Not enough messages to
             // compact."), which its compaction item already carries; it is not a reply.
@@ -9954,6 +9980,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               assistant: {
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
+                localCommand: undefined,
                 emittedNativeItemIds: new Set(),
                 noticeTexts: new Set(),
               },

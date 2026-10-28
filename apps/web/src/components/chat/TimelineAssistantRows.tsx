@@ -13,6 +13,7 @@ import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { CommandOutputMessage } from "./CommandOutputMessage";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -26,6 +27,27 @@ import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts"
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+
+  if (row.message.localCommand !== undefined) {
+    return (
+      <div className="relative min-w-0 px-1 py-0.5">
+        <MessageAuthorHeading>Command output</MessageAuthorHeading>
+        <CommandOutputMessage
+          text={row.message.text}
+          localCommand={row.message.localCommand}
+          streaming={row.assistantCopyStreaming}
+        />
+        {row.showAssistantMeta ? (
+          <AssistantMessageMeta
+            className="mt-1.5"
+            message={row.message}
+            showCopyButton={false}
+            copyStreaming={row.assistantCopyStreaming}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <>

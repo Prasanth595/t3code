@@ -76,6 +76,7 @@ export interface ChatMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant" | "system";
   readonly text: string;
+  readonly localCommand?: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   readonly runId: RunId | null;
   readonly streaming: boolean;

@@ -5457,6 +5457,130 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      name: "named local command echoes",
+      source: "both",
+      command: "config",
+      expectedCommand: "config",
+    },
+    {
+      name: "unnamed local command output",
+      source: "system",
+      command: undefined,
+      expectedCommand: "",
+    },
+    {
+      name: "synthetic local command output",
+      source: "synthetic",
+      command: "cost",
+      expectedCommand: "cost",
+    },
+    {
+      name: "result-only local command output",
+      source: "result",
+      command: "config",
+      expectedCommand: "config",
+    },
+    {
+      name: "normal model reply",
+      source: "assistant",
+      command: undefined,
+      expectedCommand: undefined,
+    },
+    {
+      name: "normal result fallback",
+      source: "result",
+      command: undefined,
+      expectedCommand: undefined,
+    },
+  ] as const)("preserves the output kind for $name", ({ source, command, expectedCommand }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const text = "Available settings:\n  model <name>\n  theme <name>";
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-command-output"),
+          text: command === undefined ? "Continue." : `/${command}`,
+          attachments: [],
+        }),
+      );
+      const frames: SDKMessage[] = [];
+      if (source === "system" || source === "both") {
+        frames.push(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "local_command_output",
+            content: text,
+            uuid: "00000000-0000-4000-8000-000000000630",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      if (source === "synthetic" || source === "both" || source === "assistant") {
+        frames.push(
+          claudeSdkFrame({
+            ...makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000631",
+              text,
+            }),
+            ...(source === "assistant"
+              ? {}
+              : { local_command_source: `<local-command-stdout>${text}</local-command-stdout>` }),
+          }),
+        );
+      }
+      frames.push(
+        claudeSdkFrame({
+          ...makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000632",
+            result: text,
+            numTurns: expectedCommand === undefined ? 1 : 0,
+            terminalReason: expectedCommand === undefined ? "completed" : null,
+          }),
+          ...(command === undefined ? {} : { local_command: command }),
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, frames);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      const messages = harness.events.flatMap((event) =>
+        event.type === "message.updated" &&
+        event.message.role === "assistant" &&
+        !event.message.streaming
+          ? [event.message]
+          : [],
+      );
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "assistant_message" &&
+        !event.turnItem.streaming
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(messages, 1);
+      assert.lengthOf(items, 1);
+      assert.equal(messages[0]?.text, text);
+      assert.equal(items[0]?.text, text);
+      assert.equal(items[0]?.messageId, messages[0]?.id);
+      for (const output of [...messages, ...items]) {
+        if (expectedCommand === undefined) {
+          assert.notProperty(output, "localCommand");
+        } else {
+          assert.propertyVal(output, "localCommand", expectedCommand);
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("keeps an unreported /compact failure's reason on the compaction, not as a reply", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

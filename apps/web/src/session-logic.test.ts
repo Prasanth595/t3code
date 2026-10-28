@@ -42,6 +42,36 @@ import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./tes
 import type { ChatMessage } from "./types";
 
 describe("V2 session presentation", () => {
+  it.each(["config", "", undefined])(
+    "preserves local command output in timeline messages (%s)",
+    (localCommand) => {
+      const fixture = makeStreamingTimelineFixture("Available settings:\nmodel\ntheme");
+      const visibleTurnItems = fixture.visibleTurnItems.flatMap((row) =>
+        row.item.type === "assistant_message"
+          ? [
+              {
+                ...row,
+                item: { ...row.item, ...(localCommand === undefined ? {} : { localCommand }) },
+              },
+            ]
+          : [],
+      );
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+      });
+      expect(entries).toHaveLength(visibleTurnItems.length);
+      for (const entry of entries) {
+        if (entry.kind !== "message") throw new Error("Expected a message row");
+        if (localCommand === undefined) {
+          expect(entry.message).not.toHaveProperty("localCommand");
+        } else {
+          expect(entry.message.localCommand).toBe(localCommand);
+        }
+      }
+    },
+  );
+
   it("uses run status as the settlement boundary", () => {
     const runId = RunId.make("run-1");
     expect(

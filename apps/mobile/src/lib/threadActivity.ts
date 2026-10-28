@@ -140,6 +140,7 @@ export interface ThreadFeedMessage {
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   readonly id: MessageId;
   readonly role: "user" | "assistant";
+  readonly localCommand?: string;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly runId: RunId | null;
@@ -2273,6 +2274,9 @@ export function buildThreadFeed(
           id: item.messageId,
           role: item.type === "user_message" ? "user" : "assistant",
           text: item.text,
+          ...(item.type === "assistant_message" && item.localCommand !== undefined
+            ? { localCommand: item.localCommand }
+            : {}),
           ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
           attachments: item.attachments ?? [],
           runId: item.runId,
