@@ -72,6 +72,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { VoiceCallIcon } from "./VoiceCallIcon";
+import { threadVoiceCallRow } from "./threadVoiceCall";
 import { isVoiceCallChat, useThreadVoiceCall } from "~/hooks/useVoiceCall";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 
@@ -628,10 +629,11 @@ export function ThreadRelationshipsPanel(props: {
                 ? projectedAgent
                 : currentSubagent(projectedAgent, node?.thread);
               const failed = rowStatus === "failed" || rowStatus === "error";
-              const voiceChat = isVoiceCallChat(voiceCall, threadId);
-              const calledVoice = node?.thread?.voiceCall;
-              const voiceAccount = providers?.find(
-                (entry) => entry.instanceId === calledVoice?.instanceId,
+              const voiceRow = threadVoiceCallRow(
+                voiceCall,
+                threadId,
+                node?.thread?.voiceCall,
+                providers,
               );
               const canStop =
                 agent &&
@@ -669,9 +671,7 @@ export function ThreadRelationshipsPanel(props: {
               const project = projects.find((project) => project.id === node?.thread?.projectId);
               const relationshipHint = node?.missing
                 ? "This related thread is unavailable"
-                : calledVoice
-                  ? `Voice call on ${voiceAccount?.displayName ?? calledVoice.instanceId}`
-                  : `Open ${relationship.toLowerCase()} in this chat`;
+                : (voiceRow.hint ?? `Open ${relationship.toLowerCase()} in this chat`);
               const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent
@@ -697,9 +697,9 @@ export function ThreadRelationshipsPanel(props: {
               );
               const relationshipContent = (
                 <>
-                  {voiceChat || calledVoice ? (
+                  {voiceRow.isCall ? (
                     <VoiceCallIcon
-                      call={voiceChat ? voiceCall : null}
+                      call={voiceRow.live ? voiceCall : null}
                       className="size-4 shrink-0 text-info-foreground"
                     />
                   ) : (
@@ -734,13 +734,7 @@ export function ThreadRelationshipsPanel(props: {
                           : `shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"} ${trailingVisibilityClass}`
                       }
                     >
-                      {voiceChat
-                        ? voiceCall?.state.phase === "live"
-                          ? "Live"
-                          : "Connecting"
-                        : calledVoice
-                          ? "Ended"
-                          : threadRelationshipStatusLabel(rowStatus)}
+                      {voiceRow.status ?? threadRelationshipStatusLabel(rowStatus)}
                     </span>
                   ) : null}
                 </>

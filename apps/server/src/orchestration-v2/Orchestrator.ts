@@ -166,6 +166,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { voiceTranscriptMessage, voiceTranscriptTurnItem } from "./VoiceTranscript.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -8260,55 +8261,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const startedAt = existing?.startedAt ?? now;
       const ordinal = existing?.ordinal ?? (yield* nextTurnItemOrdinal({ thread }));
       const emitEvent = emit(events, command);
-      const provenance = {
-        createdBy: command.role === "user" ? ("user" as const) : ("agent" as const),
-        creationSource: "server" as const,
-      };
       yield* emitEvent({
         type: "message.updated",
         threadId: command.threadId,
         occurredAt: now,
-        payload: {
-          ...provenance,
-          id: command.messageId,
-          threadId: command.threadId,
-          runId: null,
-          nodeId: null,
-          role: command.role,
-          text: command.text,
-          attachments: [],
-          streaming: command.streaming,
-          createdAt: startedAt,
-          updatedAt: now,
-        },
+        payload: voiceTranscriptMessage(command, { startedAt, now }),
       });
-      const turnItem = {
-        ...provenance,
-        id: itemId,
-        threadId: command.threadId,
-        runId: null,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal,
-        status: "completed",
-        title: null,
-        startedAt,
-        completedAt: now,
-        updatedAt: now,
-        messageId: command.messageId,
-        text: command.text,
-      } as const;
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,
         occurredAt: now,
-        payload:
-          command.role === "user"
-            ? { ...turnItem, type: "user_message", inputIntent: "turn_start", attachments: [] }
-            : { ...turnItem, type: "assistant_message", streaming: command.streaming },
+        payload: voiceTranscriptTurnItem(command, { itemId, ordinal, startedAt, now }),
       });
     },
   );

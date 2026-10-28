@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { VoiceCall, type VoiceCallPlatform, type VoiceCallSignaling } from "./call.ts";
+import { VoiceCall, type VoiceCallSignaling } from "./call.ts";
+import type { VoiceCallPlatform } from "./platform.ts";
 
 class FakeConnection extends EventTarget {
   iceGatheringState = "complete";

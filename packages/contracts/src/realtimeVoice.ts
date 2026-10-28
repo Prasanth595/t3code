@@ -73,3 +73,40 @@ export class RealtimeVoiceError extends Schema.TaggedError<RealtimeVoiceError>()
 }
 
 export const isRealtimeVoiceError = Schema.is(RealtimeVoiceError);
+
+// Codex's realtime v3 voices; the app-server lists them through `thread/realtime/listVoices`.
+export const CODEX_REALTIME_VOICE_NAMES = [
+  "juniper",
+  "maple",
+  "spruce",
+  "ember",
+  "vale",
+  "breeze",
+  "arbor",
+  "sol",
+  "cove",
+  "aube",
+  "bubbie",
+  "haetsal",
+  "hanul",
+  "himari",
+  "leher",
+  "miko",
+  "neer",
+  "porto",
+  "rindo",
+  "rio",
+  "rivage",
+  "selva",
+  "sonna",
+  "tinta",
+  "viola",
+] as const;
+
+export const CODEX_REALTIME_VOICES = [
+  { value: "", label: "Default" },
+  ...CODEX_REALTIME_VOICE_NAMES.map((voice) => ({
+    value: voice,
+    label: voice[0]!.toUpperCase() + voice.slice(1),
+  })),
+] as const;

@@ -10,7 +10,9 @@ only brokers the SDP offer and answer, so audio never passes through it and ever
   resolves the provider instance and delegates to its optional `realtimeVoice`
   ([`ProviderRealtimeVoice`](../../packages/provider-core/src/server/driver.ts)): `supports`,
   `start`, `stop`. A new provider adds a call capability by implementing that interface on its
-  driver; nothing else changes.
+  driver; nothing else changes. The call's chat (the subagent thread, its tool access and its
+  transcript) lives apart in
+  [`RealtimeVoiceChat.ts`](../../apps/server/src/provider/RealtimeVoiceChat.ts).
 - `ProviderRegistry` stamps `supportsRealtimeVoice` onto every snapshot from `supports`, so clients
   gate the button on the snapshot and never on a driver name or auth type.
 - The call controller ([`call.ts`](../../packages/client-runtime/src/voice-call/call.ts)) lives in

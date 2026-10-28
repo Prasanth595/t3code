@@ -1,5 +1,9 @@
-// @effect-diagnostics globalTimers:off - The ICE gathering wait is a bounded browser timeout.
-import { type AudioBands, SILENCE, SPEAKING_LEVEL, watchAudio } from "./audio-levels.ts";
+import { type AudioBands, SILENCE, SPEAKING_LEVEL } from "./audio-levels.ts";
+import {
+  browserVoiceCallPlatform,
+  type VoiceCallPlatform,
+  waitForIceGathering,
+} from "./platform.ts";
 
 export type VoiceCallPhase = "idle" | "connecting" | "live" | "error";
 
@@ -31,52 +35,7 @@ export interface VoiceCallSignaling {
   readonly stop: (sessionId: string) => Promise<void>;
 }
 
-export interface VoiceCallPlatform {
-  readonly getUserMedia: () => Promise<MediaStream>;
-  readonly createPeerConnection: () => RTCPeerConnection;
-  /** Plays the remote voice; returns a disposer. */
-  readonly playRemote: (stream: MediaStream) => () => void;
-  readonly watchAudio: typeof watchAudio;
-}
-
-// The server relays one SDP without trickle ICE, so candidates must be in the offer.
-const ICE_GATHER_TIMEOUT_MS = 2_000;
 const EVENTS_CHANNEL = "oai-events";
-const INSECURE_CONTEXT_MESSAGE =
-  "Voice calls need a secure connection. Open T3 Code over HTTPS or on localhost.";
-
-const browserVoiceCallPlatform: VoiceCallPlatform = {
-  getUserMedia: () => {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error(INSECURE_CONTEXT_MESSAGE);
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
-  },
-  createPeerConnection: () => new RTCPeerConnection(),
-  playRemote: (stream) => {
-    const audio = new Audio();
-    audio.srcObject = stream;
-    void audio.play();
-    return () => {
-      audio.pause();
-      audio.srcObject = null;
-    };
-  },
-  watchAudio,
-};
-
-const waitForIceGathering = (connection: RTCPeerConnection) =>
-  new Promise<void>((resolve) => {
-    if (connection.iceGatheringState === "complete") return resolve();
-    const done = () => {
-      clearTimeout(timer);
-      connection.removeEventListener("icegatheringstatechange", onChange);
-      resolve();
-    };
-    const onChange = () => connection.iceGatheringState === "complete" && done();
-    const timer = setTimeout(done, ICE_GATHER_TIMEOUT_MS);
-    connection.addEventListener("icegatheringstatechange", onChange);
-  });
 
 const messageOf = (cause: unknown) =>
   cause instanceof DOMException && cause.name === "NotAllowedError"
