@@ -57,6 +57,7 @@ vi.mock("../../state/session", () => ({
     ),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
@@ -85,8 +86,8 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("./components/SettingsChoiceRow", () => ({
-  SettingsChoiceRow: ({
+vi.mock("../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: ({
     label,
     disabled,
     onPress,
@@ -234,7 +235,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     "does not send idle timeout changes to an excluded target with idle capability %s",
     async (idleCapability) => {
       const remote = environment("remote", "Remote");
-      remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
+      remote.connection.phase = "disconnected";
       remote.serverConfig.environment.capabilities.providerSessionIdleTimeout = idleCapability;
       mocks.targets = [environment("local", "Local"), remote];
       act(() => root.render(<SettingsThreadsRouteScreen />));
