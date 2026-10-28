@@ -599,6 +599,25 @@ describe("MessagesTimeline keyboard navigation", () => {
     expect(row.bottom).toBeGreaterThan(view.top);
   });
 
+  it("moves focus to the latest message when the focused one leaves the list", async () => {
+    setup();
+    const timeline = (entries: ReadonlyArray<Entry>) => (
+      <>
+        <button type="button">Before</button>
+        <MessagesTimeline {...baseProps()} timelineEntries={entries as Entry[]} />
+      </>
+    );
+    await using screen = await renderElement(timeline(CONVERSATION));
+    await expect.element(screen.getByRole("list", { name: "Messages" })).toBeVisible();
+    screen.button("Before").focus();
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(focusedText()).toContain("Second question");
+
+    await screen.rerender(timeline(CONVERSATION.filter((entry) => entry.id !== "entry-q2")));
+    await vi.waitFor(() => expect(focusedText()).toContain("Second answer"));
+  });
+
   it("counts loaded messages as part of an unknown total and moves up to load earlier turns", async () => {
     setup();
     await using screen = await renderWithNeighbours(CONVERSATION.slice(2), {

@@ -43,9 +43,19 @@ function controlsIn(node: Element) {
  * Tab reaches the controls of the list's Tab-stop item only (the item rendered with
  * tabindex 0, plus anything linked to it with `data-timeline-controls-for`), so the
  * list stays one stop for the rest. Only added subtrees are visited as the list streams.
+ * When the focused item leaves the list, focus moves to the new Tab stop.
  */
 export function installTimelineControls(root: HTMLElement) {
   let stopId: string | undefined;
+  // Removing a focused element drops focus to the body without a focusout event.
+  let ownsFocus = root.contains(document.activeElement);
+  const onFocusIn = (event: FocusEvent) => {
+    ownsFocus = root.contains(event.target as Node);
+  };
+  // A click on text drops focus to the body too, and must not pull it back.
+  const onPointerDown = () => {
+    ownsFocus = false;
+  };
   const controlsOf = (id: string) =>
     Array.from(
       root.querySelectorAll(
@@ -89,6 +99,8 @@ export function installTimelineControls(root: HTMLElement) {
     }
     if (stop?.isConnected) setStop(stop.dataset.timelineItem);
     for (const node of added) if (node.isConnected) sync(node);
+    if (ownsFocus && document.activeElement === document.body)
+      root.querySelector<HTMLElement>(TAB_STOP)?.focus({ preventScroll: true });
   });
   observer.observe(root, {
     childList: true,
@@ -96,5 +108,11 @@ export function installTimelineControls(root: HTMLElement) {
     attributes: true,
     attributeFilter: ["tabindex"],
   });
-  return () => observer.disconnect();
+  document.addEventListener("focusin", onFocusIn);
+  document.addEventListener("pointerdown", onPointerDown, true);
+  return () => {
+    observer.disconnect();
+    document.removeEventListener("focusin", onFocusIn);
+    document.removeEventListener("pointerdown", onPointerDown, true);
+  };
 }
