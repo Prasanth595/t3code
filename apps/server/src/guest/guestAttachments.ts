@@ -61,25 +61,23 @@ const IMAGE_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 /**
- * The type of the host image at `path` when an agent message shows it, or null when the guest may
- * not load it. Only images the guest already sees in the thread qualify, never a network path,
- * which would make the host reach out to another machine.
+ * The type of a host image a guest may ask for by path, or null. A network path never qualifies:
+ * it would make the host reach out to another machine.
  */
-export function embeddedHostImageType(
-  path: string,
-  agentMessages: ReadonlyArray<string>,
-): string | null {
+export function guestHostImageType(path: string): string | null {
   if (!isAbsolutePath(path) || isNetworkPath(path)) return null;
-  const mimeType = IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()];
-  if (mimeType === undefined) return null;
+  return IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()] ?? null;
+}
+
+/** Whether an agent message shows the image at `path`, so the guest already sees it. */
+export function agentMessagesShowImage(path: string, agentMessages: ReadonlyArray<string>) {
   // Parsing is the slow part, so only messages that name the file are parsed.
   const name = fileBasename(path);
-  const embedded = agentMessages.some(
+  return agentMessages.some(
     (text) =>
       (text.includes(name) || text.includes(encodeURI(name))) &&
       chatMarkdownImageSources(text).some((source) => markdownDestinationHostPath(source) === path),
   );
-  return embedded ? mimeType : null;
 }
 
 /**

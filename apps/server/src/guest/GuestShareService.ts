@@ -62,8 +62,9 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
-  embeddedHostImageType,
+  agentMessagesShowImage,
   GUEST_UPLOAD_HEADER_BYTES,
+  guestHostImageType,
   type GuestUpload,
   matchesImageSignature,
 } from "./guestAttachments.ts";
@@ -639,14 +640,19 @@ const make = Effect.gen(function* () {
 
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
     const { thread } = yield* authorize(session, "session");
+    const mimeType = guestHostImageType(path);
+    if (mimeType === null) return yield* unavailable;
     const { messages } = yield* orchestrator
       .getThreadRecords(thread.id, ["messages"], { messageRoles: ["assistant"] })
       .pipe(Effect.mapError(() => unavailable));
-    const mimeType = embeddedHostImageType(
-      path,
-      messages.map((message) => message.text),
-    );
-    if (mimeType === null) return yield* unavailable;
+    if (
+      !agentMessagesShowImage(
+        path,
+        messages.map((message) => message.text),
+      )
+    ) {
+      return yield* unavailable;
+    }
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),

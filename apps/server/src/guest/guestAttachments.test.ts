@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { embeddedHostImageType } from "./guestAttachments.ts";
+import { agentMessagesShowImage, guestHostImageType } from "./guestAttachments.ts";
 
-describe("embeddedHostImageType", () => {
+describe("guest host images", () => {
   it.each([
     ["![a](/w/a.png)", "/w/a.png", "image/png"],
     ["![a](</w/my shot.jpg>)", "/w/my shot.jpg", "image/jpeg"],
@@ -21,6 +21,7 @@ describe("embeddedHostImageType", () => {
     ["![a](\\\\host\\s\\x.png)", "\\\\host\\s\\x.png", null],
     ["![a](/w/a.svg)", "/w/a.svg", null],
   ])("%j serves %j as %j", (text, path, type) => {
-    expect(embeddedHostImageType(path, [text])).toBe(type);
+    const served = guestHostImageType(path) !== null && agentMessagesShowImage(path, [text]);
+    expect(served ? guestHostImageType(path) : null).toBe(type);
   });
 });
