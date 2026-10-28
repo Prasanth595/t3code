@@ -76,8 +76,6 @@ const SHARE_ID_BYTES = 16;
 const INVITE_SIGNATURE_BYTES = 16;
 const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
-// Parsed replies kept across guest media requests; each holds only a reply's image sources.
-const PARSED_REPLY_LIMIT = 2_000;
 // Shares with no open guest stream whose sent image replies are still kept.
 const SHARED_THREAD_REPLIES_LIMIT = 64;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
@@ -207,7 +205,11 @@ export class GuestShareService extends Context.Service<
   }
 >()("t3/guest/GuestShareService") {}
 
-type AssistantReply = Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>;
+/** A reply a guest's stream sent, with its image sources once a media request parsed them. */
+interface SentReply {
+  readonly text: string;
+  sources?: ReadonlyArray<string>;
+}
 
 /** The thread record an event carries, for the share and the view. */
 const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread | null => {
@@ -486,7 +488,7 @@ const make = Effect.gen(function* () {
   // record; past the limit, closed ones are dropped.
   const sentImageReplies = new Map<
     GuestShareId,
-    { openStreams: number; readonly replies: Map<string, AssistantReply> }
+    { openStreams: number; readonly replies: Map<string, SentReply> }
   >();
   const sentRecord = (shareId: GuestShareId) => {
     let record = sentImageReplies.get(shareId);
@@ -507,7 +509,7 @@ const make = Effect.gen(function* () {
       // Only replies with image syntax can show an image. One edited to drop its images stops
       // allowing them.
       if (item.text.includes("![") || /<img/i.test(item.text)) {
-        sentRecord(shareId).replies.set(key, item);
+        sentRecord(shareId).replies.set(key, { text: item.text });
       } else {
         sentImageReplies.get(shareId)?.replies.delete(key);
       }
@@ -695,29 +697,21 @@ const make = Effect.gen(function* () {
     return exists ? { path, attachment: found } : yield* unavailable;
   });
 
-  // Each image on the guest page is its own request; a reply is parsed once per revision, not once
-  // per request, so a guest cannot keep the server parsing.
-  const parsedReplies = new Map<string, ReadonlyArray<string>>();
-  const imageSourcesOf = (reply: AssistantReply) => {
-    // Length too, so a streaming reply that grows within one timestamp is parsed again.
-    const key = `${reply.threadId}\u0000${reply.id}\u0000${DateTime.toEpochMillis(reply.updatedAt)}\u0000${reply.text.length}`;
-    let sources = parsedReplies.get(key);
-    if (sources === undefined) {
-      sources = chatMarkdownImageSources(reply.text);
-      parsedReplies.set(key, sources);
-      if (parsedReplies.size > PARSED_REPLY_LIMIT) {
-        parsedReplies.delete(parsedReplies.keys().next().value!);
-      }
-    }
-    return sources;
-  };
-
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
     const { share } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
     if (mimeType === null) return yield* unavailable;
     const sent = sentImageReplies.get(share.id)?.replies.values() ?? [];
-    if (!repliesShowImage(path, [...sent], imageSourcesOf)) return yield* unavailable;
+    // Each sent reply is parsed once, on the first request that needs it.
+    if (
+      !repliesShowImage(
+        path,
+        [...sent],
+        (reply) => (reply.sources ??= chatMarkdownImageSources(reply.text)),
+      )
+    ) {
+      return yield* unavailable;
+    }
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),
