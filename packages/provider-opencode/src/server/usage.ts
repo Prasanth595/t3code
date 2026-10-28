@@ -366,32 +366,33 @@ export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path | Provide
 
 // Rename when parseOpenCodeMessage output or the fingerprint changes; a bad file reads as empty.
 const CACHE_FILE_NAME = "usage-opencode-cache-v1.json";
+// Tuples in plain records; ReadonlyMap codecs made encode and decode several times slower.
 const CacheFile = Schema.fromJsonString(
-  Schema.toCodecJson(
-    Schema.ReadonlyMap(
-      Schema.String,
-      Schema.ReadonlyMap(
+  Schema.Record(
+    Schema.String,
+    Schema.Array(
+      Schema.Tuple([
         Schema.Number,
-        Schema.Struct({
-          fingerprint: Schema.NullOr(Schema.String),
-          created: Schema.NullOr(Schema.Number),
-          record: Schema.NullOr(
-            Schema.Struct({
-              provider: UsageProviderKind,
-              timestampMs: Schema.Number,
-              model: Schema.String,
-              sessionId: Schema.String,
-              totals: UsageTokenTotals,
-              reportedCostUsd: Schema.NullOr(Schema.Number),
-              speed: Schema.Literals(["standard", "fast", "ultrafast"]),
-              dedupeKey: Schema.NullOr(Schema.String),
-            }),
-          ),
-        }),
-      ),
+        Schema.NullOr(Schema.String),
+        Schema.NullOr(Schema.Number),
+        Schema.NullOr(
+          Schema.Struct({
+            provider: UsageProviderKind,
+            timestampMs: Schema.Number,
+            model: Schema.String,
+            sessionId: Schema.String,
+            totals: UsageTokenTotals,
+            reportedCostUsd: Schema.NullOr(Schema.Number),
+            speed: Schema.Literals(["standard", "fast", "ultrafast"]),
+            dedupeKey: Schema.NullOr(Schema.String),
+          }),
+        ),
+      ]),
     ),
   ),
 );
+const decodeCacheFile = Schema.decodeUnknownEffect(CacheFile);
+const encodeCacheFile = Schema.encodeEffect(CacheFile);
 // Parsed rows by cache file, so refreshes and restarts re-read only rows that changed.
 const rowCaches = new Map<string, OpenCodeUsageCache>();
 
@@ -408,10 +409,16 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
     const cachePath = path.join((yield* ProviderHost.ProviderHost).paths.stateDir, CACHE_FILE_NAME);
     if (!rowCaches.has(cachePath)) {
       const loaded = yield* fileSystem.readFileString(cachePath).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(CacheFile)),
-        Effect.orElseSucceed(() => []),
+        Effect.flatMap(decodeCacheFile),
+        Effect.orElseSucceed(() => ({})),
       );
-      if (!rowCaches.has(cachePath)) rowCaches.set(cachePath, new Map(loaded));
+      const tables = Object.entries(loaded).map(([key, rows]) => {
+        const entries = rows.map(([id, fingerprint, created, record]) => {
+          return [id, { fingerprint, created, record }] as const;
+        });
+        return [key, new Map(entries)] as const;
+      });
+      if (!rowCaches.has(cachePath)) rowCaches.set(cachePath, new Map(tables));
     }
     const rowCache = rowCaches.get(cachePath)!;
     const before = new Map(rowCache);
@@ -436,7 +443,13 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
       rowCache.size !== before.size ||
       rowCache.entries().some(([key, rows]) => before.get(key) !== rows)
     ) {
-      yield* Schema.encodeEffect(CacheFile)(rowCache).pipe(
+      const tables = rowCache.entries().map(([key, rows]) => {
+        const entries = rows
+          .entries()
+          .map(([id, row]) => [id, row.fingerprint, row.created, row.record] as const);
+        return [key, entries.toArray()] as const;
+      });
+      yield* encodeCacheFile(Object.fromEntries(tables)).pipe(
         Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
         Effect.ignore,
       );
