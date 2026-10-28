@@ -78,6 +78,8 @@ const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
 // Parsed replies kept across guest media requests; each holds only a reply's image sources.
 const PARSED_REPLY_LIMIT = 2_000;
+// Shared threads whose replies stay read between guest media requests.
+const SHARED_THREAD_REPLIES_LIMIT = 16;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
 // the host. Closing or replacing the link ends the main stream at once.
 const ACCESS_RECHECK_INTERVAL = Duration.seconds(30);
@@ -661,21 +663,44 @@ const make = Effect.gen(function* () {
     return sources;
   };
 
+  // The replies in the rows the guest's stream opens with, so replies a fork inherits count too.
+  // Read again only when the thread changes, not for every image the page loads.
+  const repliesByThread = new Map<
+    ThreadId,
+    {
+      readonly sequence: number;
+      readonly replies: ReadonlyArray<Parameters<typeof imageSourcesOf>[0]>;
+    }
+  >();
+  const windowReplies = Effect.fn("GuestShareService.windowReplies")(
+    function* (threadId: ThreadId) {
+      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const cached = repliesByThread.get(threadId);
+      if (cached?.sequence === sequence) return cached.replies;
+      const { projection } = yield* orchestrator.getThreadSnapshotWindow(threadId, {
+        rowLimit: SNAPSHOT_ROW_LIMIT,
+        userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
+      });
+      const replies = projection.visibleTurnItems.flatMap(({ item }) =>
+        item.type === "assistant_message" ? [item] : [],
+      );
+      repliesByThread.delete(threadId);
+      repliesByThread.set(threadId, { sequence, replies });
+      if (repliesByThread.size > SHARED_THREAD_REPLIES_LIMIT) {
+        repliesByThread.delete(repliesByThread.keys().next().value!);
+      }
+      return replies;
+    },
+    Effect.mapError(() => unavailable),
+  );
+
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
     const { thread } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
     if (mimeType === null) return yield* unavailable;
-    // The rows the guest's stream opens with, so replies a fork inherits count too.
-    const { projection } = yield* orchestrator
-      .getThreadSnapshotWindow(thread.id, {
-        rowLimit: SNAPSHOT_ROW_LIMIT,
-        userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,
-      })
-      .pipe(Effect.mapError(() => unavailable));
-    const replies = projection.visibleTurnItems.flatMap(({ item }) =>
-      item.type === "assistant_message" ? [item] : [],
-    );
-    if (!repliesShowImage(path, replies, imageSourcesOf)) return yield* unavailable;
+    if (!repliesShowImage(path, yield* windowReplies(thread.id), imageSourcesOf)) {
+      return yield* unavailable;
+    }
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(
       Effect.flatMap((file) => file.readAlloc(GUEST_UPLOAD_HEADER_BYTES)),
