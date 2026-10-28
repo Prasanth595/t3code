@@ -309,27 +309,30 @@ describe("OpenCodeAdapterV2", () => {
       const root = "ses_root";
       const child = "ses_child";
       const taskDeny = { permission: "task", pattern: "*", action: "deny" as const };
+      const nativePermissions = new Map<string, (typeof updates)[number]["permission"]>([
+        [root, openCodePermissionRules(fullAccess)],
+        [child, [taskDeny]],
+      ]);
+      let failNextChildUpdate = false;
       const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
           get: async ({ sessionID }: { sessionID: string }) => ({
-            data:
-              sessionID === child
-                ? {
-                    id: child,
-                    parentID: root,
-                    permission: [taskDeny],
-                    time: { created: 2, updated: 2 },
-                  }
-                : {
-                    id: root,
-                    permission: openCodePermissionRules(fullAccess),
-                    time: { created: 1, updated: 1 },
-                  },
+            data: {
+              id: sessionID,
+              ...(sessionID === child ? { parentID: root } : {}),
+              permission: nativePermissions.get(sessionID),
+              time: { created: 1, updated: 1 },
+            },
           }),
           update: async (input: (typeof updates)[number]) => {
+            if (input.sessionID === child && failNextChildUpdate) {
+              failNextChildUpdate = false;
+              throw new Error("child update failed");
+            }
             updates.push(input);
+            nativePermissions.set(input.sessionID, input.permission);
             return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
           },
           promptAsync: async () => ({ data: true }),
@@ -372,6 +375,27 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(permissionAction(childRules, "bash"), "ask");
       assert.equal(permissionAction(childRules, "task"), "deny");
       assert.deepStrictEqual(childRules, openCodeChildPermissionRules(supervised, [taskDeny]));
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: fullAccess,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "allow");
+
+      failNextChildUpdate = true;
+      const failed = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: supervised,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(failed));
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
+      assert.equal(permissionAction(nativePermissions.get(child)!, "task"), "deny");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
