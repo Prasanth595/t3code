@@ -1468,6 +1468,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     };
     const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
+      !(
+        hostPlatform !== "darwin" &&
+        keys.ctrlKey &&
+        keys.altKey &&
+        /^(?:[^a-zA-Z0-9]|Dead)$/u.test(keys.key)
+      ) &&
       forwardedShortcuts.find(({ shortcut }) =>
         matchesKeybindingShortcut(
           keys,
@@ -1494,12 +1500,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         host &&
         !host.isDestroyed() &&
         holdsKeyboardFocus(wc) &&
-        !(
-          hostPlatform !== "darwin" &&
-          input.control &&
-          input.alt &&
-          /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key)
-        ) &&
         findForwardedShortcut({
           key: input.key,
           code: input.code,

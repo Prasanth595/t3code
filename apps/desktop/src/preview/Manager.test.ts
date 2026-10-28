@@ -713,6 +713,23 @@ describe("PreviewManager", () => {
             );
             expect(preventDefault).toHaveBeenCalledOnce();
             expect(send).toHaveBeenCalledTimes(2);
+
+            Object.assign(preview.webContents, { focusedFrame: mainFrame });
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("ctrl+alt+8")! },
+            ]);
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "[",
+                code: "Digit8",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: true,
+              },
+            );
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 3 : 2);
           }),
         platform,
       ),
