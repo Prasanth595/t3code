@@ -200,7 +200,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <>
               <ComposerBanner.Separator />
               <span className="max-w-[40%] min-w-0 truncate text-muted-foreground">
-                Delegated task on {prompt.remoteEnvironmentLabel}
+                <span className="@max-[560px]:hidden">Delegated task on </span>
+                {prompt.remoteEnvironmentLabel}
               </span>
             </>
           ) : null}

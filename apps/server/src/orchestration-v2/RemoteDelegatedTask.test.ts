@@ -511,6 +511,23 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         ),
         [approval.requestId],
       );
+      const settle = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("command:settle:mirrors"),
+          threadId: parent.threadId,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(settle.cause), "is waiting on an approval or question");
+      const snooze = yield* orchestrator
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("command:snooze:mirrors"),
+          threadId: parent.threadId,
+          snoozedUntil: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+        })
+        .pipe(Effect.flip);
+      assert.include(String(snooze.cause), "cannot be snoozed");
 
       yield* orchestrator.dispatch({
         type: "delegated_task.remote.complete",

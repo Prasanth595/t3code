@@ -43,6 +43,7 @@ import { countQuestionAttachments, questionAttachmentDraftId } from "../../quest
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
+import type { ImportedContextIds } from "../composerInlineTokenPaste";
 import { randomUUID } from "~/lib/utils";
 import { readPreparedConnection } from "~/state/session";
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -274,8 +275,8 @@ export function useComposerContextImport(input: {
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget = attachmentDraftTarget,
-  ): ReadonlyMap<string, string> => {
-    const rewritten = new Map<string, string>();
+  ): ImportedContextIds => {
+    const rewritten = new Map<string, string | null>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
     const target = {
@@ -343,7 +344,10 @@ export function useComposerContextImport(input: {
         continue;
       }
       const conflicts = existing !== undefined;
-      if (!pastedContextRecordFits(record.kind, target)) continue;
+      if (!pastedContextRecordFits(record.kind, target)) {
+        rewritten.set(record.contextId, null);
+        continue;
+      }
       switch (record.kind) {
         case "terminal": {
           const threadId = activeThread?.id ?? activeThreadId;
@@ -422,9 +426,7 @@ export function useComposerContextImport(input: {
     }
     return rewritten;
   };
-  const importContextFragment = (
-    fragment: ComposerContextClipboardFragment,
-  ): ReadonlyMap<string, string> =>
+  const importContextFragment = (fragment: ComposerContextClipboardFragment): ImportedContextIds =>
     importContextRecords(fragment.records, fragment.source.environmentId);
   const importContextFragmentStable = useStableCallback(importContextFragment);
 

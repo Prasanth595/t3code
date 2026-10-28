@@ -71,6 +71,7 @@ import {
   ThreadId,
   TurnItemId,
   TrimmedNonEmptyString,
+  unansweredRemoteTaskRequests,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -3052,9 +3053,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      const blockingRequestExists = pendingRequests.some(
-        (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
-      );
+      const blockingRequestExists =
+        pendingRequests.some(
+          (request) =>
+            request.kind !== "user_input" || request.responseCapability.type !== "message",
+        ) || unansweredRemoteTaskRequests(projection.thread).length > 0;
       const blocker = blockingRequestExists
         ? "is waiting on an approval or question. Answer it before settling."
         : runningRunExists
@@ -3187,7 +3190,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
       }
-      if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+      if (
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        unansweredRemoteTaskRequests(projection.thread).length > 0
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

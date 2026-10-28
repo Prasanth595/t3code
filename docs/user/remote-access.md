@@ -299,7 +299,8 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason. When the task asks a question or needs an approval,
 this thread shows it, so you can answer from any device connected to this
-machine.
+machine. A machine on an older T3 Code version keeps those requests to itself;
+answer them there.
 
 ## Manage or revoke access
 

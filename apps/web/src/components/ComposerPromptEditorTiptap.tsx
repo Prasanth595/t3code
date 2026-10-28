@@ -121,7 +121,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { type ImportedContextIds, importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
@@ -151,7 +151,7 @@ export interface ComposerPromptEditorProps {
     | ((contextIds: ReadonlyArray<string>) => string | null)
     | undefined;
   importContextFragment?:
-    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
+    | ((fragment: ComposerContextClipboardFragment) => ImportedContextIds)
     | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
