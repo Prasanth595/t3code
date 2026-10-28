@@ -806,6 +806,8 @@ export type SidebarThreadStatus =
   | "input"
   | "request"
   | "working"
+  | "queued"
+  | "background"
   | "waiting"
   | "failed"
   | "limited"
@@ -826,7 +828,14 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "working" || input.status === "waiting") return true;
+  if (
+    input.status === "working" ||
+    input.status === "queued" ||
+    input.status === "background" ||
+    input.status === "waiting"
+  ) {
+    return true;
+  }
   if (input.status === "ready" || input.status === "approval") {
     return !input.isUnread && !input.isWoke;
   }
@@ -841,7 +850,9 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
->;
+> & {
+  readonly pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -857,11 +868,23 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
+  if (thread.runtime?.status === "queued") {
+    return "queued";
+  }
   if (
     thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+    ["preparing", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
+  }
+  // The turn ended but background work, such as a workflow, still runs: that is not idle.
+  // Subagents and background tasks are work the agent started; an awaited command is a wait.
+  if (
+    (thread.pendingBackgroundTasks ?? []).some(
+      (task) => task.kind === "background_task" || task.kind === "subagent",
+    )
+  ) {
+    return "background";
   }
   if (thread.runtime?.status === "idle") {
     return "waiting";
@@ -955,6 +978,8 @@ export type SidebarV2TopStatusKind =
   | "limited"
   | "input"
   | "request"
+  | "queued"
+  | "background"
   | "waiting"
   | "woke"
   | "working";

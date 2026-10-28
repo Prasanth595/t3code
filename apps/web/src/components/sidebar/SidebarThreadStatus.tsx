@@ -4,6 +4,8 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
+  ClockIcon,
+  ClockIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   UserRoundIcon,
@@ -17,6 +19,7 @@ import type { SidebarThreadStatus } from "../Sidebar.logic";
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
+  queued: ClockIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,
@@ -51,6 +54,16 @@ export function sidebarThreadTopStatus(input: {
         icon: "working",
         className: "text-info-foreground",
       };
+    case "queued":
+      return { label: "Queued", icon: "queued", className: "text-muted-foreground" };
+    case "background":
+      // The turn ended but a workflow or other background work keeps running.
+      return { label: "Running", icon: "working", className: "text-info-foreground" };
+    case "queued":
+      return { label: "Queued", icon: "queued", className: "text-muted-foreground" };
+    case "background":
+      // The turn ended but a workflow or other background work keeps running.
+      return { label: "Running", icon: "working", className: "text-info-foreground" };
     case "waiting":
       return { label: "Waiting", icon: "waiting", className: "text-muted-foreground" };
     case "approval":
