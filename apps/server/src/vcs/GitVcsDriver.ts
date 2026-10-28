@@ -909,12 +909,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
+              // Large repositories list every tracked path; jump between NULs instead of visiting each byte.
               onStdoutChunk: (chunk) => {
-                for (const byte of chunk) {
-                  if (recordStart) skipped = byte === 83;
+                let index = 0;
+                while (index < chunk.length) {
+                  if (recordStart) {
+                    const tag = chunk[index]!;
+                    skipped = tag === 83;
+                    if ((tag >= 97 && tag <= 122) || (!sparseCheckout && skipped)) {
+                      specialFlags = true;
+                    }
+                  }
+                  const nul = chunk.indexOf(0, index);
+                  const end = nul === -1 ? chunk.length : nul;
                   if (skipped && sparseCheckout) {
-                    if (byte !== 0) skippedRecord.push(byte);
-                    else {
+                    for (let byte = index; byte < end; byte += 1) skippedRecord.push(chunk[byte]!);
+                    if (nul !== -1) {
                       if (skippedRecord.at(-1) !== 47) {
                         const name = Buffer.from(skippedRecord).subarray(2);
                         if (!NodeBuffer.isUtf8(name)) specialFlags = true;
@@ -923,13 +933,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                       skippedRecord = [];
                     }
                   }
-                  if (
-                    recordStart &&
-                    ((byte >= 97 && byte <= 122) || (!sparseCheckout && byte === 83))
-                  ) {
-                    specialFlags = true;
-                  }
-                  recordStart = byte === 0;
+                  recordStart = nul !== -1;
+                  index = end + 1;
                 }
               },
             });
