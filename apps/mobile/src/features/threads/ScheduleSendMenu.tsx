@@ -99,40 +99,38 @@ export function ScheduleSendMenu(props: {
       return;
     }
     scheduling.current = true;
-    try {
-      const modelSelection = draft.modelSelection ?? props.modelSelection;
-      const result = await createMessage({
-        environmentId: props.environmentId,
-        input: {
-          prompt,
-          sendAt: sendAtForPreset(preset),
-          projectId: props.projectId,
-          threadId: props.threadId,
-          workspaceStrategy:
-            props.threadId === null
-              ? workspaceForSelection(draft.workspaceSelection)
-              : { type: "root" },
-          modelSelection,
-          runtimeMode: draft.runtimeMode ?? props.runtimeMode,
-          interactionMode: draft.interactionMode ?? props.interactionMode,
-          createdBy: "user",
-          creationSource: "mobile",
-        },
-      });
-      if (result._tag === "Failure") {
-        const error = squashAtomCommandFailure(result);
-        Alert.alert(
-          "Could not schedule the message",
-          error instanceof Error ? error.message : "Try again in a moment.",
-        );
-        return;
-      }
-      const current = getComposerDraftSnapshot(props.draftKey);
-      if (current.text.trim() === prompt && current.attachments.length === 0) {
-        clearComposerDraftContent(props.draftKey);
-      }
-    } finally {
+    const modelSelection = draft.modelSelection ?? props.modelSelection;
+    const result = await createMessage({
+      environmentId: props.environmentId,
+      input: {
+        prompt,
+        sendAt: sendAtForPreset(preset),
+        projectId: props.projectId,
+        threadId: props.threadId,
+        workspaceStrategy:
+          props.threadId === null
+            ? workspaceForSelection(draft.workspaceSelection)
+            : { type: "root" },
+        modelSelection,
+        runtimeMode: draft.runtimeMode ?? props.runtimeMode,
+        interactionMode: draft.interactionMode ?? props.interactionMode,
+        createdBy: "user",
+        creationSource: "mobile",
+      },
+    }).finally(() => {
       scheduling.current = false;
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      Alert.alert(
+        "Could not schedule the message",
+        error instanceof Error ? error.message : "Try again in a moment.",
+      );
+      return;
+    }
+    const current = getComposerDraftSnapshot(props.draftKey);
+    if (current.text.trim() === prompt && current.attachments.length === 0) {
+      clearComposerDraftContent(props.draftKey);
     }
   };
 
