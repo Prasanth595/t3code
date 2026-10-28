@@ -1633,9 +1633,14 @@ export function ThreadsSettingsPanel() {
             >
               <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Release idle agents">
                 <SelectValue>
-                  {(value: string | null) =>
-                    value === null ? "Mixed" : value === "never" ? "Never" : `${value} minutes`
-                  }
+                  {(value: string | null) => {
+                    if (value === null) return "Mixed";
+                    const preset = PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.find(
+                      (option) =>
+                        (option.value === null ? "never" : String(option.value)) === value,
+                    );
+                    return preset?.label ?? `${value} minutes`;
+                  }}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
