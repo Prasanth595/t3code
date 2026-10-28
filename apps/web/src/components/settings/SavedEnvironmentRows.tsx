@@ -491,7 +491,6 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
           {meter}
           {tunnelLimit !== null ? (
             <TunnelLimitAlert
-              limit={tunnelLimit}
               upgrade={usage.upgrade}
               onLinkT3Chat={openAccountPage ? () => openAccountPage("t3-chat") : null}
               onManageTunnels={openAccountPage ? () => openAccountPage("t3-connect") : null}

@@ -342,23 +342,20 @@ function PublishStep({
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
       {tunnelLimit !== null ? (
-        <OnboardingTunnelLimitAlert limit={tunnelLimit} onOpenAccountPage={onOpenAccountPage} />
+        <OnboardingTunnelLimitAlert onOpenAccountPage={onOpenAccountPage} />
       ) : null}
     </div>
   );
 }
 
 function OnboardingTunnelLimitAlert({
-  limit,
   onOpenAccountPage,
 }: {
-  readonly limit: number;
   readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
 }) {
   const { upgrade } = useManagedTunnelUsage();
   return (
     <TunnelLimitAlert
-      limit={limit}
       upgrade={upgrade}
       onLinkT3Chat={onOpenAccountPage ? () => onOpenAccountPage("t3-chat") : null}
       onManageTunnels={onOpenAccountPage ? () => onOpenAccountPage("t3-connect") : null}

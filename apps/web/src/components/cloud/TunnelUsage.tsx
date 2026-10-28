@@ -76,12 +76,10 @@ export function TunnelUsageMeter({
 
 /** Shown when the relay refuses a new tunnel because the account is at its cap. */
 export function TunnelLimitAlert({
-  limit,
   upgrade,
   onLinkT3Chat,
   onManageTunnels,
 }: {
-  readonly limit: number;
   readonly upgrade: ManagedTunnelUpgrade;
   readonly onLinkT3Chat: (() => void) | null;
   readonly onManageTunnels: (() => void) | null;
@@ -106,11 +104,13 @@ export function TunnelLimitAlert({
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>All {limit} T3 Connect tunnels are in use</AlertTitle>
+      <AlertTitle>You&apos;re out of tunnels (they cost us money).</AlertTitle>
       <AlertDescription>
-        {upgrade
-          ? `${tunnelUpgradeCopy(upgrade)} Or deregister an environment you no longer use.`
-          : "Deregister an environment you no longer use to free a tunnel."}
+        {upgrade === "link"
+          ? "Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)"
+          : upgrade
+            ? "Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)"
+            : "Switch to Tailscale or deregister an environment you no longer use (sorry!)"}
       </AlertDescription>
       {action ? <AlertAction>{action}</AlertAction> : null}
     </Alert>
