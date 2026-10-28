@@ -280,6 +280,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         className="before:hidden"
         padding="none"
         touchBackdrop
+        animated={false}
       >
         <ModelPickerContent
           searchInputRef={searchInputRef}
