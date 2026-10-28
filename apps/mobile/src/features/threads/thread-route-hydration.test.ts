@@ -1,6 +1,11 @@
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadRouteIsHydrating, threadRouteOpensDraft } from "./thread-route-hydration";
+import {
+  threadDetailErrorIsCurrent,
+  threadRouteIsHydrating,
+  threadRouteOpensDraft,
+} from "./thread-route-hydration";
 
 const settled = {
   isLoadingConnections: false,
@@ -113,5 +118,38 @@ describe("threadRouteOpensDraft", () => {
       threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),
     ).toBe(true);
     expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(true);
+  });
+});
+
+describe("threadDetailErrorIsCurrent", () => {
+  const oldError = Option.some("Could not synchronize the thread.");
+
+  it("ignores the error a thread kept from before the connection came back", () => {
+    const detailHasError = threadDetailErrorIsCurrent({
+      connectionState: "connected",
+      error: oldError,
+      errorBeforeConnected: oldError,
+    });
+    expect(detailHasError).toBe(false);
+    expect(threadRouteIsHydrating({ ...settled, detailStatus: "empty", detailHasError })).toBe(
+      true,
+    );
+  });
+
+  it("counts an error the live connection reported", () => {
+    expect(
+      threadDetailErrorIsCurrent({
+        connectionState: "connected",
+        error: Option.some("Could not synchronize the thread."),
+        errorBeforeConnected: oldError,
+      }),
+    ).toBe(true);
+    expect(
+      threadDetailErrorIsCurrent({
+        connectionState: "reconnecting",
+        error: oldError,
+        errorBeforeConnected: oldError,
+      }),
+    ).toBe(true);
   });
 });

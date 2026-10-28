@@ -1,6 +1,7 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import * as Option from "effect/Option";
 
 export function threadRouteIsHydrating(input: {
   readonly isLoadingConnections: boolean;
@@ -55,4 +56,20 @@ export function threadRouteOpensDraft(input: {
     return true;
   }
   return input.connectionState !== "reconnecting" && input.connectionState !== "connecting";
+}
+
+/**
+ * A thread keeps its sync error until the new connection resubscribes, so the first renders after
+ * a reconnect still show the old connection's error. Only an error the live connection reported
+ * counts.
+ */
+export function threadDetailErrorIsCurrent<E>(input: {
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly error: Option.Option<E>;
+  readonly errorBeforeConnected: Option.Option<E>;
+}): boolean {
+  return (
+    Option.isSome(input.error) &&
+    !(input.connectionState === "connected" && input.error === input.errorBeforeConnected)
+  );
 }
