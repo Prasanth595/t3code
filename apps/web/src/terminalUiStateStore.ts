@@ -9,8 +9,10 @@ import {
   paneLayout,
   removePaneFromLayout,
   resolveTerminalPaneLayout,
+  setSplitSizesAtPath,
   splitPaneLayout,
   terminalPaneLayoutEqual,
+  type TerminalPaneLayoutPath,
 } from "./terminalPaneLayout";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -390,6 +392,23 @@ function setThreadTerminalHeight(
   return { ...normalized, terminalHeight: height };
 }
 
+function setThreadTerminalPaneSizes(
+  state: ThreadTerminalUiState,
+  groupId: string,
+  path: TerminalPaneLayoutPath,
+  sizes: number[] | undefined,
+): ThreadTerminalUiState {
+  const normalized = normalizeThreadTerminalUiState(state);
+  const groupIndex = normalized.terminalGroups.findIndex((group) => group.id === groupId);
+  if (groupIndex < 0) return normalized;
+  const group = normalized.terminalGroups[groupIndex]!;
+  const nextLayout = setSplitSizesAtPath(group.layout, path, sizes);
+  if (nextLayout === group.layout) return normalized;
+  const terminalGroups = [...normalized.terminalGroups];
+  terminalGroups[groupIndex] = { ...group, layout: nextLayout };
+  return { ...normalized, terminalGroups };
+}
+
 function splitThreadTerminal(
   state: ThreadTerminalUiState,
   terminalId: string,
@@ -601,6 +620,12 @@ interface TerminalUiStateStoreState {
     options?: { open?: boolean; active?: boolean },
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  setTerminalPaneSizes: (
+    threadRef: ScopedThreadRef,
+    groupId: string,
+    path: TerminalPaneLayoutPath,
+    sizes: number[] | undefined,
+  ) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
   clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
@@ -708,6 +733,10 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
           ),
         setActiveTerminal: (threadRef, terminalId) =>
           updateTerminal(threadRef, (state) => setThreadActiveTerminal(state, terminalId)),
+        setTerminalPaneSizes: (threadRef, groupId, path, sizes) =>
+          updateTerminal(threadRef, (state) =>
+            setThreadTerminalPaneSizes(state, groupId, path, sizes),
+          ),
         closeTerminal: (threadRef, terminalId) =>
           updateTerminal(threadRef, (state) => closeThreadTerminal(state, terminalId), {
             terminalId,

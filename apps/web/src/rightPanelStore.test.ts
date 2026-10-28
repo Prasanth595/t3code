@@ -640,6 +640,38 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("rehydrates a v14 terminal surface with a split layout and no sizes unchanged", () => {
+    const persisted = {
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "terminal:term-1",
+          surfaces: [
+            {
+              id: "terminal:term-1",
+              kind: "terminal",
+              resourceId: "term-1",
+              terminalIds: ["term-1", "term-2"],
+              activeTerminalId: "term-2",
+              layout: {
+                kind: "split",
+                direction: "horizontal",
+                children: [
+                  { kind: "pane", terminalId: "term-1" },
+                  { kind: "pane", terminalId: "term-2" },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+    expect(migratePersistedRightPanelState(persisted)).toEqual({
+      ...persisted,
+      threadPanelVisibilityByThreadKey: {},
+    });
+  });
+
   it("upgrades saved file surfaces with neutral reveal state", () => {
     expect(
       migratePersistedRightPanelState({
@@ -1513,6 +1545,53 @@ describe("rightPanelStore", () => {
         ],
       },
     });
+  });
+
+  it("updates only the targeted terminal surface's sizes; a bad surface id is a no-op", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-2");
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().setTerminalPaneSizes(refA, "terminal:term-1", [], [0.7, 0.3]);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    const terminalSurface = state.surfaces.find((surface) => surface.id === "terminal:term-1");
+    expect(terminalSurface?.kind === "terminal" && terminalSurface.layout).toEqual({
+      kind: "split",
+      direction: "horizontal",
+      sizes: [0.7, 0.3],
+      children: [
+        { kind: "pane", terminalId: "term-1" },
+        { kind: "pane", terminalId: "term-2" },
+      ],
+    });
+    const browserSurface = state.surfaces.find((surface) => surface.id === "browser:tab-a");
+    expect(browserSurface).toBeDefined();
+
+    const before = useRightPanelStore.getState().byThreadKey;
+    useRightPanelStore.getState().setTerminalPaneSizes(refA, "not-a-real-surface", [], [0.9, 0.1]);
+    expect(useRightPanelStore.getState().byThreadKey).toBe(before);
+  });
+
+  it("does not bump the user action revision when resizing terminal panes", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2");
+    const revision = store.getUserActionRevision(refA);
+    store.setTerminalPaneSizes(refA, "terminal:term-1", [], [0.7, 0.3]);
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  it("keeps the layout consistent after splitting or closing a resized terminal surface", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2");
+    store.setTerminalPaneSizes(refA, "terminal:term-1", [], [0.2, 0.8]);
+    store.splitTerminal(refA, "terminal:term-1", "term-3");
+    store.closeTerminal(refA, "terminal:term-1", "term-1");
+
+    const surface = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(surface?.kind === "terminal" && surface.terminalIds).toEqual(["term-2", "term-3"]);
   });
 
   it("closing the final terminal pane removes its surface and closes the panel", () => {
