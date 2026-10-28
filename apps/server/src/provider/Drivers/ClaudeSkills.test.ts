@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
@@ -397,7 +398,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
+  it.effect("prefers managed then user skills on collisions, even with a stray .agents copy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -430,6 +431,26 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "User deploy.",
+        },
+      ]);
+
+      const programData = path.join(tempDir, "ProgramData");
+      yield* writeSkill(
+        path.join(programData, "ClaudeCode", ".claude", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Managed deploy.", "---"].join("\n"),
+      );
+      const managedSkills = yield* discoverClaudeSkills({ homePath: configDir }, workspace, {
+        PROGRAMDATA: programData,
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+
+      assert.deepEqual(managedSkills, [
+        {
+          name: "deploy",
+          path: path.join(programData, "ClaudeCode", ".claude", "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+          description: "Managed deploy.",
         },
       ]);
     }),

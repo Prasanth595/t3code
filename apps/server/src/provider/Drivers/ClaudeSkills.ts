@@ -104,19 +104,20 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-function claudeManagedSettingsPath(
+/** Holds managed-settings.json and the managed `.claude/skills`. */
+function claudeManagedDirectory(
   path: Path.Path,
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
   if (platform === "darwin") {
-    return "/Library/Application Support/ClaudeCode/managed-settings.json";
+    return "/Library/Application Support/ClaudeCode";
   }
   if (platform === "win32") {
     const programData = environment.PROGRAMDATA?.trim();
-    return programData ? path.join(programData, "ClaudeCode", "managed-settings.json") : undefined;
+    return programData ? path.join(programData, "ClaudeCode") : undefined;
   }
-  return "/etc/claude-code/managed-settings.json";
+  return "/etc/claude-code";
 }
 
 function skillOverrideSettingsPaths(
@@ -127,7 +128,7 @@ function skillOverrideSettingsPaths(
   environment: NodeJS.ProcessEnv,
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
-  const managedPath = claudeManagedSettingsPath(path, platform, environment);
+  const managedDirectory = claudeManagedDirectory(path, platform, environment);
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
@@ -138,7 +139,7 @@ function skillOverrideSettingsPaths(
         ]
       : []),
     ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
-    ...(managedPath ? [managedPath] : []),
+    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
   ];
 }
 
@@ -427,7 +428,10 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-/** First name wins, matching Claude Code's precedence of user skills over project skills. */
+/**
+ * First name wins, matching Claude Code's precedence of managed over user skills and user
+ * over project skills.
+ */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
@@ -441,9 +445,18 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     cwd,
     environment ?? process.env,
   );
+  const managedDirectory = claudeManagedDirectory(
+    path,
+    yield* HostProcess.Platform,
+    environment ?? process.env,
+  );
 
   const additionalDirectory = parseCliArgs(config.launchArgs ?? "").flags["add-dir"];
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
+    // Managed skills reach every project, like user skills.
+    ...(managedDirectory
+      ? [{ directory: path.join(managedDirectory, ".claude", "skills"), scope: "user" as const }]
+      : []),
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
     ...(additionalDirectory && (cwd || path.isAbsolute(additionalDirectory))
