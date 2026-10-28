@@ -133,7 +133,8 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
-import { useThreadActions } from "../hooks/useThreadActions";
+import { useContinueThread, useThreadActions } from "../hooks/useThreadActions";
+import { threadContinuationRunId } from "./threadActionMenu.logic";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
@@ -1285,6 +1286,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.confirmThreadArchive,
   );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const continueThread = useContinueThread();
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
@@ -2171,6 +2173,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const clicked = await api.contextMenu.show(
         [
+          ...(threadContinuationRunId(thread) !== null
+            ? [{ id: "continue", label: "Continue", icon: "play", disabled: !canOperateThread }]
+            : []),
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
@@ -2192,6 +2197,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      if (clicked === "continue") {
+        const result = await continueThread(threadRef);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to continue thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
 
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);

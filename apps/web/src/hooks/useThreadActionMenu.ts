@@ -21,6 +21,7 @@ import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadContinuationRunId,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -48,7 +49,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
-import { useThreadActions } from "./useThreadActions";
+import { useContinueThread, useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -88,6 +89,7 @@ export function useThreadActionMenu(input: {
     deleteThread,
     markThreadUnread,
   } = useThreadActions();
+  const continueThread = useContinueThread();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -134,6 +136,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        canContinue: threadContinuationRunId(thread) !== null,
         branch: thread.branch ?? null,
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
@@ -183,6 +186,9 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "continue":
+          await reportFailure("Failed to continue thread", () => continueThread(threadRef));
+          return;
         case "hide":
           setThreadHiddenOnClient(threadRef, true);
           return;

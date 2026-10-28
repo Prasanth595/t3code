@@ -116,7 +116,11 @@ import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
-import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import {
+  useAcknowledgeThreadWoke,
+  useContinueThread,
+  useThreadActions,
+} from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -164,6 +168,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadContinuationRunId,
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
@@ -827,6 +832,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const continueThread = useContinueThread();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2400,6 +2406,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              canContinue: threadContinuationRunId(thread) !== null,
               branch: thread.branch ?? null,
               projectFilter: threadProjectGroup
                 ? {
@@ -2441,6 +2448,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "continue": {
+            const result = await continueThread(threadRef);
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to continue thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "hide":
             setThreadHiddenOnClient(threadRef, true);
             return;

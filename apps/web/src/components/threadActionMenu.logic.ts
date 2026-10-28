@@ -1,7 +1,36 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
+
+export function threadContinuationRunId(
+  thread: Pick<
+    EnvironmentThreadShell,
+    | "latestRun"
+    | "runtime"
+    | "archivedAt"
+    | "deletedAt"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+  >,
+) {
+  if (
+    thread.archivedAt != null ||
+    thread.deletedAt != null ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    threadRuntimeIsActive(thread.runtime)
+  ) {
+    return null;
+  }
+  const run = thread.latestRun;
+  return run?.status === "failed" || run?.status === "interrupted" ? run.runId : null;
+}
 
 export type ThreadActionMenuId =
+  | "continue"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -68,6 +97,7 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  readonly canContinue?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -114,6 +144,7 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canContinue ? [{ id: "continue" as const, label: "Continue", icon: "play" }] : []),
     state.isHidden
       ? { id: "unhide", label: "Restore on this device", icon: "eye" }
       : { id: "hide", label: "Hide on this device", icon: "eye-off" },
