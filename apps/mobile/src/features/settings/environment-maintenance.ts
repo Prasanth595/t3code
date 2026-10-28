@@ -55,7 +55,8 @@ const decodeReleases = Schema.decodeUnknownSync(Schema.Array(Release));
 
 async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
   const response = await fetch(url, { signal, headers: { Accept: accept } });
-  if (!response.ok) throw new Error(`Could not check releases (${response.status}). Try again.`);
+  if (!response.ok)
+    throw new Error(`Nu am putut verifica versiunile (${response.status}). Încearcă din nou.`);
   return response;
 }
 
@@ -90,6 +91,6 @@ export async function findEnvironmentUpdate(currentVersion: string, signal: Abor
     if (releases.length < 100) break;
   }
 
-  if (version === undefined) throw new Error(`No ${channel} release was found.`);
+  if (version === undefined) throw new Error(`Nu s-a găsit nicio versiune ${channel}.`);
   return compareSemverVersions(version, currentVersion) > 0 ? version : null;
 }

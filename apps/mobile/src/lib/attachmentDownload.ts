@@ -67,7 +67,7 @@ async function availableSharing(signal: AbortSignal) {
   const canShare = await Sharing.isAvailableAsync();
   if (signal.aborted) return null;
   if (!canShare) {
-    throw new Error("Saving and sharing files is unavailable on this device.");
+    throw new Error("Salvarea și partajarea fișierelor nu sunt disponibile pe acest dispozitiv.");
   }
   return Sharing;
 }
@@ -140,7 +140,7 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
           shared = true;
         } catch (cause) {
           if (!signal.aborted) {
-            throw new Error("Could not open the share sheet. Try again.", { cause });
+            throw new Error("Partajarea nu a putut fi deschisă. Încearcă din nou.", { cause });
           }
         } finally {
           endHandoff();
@@ -163,8 +163,8 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
 export function nativeViewerErrorMessage(cause: unknown): string {
   const text = cause instanceof Error ? cause.message : String(cause);
   return /ActivityNotFound|cannot be previewed/i.test(text)
-    ? "No app on this device can show this format. Save or share it to open it elsewhere."
-    : "The file could not be opened. Check the connection and try again.";
+    ? "Nicio aplicație de pe acest dispozitiv nu poate afișa formatul. Salvează-l sau partajează-l ca să-l deschizi în altă parte."
+    : "Fișierul nu a putut fi deschis. Verifică conexiunea și încearcă din nou.";
 }
 
 export async function openAttachmentInViewer(input: {
@@ -224,9 +224,12 @@ export async function downloadAttachmentForPreview(input: {
     // Android may leave a partial file after a failed or interrupted request.
     cached.preview.dispose();
     if (input.signal.aborted) return null;
-    throw new Error("Could not download the attachment. Check the connection and try again.", {
-      cause,
-    });
+    throw new Error(
+      "Atașamentul nu a putut fi descărcat. Verifică conexiunea și încearcă din nou.",
+      {
+        cause,
+      },
+    );
   }
 }
 
@@ -261,7 +264,7 @@ export async function shareLocalAttachment(input: {
       await new File(input.uri).copy(cached.file);
     } catch (cause) {
       if (input.signal.aborted) return;
-      throw new Error("Could not prepare the attachment for sharing.", { cause });
+      throw new Error("Atașamentul nu a putut fi pregătit pentru partajare.", { cause });
     }
     if (!input.signal.aborted) {
       await cached.preview.share(input.signal, input.sourceIdentifier);

@@ -650,7 +650,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
-      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      reportPictureInPicture("Pagina nu s-a afișat încă. Încearcă din nou imediat.");
       return;
     }
     // The page may have changed since the video's last frame. WebKit captures only on a draw.
@@ -659,7 +659,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     const fail = (error: unknown) => {
       element.pause();
       reportPictureInPicture(
-        error instanceof Error ? error.message : "Picture in picture is unavailable.",
+        error instanceof Error ? error.message : "Picture in picture nu e disponibil.",
       );
     };
     if (document.pictureInPictureEnabled) {

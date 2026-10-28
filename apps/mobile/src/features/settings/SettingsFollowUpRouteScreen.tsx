@@ -20,13 +20,13 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
 }> = [
   {
     behavior: "queue",
-    label: "Queue",
-    description: "Your message waits and runs after the current turn finishes.",
+    label: "La coadă",
+    description: "Mesajul tău așteaptă și pornește după ce se termină runda curentă.",
   },
   {
     behavior: "steer",
-    label: "Steer",
-    description: "Your message reaches the agent right away, changing what it is working on.",
+    label: "Redirecționează",
+    description: "Mesajul tău ajunge imediat la agent și schimbă ce face.",
   },
 ];
 
@@ -45,7 +45,7 @@ export function SettingsFollowUpRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Follow-ups" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader title="Mesaje ulterioare" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView
@@ -55,7 +55,7 @@ export function SettingsFollowUpRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="While the agent is running">
+        <SettingsSection title="Cât timp agentul lucrează">
           {FOLLOW_UP_OPTIONS.map((option, index) => (
             <SettingsChoiceRow
               key={option.behavior}
@@ -69,8 +69,8 @@ export function SettingsFollowUpRouteScreen() {
           ))}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Long-press the send button to use the other option for a single message. With a hardware
-          keyboard, hold Command while sending.
+          Ține apăsat butonul de trimitere ca să folosești cealaltă opțiune pentru un singur mesaj.
+          Cu o tastatură fizică, ține apăsat Command când trimiți.
         </Text>
       </ScrollView>
     </View>

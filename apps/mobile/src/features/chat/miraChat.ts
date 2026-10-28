@@ -44,7 +44,7 @@ const withRelay = <A>(
   ) => Effect.Effect<A, ManagedRelay.ManagedRelayClientError>,
 ): Promise<A> =>
   readMiraClerkToken().then((clerkToken) => {
-    if (clerkToken === null) throw new Error("Sign in to your Mira account first.");
+    if (clerkToken === null) throw new Error("Autentifică-te mai întâi în contul Mira.");
     return runtime.runPromise(
       Effect.gen(function* () {
         return yield* request(yield* ManagedRelay.ManagedRelayClient, clerkToken);
@@ -101,7 +101,7 @@ export async function uploadMiraAttachment(
   file: DraftComposerAttachment,
 ): Promise<ChatUploadResult> {
   const body = chatFileBody(file);
-  if (body === null) return { ok: false, message: `Could not read ${file.name}.` };
+  if (body === null) return { ok: false, message: `Nu am putut citi ${file.name}.` };
   await miraChatHistory.load();
   const [url, clerkToken] = await Promise.all([relayUrl(), readMiraClerkToken()]);
   return uploadChatAttachment({

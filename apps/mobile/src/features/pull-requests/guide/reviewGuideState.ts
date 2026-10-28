@@ -24,51 +24,51 @@ export function guideNoticeState(state: {
   if (state.running) {
     return {
       kind: "writing" as const,
-      title: "Rewriting guide",
+      title: "Se rescrie ghidul",
       description: guide
-        ? "You can keep reading this guide while the agent writes the update."
-        : "An agent is reading the change and writing the tour. You can leave and come back when it’s ready.",
-      action: guide ? "Rewriting…" : "Writing guide…",
+        ? "Poți citi în continuare ghidul cât timp agentul scrie actualizarea."
+        : "Un agent citește modificarea și scrie turul. Poți pleca și reveni când e gata.",
+      action: guide ? "Se rescrie…" : "Se scrie ghidul…",
     };
   }
   const error = state.startError ?? failure;
   if (error) {
     return {
       kind: "failed" as const,
-      title: "Could not write guide",
+      title: "Ghidul nu a putut fi scris",
       description: error,
-      action: "Try again",
+      action: "Încearcă din nou",
     };
   }
   if (state.error) {
     return {
       kind: "unavailable" as const,
-      title: "Could not refresh guide",
+      title: "Ghidul nu a putut fi reîmprospătat",
       description: state.error,
-      action: "Try again",
+      action: "Încearcă din nou",
     };
   }
   if (!state.data) {
     return {
       kind: "loading" as const,
-      title: "Review guide",
-      description: "Checking for a saved guide…",
-      action: "Loading guide…",
+      title: "Ghid de revizuire",
+      description: "Se caută un ghid salvat…",
+      action: "Se încarcă ghidul…",
     };
   }
   if (stale) {
     return {
       kind: "stale" as const,
-      title: "New changes since this guide",
-      description: "You can read the previous guide, or rewrite it for the latest changes.",
-      action: "Rewrite guide",
+      title: "Modificări noi de la acest ghid",
+      description: "Poți citi ghidul anterior sau îl poți rescrie pentru ultimele modificări.",
+      action: "Rescrie ghidul",
     };
   }
   return {
     kind: guide ? ("ready" as const) : ("empty" as const),
-    title: "Review guide",
+    title: "Ghid de revizuire",
     description:
-      "Get a tour of the change, with code excerpts and notes on what needs a closer look.",
-    action: "Write guide",
+      "Primești un tur al modificării, cu fragmente de cod și note despre ce merită verificat atent.",
+    action: "Scrie ghidul",
   };
 }

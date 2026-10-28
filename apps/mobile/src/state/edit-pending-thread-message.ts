@@ -45,7 +45,7 @@ export async function editPendingThreadMessage(message: QueuedThreadMessage): Pr
     const attachmentIds = new Set(snapshot.attachments.map((attachment) => attachment.id));
     for (const attachment of message.attachments) attachmentIds.add(attachment.id);
     if (attachmentIds.size > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-      throw new Error("Remove attachments from the composer before editing this message.");
+      throw new Error("Elimină atașamentele din editor înainte să editezi mesajul.");
     }
     try {
       await mergeComposerDraftContent(draftKey, message);

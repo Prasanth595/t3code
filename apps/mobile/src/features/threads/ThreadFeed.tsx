@@ -390,7 +390,7 @@ async function waitForThreadShell(
 }
 
 const USER_MESSAGE_COPY_MENU_ACTIONS = [
-  { id: "copy-prompt-link", title: "Copy prompt link", image: "link" },
+  { id: "copy-prompt-link", title: "Copiază link-ul promptului", image: "link" },
 ];
 
 function UserMessageCopyButton(props: {
@@ -400,7 +400,7 @@ function UserMessageCopyButton(props: {
 }) {
   const button = (
     <CopyTextButton
-      accessibilityLabel="Copy message"
+      accessibilityLabel="Copiază mesajul"
       text={props.text}
       onCopy={props.onCopy}
       tintColor={props.tintColor}
@@ -449,7 +449,7 @@ function AssistantForkButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Fork from this response"
+      accessibilityLabel="Ramifică de la acest răspuns"
       disabled={busy}
       onPress={() => {
         const targetThreadId = ThreadId.make(uuidv4());
@@ -470,8 +470,8 @@ function AssistantForkButton(props: {
             const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
             if (!targetThreadReady) {
               Dialog.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+                "Ramificare creată",
+                "Datele conversației nu au ajuns pe acest dispozitiv. Reconectează-te și deschide-o din listă.",
               );
               return;
             }
@@ -534,7 +534,7 @@ function MessageAttachmentImage(props: {
     <PresentationSource identifier={sourceIdentifier}>
       <Pressable
         accessibilityRole="imagebutton"
-        accessibilityLabel={`Open ${props.name}`}
+        accessibilityLabel={`Deschide ${props.name}`}
         onPress={() =>
           props.onPressPreview(
             withGallery({
@@ -599,7 +599,7 @@ function MessageAttachmentFile(props: {
   const isPdf = isPdfFile(attachment);
   const fileTypeLabel = isPdf
     ? "PDF"
-    : (attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase() ?? "File");
+    : (attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase() ?? "Fișier");
   const sizeLabel = formatAttachmentSize(attachment.sizeBytes);
   const thumbnailUrl = useAssetUrl(
     props.environmentId,
@@ -635,7 +635,7 @@ function MessageAttachmentFile(props: {
     setOpening(true);
     const finish = (message: string | null) => {
       if (message !== null && !controller.signal.aborted) {
-        Dialog.alert("Could not open attachment", message);
+        Dialog.alert("Atașamentul nu a putut fi deschis", message);
       }
       if (openingRef.current === controller) {
         openingRef.current = null;
@@ -657,10 +657,10 @@ function MessageAttachmentFile(props: {
       if (controller.signal.aborted) return finish(null);
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
-        return finish(error instanceof Error ? error.message : "The attachment is unavailable.");
+        return finish(error instanceof Error ? error.message : "Atașamentul nu e disponibil.");
       }
       const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-      if (url === null) return finish("The attachment could not be opened.");
+      if (url === null) return finish("Atașamentul nu a putut fi deschis.");
       const shared = await settlePromise(() =>
         downloadAndShareAttachment({
           url,
@@ -671,7 +671,7 @@ function MessageAttachmentFile(props: {
       );
       if (shared._tag === "Failure") {
         const error = squashAtomCommandFailure(shared);
-        return finish(error instanceof Error ? error.message : "The attachment is unavailable.");
+        return finish(error instanceof Error ? error.message : "Atașamentul nu e disponibil.");
       }
       finish(null);
     })();
@@ -705,7 +705,7 @@ function MessageAttachmentFile(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
+          accessibilityLabel={`Deschide ${attachment.name}`}
           accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
           accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
           disabled={opening || httpBaseUrl === null}
@@ -892,9 +892,9 @@ function ArtifactTemplateCard(props: {
       </View>
       {props.onUse ? (
         <Button
-          label="Use template"
+          label="Folosește șablonul"
           tone="secondary"
-          accessibilityLabel={`Use ${props.template.displayName} template`}
+          accessibilityLabel={`Folosește șablonul ${props.template.displayName}`}
           onPress={() => props.onUse?.(props.template)}
         />
       ) : null}
@@ -1059,7 +1059,7 @@ function AgentMessageFoldHeader(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${props.summary}`}
-      accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the message.`}
+      accessibilityHint={`Atinge de două ori pentru a ${props.expanded ? "ascunde" : "arăta"} mesajul.`}
       accessibilityState={{ expanded: props.expanded }}
       hitSlop={4}
       className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
@@ -1155,8 +1155,8 @@ function ThreadAutomationMessageRow(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Automation: ${summary}`}
-          accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
+          accessibilityLabel={`Automatizare: ${summary}`}
+          accessibilityHint={`Atinge de două ori pentru a ${props.expanded ? "ascunde" : "arăta"} promptul.`}
           accessibilityState={{ expanded: props.expanded }}
           hitSlop={4}
           className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
@@ -1211,7 +1211,7 @@ function ThreadAutomationMessageRow(props: {
               onPress={() => openSettings(navigation, "SettingsScheduledTasks")}
             >
               <Text className="font-t3-medium text-xs text-foreground-secondary">
-                Open automation
+                Deschide automatizarea
               </Text>
             </Pressable>
           ) : null}
@@ -1231,8 +1231,8 @@ function ThreadAutomationMessageRow(props: {
 
 /** Leads with why Mira compacted, when it did so without being asked. */
 function compactionLabel(label: string, title: string | undefined) {
-  return title !== undefined && label.startsWith("Context compacted")
-    ? title + label.slice("Context compacted".length)
+  return title !== undefined && label.startsWith("Context compactat")
+    ? title + label.slice("Context compactat".length)
     : label;
 }
 
@@ -1490,9 +1490,9 @@ function renderFeedEntry(
         <ThreadContextDivider
           label={
             !active
-              ? "Context compaction"
+              ? "Compactare context"
               : reason === undefined
-                ? "Compacting context"
+                ? "Se compactează contextul"
                 : IDLE_COMPACTING_LABELS[reason]
           }
           icon="arrow.down.right.and.arrow.up.left"
@@ -1550,7 +1550,7 @@ function renderFeedEntry(
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by Mira
+              Trimis de Mira
             </Text>
           ) : null}
           {presentation.guestName !== undefined ? (
@@ -1603,7 +1603,7 @@ function renderFeedEntry(
                     <Pressable
                       key={attachment.id}
                       accessibilityRole="imagebutton"
-                      accessibilityLabel={`Open ${attachment.name}`}
+                      accessibilityLabel={`Deschide ${attachment.name}`}
                       onPress={() =>
                         props.onPressPreview({
                           kind: "image",
@@ -1704,7 +1704,7 @@ function renderFeedEntry(
                 </Text>
               ) : null}
               <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-                {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+                {entry.pendingMessage && !entry.acknowledged ? "În așteptare" : timestampLabel}
               </Text>
               {props.onEditPendingMessage !== null &&
               entry.pendingMessage &&
@@ -1713,7 +1713,7 @@ function renderFeedEntry(
               entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Edit pending message"
+                  accessibilityLabel="Editează mesajul în așteptare"
                   hitSlop={8}
                   className="size-7 items-center justify-center"
                   onPress={() => {
@@ -1790,7 +1790,7 @@ function renderFeedEntry(
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
-              accessibilityLabel="Copy message"
+              accessibilityLabel="Copiază mesajul"
               text={renderedText}
               tintColor={iconSubtleColor}
               buttonSize={28}
@@ -1848,7 +1848,7 @@ function TurnDiffStat(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Review ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
+      accessibilityLabel={`Revizuiește ${fileCountLabel}, ${additions} adăugări, ${deletions} ștergeri`}
       onPress={() => props.onOpenTurnDiff(props.checkpoint)}
       className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
     >
@@ -1914,7 +1914,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       });
       return;
     }
-    setSelected({ contextId: reference.contextId, label: record?.label ?? "Context unavailable" });
+    setSelected({ contextId: reference.contextId, label: record?.label ?? "Context indisponibil" });
   };
   return (
     <>
@@ -1931,10 +1931,10 @@ function UserMessageContent(props: UserMessageContentProps) {
               (item) => item.contextId === reference.contextId,
             );
             return {
-              title: record?.label ?? "Context unavailable",
+              title: record?.label ?? "Context indisponibil",
               actions: [
-                { id: "open-context", title: "Open context" },
-                { id: "copy-context", title: "Copy context", disabled: !record },
+                { id: "open-context", title: "Deschide contextul" },
+                { id: "copy-context", title: "Copiază contextul", disabled: !record },
               ],
             };
           },
@@ -1959,7 +1959,10 @@ function UserMessageContent(props: UserMessageContentProps) {
               )
                 .then(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
                 .catch(() => {
-                  Dialog.alert("Could not copy context", "Try copying this context again.");
+                  Dialog.alert(
+                    "Contextul nu a putut fi copiat",
+                    "Încearcă din nou să copiezi contextul.",
+                  );
                 });
             }
           },
@@ -2431,10 +2434,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           actions: [
             {
               id: "open-skill",
-              title: "View instructions",
+              title: "Vezi instrucțiunile",
               disabled: !enrichedSkillInstructionsPath(skill),
             },
-            { id: "copy-skill", title: "Copy skill" },
+            { id: "copy-skill", title: "Copiază abilitatea" },
           ],
         };
       }
@@ -2442,10 +2445,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (thread) {
         return {
           title:
-            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
+            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ??
+            "Conversație",
           actions: [
-            { id: "open-thread", title: "Open thread" },
-            { id: "copy-thread-link", title: "Copy link" },
+            { id: "open-thread", title: "Deschide conversația" },
+            { id: "copy-thread-link", title: "Copiază link-ul" },
           ],
         };
       }
@@ -3225,7 +3229,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   endpoints={props.pendingHandoff}
                   iconColor={iconSubtleColor}
                   surfaceColor={screenColor}
-                  label="Context handoff pending"
+                  label="Transfer de context în așteptare"
                 />
               ) : null
             }
@@ -3245,8 +3249,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             style={[StyleSheet.absoluteFill, { left: contentLeftInset, right: contentRightInset }]}
           >
             <ThreadFeedPlaceholder
-              title="No conversation yet"
-              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+              title="Nicio conversație încă"
+              detail="Cere-i agentului să analizeze proiectul, să ruleze o comandă sau să continue conversația."
               topInset={topContentInset}
               bottomInset={bottomContentInset}
               horizontalPadding={horizontalPadding}
@@ -3271,9 +3275,13 @@ function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
       {props.hasMoreHistory ? (
         <View className="self-center">
           <Button
-            label={props.loading ? "Loading earlier activity…" : "Load earlier activity"}
+            label={
+              props.loading
+                ? "Se încarcă activitatea anterioară…"
+                : "Încarcă activitatea anterioară"
+            }
             tone="secondary"
-            accessibilityLabel="Load earlier activity"
+            accessibilityLabel="Încarcă activitatea anterioară"
             disabled={props.loading}
             onPress={props.onLoadEarlier}
             icon="chevron.up"

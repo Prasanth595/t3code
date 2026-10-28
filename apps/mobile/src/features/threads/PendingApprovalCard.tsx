@@ -25,9 +25,9 @@ export interface PendingApprovalCardProps {
 }
 
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "accept", label: "Allow once" },
-  { decision: "acceptForSession", label: "Allow session" },
-  { decision: "decline", label: "Decline" },
+  { decision: "accept", label: "Permite o dată" },
+  { decision: "acceptForSession", label: "Permite în sesiune" },
+  { decision: "decline", label: "Refuză" },
 ];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
@@ -40,7 +40,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-        Approval needed
+        E nevoie de aprobare
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
         {props.approval.appName ?? props.approval.requestKind}
@@ -73,8 +73,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       ) : null}
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
-          The provider process for this request is no longer available. Interrupt or restart the run
-          to continue.
+          Procesul furnizorului pentru această cerere nu mai e disponibil. Întrerupe sau repornește
+          rularea ca să continui.
         </Text>
       ) : null}
       {warning ? (
@@ -99,7 +99,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       </View>
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-muted">
-          This connection cannot respond to approvals.
+          Această conexiune nu poate răspunde la aprobări.
         </Text>
       ) : null}
     </View>

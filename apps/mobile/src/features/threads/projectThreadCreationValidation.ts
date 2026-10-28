@@ -10,7 +10,7 @@ export class ProjectThreadTaskRequiredError extends Schema.TaggedError<ProjectTh
   },
 ) {
   override get message(): string {
-    return "Enter a task before starting the thread.";
+    return "Scrie o sarcină înainte să pornești conversația.";
   }
 }
 
@@ -22,7 +22,7 @@ export class ProjectThreadBaseBranchRequiredError extends Schema.TaggedError<Pro
   },
 ) {
   override get message(): string {
-    return "Select a base branch before creating a worktree.";
+    return "Alege un branch de bază înainte să creezi un worktree.";
   }
 }
 

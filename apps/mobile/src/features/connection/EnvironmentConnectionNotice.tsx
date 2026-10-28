@@ -13,17 +13,17 @@ import { AppText as Text } from "../../components/ui/AppText";
 function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
   switch (phase) {
     case "offline":
-      return "You are offline";
+      return "Ești offline";
     case "connecting":
-      return `Connecting to ${environmentLabel}...`;
+      return `Se conectează la ${environmentLabel}...`;
     case "reconnecting":
-      return `Reconnecting to ${environmentLabel}...`;
+      return `Reconectare la ${environmentLabel}...`;
     case "unsupported":
-      return "Client not supported";
+      return "Client nesuportat";
     case "error":
-      return `${environmentLabel} is unavailable`;
+      return `${environmentLabel} nu e disponibil`;
     case "available":
-      return `${environmentLabel} is disconnected`;
+      return `${environmentLabel} e deconectat`;
     case "connected":
       return "";
   }
@@ -35,20 +35,20 @@ function noticeDetail(
   error: string | null,
 ): string {
   if (error) {
-    return phase === "reconnecting" ? `The app will keep retrying automatically. ${error}` : error;
+    return phase === "reconnecting" ? `Aplicația va reîncerca automat. ${error}` : error;
   }
 
   switch (phase) {
     case "offline":
-      return `Cached data remains available. The ${resourceName} will load when your connection returns.`;
+      return `Datele salvate rămân disponibile. Restul se încarcă (${resourceName}) când revine conexiunea.`;
     case "connecting":
     case "reconnecting":
-      return `The ${resourceName} will load as soon as the environment is ready.`;
+      return `Se încarcă (${resourceName}) imediat ce mediul e pregătit.`;
     case "unsupported":
-      return "Use compatible versions of the app and server to connect.";
+      return "Folosește versiuni compatibile ale aplicației și serverului ca să te conectezi.";
     case "available":
     case "error":
-      return `Reconnect the environment to load the ${resourceName}.`;
+      return `Reconectează mediul ca să încarci (${resourceName}).`;
     case "connected":
       return "";
   }
@@ -89,7 +89,7 @@ export function EnvironmentConnectionNotice(props: {
 
         {props.connection.phase !== "offline" && props.connection.phase !== "unsupported" ? (
           <View className="mt-1">
-            <Button label="Retry now" tone="secondary" onPress={props.onRetry} />
+            <Button label="Reîncearcă acum" tone="secondary" onPress={props.onRetry} />
           </View>
         ) : null}
       </View>

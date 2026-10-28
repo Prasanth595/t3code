@@ -32,10 +32,10 @@ export const chatAttachmentProblem = (input: {
   readonly sizeBytes: number;
 }): string | null => {
   if (chatAttachmentKind(input.name, input.mimeType) === undefined) {
-    return `Mira cannot read ${input.name}. Send photos, PDF, Word, Excel, PowerPoint, text or CSV files.`;
+    return `Mira nu poate citi ${input.name}. Trimite poze, PDF, Word, Excel, PowerPoint, text sau CSV.`;
   }
   if (input.sizeBytes > SAAS_CHAT_MAX_ATTACHMENT_BYTES) {
-    return `${input.name} is larger than 20 MB.`;
+    return `${input.name} depășește 20 MB.`;
   }
   return null;
 };
@@ -70,19 +70,22 @@ export async function uploadChatAttachment(input: {
       },
     );
   } catch {
-    return { ok: false, message: "Could not reach Mira. Check your internet connection." };
+    return { ok: false, message: "Nu am putut contacta Mira. Verifică conexiunea la internet." };
   }
   const text = await response.text().catch(() => "");
   if (response.ok) {
     return Option.match(decodeAttachment(text), {
-      onNone: () => ({ ok: false, message: `Could not send ${input.name}. Try again.` }),
+      onNone: () => ({
+        ok: false,
+        message: `${input.name} nu a putut fi trimis. Încearcă din nou.`,
+      }),
       onSome: (attachment) => ({ ok: true, attachment }),
     });
   }
   return {
     ok: false,
     message: Option.match(decodeError(text), {
-      onNone: () => `Could not send ${input.name}. Try again.`,
+      onNone: () => `${input.name} nu a putut fi trimis. Încearcă din nou.`,
       onSome: ({ error }) => error.message,
     }),
   };

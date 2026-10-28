@@ -27,23 +27,21 @@ export function planProjectRemoval<
   const targetLabel = singleMember?.title ?? displayName;
   const confirmationMessage = [
     threadCount > 0
-      ? `Remove ${targetKind} "${targetLabel}" and delete its ${threadCount} thread${threadCount === 1 ? "" : "s"}?`
-      : `Remove ${targetKind} "${targetLabel}"?`,
+      ? `Elimini ${targetKind === "checkout" ? "checkout-ul" : "proiectul"} „${targetLabel}” și ștergi ${threadCount === 1 ? "conversația lui" : `cele ${threadCount} conversații ale lui`}?`
+      : `Elimini ${targetKind === "checkout" ? "checkout-ul" : "proiectul"} „${targetLabel}”?`,
     ...(singleMember
       ? [
-          `Path: ${singleMember.workspaceRoot}`,
-          ...(singleMember.environmentLabel
-            ? [`Environment: ${singleMember.environmentLabel}`]
-            : []),
+          `Cale: ${singleMember.workspaceRoot}`,
+          ...(singleMember.environmentLabel ? [`Mediu: ${singleMember.environmentLabel}`] : []),
         ]
-      : [`This removes ${members.length} grouped project entries.`]),
+      : [`Se elimină ${members.length} intrări de proiect grupate.`]),
     ...(threadCount > 0
-      ? ["This permanently clears conversation history for those threads and any archived threads."]
-      : ["This permanently clears any archived conversation history."]),
+      ? ["Se șterge definitiv istoricul acestor conversații și al celor arhivate."]
+      : ["Se șterge definitiv istoricul conversațiilor arhivate."]),
     isWholeGroup && !hasOtherMembers
-      ? "This removes only the project entries, not the files on disk."
-      : "Other entries in this grouped project are unaffected.",
-    "This action cannot be undone.",
+      ? "Se elimină doar intrările proiectului, nu și fișierele de pe disc."
+      : "Celelalte intrări din acest proiect grupat nu sunt afectate.",
+    "Acțiunea nu poate fi anulată.",
   ].join("\n");
 
   return { projectThreads, isWholeGroup, targetKind, confirmationMessage };

@@ -32,7 +32,7 @@ export function ProposedPlanCard(props: {
     const relativePath = path.trim();
     if (!canWrite || !props.workspaceRoot || inFlight.current) return;
     if (!relativePath) {
-      Dialog.alert("Enter a workspace path");
+      Dialog.alert("Introdu o cale din spațiul de lucru");
       return;
     }
     inFlight.current = true;
@@ -46,10 +46,13 @@ export function ProposedPlanCard(props: {
       setSaving(false);
     });
     if (result._tag === "Success") {
-      Dialog.alert("Plan saved to workspace", result.value.relativePath);
+      Dialog.alert("Planul a fost salvat", result.value.relativePath);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      Dialog.alert("Could not save plan", error instanceof Error ? error.message : String(error));
+      Dialog.alert(
+        "Planul nu a putut fi salvat",
+        error instanceof Error ? error.message : String(error),
+      );
     }
   };
 
@@ -57,24 +60,24 @@ export function ProposedPlanCard(props: {
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="flex-row items-center gap-2">
         <Text accessibilityRole="header" className="flex-1 font-t3-bold text-base text-foreground">
-          {proposedPlanTitle(props.markdown) ?? "Proposed plan"}
+          {proposedPlanTitle(props.markdown) ?? "Plan propus"}
         </Text>
-        <CopyTextButton accessibilityLabel="Copy plan" text={contents} />
+        <CopyTextButton accessibilityLabel="Copiază planul" text={contents} />
       </View>
       {props.renderMarkdown(stripDisplayedPlanMarkdown(props.markdown))}
       <View className="flex-row">
         <Button
-          label={saving ? "Saving..." : "Save to workspace"}
+          label={saving ? "Se salvează..." : "Salvează în spațiul de lucru"}
           tone="secondary"
           disabled={!canWrite || !props.workspaceRoot || saving}
           onPress={() =>
             Dialog.prompt({
-              title: "Save plan to workspace",
+              title: "Salvează planul în spațiul de lucru",
               // The write replaces an existing file, and the RPC has no create-only mode.
               message:
-                "Enter a path relative to the thread's workspace. A file already at that path is replaced.",
+                "Introdu o cale relativă la spațiul de lucru al conversației. Un fișier existent la acea cale va fi înlocuit.",
               initialValue: lastPath,
-              confirmText: "Save",
+              confirmText: "Salvează",
               onConfirm: (path) => void save(path),
             })
           }

@@ -35,7 +35,7 @@ function InspectorContentPane(props: {
         resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
           <NativeInspectorContent>
-            <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+            <RenderFailureView {...fallback} title="Inspectorul nu a putut fi afișat" />
           </NativeInspectorContent>
         )}
       >

@@ -36,12 +36,13 @@ export function useFileChipShare(
       requestRef.current = request;
       const httpBaseUrl = connectionRef.current;
       void (async () => {
-        if (httpBaseUrl === null) throw new Error("Reconnect to the environment and try again.");
+        if (httpBaseUrl === null) throw new Error("Reconectează-te la mediu și încearcă din nou.");
         const result = await createUrl({ environmentId, input: { resource: source.resource } });
         if (request.signal.aborted) return;
         const url =
           result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;
-        if (url === null) throw new Error("The file could not be loaded. Reconnect and try again.");
+        if (url === null)
+          throw new Error("Fișierul nu a putut fi încărcat. Reconectează-te și încearcă din nou.");
         await downloadAndShareAttachment({
           url,
           attachment: source,
@@ -52,8 +53,8 @@ export function useFileChipShare(
         .catch((error: unknown) => {
           if (!request.signal.aborted) {
             Dialog.alert(
-              "Could not share file",
-              error instanceof Error ? error.message : "Try again.",
+              "Fișierul nu a putut fi partajat",
+              error instanceof Error ? error.message : "Încearcă din nou.",
             );
           }
         })

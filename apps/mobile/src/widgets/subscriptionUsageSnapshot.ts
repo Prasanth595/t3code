@@ -67,7 +67,7 @@ function subscriptionUsageProps(
         if (!pool)
           return {
             name,
-            detail: "No limits available",
+            detail: "Nicio limită disponibilă",
             windows: [],
             expiresAt: 0,
             totalWindows: 0,
@@ -94,10 +94,10 @@ function subscriptionUsageProps(
         return {
           name,
           detail: !fresh
-            ? "Open T3 to refresh"
+            ? "Deschide Mira ca să actualizezi"
             : pool.accounts.length > 1
-              ? `${pool.accounts.length} accounts · pooled`
-              : "Subscription remaining",
+              ? `${pool.accounts.length} conturi · combinate`
+              : "Abonament rămas",
           expiresAt: fresh ? expiresAt : 0,
           totalWindows: fresh ? pool.windows.length : 0,
           windows: fresh
@@ -106,13 +106,13 @@ function subscriptionUsageProps(
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
-                  ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
+                  ? `Următoarea resetare ${new Date(window.resets[0].at).toLocaleString(undefined, {
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
                       minute: "2-digit",
                     })}`
-                  : "Reset time unavailable",
+                  : "Ora resetării nu e disponibilă",
               }))
             : [],
         };
@@ -159,7 +159,7 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
       ...snapshot,
       providers: snapshot.providers.map((provider) =>
         provider.windows.length > 0 && provider.expiresAt <= date
-          ? { ...provider, detail: "Open T3 to refresh", windows: [], totalWindows: 0 }
+          ? { ...provider, detail: "Deschide Mira ca să actualizezi", windows: [], totalWindows: 0 }
           : provider,
       ),
     },

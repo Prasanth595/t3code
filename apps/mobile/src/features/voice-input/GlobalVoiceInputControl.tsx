@@ -96,7 +96,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
   const phase = voice.state.phase;
   const isError = phase === "error";
   const openSettings = isError && voice.state.errorAction === "settings";
-  const label = voice.label ?? "Draft";
+  const label = voice.label ?? "Ciornă";
 
   return (
     <View pointerEvents="box-none" className="absolute inset-0">
@@ -114,8 +114,8 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             style={[{ width: COLLAPSED_WIDTH }, collapsedStyle]}
           >
             <Pressable
-              accessibilityLabel={`${presentation.statusLabel}, dictating into ${label}`}
-              accessibilityHint="Shows dictation controls"
+              accessibilityLabel={`${presentation.statusLabel}, dictezi în ${label}`}
+              accessibilityHint="Arată controalele de dictare"
               accessibilityRole="button"
               className="flex-1 flex-row items-center justify-center gap-1.5 active:opacity-70"
               hitSlop={{ top: 6, bottom: 6, left: 6 }}
@@ -150,7 +150,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             style={[{ width: expandedWidth }, expandedStyle]}
           >
             <Pressable
-              accessibilityLabel={isError ? "Dismiss voice input error" : "Cancel dictation"}
+              accessibilityLabel={isError ? "Închide eroarea de dictare" : "Anulează dictarea"}
               accessibilityRole="button"
               className="size-[30px] items-center justify-center active:opacity-70"
               onPress={voice.cancel}
@@ -164,7 +164,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             </Pressable>
             <Pressable
               accessibilityLabel={isError ? (presentation.statusLabel ?? label) : label}
-              accessibilityHint="Hides dictation controls"
+              accessibilityHint="Ascunde controalele de dictare"
               accessibilityRole="button"
               className="min-w-0 flex-1 justify-center self-stretch active:opacity-70"
               onPress={() => setExpanded(false)}
@@ -187,7 +187,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
                   seconds={voice.elapsedSeconds}
                 />
                 <Pressable
-                  accessibilityLabel="Finish dictation"
+                  accessibilityLabel="Termină dictarea"
                   accessibilityRole="button"
                   className="size-[30px] items-center justify-center active:opacity-70"
                   onPress={voice.stop}
@@ -206,7 +206,9 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             ) : isError ? (
               voice.isAvailable ? (
                 <Pressable
-                  accessibilityLabel={openSettings ? "Open microphone settings" : "Retry dictation"}
+                  accessibilityLabel={
+                    openSettings ? "Deschide setările microfonului" : "Reîncearcă dictarea"
+                  }
                   accessibilityRole="button"
                   className="size-[30px] items-center justify-center active:opacity-70"
                   onPress={() => {

@@ -122,13 +122,13 @@ function DragHandle(props: {
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityHint="Move up and Move down reorder within this section. Other actions move between sections."
+        accessibilityLabel={`Reordonează ${props.title}`}
+        accessibilityHint="Mută în sus și Mută în jos reordonează în secțiune. Celelalte acțiuni mută între secțiuni."
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
           ...props.sectionActions,
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp ? [{ name: "decrement", label: "Mută în sus" }] : []),
+          ...(props.canMoveDown ? [{ name: "increment", label: "Mută în jos" }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;
@@ -405,12 +405,12 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
             <SafeAreaView style={{ flex: 1 }}>
               <SheetHeader
                 presentation="inline"
-                title="Arrange threads"
+                title="Aranjează conversațiile"
                 onClose={props.onClose}
-                accessibilityLabel="Close arrange threads"
+                accessibilityLabel="Închide aranjarea"
               />
               <Text className="px-5 pb-3 text-sm text-foreground-muted">
-                Drag to reorder, pin, or settle. Changes save when you drop.
+                Trage pentru a reordona, fixa sau finaliza. Modificările se salvează când lași.
               </Text>
               <View
                 onLayout={(event) => {
@@ -546,10 +546,10 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                           >
                             <Text className="text-sm text-foreground-muted">
                               {olderSettledShelf.loading
-                                ? "Loading"
+                                ? "Se încarcă"
                                 : olderSettledShelf.failed
-                                  ? "Could not load older threads. Retry"
-                                  : `Show more (${settledCount - visibleSettled.length} settled hidden)`}
+                                  ? "Conversațiile mai vechi nu au putut fi încărcate. Reîncearcă"
+                                  : `Arată mai multe (${settledCount - visibleSettled.length} finalizate ascunse)`}
                             </Text>
                           </Pressable>
                         ) : (

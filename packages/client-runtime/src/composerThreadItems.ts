@@ -51,6 +51,6 @@ export function matchComposerThreadItems(input: {
       type: "thread",
       thread: { environmentId: shell.environmentId, threadId: shell.id },
       label: shell.title,
-      description: "Thread",
+      description: "Conversație",
     }));
 }

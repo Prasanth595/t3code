@@ -39,12 +39,12 @@ export function ThreadCommandOutput(props: {
   );
   if (text.length === 0) {
     const message = error
-      ? `Couldn't load output: ${error}`
+      ? `Rezultatul nu a putut fi încărcat: ${error}`
       : data === null
-        ? "Loading output…"
+        ? "Se încarcă rezultatul…"
         : data.running
           ? null
-          : "No output.";
+          : "Niciun rezultat.";
     return message === null ? null : (
       <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
         {message}

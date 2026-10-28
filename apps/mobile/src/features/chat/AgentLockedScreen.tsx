@@ -12,13 +12,13 @@ export function AgentLockedScreen() {
     <View className="flex-1 items-center justify-center bg-screen px-4">
       <EmptyState
         variant="plain"
-        title="Agent is available with Pro"
+        title="Agentul e disponibil cu Pro"
         detail={
           access.signedIn
-            ? "With Pro, Mira works on your computer: it edits files, runs commands, and finishes tasks for you. Chat stays unlimited on every plan."
-            : "Create a free account first. Then upgrade to Pro to let Mira work on your computer."
+            ? "Cu Pro, Mira lucrează pe calculatorul tău: editează fișiere, rulează comenzi și duce sarcinile la capăt pentru tine. Chat-ul rămâne nelimitat pe orice plan."
+            : "Creează mai întâi un cont gratuit. Apoi treci la Pro ca Mira să lucreze pe calculatorul tău."
         }
-        actionLabel={access.signedIn ? "Upgrade to Pro" : "Create free account"}
+        actionLabel={access.signedIn ? "Treci la Pro" : "Creează cont gratuit"}
         onAction={() => {
           if (access.signedIn) void openMiraUpgrade().catch(() => undefined);
           else navigation.navigate("SettingsAuth");

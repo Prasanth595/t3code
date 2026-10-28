@@ -306,8 +306,8 @@ export function useSelectedThreadRequests() {
         )
       ) {
         Dialog.alert(
-          "Attachments are not ready",
-          "Wait for uploads to finish, or retry failed uploads.",
+          "Atașamentele nu sunt gata",
+          "Așteaptă să se termine încărcarea sau reîncearcă încărcările eșuate.",
         );
         return;
       }

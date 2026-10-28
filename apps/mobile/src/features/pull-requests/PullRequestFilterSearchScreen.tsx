@@ -110,13 +110,15 @@ export function PullRequestFilterSearchScreen({
       },
     });
   };
-  const placeholder = kind === "labels" ? "Search labels" : "Search authors";
+  const placeholder = kind === "labels" ? "Caută etichete" : "Caută autori";
   return (
     <PullRequestSearchSheet
-      title={kind === "labels" ? "Filter by label" : "Filter by author"}
+      title={kind === "labels" ? "Filtrează după etichetă" : "Filtrează după autor"}
       placeholder={placeholder}
-      closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
-      clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
+      closeAccessibilityLabel={
+        kind === "labels" ? "Închide filtrul de etichete" : "Închide filtrul de autori"
+      }
+      clearAccessibilityLabel={kind === "labels" ? "Șterge căutarea" : "Șterge căutarea"}
       searchTextChangeId="pr-filter-option-search"
       query={query}
       onQueryChange={setQuery}
@@ -154,17 +156,17 @@ export function PullRequestFilterSearchScreen({
               <EmptyState
                 title={
                   hosted.failed
-                    ? "Couldn't search the host"
+                    ? "Căutarea la furnizor a eșuat"
                     : kind === "labels"
-                      ? "No matching labels"
-                      : "No matching authors"
+                      ? "Nicio etichetă găsită"
+                      : "Niciun autor găsit"
                 }
                 detail={
                   hosted.failed
-                    ? "The host didn't answer. Try again in a moment."
+                    ? "Furnizorul nu a răspuns. Încearcă din nou imediat."
                     : kind === "labels"
-                      ? "Search the labels of the repositories this list covers."
-                      : "Search people by name or handle on the repositories' hosts."
+                      ? "Caută etichetele repository-urilor din această listă."
+                      : "Caută persoane după nume sau utilizator."
                 }
                 variant="plain"
               />

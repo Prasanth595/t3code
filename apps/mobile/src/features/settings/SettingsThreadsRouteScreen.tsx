@@ -38,7 +38,10 @@ export function SettingsThreadsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Thread behavior" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen
+        title="Comportament conversații"
+        trailing={<AndroidSettingsEnvironmentFilter />}
+      >
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
@@ -167,7 +170,7 @@ function AutoSettleSettingsRows() {
     <View className="gap-6">
       {projectSelected ? (
         <SettingsProjectOverridesSection
-          projectLabel={selectedProject?.label ?? "Unavailable project"}
+          projectLabel={selectedProject?.label ?? "Proiect indisponibil"}
           hasOverrides={hasProjectOverrides}
           supportsOverrides={supportsProjectOverrides}
           pending={pendingWrites > 0}
@@ -176,34 +179,34 @@ function AutoSettleSettingsRows() {
         />
       ) : null}
       {!projectSelected ? (
-        <SettingsSection title="Usage limits">
+        <SettingsSection title="Limite de utilizare">
           <SettingsSwitchRow
             icon="clock"
-            label="Resume after usage limits"
+            label="Reia după limitele de utilizare"
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
             icon="clock"
-            label="Snooze until limits reset"
+            label="Amână până se resetează limitele"
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
       ) : null}
-      <SettingsSection title="Auto-settle">
+      <SettingsSection title="Finalizare automată">
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
-          label="Auto-settle merged threads"
+          label="Finalizează automat conversațiile cu merge"
           value={referenceSettings.sidebarAutoSettleOnMerge}
           disabled={disabled}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
-          label="Auto-settle inactive threads"
+          label="Finalizează automat conversațiile inactive"
           value={afterDays !== null}
           disabled={disabled}
           onValueChange={(value) =>
@@ -213,7 +216,9 @@ function AutoSettleSettingsRows() {
         {afterDays !== null ? (
           <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
             <View className="w-[22px] android:w-6" />
-            <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
+            <Text className="flex-1 text-foreground text-lg android:text-base">
+              Zile de inactivitate
+            </Text>
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabled}
@@ -223,14 +228,16 @@ function AutoSettleSettingsRows() {
         ) : null}
       </SettingsSection>
       {pendingWrites === 0 && mismatches.length > 0 ? (
-        <SettingsSection title="Across environments">
+        <SettingsSection title="Între medii">
           <View className="gap-3 p-4">
-            <Text className="text-base text-foreground">Auto-settle defaults differ</Text>
+            <Text className="text-base text-foreground">
+              Setările de finalizare automată diferă
+            </Text>
             <Text className="text-sm text-foreground-muted">
               {mismatches.map((mismatch) => mismatch.label).join(", ")}
             </Text>
             <Button
-              label="Apply auto-settle defaults"
+              label="Aplică setările de finalizare automată"
               tone="secondary"
               disabled={disabled}
               onPress={() => writeToAll(autoSettlePatch)}
@@ -253,15 +260,15 @@ function BetaSettingsSection() {
       <SettingsSection title="Beta">
         <SettingsSwitchRow
           icon="bolt.circle"
-          label="Working section"
+          label="Secțiunea În lucru"
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        Strânge conversațiile care lucrează sau monitorizează într-o secțiune În lucru. Revin în
+        capul listei când au nevoie de tine. Cât timp e activ, conversațiile active sunt ordonate
+        după timp și nu pot fi mutate.
       </Text>
     </View>
   );
@@ -275,7 +282,7 @@ function LegacySettingsSection() {
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Legacy">
+      <SettingsSection title="Vechi">
         <SettingsSwitchRow
           icon="hammer"
           label="Plan Mode"
@@ -284,8 +291,8 @@ function LegacySettingsSection() {
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
-        control; otherwise every task runs in Build mode.
+        Activează interfețe retrase, păstrate pentru compatibilitate. Plan Mode readuce comutatorul
+        Build/Plan; altfel fiecare sarcină rulează în modul Build.
       </Text>
     </View>
   );

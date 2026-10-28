@@ -311,29 +311,29 @@ export function pullRequestListReviewStatus(
 ) {
   if (entry.reviewDecision === "changes-requested")
     return {
-      label: "Changes",
-      accessibleLabel: "Changes requested",
+      label: "Modificări",
+      accessibleLabel: "Modificări cerute",
       icon: "person.fill.xmark",
       tint: "accent-danger-foreground",
     } as const;
   if (entry.reviewDecision === "approved")
     return {
-      label: "Approved",
-      accessibleLabel: "Reviews approved",
+      label: "Aprobat",
+      accessibleLabel: "Revizuiri aprobate",
       icon: "person.fill.checkmark",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   if (entry.viewerReviewRequested)
     return {
-      label: "Your review",
-      accessibleLabel: "Your review requested",
+      label: "Revizuirea ta",
+      accessibleLabel: "Ți s-a cerut revizuirea",
       icon: "person.badge.clock",
       tint: "accent-warning-foreground",
     } as const;
   if (entry.reviewDecision === "review-required")
     return {
-      label: "Review",
-      accessibleLabel: "Review required",
+      label: "Revizuire",
+      accessibleLabel: "Revizuire necesară",
       icon: "person.badge.clock",
       tint: "accent-icon-muted",
     } as const;

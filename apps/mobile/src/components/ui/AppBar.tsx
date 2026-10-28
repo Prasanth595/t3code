@@ -130,8 +130,8 @@ export function AppBar(props: AppBarProps) {
               axisBehavior={usesNativeWorkspaceColumns ? "horizontalOnly" : undefined}
               accessibilityLabel={
                 panes.primarySidebarVisible
-                  ? `Maximize ${props.title.toLowerCase()}`
-                  : "Show threads"
+                  ? `Maximizează ${props.title.toLowerCase()}`
+                  : "Arată conversațiile"
               }
               icon={
                 panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"

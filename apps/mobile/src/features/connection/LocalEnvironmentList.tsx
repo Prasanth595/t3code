@@ -36,8 +36,8 @@ export function LocalEnvironmentList({
           />
         </View>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
-          No environments connected yet.{"\n"}Tap{" "}
-          <Text className="font-t3-bold text-foreground">+</Text> to add one.
+          Niciun mediu conectat încă.{"\n"}Atinge{" "}
+          <Text className="font-t3-bold text-foreground">+</Text> ca să adaugi unul.
         </Text>
       </View>
     );

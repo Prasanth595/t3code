@@ -215,9 +215,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
               const menu = fileContextMenu?.(url) ?? {
                 title: url,
                 actions: [
-                  { id: "enriched-open-link", title: "Open link" },
-                  { id: "enriched-copy-link", title: "Copy link" },
-                  { id: "enriched-share-link", title: "Share link" },
+                  { id: "enriched-open-link", title: "Deschide link-ul" },
+                  { id: "enriched-copy-link", title: "Copiază link-ul" },
+                  { id: "enriched-share-link", title: "Partajează link-ul" },
                 ],
               };
               return [
@@ -286,8 +286,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             const menu = props.fileContextMenu?.(url) ?? {
               title: url,
               actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
+                { id: "enriched-open-link", title: "Deschide link-ul" },
+                { id: "enriched-copy-link", title: "Copiază link-ul" },
               ],
             };
             setActiveMenu({ url, menu });

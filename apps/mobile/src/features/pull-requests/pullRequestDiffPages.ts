@@ -107,7 +107,7 @@ export function combinePullRequestDiffPages(
     notice:
       pages.some((page) => page.result.truncated) ||
       parsed.some((page) => page.kind === "raw" || (page.kind === "files" && page.notice !== null))
-        ? `Some file contents are unavailable. Open the ${terminology.singular} on its provider to see the full changes.`
+        ? `Conținutul unor fișiere nu e disponibil. Deschide ${terminology.singular} la furnizor ca să vezi toate modificările.`
         : null,
   };
 }

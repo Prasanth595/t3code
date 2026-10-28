@@ -10,7 +10,7 @@ import {
 import { linkedThreadDraftAction } from "./prompt-link-model";
 
 export function showPromptLinkNotice(notice: string): void {
-  Dialog.alert("Prompt from a link", notice);
+  Dialog.alert("Prompt dintr-un link", notice);
 }
 
 export async function applyLinkedPromptToThreadDraft(
@@ -21,7 +21,10 @@ export async function applyLinkedPromptToThreadDraft(
   try {
     await waitForComposerDraftsLoaded();
   } catch {
-    Dialog.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
+    Dialog.alert(
+      "Link-ul nu a putut fi deschis",
+      "Ciornele nu au putut fi încărcate, așa că promptul nu a fost adăugat.",
+    );
     return;
   }
   const action = linkedThreadDraftAction(getComposerDraftSnapshot(draftKey).text, prompt.text);
@@ -30,14 +33,14 @@ export async function applyLinkedPromptToThreadDraft(
     showPromptLinkNotice(notice);
     return;
   }
-  Dialog.alert("Linked prompt ready. Replace draft?", notice, [
-    { text: "Keep mine", style: "cancel" },
-    { text: "Replace", onPress: () => setComposerDraftText(draftKey, prompt.text) },
+  Dialog.alert("Promptul din link e gata. Înlocuiești ciorna?", notice, [
+    { text: "Păstrează ciorna mea", style: "cancel" },
+    { text: "Înlocuiește", onPress: () => setComposerDraftText(draftKey, prompt.text) },
   ]);
 }
 
 export async function copyPromptLink(prompt: string): Promise<void> {
   if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
-    Dialog.alert("Could not copy", "Try again.");
+    Dialog.alert("Nu s-a putut copia", "Încearcă din nou.");
   }
 }

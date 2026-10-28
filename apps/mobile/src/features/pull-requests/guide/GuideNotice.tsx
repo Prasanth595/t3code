@@ -33,7 +33,7 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
           tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
         />
         <Text className="text-base font-t3-semibold">
-          {compact ? notice.title : "Review guide"}
+          {compact ? notice.title : "Ghid de revizuire"}
         </Text>
       </View>
       <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
@@ -54,8 +54,8 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"
-              ? "Reconnect or ask someone with write access to retry."
-              : "Writing a guide requires a connection and write access."}
+              ? "Reconectează-te sau roagă pe cineva cu drept de scriere să reîncerce."
+              : "Scrierea unui ghid necesită conexiune și drept de scriere."}
           </Text>
         )}
         {notice.kind === "writing" && state.data?.run?._tag === "Running" ? (

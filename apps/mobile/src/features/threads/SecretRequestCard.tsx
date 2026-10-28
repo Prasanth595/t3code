@@ -129,7 +129,7 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        label="Salvează în siguranță"
         tone="primary"
         fullWidth
         disabled={submitting || secret.trim().length === 0}
@@ -148,7 +148,7 @@ function PendingSecretRequestForm(props: {
           </Text>
         </View>
         <Button
-          label="Decline"
+          label="Refuză"
           tone="text"
           disabled={submitting}
           onPress={() => void send({ type: "decline" })}

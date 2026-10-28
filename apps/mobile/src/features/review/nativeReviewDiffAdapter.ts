@@ -21,7 +21,7 @@ const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COMPARISONS = 1_000;
 // Bound the rows serialized to the native heap before mapping and word matching.
 const NATIVE_REVIEW_MAX_FILE_ROWS = 100_000;
-const TRUNCATED_FILE_NOTICE = "This diff is too large to show in full.";
+const TRUNCATED_FILE_NOTICE = "Diff-ul e prea mare pentru a fi afișat complet.";
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
@@ -252,12 +252,16 @@ function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeRevi
   const previewState = getReviewFilePreviewState(file);
   if (previewState.kind === "suppressed" && previewState.reason === "non-text") {
     return [
-      createNoticeRow(file.id, "non-text", "Unsupported format. Diff contents are not available."),
+      createNoticeRow(
+        file.id,
+        "non-text",
+        "Format nesuportat. Conținutul diff-ului nu e disponibil.",
+      ),
     ];
   }
 
   if (file.changeType === "rename-pure") {
-    return [createNoticeRow(file.id, "rename", "This file was renamed without modifications.")];
+    return [createNoticeRow(file.id, "rename", "Fișierul a fost redenumit fără modificări.")];
   }
 
   return [];
@@ -426,10 +430,10 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
   if (file.noEOFCRAdditions || file.noEOFCRDeletions) {
     const side = file.noEOFCRAdditions
       ? file.noEOFCRDeletions
-        ? "Old and new files have"
-        : "New file has"
-      : "Old file has";
-    rows.push(createNoticeRow(file.id, "eof", `${side} no newline at end of file.`));
+        ? "Fișierele vechi și noi nu au"
+        : "Fișierul nou nu are"
+      : "Fișierul vechi nu are";
+    rows.push(createNoticeRow(file.id, "eof", `${side} rând nou la final.`));
   }
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,

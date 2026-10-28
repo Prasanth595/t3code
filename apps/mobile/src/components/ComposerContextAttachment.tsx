@@ -52,7 +52,8 @@ export function ComposerContextAttachment(props: {
         setError(null);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError("The local file is unavailable. Attach it again.");
+        if (!controller.signal.aborted)
+          setError("Fișierul local nu e disponibil. Atașează-l din nou.");
       });
     return () => {
       controller.abort();
@@ -76,7 +77,7 @@ export function ComposerContextAttachment(props: {
         return;
       }
       const url = await refresh();
-      if (!url) throw new Error("Reconnect to the environment and try again.");
+      if (!url) throw new Error("Reconectează-te la mediu și încearcă din nou.");
       await downloadAndShareAttachment({
         url,
         attachment: record,
@@ -88,8 +89,8 @@ export function ComposerContextAttachment(props: {
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not open attachment",
-        cause instanceof Error ? cause.message : "Try again.",
+        "Atașamentul nu a putut fi deschis",
+        cause instanceof Error ? cause.message : "Încearcă din nou.",
       );
     }
   };
@@ -98,7 +99,7 @@ export function ComposerContextAttachment(props: {
       {record.kind === "image" && uri ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Preview ${record.name}`}
+          accessibilityLabel={`Previzualizează ${record.name}`}
           onPress={() => setPreviewOpen(true)}
         >
           <Image
@@ -115,12 +116,12 @@ export function ComposerContextAttachment(props: {
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (
         <Text className="text-foreground-muted">
-          {error ?? "Attachment unavailable. Reconnect and try again."}
+          {error ?? "Atașament indisponibil. Reconectează-te și încearcă din nou."}
         </Text>
       ) : null}
       <PresentationSource identifier={shareSourceIdentifier}>
         <Button
-          label={sharing ? "Opening attachment…" : "Open or share attachment"}
+          label={sharing ? "Se deschide atașamentul…" : "Deschide sau partajează atașamentul"}
           tone="secondary"
           disabled={sharing}
           onPress={() => void share()}

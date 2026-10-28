@@ -118,11 +118,11 @@ export function ConnectionsNewRouteScreen({
     }
     if (permission.canAskAgain) return;
     Dialog.alert(
-      "Camera access needed",
-      "Camera access was denied for this app. Open Settings to enable it.",
+      "E nevoie de acces la cameră",
+      "Accesul la cameră a fost refuzat. Deschide Setările ca să-l activezi.",
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: "Anulează", style: "cancel" },
+        { text: "Deschide Setările", onPress: () => void Linking.openSettings() },
       ],
     );
   };
@@ -145,8 +145,8 @@ export function ConnectionsNewRouteScreen({
     } catch (error) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Dialog.alert(
-        "Invalid QR code",
-        error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+        "Cod QR invalid",
+        error instanceof Error ? error.message : "Codul QR scanat nu a fost recunoscut.",
       );
       setTimeout(() => {
         setScannerLocked(false);
@@ -191,10 +191,10 @@ export function ConnectionsNewRouteScreen({
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title="Add environment"
+      title="Adaugă mediu"
       actions={[
         {
-          accessibilityLabel: isSubmitting ? "Connecting" : "Add environment",
+          accessibilityLabel: isSubmitting ? "Se conectează" : "Adaugă mediu",
           loading: isSubmitting,
           icon: "checkmark",
           tintColor: headerIconColor,
@@ -236,7 +236,7 @@ export function ConnectionsNewRouteScreen({
               )}
             >
               <PairingInputRow
-                label="Address"
+                label="Adresă"
                 keyboardType="url"
                 placeholder="192.168.1.100:3773"
                 value={hostInput}
@@ -244,8 +244,8 @@ export function ConnectionsNewRouteScreen({
               />
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
-                label="Code"
-                placeholder="Pairing code"
+                label="Cod"
+                placeholder="Cod de asociere"
                 returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
@@ -262,7 +262,7 @@ export function ConnectionsNewRouteScreen({
               )}
             >
               {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+                "Pentru calculatoare din rețeaua locală sau tailnet. Calculatorul își păstrează propriile date de autentificare."}
             </Text>
           </View>
 
@@ -287,7 +287,7 @@ function PairingScanCard(props: {
   return (
     <Pressable
       accessibilityRole={props.cameraActive ? undefined : "button"}
-      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
+      accessibilityLabel={props.cameraActive ? undefined : "Scanează codul QR"}
       disabled={props.cameraActive}
       onPress={props.onScanPress}
       className={cn(
@@ -352,13 +352,13 @@ function PairingScanCard(props: {
               <Text
                 className={cn("font-t3-medium text-sm", light ? "text-black/70" : "text-white/80")}
               >
-                Tap to scan
+                Atinge pentru a scana
               </Text>
             </>
           )}
         </View>
         <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
-          Scan the code from t3 pair or desktop Connections settings
+          Scanează codul din t3 pair sau din setările Conexiuni de pe desktop
         </Text>
       </View>
     </Pressable>
@@ -378,7 +378,7 @@ function T3ConnectSection() {
   return (
     <View collapsable={false} className="gap-2">
       <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
-        Or use the managed relay
+        Sau folosește contul Mira
       </Text>
       {isSignedIn ? (
         <CloudEnvironmentRows
@@ -389,8 +389,8 @@ function T3ConnectSection() {
         />
       ) : (
         <ListRow
-          label="Sign in to T3 Connect"
-          description="Reach your machines from anywhere, no network setup."
+          label="Autentifică-te în contul Mira"
+          description="Accesează-ți calculatoarele de oriunde, fără configurare de rețea."
           disabled={!isLoaded}
           onPress={() => navigation.navigate("SettingsAuth")}
         />

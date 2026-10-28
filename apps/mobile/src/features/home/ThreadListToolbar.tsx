@@ -80,9 +80,9 @@ export function ThreadListToolbar(props: {
   const searchField = (
     <SearchField
       inputRef={searchRef}
-      accessibilityLabel="Search threads"
-      clearAccessibilityLabel="Clear search"
-      placeholder="Search"
+      accessibilityLabel="Caută conversații"
+      clearAccessibilityLabel="Șterge căutarea"
+      placeholder="Caută"
       value={props.searchQuery}
       onChangeText={onSearchQueryChange}
     />
@@ -91,7 +91,7 @@ export function ThreadListToolbar(props: {
     <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
       {(open) => (
         <AndroidHeaderIconButton
-          accessibilityLabel="Filter threads"
+          accessibilityLabel="Filtrează conversațiile"
           icon={filterIcon}
           onPress={open}
         />
@@ -110,8 +110,8 @@ export function ThreadListToolbar(props: {
         searchField={searchField}
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search threads"
-        titleAccessibilityLabel="Mira, Threads"
+        searchAccessibilityLabel="Caută conversații"
+        titleAccessibilityLabel="Mira, Conversații"
         onOpenEnvironments={props.onOpenEnvironments}
         filter={filterButton}
       />

@@ -13,7 +13,7 @@ export function NewThreadButton(props: {
 }) {
   return (
     <Pressable
-      accessibilityLabel="New thread"
+      accessibilityLabel="Conversație nouă"
       accessibilityRole="button"
       onPress={props.onPress}
       className={cn(

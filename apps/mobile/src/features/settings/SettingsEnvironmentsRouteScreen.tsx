@@ -93,15 +93,15 @@ export function SettingsEnvironmentsRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Environments"
+      title="Medii"
       trailing={
         Platform.OS === "android" && relaySession ? (
           <AndroidAnchoredMenu
-            title="Environment options"
+            title="Opțiuni medii"
             actions={[
               {
                 id: "refresh",
-                title: "Refresh cloud environments",
+                title: "Reîmprospătează mediile cloud",
                 attributes: { disabled: isRefreshingCloud },
               },
             ]}
@@ -111,7 +111,7 @@ export function SettingsEnvironmentsRouteScreen() {
           >
             {(open) => (
               <AndroidHeaderIconButton
-                accessibilityLabel="Environment options"
+                accessibilityLabel="Opțiuni medii"
                 icon="ellipsis"
                 onPress={open}
               />
@@ -121,7 +121,7 @@ export function SettingsEnvironmentsRouteScreen() {
       }
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: "Adaugă mediu",
           icon: "plus",
           tintColor: headerIconColor,
           onPress: () => navigation.navigate("SettingsEnvironmentNew"),

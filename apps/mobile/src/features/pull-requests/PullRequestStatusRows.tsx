@@ -90,13 +90,13 @@ export function PullRequestStatusMenu(props: RowProps) {
           action.confirm(
             selected,
             pullRequestActionLabel("close", terminology),
-            `Close this ${terminology.singular} without merging its changes?`,
+            `Închizi acest ${terminology.singular} fără să îmbini modificările?`,
           );
         else if (selected === "revert")
           action.confirm(
             selected,
             pullRequestActionLabel("revert", terminology),
-            `Open a new ${terminology.singular} that reverses these changes?`,
+            `Deschizi un ${terminology.singular} nou care anulează aceste modificări?`,
           );
         else void action.perform(selected);
       }}
@@ -119,7 +119,7 @@ export function PullRequestChecksRow(props: RowProps) {
         tint={checks.tint}
         value={checks.count}
         compact
-        accessibilityLabel={`Checks, ${checks.label}`}
+        accessibilityLabel={`Verificări, ${checks.label}`}
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
       />
@@ -132,18 +132,18 @@ export function PullRequestChecksRow(props: RowProps) {
         >
           {props.pr.state === "open" &&
           props.pr.checks.some((check) => check.status === "failure") ? (
-            <PullRequestAgentRow {...props} task="feedback" title="Fix failing checks" />
+            <PullRequestAgentRow {...props} task="feedback" title="Repară verificările eșuate" />
           ) : null}
           {action.available("approve-workflows") ? (
             <PullRequestCardRow
-              title="Approve workflows"
+              title="Aprobă workflow-urile"
               icon="checkmark"
-              detail={`${props.pr.workflowApprovalsRequired} waiting for approval`}
+              detail={`${props.pr.workflowApprovalsRequired} așteaptă aprobare`}
               onPress={() =>
                 action.confirm(
                   "approve-workflows",
-                  "Approve workflows",
-                  `Allow this ${definition.changeRequest.singular}'s workflows to run? Review the workflow changes first.`,
+                  "Aprobă workflow-urile",
+                  `Permiți rularea workflow-urilor pentru ${definition.changeRequest.singular}? Verifică mai întâi modificările din workflow.`,
                 )
               }
             />
@@ -169,7 +169,7 @@ export function PullRequestChecksRow(props: RowProps) {
             <Text className="px-4 py-3 text-xs text-foreground-muted">No checks reported.</Text>
           ) : null}
           <PullRequestCardRow
-            title="Open checks on provider"
+            title="Deschide verificările la furnizor"
             icon="arrow.up.right"
             onPress={() =>
               void Linking.openURL(
@@ -189,16 +189,16 @@ export function PullRequestBranchRow(props: RowProps) {
   const methods = action.available("update-branch") ? allowedUpdateMethods(props.pr) : [];
   const canResolve =
     agent.canAsk && props.pr.state === "open" && props.pr.mergeability === "conflicting";
-  const summary = action.busy ? "Updating…" : pullRequestBranchSummary(props.pr);
+  const summary = action.busy ? "Se actualizează…" : pullRequestBranchSummary(props.pr);
   const clean = props.pr.mergeability === "mergeable";
   const conflicting = props.pr.mergeability === "conflicting";
   const row = (
     <PullRequestCardRow
       title={
         props.pr.mergeability === "conflicting"
-          ? `Conflicts with ${props.pr.baseBranch}`
+          ? `Conflicte cu ${props.pr.baseBranch}`
           : clean
-            ? `No conflicts with ${props.pr.baseBranch}`
+            ? `Fără conflicte cu ${props.pr.baseBranch}`
             : "Branch"
       }
       icon={
@@ -227,7 +227,7 @@ export function PullRequestBranchRow(props: RowProps) {
       title="Branch"
       actions={[
         ...(canResolve ? [agent.menuAction("conflicts")] : []),
-        ...methods.map((id) => ({ id, title: `Update with ${id}`, image: "arrow.up.circle" })),
+        ...methods.map((id) => ({ id, title: `Actualizează cu ${id}`, image: "arrow.up.circle" })),
       ]}
       onPressAction={({ nativeEvent }) => {
         const method = methods.find((id) => id === nativeEvent.event);
@@ -280,7 +280,7 @@ export function PullRequestReviewersRow(props: RowProps) {
           {summary.reviews.map((review) => (
             <View
               key={review.id}
-              accessibilityLabel={`${review.author?.login ?? "Unknown reviewer"}, ${review.reviewState === "APPROVED" ? "Approved" : review.reviewState === "CHANGES_REQUESTED" ? "Changes requested" : "Commented"}`}
+              accessibilityLabel={`${review.author?.login ?? "Revizor necunoscut"}, ${review.reviewState === "APPROVED" ? "Aprobat" : review.reviewState === "CHANGES_REQUESTED" ? "Modificări cerute" : "A comentat"}`}
               className="min-h-14 flex-row items-center gap-3 px-4 py-2"
             >
               <SymbolView
@@ -302,7 +302,7 @@ export function PullRequestReviewersRow(props: RowProps) {
               />
               <PullRequestAvatar actor={review.author} size={32} />
               <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
-                {review.author?.login ?? "Unknown reviewer"}
+                {review.author?.login ?? "Revizor necunoscut"}
               </Text>
             </View>
           ))}
@@ -314,7 +314,7 @@ export function PullRequestReviewersRow(props: RowProps) {
             .map((reviewer) => (
               <View
                 key={reviewer.login}
-                accessibilityLabel={`${reviewer.login}, Review requested`}
+                accessibilityLabel={`${reviewer.login}, revizuire cerută`}
                 className="min-h-14 flex-row items-center gap-3 px-4 py-2"
               >
                 <SymbolView name="clock" size={18} tintColorClassName="accent-icon-muted" />
@@ -326,13 +326,13 @@ export function PullRequestReviewersRow(props: RowProps) {
             ))}
           {canRequest ? (
             <PullRequestCardRow
-              title="Request review"
+              title="Cere revizuire"
               icon="person.badge.plus"
               onPress={() => navigation.navigate("PullRequestReviewers", props.params)}
             />
           ) : (
             <PullRequestCardRow
-              title="View reviewers on provider"
+              title="Vezi revizorii la furnizor"
               icon="arrow.up.right"
               onPress={() => void Linking.openURL(props.pr.url)}
             />

@@ -103,7 +103,7 @@ export function AgentActivity(
     ? props.activities.map((row) =>
         row.phase === "completed" || row.phase === "failed"
           ? row
-          : { ...row, phase: "stale", status: "Out of date" },
+          : { ...row, phase: "stale", status: "Neactualizat" },
       )
     : props.activities;
   const ordered = [...activities].sort((a, b) => phasePriority(a.phase) - phasePriority(b.phase));
@@ -127,24 +127,24 @@ export function AgentActivity(
       : tint;
 
   const allDone = props.activeCount === 0;
-  const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
+  const doneLabel = failedRow ? "Eșuat" : "Gata";
+  const outcomeLabel = failedRow ? "Munca agentului a eșuat" : "Agentul a terminat";
 
-  const agentWord = props.activeCount === 1 ? "agent" : "agents";
+  const agentWord = props.activeCount === 1 ? "agent activ" : "agenți activi";
   const agentsLabel = allDone
     ? outcomeLabel
     : environment.isStale
-      ? "Agent status out of date"
-      : `${props.activeCount} active ${agentWord}`;
+      ? "Starea agentului nu e actualizată"
+      : `${props.activeCount} ${agentWord}`;
   const attentionSuffix =
     attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
+      ? `${attentionRows.length} ${attentionRows.length === 1 ? "necesită" : "necesită"} atenție`
       : "";
   const activeLabel = allDone
     ? doneLabel
     : environment.isStale
-      ? "Out of date"
-      : `${props.activeCount} active`;
+      ? "Neactualizat"
+      : `${props.activeCount} activi`;
   const showCompactGlyph = !attentionRow && !failedRow && !allDone && !environment.isStale;
   const summary = attentionSuffix || activeLabel;
 
@@ -346,10 +346,10 @@ export function AgentActivity(
       >
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
+            ? "Aprobare"
+            : "Răspuns"
           : failedRow
-            ? "Failed"
+            ? "Eșuat"
             : activeLabel}
       </Text>
     ),

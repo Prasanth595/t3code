@@ -4,23 +4,23 @@ const DAY = 24 * HOUR;
 
 export function formatScheduledTaskInterval(everyMs: number): string {
   const units = [
-    [7 * DAY, "week"],
-    [DAY, "day"],
-    [HOUR, "hour"],
-    [MINUTE, "minute"],
-    [1_000, "second"],
-    [1, "millisecond"],
+    [7 * DAY, "săptămână", "săptămâni"],
+    [DAY, "zi", "zile"],
+    [HOUR, "oră", "ore"],
+    [MINUTE, "minut", "minute"],
+    [1_000, "secundă", "secunde"],
+    [1, "milisecundă", "milisecunde"],
   ] as const;
   let remaining = everyMs;
   const parts: string[] = [];
-  for (const [size, unit] of units) {
+  for (const [size, unit, plural] of units) {
     const count = Math.floor(remaining / size);
     if (count === 0) continue;
-    if (count === 1 && remaining === everyMs && remaining === size) return `Every ${unit}`;
-    parts.push(`${count} ${unit}${count === 1 ? "" : "s"}`);
+    if (count === 1 && remaining === everyMs && remaining === size) return `În fiecare ${unit}`;
+    parts.push(`${count} ${count === 1 ? unit : plural}`);
     remaining %= size;
   }
-  return `Every ${parts.join(" ")}`;
+  return `La fiecare ${parts.join(" ")}`;
 }
 
 function localCalendarDay(date: Date): number {
@@ -32,26 +32,26 @@ export function formatNextScheduledTaskRun(nextRunAt: string, now: number): stri
   const next = new Date(nextRunAt);
   const current = new Date(now);
   const remaining = next.getTime() - now;
-  if (!Number.isFinite(remaining)) return "Next run unavailable";
-  if (remaining <= 0) return "Next run due";
+  if (!Number.isFinite(remaining)) return "Următoarea rulare nu e disponibilă";
+  if (remaining <= 0) return "Următoarea rulare e acum";
 
   const days = localCalendarDay(next) - localCalendarDay(current);
   if (days === 0) {
-    if (remaining < MINUTE) return "Next run in less than a minute";
-    const unit = remaining < HOUR ? "minute" : "hour";
+    if (remaining < MINUTE) return "Următoarea rulare în mai puțin de un minut";
+    const [unit, plural] = remaining < HOUR ? ["minut", "minute"] : ["oră", "ore"];
     const count = Math.round(remaining / (remaining < HOUR ? MINUTE : HOUR));
-    return `Next run in ${count} ${unit}${count === 1 ? "" : "s"}`;
+    return `Următoarea rulare în ${count} ${count === 1 ? unit : plural}`;
   }
 
   const time = next.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (days === 1) return `Next run tomorrow at ${time}`;
+  if (days === 1) return `Următoarea rulare mâine la ${time}`;
   if (days <= 7) {
-    return `Next run next ${next.toLocaleDateString([], { weekday: "long" })} at ${time}`;
+    return `Următoarea rulare ${next.toLocaleDateString([], { weekday: "long" })} la ${time}`;
   }
   const date = next.toLocaleDateString([], {
     month: "short",
     day: "numeric",
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
-  return `Next run ${date} at ${time}`;
+  return `Următoarea rulare ${date} la ${time}`;
 }

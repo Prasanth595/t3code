@@ -65,34 +65,35 @@ function AttachmentDocumentBody(props: {
     return (
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <EmptyState
-          title="File unavailable"
+          title="Fișier indisponibil"
           detail={document.error}
-          actionLabel="Try again"
+          actionLabel="Încearcă din nou"
           onAction={document.retry}
         />
       </View>
     );
   }
   if (props.nativeViewer !== null && props.nativeViewer !== "unavailable") {
-    return <FilePreviewLoading message="Opening in file viewer..." />;
+    return <FilePreviewLoading message="Se deschide în vizualizator..." />;
   }
   if (!document.uri || (document.needsText && !document.content)) {
-    return <FilePreviewLoading message="Loading file..." />;
+    return <FilePreviewLoading message="Se încarcă fișierul..." />;
   }
   if (document.needsText && document.content) {
     const { content, table } = document;
     return (
       <View className="flex-1 bg-sheet">
         {content.truncated ? (
-          <FilePreviewNotice title="Partial file">
-            Preview limited to the first 1 MB. Save or share the file to read it in full.
+          <FilePreviewNotice title="Fișier parțial">
+            Previzualizare limitată la primul 1 MB. Salvează sau partajează fișierul ca să-l citești
+            complet.
           </FilePreviewNotice>
         ) : null}
         {table && document.activeMode === "table" ? (
           <ScrollView className="flex-1">
             {table.truncated ? (
               <FilePreviewNotice>
-                Table limited to the first 100 rows and 30 columns. Source shows the rest.
+                Tabel limitat la primele 100 de rânduri și 30 de coloane. Sursa arată restul.
               </FilePreviewNotice>
             ) : null}
             <ScrollView horizontal>
@@ -152,12 +153,12 @@ function AttachmentDocumentBody(props: {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <EmptyState
-        title="No preview for this file"
+        title="Nicio previzualizare pentru acest fișier"
         detail={
           props.nativeError ??
-          "No app on this device can show this format. Save or share it to open it elsewhere."
+          "Nicio aplicație de pe acest dispozitiv nu poate afișa formatul. Salvează-l sau partajează-l ca să-l deschizi în altă parte."
         }
-        actionLabel="Try again"
+        actionLabel="Încearcă din nou"
         onAction={props.onOpenNative}
       />
     </View>
@@ -222,7 +223,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     const message = pendingNativeError.current;
     pendingNativeError.current = null;
     if (nativeViewer === null) {
-      if (message) Dialog.alert("Could not open document", message);
+      if (message) Dialog.alert("Documentul nu a putut fi deschis", message);
       return;
     }
     if (message) {
@@ -243,7 +244,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "preview",
-          title: renderedMode === "table" ? "Table" : "Preview",
+          title: renderedMode === "table" ? "Tabel" : "Previzualizare",
           icon: renderedMode === "table" ? "tablecells" : "eye",
           inline: true,
           onPress: () => setRendered(true),
@@ -252,7 +253,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "source",
-          title: "Source",
+          title: "Sursă",
           icon: "doc.text",
           inline: true,
           onPress: () => setRendered(false),
@@ -261,7 +262,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content && activeMode === "source"
       ? ({
           id: "word-wrap",
-          title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+          title: appearance.codeWordBreak ? "Dezactivează încadrarea" : "Activează încadrarea",
           icon: "text.alignleft",
           inline: false,
           onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
@@ -270,7 +271,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content
       ? ({
           id: "copy",
-          title: content.truncated ? "Copy preview" : "Copy contents",
+          title: content.truncated ? "Copiază previzualizarea" : "Copiază conținutul",
           icon: "doc.on.doc",
           inline: false,
           onPress: () => copyTextWithHaptic(content.text),
@@ -279,7 +280,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "share",
-          title: sharing ? "Opening share sheet…" : "Save or share",
+          title: sharing ? "Se deschide partajarea…" : "Salvează sau partajează",
           icon: "square.and.arrow.up",
           inline: false,
           onPress: () => void share(),
@@ -288,7 +289,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "open-viewer",
-          title: "Open in file viewer",
+          title: "Deschide în vizualizator",
           icon: "arrow.up.left.and.arrow.down.right",
           inline: false,
           onPress: () => {
@@ -300,7 +301,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     draftKey
       ? ({
           id: "remove",
-          title: "Remove from draft",
+          title: "Elimină din ciornă",
           icon: "trash",
           inline: false,
           destructive: true,
@@ -319,7 +320,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const handleAndroidMenuAction = (event: { nativeEvent: { event: string } }) => {
     menuActions.find(({ id }) => id === event.nativeEvent.event)?.onPress();
   };
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
+  const subtitle = `${draftKey ? "Atașament în ciornă" : "Atașament"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
 
   return (
     <View className="flex-1 bg-sheet">
@@ -341,16 +342,16 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
             <Menu
               actions={androidMenuActions}
               isAnchoredToRight
-              title="File actions"
+              title="Acțiuni fișier"
               onPressAction={handleAndroidMenuAction}
             >
-              <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+              <AndroidHeaderIconButton accessibilityLabel="Acțiuni fișier" icon="ellipsis" />
             </Menu>
           }
         />
       ) : null}
       <Toolbar placement="right">
-        <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+        <Toolbar.Menu accessibilityLabel="Acțiuni fișier" icon="ellipsis">
           {renderedMode ? (
             <Toolbar.Menu inline>
               {menuActions

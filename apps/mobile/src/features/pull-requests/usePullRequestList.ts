@@ -110,7 +110,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
             JSON.stringify(Object.entries(input.cursors).sort()) ===
               JSON.stringify(Object.entries(next.nextCursors).sort())
           )
-            throw new Error("Couldn't advance the list. Try again.");
+            throw new Error("Lista nu a putut avansa. Încearcă din nou.");
         }),
       );
       if (requests.current.page === controller) delete requests.current.page;
@@ -263,7 +263,10 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           {
             environmentId: target.environmentId,
             projectTitle: "",
-            message: cause instanceof Error ? cause.message : "Couldn't load pull requests.",
+            message:
+              cause instanceof Error
+                ? cause.message
+                : "Pull request-urile nu au putut fi încărcate.",
           },
         ];
       }),
@@ -297,7 +300,7 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
           ? [
               result.reason instanceof Error
                 ? result.reason.message
-                : "Couldn't load pull requests.",
+                : "Pull request-urile nu au putut fi încărcate.",
             ]
           : [],
       )

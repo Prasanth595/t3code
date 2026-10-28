@@ -14,14 +14,16 @@ export function ConnectionTraceId({
   const copy = () => copyTextWithHaptic(traceId, { target: "connection-trace-id" });
   return (
     <>
-      {" Trace ID: "}
+      {" ID urmărire: "}
       <Text
         accessibilityHint={
-          activation === "longPress" ? "Long press to copy the trace ID" : "Copies the trace ID"
+          activation === "longPress"
+            ? "Ține apăsat pentru a copia ID-ul de urmărire"
+            : "Copiază ID-ul de urmărire"
         }
-        accessibilityLabel={`Copy trace ID ${traceId}`}
+        accessibilityLabel={`Copiază ID-ul de urmărire ${traceId}`}
         accessibilityRole="button"
-        accessibilityActions={[{ name: "activate", label: "Copy trace ID" }]}
+        accessibilityActions={[{ name: "activate", label: "Copiază ID-ul de urmărire" }]}
         onAccessibilityAction={(event) => {
           event.stopPropagation();
           if (event.nativeEvent.actionName === "activate") copy();

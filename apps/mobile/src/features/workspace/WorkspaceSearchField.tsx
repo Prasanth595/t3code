@@ -20,7 +20,7 @@ export function WorkspaceSearchField({
 }) {
   const inputStyle = useResolveClassNames("text-foreground font-sans text-base");
   const placeholderStyle = useResolveClassNames("text-foreground-muted");
-  const label = props.tab === "pullRequests" ? "Search pull requests" : "Search threads";
+  const label = props.tab === "pullRequests" ? "Caută pull request-uri" : "Caută conversații";
   return (
     <GlassSurface
       className="min-w-0 flex-1"
@@ -47,7 +47,7 @@ export function WorkspaceSearchField({
         {props.query ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Clear search"
+            accessibilityLabel="Șterge căutarea"
             onPress={props.onClear}
             className="h-11 w-11 items-center justify-center"
           >

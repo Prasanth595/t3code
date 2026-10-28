@@ -86,14 +86,14 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
     body,
     credentials: chooser.credentials ? "include" : "omit",
   });
-  if (!response.ok) throw new Error((await response.text()) || "The upload was refused.");
+  if (!response.ok) throw new Error((await response.text()) || "Încărcarea a fost refuzată.");
 }
 
 function offerDownload(download: PreviewStreamDownload) {
-  Dialog.alert(`Downloaded ${download.fileName}`, undefined, [
-    { text: "Not now", style: "cancel" },
+  Dialog.alert(`S-a descărcat ${download.fileName}`, undefined, [
+    { text: "Nu acum", style: "cancel" },
     {
-      text: "Save or share",
+      text: "Salvează sau partajează",
       onPress: () =>
         void downloadAndShareAttachment({
           url: download.url,
@@ -101,7 +101,7 @@ function offerDownload(download: PreviewStreamDownload) {
           signal: new AbortController().signal,
         }).catch((cause: unknown) =>
           Dialog.alert(
-            "Could not save the download",
+            "Descărcarea nu a putut fi salvată",
             cause instanceof Error ? cause.message : undefined,
           ),
         ),
@@ -139,11 +139,11 @@ export function PreviewStreamWebView(
               error ? "text-center text-sm text-foreground-muted" : "text-sm text-foreground-muted"
             }
           >
-            {error || "Connecting to browser..."}
+            {error || "Se conectează la browser..."}
           </AppText>
           {error && (
             <View className="items-center">
-              <Button label="Retry" tone="secondary" onPress={refresh} />
+              <Button label="Reîncearcă" tone="secondary" onPress={refresh} />
             </View>
           )}
         </>
@@ -258,7 +258,7 @@ function PreviewStreamDocumentView({
     setFileChooser(null);
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
       Dialog.alert(
-        "Could not send the files to the page",
+        "Fișierele nu au putut fi trimise paginii",
         cause instanceof Error ? cause.message : undefined,
       ),
     );
@@ -275,7 +275,7 @@ function PreviewStreamDocumentView({
       (text) => {
         if (text) command({ type: "text", text });
       },
-      () => Dialog.alert("Could not read the clipboard"),
+      () => Dialog.alert("Clipboard-ul nu a putut fi citit"),
     );
   const fail = (message: string) => {
     if (!active.current || failed.current) return;
@@ -289,7 +289,7 @@ function PreviewStreamDocumentView({
     setStatus("error");
   };
   const bootstrapTimedOut = useEffectEvent(() =>
-    fail("Browser viewer could not start. Reconnect to try again."),
+    fail("Vizualizarea browserului nu a putut porni. Reconectează-te și încearcă din nou."),
   );
   useEffect(() => {
     if (started) return;
@@ -321,7 +321,8 @@ function PreviewStreamDocumentView({
   useEffect(() => () => controlChanged(null), []);
   const processTerminated = () => {
     if (!active.current || failed.current) return;
-    if (!onRecoverProcess()) fail("Browser viewer stopped. Reconnect to try again.");
+    if (!onRecoverProcess())
+      fail("Vizualizarea browserului s-a oprit. Reconectează-te și încearcă din nou.");
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
@@ -332,7 +333,7 @@ function PreviewStreamDocumentView({
           </AppText>
           {control?.canOperate ? (
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label={control.controller === "you" ? "Eliberează controlul" : "Preia controlul"}
               tone="secondary"
               disabled={control.controller === "another-viewer"}
               onPress={() =>
@@ -357,8 +358,16 @@ function PreviewStreamDocumentView({
           allowsPictureInPictureMediaPlayback
           mediaPlaybackRequiresUserAction={false}
           style={{ flex: 1, backgroundColor: background }}
-          onError={() => fail("Browser viewer could not load. Reconnect to try again.")}
-          onHttpError={() => fail("Browser viewer could not load. Reconnect to try again.")}
+          onError={() =>
+            fail(
+              "Vizualizarea browserului nu s-a putut încărca. Reconectează-te și încearcă din nou.",
+            )
+          }
+          onHttpError={() =>
+            fail(
+              "Vizualizarea browserului nu s-a putut încărca. Reconectează-te și încearcă din nou.",
+            )
+          }
           onContentProcessDidTerminate={processTerminated}
           onRenderProcessGone={processTerminated}
           onShouldStartLoadWithRequest={(request) =>
@@ -379,12 +388,14 @@ function PreviewStreamDocumentView({
               }
               case "unauthorized":
                 if (!onUnauthorized()) {
-                  fail("This session can't open the browser stream. Reconnect to try again.");
+                  fail(
+                    "Această sesiune nu poate deschide browserul. Reconectează-te și încearcă din nou.",
+                  );
                 }
                 return;
               case "gone":
                 setGone(true);
-                fail("This tab was closed.");
+                fail("Fila a fost închisă.");
                 onGone?.();
                 return;
               case "hostSetup":
@@ -409,7 +420,7 @@ function PreviewStreamDocumentView({
               case "status":
                 setStarted(true);
                 if (message.status === "error") {
-                  fail(message.detail ?? "Browser stream failed.");
+                  fail(message.detail ?? "Transmisia browserului a eșuat.");
                   return;
                 }
                 setStatus(message.status);
@@ -436,9 +447,9 @@ function PreviewStreamDocumentView({
             The page asks for {fileChooser.multiple ? "files" : "a file"}.
           </AppText>
           <View className="flex-row justify-end gap-3">
-            <Button label="Cancel" tone="text" onPress={() => answerFileChooser(false)} />
+            <Button label="Anulează" tone="text" onPress={() => answerFileChooser(false)} />
             <Button
-              label={`Choose ${fileChooser.multiple ? "files" : "file"}`}
+              label={`Alege ${fileChooser.multiple ? "fișiere" : "fișierul"}`}
               tone="secondary"
               onPress={() => answerFileChooser(true)}
             />
@@ -452,7 +463,7 @@ function PreviewStreamDocumentView({
             <>
               {control.dialog.type === "prompt" ? (
                 <TextInput
-                  accessibilityLabel="Dialog response"
+                  accessibilityLabel="Răspuns"
                   className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
                   placeholderTextColorClassName="accent-placeholder"
                   selectionColorClassName="accent-focus/32"
@@ -462,12 +473,12 @@ function PreviewStreamDocumentView({
               ) : null}
               <View className="flex-row justify-end gap-3">
                 <Button
-                  label="Dismiss"
+                  label="Respinge"
                   tone="text"
                   onPress={() => command({ type: "dialog", accept: false })}
                 />
                 <Button
-                  label="Accept"
+                  label="Acceptă"
                   tone="secondary"
                   onPress={() =>
                     command({
@@ -495,13 +506,13 @@ function PreviewStreamDocumentView({
               accessibilityLiveRegion="polite"
               className="text-center text-sm text-foreground-muted"
             >
-              {status === "error" ? error : "Connecting to browser..."}
+              {status === "error" ? error : "Se conectează la browser..."}
             </AppText>
           )}
           {status === "error" && hostSetup && !compact ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Copy ${hostSetup.command}`}
+              accessibilityLabel={`Copiază ${hostSetup.command}`}
               className="w-full flex-row items-center gap-2 rounded-xl border border-secondary-border bg-secondary px-4 py-3"
               onPress={() => {
                 void Clipboard.setStringAsync(hostSetup.command).catch(() => undefined);
@@ -516,7 +527,7 @@ function PreviewStreamDocumentView({
           {status === "error" && !gone && !compact ? (
             <View className="items-center">
               <Button
-                label={hostSetup ? "Try again" : "Reconnect"}
+                label={hostSetup ? "Încearcă din nou" : "Reconectează"}
                 tone="secondary"
                 onPress={onRetry}
               />

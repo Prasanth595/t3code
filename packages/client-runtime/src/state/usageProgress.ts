@@ -32,8 +32,8 @@ export function updatingProvidersLabel(
   providerLabel: (provider: UsageProviderKind) => string,
 ) {
   return providers.length === 1
-    ? `Updating ${providerLabel(providers[0]!)}…`
-    : `Updating ${providers.length} providers…`;
+    ? `Se actualizează ${providerLabel(providers[0]!)}…`
+    : `Se actualizează ${providers.length} furnizori…`;
 }
 
 export function usageProgress(
@@ -63,10 +63,10 @@ export function usageProgress(
           ? null
           : updatingProvidersLabel(providers, providerLabel)
         : environments.length === 1
-          ? "Updating…"
+          ? "Se actualizează…"
           : waiting.length === 1
-            ? `Updating ${waiting[0]!.label}…`
-            : `Updating ${waiting.length} environments…`,
+            ? `Se actualizează ${waiting[0]!.label}…`
+            : `Se actualizează ${waiting.length} medii…`,
   };
 }
 

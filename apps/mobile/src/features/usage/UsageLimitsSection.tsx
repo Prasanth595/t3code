@@ -138,7 +138,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
     <Pressable
       className="shrink active:opacity-60"
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      accessibilityLabel={revealed ? "Ascunde numele contului" : "Arată numele contului"}
       onPress={() => setRevealed((current) => !current)}
     >
       <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
@@ -211,10 +211,10 @@ export function AccountLimits(props: {
 }
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
+  reset: "Resetare aplicată. Limitele au fost golite.",
+  nothingToReset: "Nimic de resetat acum.",
+  noCredit: "Nu mai ai credite de resetare.",
+  alreadyRedeemed: "Creditul a fost deja folosit.",
 };
 
 export function ResetCredits(props: {
@@ -238,9 +238,9 @@ export function ResetCredits(props: {
     : null;
   const summary =
     credits.availableCount === 0
-      ? "No reset credits banked"
+      ? "Niciun credit de resetare"
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
+          expiresIn ? ` · următorul expiră în ${expiresIn}` : ""
         }`;
 
   const redeem = async () => {
@@ -256,18 +256,18 @@ export function ResetCredits(props: {
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
         ? result.cause.error.message
-        : "Could not use the reset credit.",
+        : "Creditul de resetare nu a putut fi folosit.",
     );
   };
 
   const confirm = () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Dialog.alert(
-      "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      "Folosești un credit de resetare?",
+      "Se folosește un credit din cont și se golesc limitele curente. Acțiunea nu poate fi anulată.",
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
+        { text: "Anulează", style: "cancel" },
+        { text: "Folosește creditul", onPress: () => void redeem() },
       ],
     );
   };
@@ -294,13 +294,13 @@ export function ResetCredits(props: {
                 : "text-sm font-t3-medium text-foreground"
             }
           >
-            {busy ? "Using…" : "Use reset"}
+            {busy ? "Se folosește…" : "Resetează"}
           </Text>
         </Pressable>
       ) : null}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
+          Această conexiune nu poate gestiona conturile furnizorilor.
         </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}

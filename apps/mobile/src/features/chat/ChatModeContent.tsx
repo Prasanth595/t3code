@@ -126,9 +126,9 @@ export function ChatModeContent(props: {
     <Animated.View className="flex-1 bg-screen" style={keyboardStyle}>
       {chat === undefined ? (
         <View className="flex-1 items-center justify-center gap-2 px-8">
-          <AppText className="text-center text-2xl font-t3-bold">What can I help with?</AppText>
+          <AppText className="text-center text-2xl font-t3-bold">Cu ce te pot ajuta?</AppText>
           <AppText className="text-center text-sm text-foreground-secondary">
-            Ask anything. Chat works without a connected computer.
+            Întreabă orice. Chat-ul merge și fără un calculator conectat.
           </AppText>
         </View>
       ) : (
@@ -226,7 +226,7 @@ function ChatWorkingRow(props: { readonly searching: boolean }) {
         key={props.searching ? "searching" : "thinking"}
         icon={props.searching ? "globe" : "brain"}
         iconSubtleColor={iconColor ?? "gray"}
-        label={props.searching ? "Searching the web" : "Thinking"}
+        label={props.searching ? "Caut pe internet" : "Mă gândesc"}
         showIcon
       />
     </View>
@@ -262,7 +262,7 @@ function ChatMessageRow(props: { readonly message: SaasChatMessage; readonly str
           {messageTime(message.createdAt)}
         </AppText>
         <CopyTextButton
-          accessibilityLabel="Copy message"
+          accessibilityLabel="Copiază mesajul"
           text={message.content}
           tintColor={iconColor}
           buttonSize={28}
@@ -298,7 +298,7 @@ function AssistantRow(props: { readonly text: string; readonly streaming: boolea
       {props.streaming ? null : (
         <View className="mt-1 flex-row items-center gap-1">
           <CopyTextButton
-            accessibilityLabel="Copy message"
+            accessibilityLabel="Copiază mesajul"
             text={chatVisualsAsText(props.text)}
             tintColor={iconColor}
             buttonSize={28}
@@ -319,13 +319,13 @@ function ChatErrorNotice(props: {
   const action =
     props.error.code === "sign_up_required" || props.error.code === "session_expired"
       ? {
-          label: props.error.code === "session_expired" ? "Sign in" : "Create free account",
+          label: props.error.code === "session_expired" ? "Autentifică-te" : "Creează cont gratuit",
           run: props.onSignIn,
         }
       : props.error.code === "daily_limit"
-        ? { label: "Upgrade to Pro", run: props.onUpgrade }
+        ? { label: "Treci la Pro", run: props.onUpgrade }
         : isRetryable(props.error)
-          ? { label: "Try again", run: props.onRetry }
+          ? { label: "Încearcă din nou", run: props.onRetry }
           : null;
   return (
     <View
@@ -377,7 +377,7 @@ function MessageAttachments(props: { readonly attachments: ReadonlyArray<SaasCha
           <Pressable
             key={attachment.id}
             accessibilityRole="imagebutton"
-            accessibilityLabel={`Open ${attachment.name}`}
+            accessibilityLabel={`Deschide ${attachment.name}`}
             onPress={() => setPreviewing(chatAttachmentUrl(relayUrl, attachment.id))}
           >
             <Image
@@ -419,11 +419,11 @@ function usePendingFiles() {
     readonly attachments: ReadonlyArray<DraftComposerAttachment>;
     readonly error: string | null;
   }) => {
-    if (picked.error) Dialog.alert("Could not add the file", picked.error);
+    if (picked.error) Dialog.alert("Fișierul nu a putut fi adăugat", picked.error);
     for (const draft of picked.attachments) {
       const problem = chatAttachmentProblem(draft);
       if (problem !== null) {
-        Dialog.alert("Could not add the file", problem);
+        Dialog.alert("Fișierul nu a putut fi adăugat", problem);
         continue;
       }
       setFiles((current) => [...current, { draft, attachment: null }]);
@@ -436,7 +436,7 @@ function usePendingFiles() {
           );
         } else {
           setFiles((current) => current.filter((item) => item.draft.id !== draft.id));
-          Dialog.alert("Could not add the file", result.message);
+          Dialog.alert("Fișierul nu a putut fi adăugat", result.message);
         }
       });
     }
@@ -463,8 +463,8 @@ function AttachTray(props: { readonly onPhotos: () => void; readonly onFiles: ()
       entering={FadeInDown.duration(160)}
       exiting={FadeOutDown.duration(120)}
     >
-      <AttachTile icon="photo" label="Photos" onPress={props.onPhotos} />
-      <AttachTile icon="folder" label="Files" onPress={props.onFiles} />
+      <AttachTile icon="photo" label="Poze" onPress={props.onPhotos} />
+      <AttachTile icon="folder" label="Fișiere" onPress={props.onFiles} />
     </Animated.View>
   );
 }
@@ -562,7 +562,7 @@ function ChatComposer(props: {
           <View onLayout={compactEditor.onRowLayout}>
             <View className="flex-row items-end">
               <Pressable
-                accessibilityLabel={attaching ? "Close attachments" : "Add attachment"}
+                accessibilityLabel={attaching ? "Închide atașamentele" : "Adaugă atașament"}
                 accessibilityRole="button"
                 className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70"
                 onPress={() => setAttaching(!attaching)}
@@ -614,14 +614,16 @@ function ChatComposer(props: {
               >
                 {props.replying ? (
                   <ComposerActionButton
-                    accessibilityLabel="Stop answer"
+                    accessibilityLabel="Oprește răspunsul"
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStop}
                   />
                 ) : (
                   <ComposerActionButton
-                    accessibilityLabel={pending.uploading ? "Uploading files" : "Send message"}
+                    accessibilityLabel={
+                      pending.uploading ? "Se încarcă fișierele" : "Trimite mesajul"
+                    }
                     icon="arrow.up"
                     variant="primary"
                     disabled={!canSend}
@@ -635,7 +637,7 @@ function ChatComposer(props: {
                 multiline
                 value={text}
                 onChangeText={setText}
-                placeholder="Ask anything..."
+                placeholder="Întreabă orice..."
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 onPasteImages={(uris) =>
@@ -644,7 +646,7 @@ function ChatComposer(props: {
                     existingCount: stripAttachments.length,
                   }).then((attachments) => pending.add({ attachments, error: null }))
                 }
-                submitTitle="Send"
+                submitTitle="Trimite"
                 onSubmit={submit}
                 {...compactEditor.editorProps}
                 textStyle={{ ...bodyText, color: foregroundColor }}

@@ -68,7 +68,7 @@ export function start(configuration: DeviceStreamConfiguration) {
   image.style.display = "none";
   const inputStatus = document.createElement("div");
   inputStatus.setAttribute("role", "status");
-  inputStatus.textContent = "Reconnecting device controls...";
+  inputStatus.textContent = "Se reconectează controalele...";
   Object.assign(inputStatus.style, {
     position: "fixed",
     bottom: "12px",

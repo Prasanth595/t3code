@@ -28,16 +28,16 @@ export interface PreviewStreamControl {
 
 export const previewStreamControlLabel = (control: PreviewStreamControl | null): string =>
   !control
-    ? "Connecting..."
+    ? "Se conectează..."
     : !control.canOperate
-      ? "Read-only"
+      ? "Doar citire"
       : control.controller === "you"
-        ? "You have control"
+        ? "Tu ai controlul"
         : control.controller === "agent"
-          ? "Agent has control"
+          ? "Agentul are controlul"
           : control.controller === "another-viewer"
-            ? "Another viewer has control"
-            : "Watching";
+            ? "Alt spectator are controlul"
+            : "Urmărești";
 
 const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["dialog"] =>
   value === null ||
@@ -131,7 +131,7 @@ export async function uploadPreviewStreamFiles(
     body,
     credentials: chooser.credentials ? "include" : "omit",
   });
-  if (!response.ok) throw new Error((await response.text()) || "The upload was refused.");
+  if (!response.ok) throw new Error((await response.text()) || "Încărcarea a fost refuzată.");
 }
 
 export const previewStreamDownloadUrl = (

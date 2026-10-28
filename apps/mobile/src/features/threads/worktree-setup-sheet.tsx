@@ -9,7 +9,7 @@ export interface WorktreeSetupSheetProps {
 
 export function WorktreeSetupSheet({ children, onClose }: WorktreeSetupSheetProps) {
   return (
-    <Sheet title="Worktree setup" onClose={onClose}>
+    <Sheet title="Pregătire worktree" onClose={onClose}>
       {children}
     </Sheet>
   );

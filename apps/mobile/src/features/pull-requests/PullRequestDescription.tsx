@@ -47,7 +47,7 @@ export function PullRequestDescription(props: {
         .map((attachment) => {
           return {
             ...pullRequestImageSource(attachment.uri, mediaContext),
-            name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
+            name: new URL(attachment.uri).pathname.split("/").pop() || "Imagine",
           };
         }),
     [content, mediaContext],
@@ -57,7 +57,7 @@ export function PullRequestDescription(props: {
   return (
     <View className="gap-5">
       <View className="gap-3">
-        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
+        <PullRequestSectionHeading>Descriere</PullRequestSectionHeading>
         {props.markdown.trim() ? (
           <View className="overflow-hidden">
             <View
@@ -112,7 +112,7 @@ export function PullRequestDescription(props: {
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded }}
-                accessibilityLabel={expanded ? "Collapse description" : "Expand description"}
+                accessibilityLabel={expanded ? "Restrânge descrierea" : "Extinde descrierea"}
                 onPress={() => {
                   if (expanded) props.onCollapse();
                   onExpandedChange(!expanded);
@@ -125,7 +125,7 @@ export function PullRequestDescription(props: {
                 className="min-h-11 flex-row items-center justify-center gap-1 py-2 active:opacity-70"
               >
                 <Text className="text-xs font-t3-medium text-foreground">
-                  {expanded ? "Show less" : "Show more"}
+                  {expanded ? "Arată mai puțin" : "Arată mai mult"}
                 </Text>
                 <SymbolView
                   name={expanded ? "chevron.up" : "chevron.down"}
@@ -142,7 +142,7 @@ export function PullRequestDescription(props: {
       </View>
       {content.attachments.length ? (
         <View className="gap-3">
-          <PullRequestSectionHeading>Attachments</PullRequestSectionHeading>
+          <PullRequestSectionHeading>Atașamente</PullRequestSectionHeading>
           <ScrollView
             horizontal
             keyboardShouldPersistTaps="always"

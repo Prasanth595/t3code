@@ -53,7 +53,7 @@ export async function createPastedTextComposerAttachment(input: {
 }): Promise<DraftComposerFileAttachment> {
   const bytes = new TextEncoder().encode(input.text).byteLength;
   if (bytes <= 0) {
-    throw new Error("Clipboard is empty.");
+    throw new Error("Clipboard-ul e gol.");
   }
   if (bytes > input.maxBytes) {
     throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
@@ -228,7 +228,7 @@ async function createComposerFileAttachment(input: {
   try {
     const sizeBytes = new File(fileUri).size ?? input.sizeBytes ?? 0;
     if (sizeBytes <= 0) {
-      throw new Error(`'${input.name}' is empty or could not be read.`);
+      throw new Error(`„${input.name}” e gol sau nu a putut fi citit.`);
     }
     if (sizeBytes > input.maxBytes) {
       throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
@@ -258,7 +258,7 @@ export async function pickComposerFiles(input: {
   if (remainingSlots <= 0) {
     return {
       files: [],
-      error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+      error: `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`,
     };
   }
 
@@ -271,7 +271,8 @@ export async function pickComposerFiles(input: {
   } catch (cause) {
     return {
       files: [],
-      error: cause instanceof Error ? cause.message : "Could not open the file picker.",
+      error:
+        cause instanceof Error ? cause.message : "Selectorul de fișiere nu a putut fi deschis.",
     };
   } finally {
     endHandoff();
@@ -304,11 +305,11 @@ export async function pickComposerFiles(input: {
         }),
       );
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : `Could not read '${name}'.`;
+      error = cause instanceof Error ? cause.message : `„${name}” nu a putut fi citit.`;
     }
   }
   if (exceededAttachmentLimit) {
-    error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+    error = `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`;
   }
   return { files: attachments, error };
 }
@@ -317,7 +318,7 @@ async function loadImagePicker() {
   try {
     return await import("expo-image-picker");
   } catch (error) {
-    throw new Error("The photo library is unavailable right now.", { cause: error });
+    throw new Error("Galeria foto nu e disponibilă acum.", { cause: error });
   }
 }
 
@@ -325,7 +326,7 @@ async function loadClipboard() {
   try {
     return await import("expo-clipboard");
   } catch (error) {
-    throw new Error("Clipboard paste is unavailable right now.", { cause: error });
+    throw new Error("Lipirea din clipboard nu e disponibilă acum.", { cause: error });
   }
 }
 
@@ -351,7 +352,7 @@ export async function pickComposerMedia(input: {
   if (remainingSlots <= 0) {
     return {
       attachments: [],
-      error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`,
+      error: `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente per mesaj.`,
     };
   }
 
@@ -361,7 +362,7 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "The photo library is unavailable right now.",
+      error: error instanceof Error ? error.message : "Galeria foto nu e disponibilă acum.",
     };
   }
 
@@ -381,7 +382,7 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "Could not open the photo library.",
+      error: error instanceof Error ? error.message : "Galeria foto nu a putut fi deschisă.",
     };
   } finally {
     endHandoff();
@@ -399,13 +400,13 @@ export async function pickComposerMedia(input: {
 
   for (const asset of result.assets) {
     if (attachments.length >= remainingSlots) {
-      error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`;
+      error = `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente per mesaj.`;
       break;
     }
     const mimeType = asset.mimeType?.toLowerCase();
     if (asset.type === "video" || mimeType?.startsWith("video/")) {
       if (input.maxVideoBytes === undefined) {
-        error = "Video attachments are unavailable here.";
+        error = "Atașamentele video nu sunt disponibile aici.";
         continue;
       }
       try {
@@ -422,12 +423,14 @@ export async function pickComposerMedia(input: {
         );
       } catch (cause) {
         error =
-          cause instanceof Error ? cause.message : `Could not read '${asset.fileName ?? "video"}'.`;
+          cause instanceof Error
+            ? cause.message
+            : `„${asset.fileName ?? "video"}” nu a putut fi citit.`;
       }
       continue;
     }
     if (asset.type !== "image" && !mimeType?.startsWith("image/")) {
-      error = `Unsupported file type for '${asset.fileName ?? "image"}'.`;
+      error = `Tip de fișier nesuportat pentru „${asset.fileName ?? "imagine"}”.`;
       continue;
     }
 
@@ -476,13 +479,13 @@ export async function pickComposerMedia(input: {
         };
       }
     } catch {
-      error = `Failed to read '${name}'.`;
+      error = `„${name}” nu a putut fi citit.`;
       continue;
     }
 
     const sizeBytes = estimateBase64ByteSize(image.base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      error = `'${name}' exceeds the 10 MB attachment limit.`;
+      error = `„${name}” depășește limita de 10 MB.`;
       continue;
     }
 
@@ -522,7 +525,8 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
     return {
       images: [],
       text: null,
-      error: error instanceof Error ? error.message : "Clipboard paste is unavailable right now.",
+      error:
+        error instanceof Error ? error.message : "Lipirea din clipboard nu e disponibilă acum.",
     };
   }
 
@@ -533,7 +537,7 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
       return {
         images: [],
         text: null,
-        error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
+        error: `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} imagini per mesaj.`,
       };
     }
     const image = await clipboard.getImageAsync({ format: "png" });
@@ -541,7 +545,7 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
       return {
         images: [],
         text: null,
-        error: "Clipboard image is unavailable.",
+        error: "Imaginea din clipboard nu e disponibilă.",
       };
     }
 
@@ -558,7 +562,7 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
       return {
         images: [],
         text: null,
-        error: "Clipboard image exceeds the 10 MB attachment limit.",
+        error: "Imaginea din clipboard depășește limita de 10 MB.",
       };
     }
 
@@ -583,14 +587,14 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
     const text = await clipboard.getStringAsync();
     return {
       images: [],
-      ...(text.length > 0 ? { text, error: null } : { text: null, error: "Clipboard is empty." }),
+      ...(text.length > 0 ? { text, error: null } : { text: null, error: "Clipboard-ul e gol." }),
     };
   }
 
   return {
     images: [],
     text: null,
-    error: "Clipboard does not contain pasteable text or image content.",
+    error: "Clipboard-ul nu conține text sau imagini care pot fi lipite.",
   };
 }
 

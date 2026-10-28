@@ -19,9 +19,9 @@ export interface ComposerSendPresentation {
 }
 
 const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
-  queue: "Queue",
-  steer: "Steer",
-  restart: "Restart",
+  queue: "La coadă",
+  steer: "Redirecționează",
+  restart: "Repornește",
 };
 
 export function resolveComposerSendPresentation(input: {
@@ -33,7 +33,7 @@ export function resolveComposerSendPresentation(input: {
 }): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
     return {
-      label: "Update queued message",
+      label: "Actualizează mesajul din coadă",
       icon: "checkmark",
       action: null,
       alternate: null,
@@ -42,7 +42,7 @@ export function resolveComposerSendPresentation(input: {
   }
   if (!input.running) {
     return {
-      label: input.deliveryDeferred ? "Queue" : "Send",
+      label: input.deliveryDeferred ? "La coadă" : "Trimite",
       icon: input.deliveryDeferred ? "tray.and.arrow.up" : "arrow.up",
       action: null,
       alternate: null,

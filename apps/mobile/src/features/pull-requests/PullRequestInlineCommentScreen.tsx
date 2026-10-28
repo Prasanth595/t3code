@@ -75,13 +75,13 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   return (
     <PullRequestSheetContent
       busy={busy}
-      title={saved ? "Edit review comment" : "Review comment"}
+      title={saved ? "Editează comentariul" : "Comentariu de revizuire"}
       subtitle={`#${params.number} · ${reviewPositionLabel(params.position)}`}
       footer={
         <Button
           fullWidth
           tone="contrast"
-          label={busy ? "Saving…" : "Save draft"}
+          label={busy ? "Se salvează…" : "Salvează ciorna"}
           loading={busy}
           disabled={
             !store.ready ||
@@ -105,8 +105,8 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         multiline
         editable={store.ready && !busy}
         autoFocus
-        accessibilityLabel="Inline review comment"
-        placeholder="Write feedback on this line…"
+        accessibilityLabel="Comentariu pe linie"
+        placeholder="Scrie feedback pentru această linie…"
         placeholderTextColorClassName="accent-foreground-muted"
         maxLength={65536}
         value={body}
@@ -115,11 +115,11 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         style={{ textAlignVertical: "top" }}
       />
       <Text className="text-xs text-foreground-muted">
-        Saved comments are private until you submit your review.
+        Comentariile salvate sunt private până trimiți revizuirea.
       </Text>
       {stale ? (
         <Text className="text-sm text-danger-foreground">
-          The branch changed. Return to the current diff and select the line again.
+          Branch-ul s-a schimbat. Întoarce-te la diff-ul curent și alege din nou linia.
         </Text>
       ) : null}
       {store.error || detail.error ? (
@@ -127,12 +127,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       ) : null}
       {saved ? (
         <Button
-          label="Delete draft"
+          label="Șterge ciorna"
           onPress={() =>
-            Dialog.alert("Delete this draft?", "Your other review comments will be kept.", [
-              { text: "Cancel", style: "cancel" },
+            Dialog.alert("Ștergi ciorna?", "Celelalte comentarii vor fi păstrate.", [
+              { text: "Anulează", style: "cancel" },
               {
-                text: "Delete",
+                text: "Șterge",
                 style: "destructive",
                 onPress: () => {
                   store.update((draft) => ({

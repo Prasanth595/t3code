@@ -817,8 +817,8 @@ function AdaptiveWorkspaceLayoutContent(
                     renderFallback={(fallback) => (
                       <RenderFailureView
                         {...fallback}
-                        title="The sidebar couldn't be displayed"
-                        exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                        title="Bara laterală nu a putut fi afișată"
+                        exit={{ label: "Deschide setările", onPress: handleOpenSettings }}
                       />
                     )}
                   >

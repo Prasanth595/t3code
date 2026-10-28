@@ -79,10 +79,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       ) : null}
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Commit changes"
+        title="Commit modificări"
         subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
         onCancel={() => navigation.goBack()}
-        accessibilityLabel="Cancel commit"
+        accessibilityLabel="Anulează commit-ul"
       />
       <ScrollView
         nestedScrollEnabled
@@ -96,28 +96,28 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       >
         {isDefaultRef ? (
           <Text className="text-sm text-warning-foreground">
-            You’re on the default branch. You can create a new branch when committing.
+            Ești pe branch-ul implicit. Poți crea un branch nou când faci commit.
           </Text>
         ) : null}
         <View className="gap-2">
-          <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
+          <Text className="text-sm font-t3-medium text-foreground">Mesaj commit</Text>
           <TextInput
             multiline
-            accessibilityLabel="Commit message"
+            accessibilityLabel="Mesaj commit"
             value={dialogCommitMessage}
             onChangeText={setDialogCommitMessage}
-            placeholder="Describe your changes…"
+            placeholder="Descrie modificările…"
             textAlignVertical="top"
             className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
           />
           <Text className="text-xs text-foreground-muted">
-            Leave empty to generate a message automatically.
+            Lasă gol ca mesajul să fie generat automat.
           </Text>
         </View>
         <View>
           <View className="flex-row items-center justify-between gap-2 pb-2">
             <View className="flex-1 gap-1">
-              <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
+              <Text className="text-base font-t3-bold text-foreground">Fișiere modificate</Text>
               <Text className="text-xs text-foreground-muted">
                 {selectedFiles.length} of {allFiles.length} selected · +
                 {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
@@ -125,7 +125,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             </View>
             {allFiles.length > 0 ? (
               <Button
-                label={allSelected ? "Deselect all" : "Select all"}
+                label={allSelected ? "Deselectează tot" : "Selectează tot"}
                 tone="text"
                 onPress={() =>
                   setExcludedFiles(
@@ -136,7 +136,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             ) : null}
           </View>
           {allFiles.length === 0 ? (
-            <Text className="py-4 text-sm text-foreground-muted">No changed files to commit.</Text>
+            <Text className="py-4 text-sm text-foreground-muted">
+              Niciun fișier modificat pentru commit.
+            </Text>
           ) : (
             allFiles.map((file) => {
               const included = !excludedFiles.has(file.path);
@@ -206,7 +208,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         </View>
         <View className="gap-2">
           <Button
-            label="Commit changes"
+            label="Fă commit"
             icon="checkmark"
             tone="primary"
             fullWidth
@@ -214,7 +216,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             onPress={() => void runCommitAction(false)}
           />
           <Button
-            label="Commit on a new branch"
+            label="Commit pe un branch nou"
             icon="arrow.branch"
             tone="text"
             fullWidth

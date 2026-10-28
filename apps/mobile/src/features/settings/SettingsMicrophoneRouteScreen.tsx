@@ -62,27 +62,27 @@ const KINDS: Record<
   }
 > = {
   wired: {
-    label: "Wired",
-    row: "Other wired",
-    rowDescription: "Headsets and USB microphones not listed",
+    label: "Cu fir",
+    row: "Alte dispozitive cu fir",
+    rowDescription: "Căști și microfoane USB nelistate",
     icon: "cable.connector",
   },
   bluetooth: {
     label: "Bluetooth",
-    row: "Other Bluetooth",
-    rowDescription: "AirPods, headsets, and cars not listed",
+    row: "Alte dispozitive Bluetooth",
+    rowDescription: "AirPods, căști și mașini nelistate",
     icon: "headphones",
   },
   builtIn: {
-    label: "Built-in",
-    row: "Built-in microphone",
-    rowDescription: "The microphone on this device",
+    label: "Integrat",
+    row: "Microfon integrat",
+    rowDescription: "Microfonul acestui dispozitiv",
     icon: "iphone",
   },
   carPlay: {
     label: "CarPlay",
     row: "CarPlay",
-    rowDescription: "The car’s microphone",
+    rowDescription: "Microfonul mașinii",
     icon: "car",
   },
 };
@@ -147,10 +147,10 @@ export function SettingsMicrophoneRouteScreen() {
       >
         {permission === "ask" || permission === "denied" ? (
           <>
-            <SettingsSection title="Microphone access">
+            <SettingsSection title="Acces la microfon">
               <SettingsActionRow
                 icon="mic"
-                label={permission === "ask" ? "Allow microphone access" : "Open Settings"}
+                label={permission === "ask" ? "Permite accesul la microfon" : "Deschide Setările"}
                 onPress={
                   permission === "ask" ? requestPermission : () => void Linking.openSettings()
                 }
@@ -158,17 +158,17 @@ export function SettingsMicrophoneRouteScreen() {
             </SettingsSection>
             <Text className="px-2 text-sm text-foreground-muted">
               {permission === "ask"
-                ? "Voice input needs microphone access before it can record or list your microphones."
-                : "Microphone access is off for Mira. Turn it on in Settings to use voice input."}
+                ? "Dictarea are nevoie de acces la microfon ca să înregistreze sau să-ți listeze microfoanele."
+                : "Accesul la microfon e oprit pentru Mira. Activează-l din Setări ca să folosești dictarea."}
             </Text>
           </>
         ) : null}
         <SettingsSection
-          title="Preferred order"
+          title="Ordinea preferată"
           trailing={
             hasDevices ? (
               <Button
-                label={editing ? "Done" : "Edit"}
+                label={editing ? "Gata" : "Editează"}
                 tone="text"
                 onPress={() => setEditing((value) => !value)}
               />
@@ -210,9 +210,9 @@ export function SettingsMicrophoneRouteScreen() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input records from the first connected microphone in this list. Wired and Bluetooth
-          devices are added by name after you use voice input with them connected; until then, the
-          Other row ranks them.
+          Dictarea înregistrează de la primul microfon conectat din listă. Dispozitivele cu fir și
+          Bluetooth sunt adăugate după nume după ce folosești dictarea cu ele conectate; până
+          atunci, rândul Alte le ordonează.
         </Text>
       </ScrollView>
     </View>
@@ -261,7 +261,7 @@ function MicrophoneRow(props: {
       {props.editing && props.onForget ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Forget ${title}`}
+          accessibilityLabel={`Uită ${title}`}
           hitSlop={8}
           onPress={props.onForget}
           className="active:opacity-70"

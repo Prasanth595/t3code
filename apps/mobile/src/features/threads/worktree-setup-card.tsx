@@ -44,25 +44,25 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
+  const scriptName = snapshot.setupScript?.name ?? "Script de configurare";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const now = useVisibleSecondClock(running || working);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
   const label =
     handedOff && working
-      ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
+      ? `Lucrează de ${elapsed(turnStartedAt, null, now) ?? "0s"}`
       : running
         ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
+          ? "Configurarea continuă…"
+          : "Se pregătește worktree-ul…"
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? "Pregătirea worktree-ului a fost anulată"
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? "Pregătirea worktree-ului a eșuat"
             : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+              ? "Scriptul de configurare a eșuat"
+              : "Worktree pregătit";
 
   return (
     <View accessibilityLabel="Worktree setup" className="py-1">
@@ -84,8 +84,8 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           accessibilityRole="button"
           accessibilityLabel={
             backgroundSetup
-              ? `Background setup is still running: ${scriptName}. Show setup progress.`
-              : "Worktree setup details"
+              ? `Configurarea din fundal încă rulează: ${scriptName}. Arată progresul.`
+              : "Detalii pregătire worktree"
           }
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
@@ -116,7 +116,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? "Background setup" : "Details"}
+              {backgroundSetup ? "Configurare în fundal" : "Detalii"}
             </Text>
             {!backgroundSetup ? (
               <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
@@ -152,7 +152,7 @@ export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
-        <HeaderLabel label={`Working for ${elapsed(startedAt, null, now) ?? "0s"}`} active />
+        <HeaderLabel label={`Lucrează de ${elapsed(startedAt, null, now) ?? "0s"}`} active />
       </View>
     </View>
   );
@@ -231,9 +231,9 @@ function SetupDetailsSheet({
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Button
-              label="Cancel setup"
+              label="Anulează configurarea"
               tone="danger"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel="Anulează pregătirea worktree-ului"
               onPress={() => {
                 onClose();
                 onCancel();
@@ -241,7 +241,7 @@ function SetupDetailsSheet({
             />
             {onWorkLocally ? (
               <Button
-                label="Work locally"
+                label="Lucrează local"
                 tone="secondary"
                 onPress={() => {
                   onClose();
@@ -349,7 +349,7 @@ const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   return (
     <View
-      accessibilityLabel="Setup script output"
+      accessibilityLabel="Rezultatul scriptului de configurare"
       className={
         failed
           ? "mb-2 ml-8 rounded-md border border-danger-border bg-danger px-3 py-2"

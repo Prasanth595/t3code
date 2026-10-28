@@ -48,9 +48,9 @@ function NativeVideoPreview(props: {
   const loadError =
     resource !== null && playbackUrl === null
       ? preparedConnection._tag === "None"
-        ? "Reconnect to this environment and open the video again."
+        ? "Reconectează-te la acest mediu și deschide din nou video-ul."
         : assetUrl._tag === "Failure"
-          ? "Could not load this video. Check the connection and try again."
+          ? "Video-ul nu a putut fi încărcat. Verifică conexiunea și încearcă din nou."
           : null
       : null;
 
@@ -64,7 +64,7 @@ function NativeVideoPreview(props: {
   }, [playbackUrl, resolvedUrl]);
   useEffect(() => {
     if (!loadError) return;
-    Dialog.alert("Could not open video", loadError);
+    Dialog.alert("Video-ul nu a putut fi deschis", loadError);
     onRequestClose();
   }, [loadError]);
 
@@ -100,12 +100,12 @@ function NativeVideoPreview(props: {
       // AVKit gives no retry, so re-mint now; the cached URL may simply have expired.
       if (ready) void refreshAssetUrl();
       Dialog.alert(
-        "Could not open video",
+        "Video-ul nu a putut fi deschis",
         ready
-          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original."
+          ? "Video-ul nu a putut fi încărcat sau redat. Verifică conexiunea sau ține apăsat pe video ca să salvezi ori să partajezi originalul."
           : error instanceof Error
             ? error.message
-            : "Could not load this video.",
+            : "Video-ul nu a putut fi încărcat.",
       );
       onRequestClose();
     });

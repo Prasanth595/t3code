@@ -45,23 +45,23 @@ function compactMenuBranchLabel(branch: string): string {
 
 function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
   if (!gitStatus) {
-    return "Checking status";
+    return "Se verifică starea";
   }
   if (!gitStatus.isRepo) {
-    return "Not a repo";
+    return "Nu e repository";
   }
 
   const parts: string[] = [];
   if (gitStatus.hasWorkingTreeChanges) {
-    parts.push(`${gitStatus.workingTree.files.length} changed`);
+    parts.push(`${gitStatus.workingTree.files.length} modificate`);
   } else if (gitStatus.aheadCount === 0 && gitStatus.behindCount === 0) {
-    parts.push("Clean");
+    parts.push("Curat");
   }
   if (gitStatus.aheadCount > 0) {
-    parts.push(`${gitStatus.aheadCount} ahead`);
+    parts.push(`${gitStatus.aheadCount} înainte`);
   }
   if (gitStatus.behindCount > 0) {
-    parts.push(`${gitStatus.behindCount} behind`);
+    parts.push(`${gitStatus.behindCount} în urmă`);
   }
   if (gitStatus.pr?.state === "open") {
     const { shortLabel } = sourceControlClients.get(
@@ -137,10 +137,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const quickAction = (() => {
     if (!isRepo) {
       return {
-        label: "Git unavailable",
+        label: "Git indisponibil",
         disabled: true,
         kind: "show_hint" as const,
-        hint: "This workspace is not a git repository.",
+        hint: "Acest spațiu de lucru nu e un repository git.",
       };
     }
     const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
@@ -148,13 +148,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       ? {
           ...action,
           disabled: true,
-          hint: "This connection cannot change source control.",
+          hint: "Această conexiune nu poate modifica controlul versiunilor.",
         }
       : action;
   })();
 
   const quickActionHint = quickAction.disabled
-    ? (quickAction.hint ?? "This action is unavailable.")
+    ? (quickAction.hint ?? "Această acțiune nu e disponibilă.")
     : null;
 
   const quickActionIcon: QuickActionIcon = (() => {
@@ -174,11 +174,14 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ).changeRequest;
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
-      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
+      Dialog.alert(
+        `Niciun ${shortLabel} deschis`,
+        `Acest branch nu are niciun ${singular} deschis.`,
+      );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
+      Dialog.alert(`${shortLabel} nu a putut fi deschis`, `${singular} nu a putut fi deschis.`);
     }
   };
 
@@ -200,8 +203,8 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ) {
       if (props.hasThread === false) {
         Dialog.alert(
-          "Choose a feature branch",
-          "Switch branches before publishing changes from this draft.",
+          "Alege un branch de lucru",
+          "Schimbă branch-ul înainte să publici modificările din această ciornă.",
         );
         return;
       }
@@ -280,7 +283,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
   return {
     terminal: {
-      accessibilityLabel: "Open terminal",
+      accessibilityLabel: "Deschide terminalul",
       disabled: !props.canOpenTerminal,
       icon: { name: "terminal", type: "sfSymbol" },
       identifier: "thread-right-terminal",
@@ -298,10 +301,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           ...(props.projectScripts.length === 0
             ? [
                 {
-                  description: "This project has no saved scripts yet",
+                  description: "Proiectul nu are încă scripturi salvate",
                   disabled: true,
                   icon: { name: "play", type: "sfSymbol" as const },
-                  label: "No project scripts",
+                  label: "Niciun script",
                   onPress: () => {},
                   type: "action" as const,
                 },
@@ -323,10 +326,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             type: "action" as const,
           })),
           {
-            description: "Start another shell for this thread",
+            description: "Pornește alt shell pentru această conversație",
             disabled: !props.canOperateTerminal,
             icon: { name: "plus", type: "sfSymbol" },
-            label: "Open new terminal",
+            label: "Terminal nou",
             onPress: props.onOpenNewTerminal,
             type: "action",
           },
@@ -338,18 +341,18 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       variant: "plain",
     },
     files: {
-      accessibilityLabel: "Open files",
+      accessibilityLabel: "Deschide fișierele",
       disabled: !props.canOpenFiles,
       icon: { name: "folder", type: "sfSymbol" },
       identifier: "thread-right-files",
-      label: "Files",
+      label: "Fișiere",
       onPress: model.openFiles,
       sharesBackground: true,
       type: "button",
       variant: "plain",
     },
     git: {
-      accessibilityLabel: "Git actions",
+      accessibilityLabel: "Acțiuni Git",
       icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
       identifier: "thread-right-git",
       label: "Git",
@@ -377,20 +380,20 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
-                : "Turn diffs and worktree changes",
+                ? "Disponibil după primul mesaj"
+                : "Diff-uri și modificări din worktree",
             disabled: !model.isRepo || props.hasThread === false,
             icon: { name: "text.bubble", type: "sfSymbol" },
-            label: "Review changes",
+            label: "Revizuiește modificările",
             onPress: model.openReview,
             type: "action",
           },
           ...(props.onMergeBack
             ? [
                 {
-                  description: "Bring this thread's latest turn into its source",
+                  description: "Adu ultima rundă a conversației în sursă",
                   icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
-                  label: "Merge back to source",
+                  label: "Îmbină înapoi în sursă",
                   onPress: props.onMergeBack,
                   type: "action" as const,
                 },
@@ -399,11 +402,11 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           {
             description:
               props.hasThread === false
-                ? "Available after the first message"
-                : "Commit, files, branches",
+                ? "Disponibil după primul mesaj"
+                : "Commit, fișiere, branch-uri",
             disabled: props.hasThread === false,
             icon: { name: "ellipsis", type: "sfSymbol" },
-            label: "More",
+            label: "Mai mult",
             onPress: model.openGitInspector,
             type: "action",
           },
@@ -447,7 +450,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
       ) : null}
       {showActionControls ? (
         <Toolbar.Menu
-          accessibilityLabel="Open terminal"
+          accessibilityLabel="Deschide terminalul"
           icon="terminal"
           disabled={!props.canOpenTerminal}
           separateBackground
@@ -469,9 +472,9 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               icon="play"
               disabled
               onPress={() => {}}
-              subtitle="This project has no saved scripts yet"
+              subtitle="Proiectul nu are încă scripturi salvate"
             >
-              <Toolbar.Label>No project scripts</Toolbar.Label>
+              <Toolbar.Label>Niciun script</Toolbar.Label>
             </Toolbar.MenuAction>
           )}
           {props.terminalSessions.map((session) => (
@@ -496,15 +499,15 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
             icon="plus"
             disabled={!props.canOperateTerminal}
             onPress={props.onOpenNewTerminal}
-            subtitle="Start another shell for this thread"
+            subtitle="Pornește alt shell pentru această conversație"
           >
-            <Toolbar.Label>Open new terminal</Toolbar.Label>
+            <Toolbar.Label>Terminal nou</Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       ) : null}
       {showActionControls && props.showDirectFileControl ? (
         <Toolbar.Button
-          accessibilityLabel="Open files"
+          accessibilityLabel="Deschide fișierele"
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}
@@ -531,7 +534,7 @@ function threadGitMenuDefinition(
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
   return {
-    title: "Git controls",
+    title: "Controale Git",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
@@ -555,24 +558,24 @@ function threadGitMenuDefinition(
       },
       {
         id: "git-review",
-        title: "Review changes",
+        title: "Revizuiește modificările",
         icon: "text.bubble",
         disabled: !model.isRepo || props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Turn diffs and worktree changes",
+            ? "Disponibil după primul mesaj"
+            : "Diff-uri și modificări din worktree",
         onPress: model.openReview,
       },
       {
         id: "git-more",
-        title: "More",
+        title: "Mai mult",
         icon: "ellipsis",
         disabled: props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Commit, files, branches",
+            ? "Disponibil după primul mesaj"
+            : "Commit, fișiere, branch-uri",
         onPress: model.openGitInspector,
       },
     ],

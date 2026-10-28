@@ -24,7 +24,7 @@ export const selectedThreadRowColors = {
 };
 
 export function getThreadListV2NewBranchMenuTitle(branch: string) {
-  return `New thread on ${branch}`;
+  return `Conversație nouă pe ${branch}`;
 }
 
 export function getThreadListV2RowAppearance(

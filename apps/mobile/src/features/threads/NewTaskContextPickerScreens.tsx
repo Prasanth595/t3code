@@ -101,7 +101,7 @@ function EnvironmentPickerRow(props: {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${expanded ? "Hide" : "Show"} connection details for ${props.title}`}
+          accessibilityLabel={`${expanded ? "Ascunde" : "Arată"} detaliile conexiunii pentru ${props.title}`}
           accessibilityState={{ expanded }}
           onPress={() => setExpanded(!expanded)}
           className="min-h-11 min-w-11 items-center justify-center active:opacity-65"
@@ -127,7 +127,7 @@ function EnvironmentPickerRow(props: {
           ) : null}
           {connection?.phase !== "connected" ? (
             <Button
-              label="Reconnect now"
+              label="Reconectează acum"
               onPress={() => onReconnectEnvironment(props.environmentId)}
             />
           ) : null}
@@ -185,15 +185,11 @@ export function NewTaskEnvironmentPickerRouteScreen() {
       <NativeStackScreenOptions
         options={{
           headerShown: Platform.OS !== "android",
-          title: "Environment",
+          title: "Mediu",
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Environment"
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AndroidScreenHeader title="Mediu" hideBottomBorder onBack={() => navigation.goBack()} />
       ) : null}
       <ScreenContent>
         <ScrollView
@@ -292,8 +288,8 @@ export function NewTaskBranchPickerRouteScreen() {
       if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not switch branch",
-          error instanceof Error ? error.message : "The branch could not be checked out.",
+          "Branch-ul nu a putut fi schimbat",
+          error instanceof Error ? error.message : "Branch-ul nu a putut fi activat.",
         );
       }
       return;
@@ -315,7 +311,7 @@ export function NewTaskBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title={flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}
+      title={flow.workspaceMode === "worktree" ? "Branch de bază" : "Branch"}
       project={flow.selectedProject}
       branches={flow.filteredBranches}
       selectedBranchName={
@@ -407,7 +403,7 @@ export function BranchPickerScreen(props: {
     >
       <ToggleRow
         onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
+        title="Pornește din remote"
         value={props.worktree.startFromOrigin}
       />
     </View>
@@ -434,16 +430,16 @@ export function BranchPickerScreen(props: {
           {props.loading ? <AppActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {props.loading
-              ? "Loading branches…"
+              ? "Se încarcă branch-urile…"
               : props.error
                 ? props.error
                 : props.query
-                  ? "No matching branches"
-                  : "No branches available"}
+                  ? "Niciun branch găsit"
+                  : "Niciun branch disponibil"}
           </Text>
           {!props.loading && props.error ? (
             <View className="self-center">
-              <Button label="Try again" tone="secondary" onPress={props.onRefresh} />
+              <Button label="Încearcă din nou" tone="secondary" onPress={props.onRefresh} />
             </View>
           ) : null}
         </View>
@@ -491,10 +487,10 @@ export function BranchPickerScreen(props: {
           <SearchField
             inputRef={searchRef}
             autoFocus={false}
-            accessibilityLabel="Find a branch"
-            clearAccessibilityLabel="Clear branch search"
+            accessibilityLabel="Caută un branch"
+            clearAccessibilityLabel="Șterge căutarea"
             onChangeText={props.onQueryChange}
-            placeholder="Find a branch"
+            placeholder="Caută un branch"
             value={props.query}
           />
         </View>
@@ -513,7 +509,7 @@ export function BranchPickerScreen(props: {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: props.onQueryChange,
-                  placeholder: "Find a branch",
+                  placeholder: "Caută un branch",
                   searchTextChangeId: "new-task-branch-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -526,7 +522,7 @@ export function BranchPickerScreen(props: {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Find a branch",
+                placeholder: "Caută un branch",
                 onChangeText: (event) => {
                   props.onQueryChange(event.nativeEvent.text);
                 },

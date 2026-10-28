@@ -126,7 +126,7 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   return (
     <>
       <AppBar
-        title="Thread"
+        title="Conversație"
         options={{ contentStyle: { backgroundColor: themeVariables["--color-header"] } }}
         onBack={layout.usesSplitView ? undefined : goBack}
         hideBottomBorder
@@ -140,7 +140,7 @@ function OpeningThreadLoadingScreen() {
   return (
     <ThreadRouteFallbackLayout>
       <LoadingScreen
-        message="Opening thread…"
+        message="Se deschide conversația…"
         messagePlacement="above-spinner"
         embedded={Platform.OS === "android"}
       />
@@ -177,8 +177,8 @@ function ThreadUnavailableScreen(props: {
         className="bg-screen flex-1 android:bg-transparent"
       >
         <EmptyState
-          title="Thread unavailable"
-          detail="This thread is not available in the current mobile snapshot."
+          title="Conversație indisponibilă"
+          detail="Conversația nu e disponibilă pe acest dispozitiv momentan."
           actionLabel={props.actionLabel}
           onAction={props.onAction}
         />
@@ -257,9 +257,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
 
   return (
     <ThreadUnavailableScreen
-      actionLabel={
-        routeEnvironmentRuntime === null ? "Manage environments" : "Reconnect environment"
-      }
+      actionLabel={routeEnvironmentRuntime === null ? "Gestionează mediile" : "Reconectează mediul"}
       onAction={() => {
         if (routeEnvironmentRuntime !== null) {
           onReconnectEnvironment(environmentId);
@@ -551,7 +549,7 @@ function ThreadRouteContent(
         cwd={selectedThreadCwd}
         environmentId={selectedThread.environmentId}
         headerInset={inspectorHeaderInset}
-        projectName={selectedThreadProject?.title ?? "Files"}
+        projectName={selectedThreadProject?.title ?? "Fișiere"}
         selectedPath={null}
         onSelectFile={handleSelectInspectorFile}
       />
@@ -724,7 +722,7 @@ function ThreadRouteContent(
     auxiliaryPaneControl:
       !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
         ? {
-            accessibilityLabel: "Toggle inspector",
+            accessibilityLabel: "Comută inspectorul",
             onPress: handleToggleInspector,
           }
         : undefined,
@@ -766,7 +764,7 @@ function ThreadRouteContent(
       await recoverFailedThreadDraft(creation);
     } catch (error) {
       Dialog.alert(
-        "Could not restore draft",
+        "Ciorna nu a putut fi restaurată",
         error instanceof Error ? error.message : String(error),
       );
       return;

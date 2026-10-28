@@ -273,7 +273,7 @@ function compactWorkEntryText(value: string): string {
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
-    return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+    return entry.toolLifecycleStatus === "inProgress" ? "Se gândește" : "S-a gândit";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -295,7 +295,7 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
     if (firstPath) {
       return formatReadToolLabel(firstPath, Math.max(0, (entry.changedFiles?.length ?? 1) - 1));
     }
-    if (!expanded) return "Read file";
+    if (!expanded) return "A citit fișierul";
   }
   const preview =
     entry.command ??
@@ -305,7 +305,7 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
     (entry.changedFiles?.length
       ? entry.changedFiles.length === 1
         ? entry.changedFiles[0]!
-        : `${entry.changedFiles[0]!} +${entry.changedFiles.length - 1} more`
+        : `${entry.changedFiles[0]!} +încă ${entry.changedFiles.length - 1}`
       : null);
   if (expanded) return preview?.trim() ? truncate(preview, WORK_LOG_LABEL_MAX_LENGTH) : entry.label;
   return preview ? compactWorkEntryText(preview) || entry.label : entry.label;
@@ -370,8 +370,8 @@ export function threadFeedCompactionLabels(feed: ReadonlyArray<ThreadFeedEntry>)
           (age === undefined
             ? undefined
             : {
-                title: `Context compacted after ${age} idle`,
-                compacting: `Compacting after ${age} idle…`,
+                title: `Context compactat după ${age} de inactivitate`,
+                compacting: `Se compactează după ${age} de inactivitate…`,
               });
         if (labels) labelsByEntryId.set(entry.id, labels);
         pendingResumeAgeByRunId.delete(entry.runId);
@@ -661,35 +661,37 @@ function itemSummary(
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
     case "reasoning":
-      return "Thinking";
+      return "Se gândește";
     case "command_execution":
-      return "Command";
+      return "Comandă";
     case "file_change":
       return item.changes !== undefined && item.changes.length > 1
-        ? `Changed ${item.changes.length} files`
-        : `Changed ${item.fileName}`;
+        ? `A modificat ${item.changes.length} fișiere`
+        : `A modificat ${item.fileName}`;
     case "file_search":
-      return item.title?.trim() || formatSearchToolLabel(item) || "Searched files";
+      return item.title?.trim() || formatSearchToolLabel(item) || "A căutat în fișiere";
     case "web_search":
-      return "Searched the web";
+      return "A căutat pe internet";
     case "approval_request":
-      return "Approval requested";
+      return "Aprobare cerută";
     case "user_input_request":
-      return "Input requested";
+      return "Răspuns cerut";
     case "checkpoint":
-      return "Checkpoint captured";
+      return "Punct de salvare creat";
     case "run_interrupt_request":
-      return "Interrupt requested";
+      return "Întrerupere cerută";
     case "run_interrupt_result":
-      return "Run interrupted";
+      return "Rulare întreruptă";
     case "error":
-      return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+      return item.failure.class === "usage_limit"
+        ? "Limita de utilizare atinsă"
+        : "Eroare de la furnizor";
     case "handoff":
-      return "Context handed off";
+      return "Context transferat";
     case "fork":
-      return "Thread forked";
+      return "Conversație ramificată";
     case "thread_created":
-      return "Thread created";
+      return "Conversație creată";
     case "secret_request":
       return item.label;
     case "dynamic_tool": {
@@ -702,18 +704,18 @@ function itemSummary(
         return formatReadToolLabel(path ?? "");
       }
       if (classified === "search") {
-        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call";
+        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Apel instrument";
       }
-      return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
+      return toolPresentation?.displayName ?? item.toolName ?? "Apel instrument";
     }
     case "proposed_plan":
-      return "Proposed plan";
+      return "Plan propus";
     case "todo_list":
-      return "Plan updated";
+      return "Plan actualizat";
     case "user_message":
-      return "User message";
+      return "Mesaj utilizator";
     case "assistant_message":
-      return "Assistant message";
+      return "Mesaj asistent";
   }
 }
 
@@ -736,7 +738,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "checkpoint":
       return item.files.length === 1
         ? (item.files[0]?.path ?? null)
-        : `${item.files.length} changed files`;
+        : `${item.files.length} fișiere modificate`;
     case "run_interrupt_request":
     case "run_interrupt_result":
     case "system_notice":
@@ -796,28 +798,28 @@ function toWorkLogEntry(
         ...common,
         command: item.input,
         rawCommand: item.input,
-        toolTitle: title ?? "Command",
+        toolTitle: title ?? "Comandă",
         toolData: item,
       };
     case "file_change":
       return {
         ...common,
         changedFiles: [item.fileName],
-        toolTitle: title ?? "File change",
+        toolTitle: title ?? "Modificare fișier",
         toolData: item,
       };
     case "file_search":
       return {
         ...common,
         ...(item.pattern ? { detail: item.pattern } : {}),
-        toolTitle: title ?? "File search",
+        toolTitle: title ?? "Căutare fișiere",
         toolData: item,
       };
     case "web_search":
       return {
         ...common,
         ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
-        toolTitle: title ?? "Web search",
+        toolTitle: title ?? "Căutare pe internet",
         toolData: item,
       };
     case "checkpoint":
@@ -832,7 +834,7 @@ function toWorkLogEntry(
     case "dynamic_tool":
       return {
         ...common,
-        toolTitle: title ?? item.toolName ?? "Tool",
+        toolTitle: title ?? item.toolName ?? "Instrument",
         toolData: { input: item.input, output: item.output },
       };
     default:
@@ -923,8 +925,8 @@ function toFeedActivity(
 function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
-      ? "Thought"
-      : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
+      ? "S-a gândit"
+      : compactWorkEntryText(activity.workEntry.detail ?? "") || "S-a gândit";
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
@@ -1275,11 +1277,11 @@ function deriveThreadFeedRunFolds(
       hiddenEntryIds,
       label: interrupted
         ? duration
-          ? `You stopped after ${duration}`
-          : "You stopped this response"
+          ? `Ai oprit după ${duration}`
+          : "Ai oprit acest răspuns"
         : duration
-          ? `Worked for ${duration}`
-          : "Worked",
+          ? `A lucrat ${duration}`
+          : "A lucrat",
     });
   }
   return foldsByAnchorId;
@@ -1817,8 +1819,8 @@ function appendToolGroupRows(
   const summary = live
     ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
       ? latestActivity.lifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
+        ? "Se gândește"
+        : "S-a gândit"
       : liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
@@ -1913,7 +1915,7 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   if (activity.workEntry.itemType === "reasoning") {
     return (
       activity.workEntry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+      (status === "inProgress" ? "Se gândește" : "S-a gândit")
     );
   }
   const presentation = resolveWorkEntryToolPresentation({
@@ -1926,14 +1928,14 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
     const program = commandProgramName(command);
     const verb =
       status === "inProgress"
-        ? "Running"
+        ? "Rulează"
         : status === "failed"
-          ? "Failed"
+          ? "Eșuat"
           : status === "declined"
-            ? "Declined"
+            ? "Refuzat"
             : status === "stopped"
-              ? "Stopped"
-              : "Ran";
+              ? "Oprit"
+              : "A rulat";
     return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;

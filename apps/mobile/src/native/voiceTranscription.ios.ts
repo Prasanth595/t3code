@@ -47,7 +47,7 @@ async function prepareVoiceTranscription(
   if (!AppleTranscription.isAvailable(locale)) {
     throw new VoiceTranscriptionError(
       "unavailable",
-      "Voice transcription requires a supported device with iOS 26 or later.",
+      "Transcrierea vocală necesită un dispozitiv compatibil cu iOS 26 sau mai nou.",
     );
   }
 
@@ -63,14 +63,14 @@ async function prepareVoiceTranscription(
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
       throw new VoiceTranscriptionError(
         "unsupported-locale",
-        "Voice transcription does not support this device language.",
+        "Transcrierea vocală nu suportă limba dispozitivului.",
         { cause: error },
       );
     }
 
     throw wrapError(
       "preparation-failed",
-      "Voice transcription could not prepare this language.",
+      "Transcrierea vocală nu a putut pregăti această limbă.",
       error,
     );
   }
@@ -93,6 +93,6 @@ async function transcribeVoiceRecording(
       .trim();
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
-    throw wrapError("transcription-failed", "Voice transcription failed.", error);
+    throw wrapError("transcription-failed", "Transcrierea vocală a eșuat.", error);
   }
 }

@@ -22,7 +22,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About Mira">
+    <SettingsScreen title="Despre Mira">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -64,7 +64,7 @@ function AppSettingsSection() {
     await settlePromise(() =>
       runAppUpdateCheck({
         applyMode: "immediate",
-        onFailure: (message) => Dialog.alert("Update failed", message),
+        onFailure: (message) => Dialog.alert("Actualizarea a eșuat", message),
         onStateChange: setUpdateState,
       }),
     );
@@ -82,15 +82,15 @@ function AppSettingsSection() {
 
   const statusLabel =
     updateState === "checking"
-      ? "Checking…"
+      ? "Se verifică…"
       : updateState === "downloading"
-        ? "Downloading…"
+        ? "Se descarcă…"
         : updateState === "ready"
-          ? "Update ready"
+          ? "Actualizare pregătită"
           : updateState === "restarting"
-            ? "Restarting…"
+            ? "Se repornește…"
             : updateState === "current"
-              ? "Up to date"
+              ? "La zi"
               : null;
 
   const versionRow = (
@@ -102,7 +102,7 @@ function AppSettingsSection() {
         type="monochrome"
         weight="regular"
       />
-      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <Text className="flex-1 text-lg text-foreground">Versiune</Text>
       <View className="items-end">
         <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
         {statusLabel ? (
@@ -113,18 +113,18 @@ function AppSettingsSection() {
   );
 
   return (
-    <SettingsSection title="App">
-      <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
-      <SettingsRow icon="stethoscope" label="Diagnostics" target="SettingsDiagnostics" />
+    <SettingsSection title="Aplicație">
+      <SettingsRow icon="internaldrive" label="Stocare locală" target="SettingsClientStorage" />
+      <SettingsRow icon="stethoscope" label="Diagnosticare" target="SettingsDiagnostics" />
       <SettingsRow
         icon="doc.on.doc"
-        label="Open source licenses"
+        label="Licențe open source"
         target="SettingsOpenSourceLicenses"
       />
-      <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
+      <SettingsRow icon="doc.text" label="Informații legale" fullScreenTarget="SettingsLegal" />
       {updateCheckAvailable ? (
         <Pressable
-          accessibilityLabel={`Version ${versionLabel}`}
+          accessibilityLabel={`Versiunea ${versionLabel}`}
           accessibilityRole="text"
           disabled={busy}
           onPress={handleVersionPress}

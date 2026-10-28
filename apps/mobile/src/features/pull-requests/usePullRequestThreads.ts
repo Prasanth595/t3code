@@ -96,7 +96,7 @@ export function usePullRequestThreads(
     const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
         throw new Error(
-          `Starting work from this ${terminology.shortLabel} requires source control write access.`,
+          `Pornirea lucrului din acest ${terminology.shortLabel} necesită drept de scriere în controlul versiunilor.`,
         );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
@@ -147,7 +147,7 @@ export function usePullRequestThreads(
           { text: draft.text, start: draft.text.length, end: draft.text.length },
         )
       )
-        throw new Error("Remove some context from this thread's draft, then try again.");
+        throw new Error("Elimină o parte din contextul ciornei, apoi încearcă din nou.");
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
@@ -160,13 +160,17 @@ export function usePullRequestThreads(
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);
-      else openThreadRoute({ draft: { draftId: draftKey, title: `Ask about #${pr.number}` } });
+      else
+        openThreadRoute({ draft: { draftId: draftKey, title: `Întrebare despre #${pr.number}` } });
     });
     pending.current = false;
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert(
+        "Conversația nu a putut fi deschisă",
+        cause instanceof Error ? cause.message : "Încearcă din nou.",
+      );
     }
   };
   return {

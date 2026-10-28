@@ -41,7 +41,7 @@ export function PullRequestStackCard(props: {
         title="Stack"
         icon={PullRequestGlyph.stack}
         value={`${position} of ${stack.layers.length}`}
-        accessibilityLabel={`Stack, ${position} of ${stack.layers.length}${props.state.isFresh ? "" : ", showing saved stack"}`}
+        accessibilityLabel={`Stack, ${position} din ${stack.layers.length}${props.state.isFresh ? "" : ", stack salvat"}`}
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
         last={!expanded}
@@ -60,7 +60,7 @@ export function PullRequestStackCard(props: {
                   title={layer.title ?? layer.headBranch}
                   icon={status.icon}
                   tint={status.tint}
-                  value={selected ? "Current" : status.label}
+                  value={selected ? "Curent" : status.label}
                   detail={`#${layer.number} · ${index + 1} of ${stack.layers.length}`}
                   onPress={
                     selected

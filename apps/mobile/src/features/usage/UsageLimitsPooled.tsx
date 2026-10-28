@@ -33,13 +33,13 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   claudeAgent: "Claude",
   antigravity: "Antigravity",
 };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
+const PACE_LABEL = { ahead: "Peste ritm", on: "În ritm", under: "Sub ritm" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
   if (!account.email) return DRIVER_LABEL[account.driver] ?? String(account.driver);
   const [local = "", domain = ""] = account.email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
+  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Cont";
 }
 
 // Same gap-and-tick as the Limits rows: two clipped copies of the segment leave a see-through gap.
@@ -195,7 +195,7 @@ function PoolWindowCard({
               key={account.key}
               accessibilityRole="button"
               accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
-              accessibilityHint="Show account details"
+              accessibilityHint="Arată detaliile contului"
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 rounded-md"
             >
@@ -234,7 +234,7 @@ function PoolWindowCard({
               key={account.key}
               accessibilityRole="button"
               accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
-              accessibilityHint="Show account details"
+              accessibilityHint="Arată detaliile contului"
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
             >
@@ -309,8 +309,8 @@ export function UsageLimitsSection({
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
-            ? "Select an environment to see limits."
-            : "No provider on the selected environments reports subscription limits."}
+            ? "Alege un mediu ca să vezi limitele."
+            : "Niciun furnizor din mediile selectate nu raportează limite de abonament."}
         </Text>
       ) : null}
       {pools.map((pool) => {
@@ -419,7 +419,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
-    <SettingsScreen title="Account">
+    <SettingsScreen title="Cont">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
@@ -427,7 +427,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
       >
         {!account || !window ? (
           <Text className="text-base text-foreground-muted">
-            This account is no longer reporting limits on the selected environments.
+            Acest cont nu mai raportează limite în mediile selectate.
           </Text>
         ) : (
           <>
@@ -441,7 +441,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               {account.email ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+                  accessibilityLabel={
+                    revealed ? "Ascunde emailul contului" : "Arată emailul contului"
+                  }
                   onPress={() => setRevealed((value) => !value)}
                   className="min-h-[44px] justify-center"
                 >
@@ -483,7 +485,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             </View>
             <View className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">
-                {account.environments.length ? "Signed in" : "Source"}
+                {account.environments.length ? "Autentificat" : "Sursă"}
               </Text>
               {account.environments.length ? (
                 account.environments.map((environment) => (

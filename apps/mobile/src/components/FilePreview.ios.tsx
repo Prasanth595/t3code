@@ -31,7 +31,11 @@ function NativeFilePreview(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    else
+      Dialog.alert(
+        "Previzualizarea nu a putut fi deschisă",
+        "Fișierul nu a putut fi încărcat. Încearcă din nou.",
+      );
   });
 
   useEffect(() => {
@@ -40,7 +44,7 @@ function NativeFilePreview(props: {
       gallery && gallery.length > 1
         ? NativeControls.presentFiles(
             gallery.map((item) => item.uri),
-            gallery.map((item) => item.name ?? "Preview"),
+            gallery.map((item) => item.name ?? "Previzualizare"),
             Math.max(
               0,
               gallery.findIndex((item) => item.uri === uri),
@@ -48,7 +52,12 @@ function NativeFilePreview(props: {
             gallery.map((item) => item.sourceIdentifier ?? ""),
             identifier,
           )
-        : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);
+        : NativeControls.presentFile(
+            uri,
+            name ?? "Previzualizare",
+            sourceIdentifier ?? "",
+            identifier,
+          );
     void presentation
       .catch((error: unknown) => {
         if (!canceled) onOpenError(error);

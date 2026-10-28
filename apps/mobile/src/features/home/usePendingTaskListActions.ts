@@ -40,10 +40,10 @@ export function usePendingTaskListActions(
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
     if (pendingTask.kind === "draft") {
-      Dialog.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
-        { text: "Cancel", style: "cancel" },
+      Dialog.alert("Renunți la ciornă?", `“${pendingTask.title}” va fi eliminată.`, [
+        { text: "Anulează", style: "cancel" },
         {
-          text: "Discard",
+          text: "Renunță",
           style: "destructive",
           onPress: () => {
             void withThreadDismissal(
@@ -61,12 +61,12 @@ export function usePendingTaskListActions(
       return;
     }
     Dialog.alert(
-      "Delete pending task?",
-      `“${pendingTask.title}” has not been sent yet and will be removed from the outbox.`,
+      "Ștergi sarcina în așteptare?",
+      `“${pendingTask.title}” nu a fost trimisă încă și va fi eliminată din coada de trimitere.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "Anulează", style: "cancel" },
         {
-          text: "Delete",
+          text: "Șterge",
           style: "destructive",
           onPress: () => {
             // Hold delivery from confirmation so reconnects cannot send a task during removal.
@@ -90,8 +90,10 @@ export function usePendingTaskListActions(
               .catch((error) => {
                 releaseUnlessEditing();
                 Dialog.alert(
-                  "Could not delete pending task",
-                  error instanceof Error ? error.message : "The pending task could not be removed.",
+                  "Sarcina în așteptare nu a putut fi ștearsă",
+                  error instanceof Error
+                    ? error.message
+                    : "Sarcina în așteptare nu a putut fi eliminată.",
                 );
               });
           },

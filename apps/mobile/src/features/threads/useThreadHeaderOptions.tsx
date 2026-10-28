@@ -46,7 +46,7 @@ export function useThreadHeaderOptions(props: {
       ...(props.onReturnToThread
         ? [
             withNativeGlassHeaderItem({
-              accessibilityLabel: "Return to chat",
+              accessibilityLabel: "Înapoi la chat",
               icon: { name: "chevron.left", type: "sfSymbol" as const },
               identifier: "thread-left-return",
               onPress: props.onReturnToThread,
@@ -58,10 +58,10 @@ export function useThreadHeaderOptions(props: {
       ...(!usesDuoHeader && !props.draft
         ? [
             withNativeGlassHeaderItem({
-              accessibilityLabel: "New task",
+              accessibilityLabel: "Sarcină nouă",
               icon: { name: "square.and.pencil", type: "sfSymbol" as const },
               identifier: "thread-left-new-task",
-              label: "New task",
+              label: "Sarcină nouă",
               onPress: startNewTask,
               type: "button" as const,
             }),
@@ -74,7 +74,7 @@ export function useThreadHeaderOptions(props: {
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       withNativeGlassHeaderItem({
-        accessibilityLabel: "Go to threads list",
+        accessibilityLabel: "Mergi la lista de conversații",
         icon: { name: "list.bullet", type: "sfSymbol" as const },
         identifier: "thread-left-home",
         onPress: () => navigation.dispatch(StackActions.replace("Home")),

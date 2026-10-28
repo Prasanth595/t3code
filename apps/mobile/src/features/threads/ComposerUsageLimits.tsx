@@ -21,7 +21,7 @@ export function ComposerUsageLimits({
   const now = Date.parse(report.createdAt);
   const close = (
     <Pressable
-      accessibilityLabel="Dismiss usage limits"
+      accessibilityLabel="Închide limitele de utilizare"
       accessibilityRole="button"
       hitSlop={12}
       onPress={onClose}
@@ -73,7 +73,7 @@ export function ComposerUsageLimits({
         })}
         {report.accounts.length === 0 ? (
           <View className="flex-row items-center gap-3 px-4 pt-3">
-            <Text className="min-w-0 flex-1 text-base text-foreground">Usage limits</Text>
+            <Text className="min-w-0 flex-1 text-base text-foreground">Limite de utilizare</Text>
             {close}
           </View>
         ) : null}

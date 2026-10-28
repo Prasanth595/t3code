@@ -41,7 +41,7 @@ export function createSidebarHeaderItems(input: {
       type: "menu",
       axisBehavior: "horizontalOnly",
       label: "",
-      accessibilityLabel: "Filter threads",
+      accessibilityLabel: "Filtrează conversațiile",
       icon: sfSymbolIcon(input.filterIcon),
       menu: {
         title: input.filterMenu.title,
@@ -51,8 +51,8 @@ export function createSidebarHeaderItems(input: {
     withNativeGlassHeaderItem({
       type: "button",
       axisBehavior: "horizontalOnly",
-      label: "Settings",
-      accessibilityLabel: "Open settings",
+      label: "Setări",
+      accessibilityLabel: "Deschide setările",
       icon: sfSymbolIcon("gearshape"),
       onPress: input.onOpenSettings,
     }),

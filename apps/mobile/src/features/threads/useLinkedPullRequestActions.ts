@@ -60,7 +60,7 @@ export function useLinkedPullRequestActions(input: {
       const result = await pending;
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
       const cause = squashAtomCommandFailure(result);
-      Dialog.alert(failureTitle, cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert(failureTitle, cause instanceof Error ? cause.message : "Încearcă din nou.");
     },
     [],
   );
@@ -82,8 +82,8 @@ export function useLinkedPullRequestActions(input: {
       const environmentId = thread.environmentId;
       void run(
         linked
-          ? `Couldn't link this ${terminology.singular}`
-          : `Couldn't unlink this ${terminology.singular}`,
+          ? `${terminology.singular} nu a putut fi legat`
+          : `${terminology.singular} nu a putut fi dezlegat`,
         mutation.type === "thread.pull-request.link"
           ? link({ environmentId, input: mutation.input })
           : unlink({ environmentId, input: mutation.input }),
@@ -95,11 +95,11 @@ export function useLinkedPullRequestActions(input: {
   const promptLink = useCallback(() => {
     const { singular } = terminology;
     Dialog.prompt({
-      title: `Link ${singular}`,
-      message: `Paste a ${singular} URL, or enter 123 / #123 for this thread's repository.`,
-      placeholder: `${capitalizeTerm(singular)} URL or #42`,
+      title: `Leagă ${singular}`,
+      message: `Lipește adresa ${singular} sau scrie 123 / #123 pentru repository-ul conversației.`,
+      placeholder: `Adresă ${singular} sau #42`,
       initialValue: "",
-      confirmText: "Link",
+      confirmText: "Leagă",
       onConfirm: (reference) => {
         const resolved = resolveLinkPullRequestInput({
           reference,
@@ -107,11 +107,14 @@ export function useLinkedPullRequestActions(input: {
           hasProject: () => true,
         });
         if (resolved === null) {
-          Dialog.alert(`Couldn't link this ${singular}`, `Use a ${singular} URL, 123, or #123.`);
+          Dialog.alert(
+            `${singular} nu a putut fi legat`,
+            `Folosește o adresă ${singular}, 123 sau #123.`,
+          );
           return;
         }
         if ("error" in resolved) {
-          Dialog.alert(`Couldn't link this ${singular}`, resolved.error);
+          Dialog.alert(`${singular} nu a putut fi legat`, resolved.error);
           return;
         }
         setLinked(resolved.link, true);
@@ -124,13 +127,13 @@ export function useLinkedPullRequestActions(input: {
       const open = link.snapshot === null || link.snapshot.state === "open";
       const watching = link.watch !== undefined;
       return [
-        { id: "copy", title: "Copy link", image: "link" },
-        { id: "browser", title: "Open in browser", image: "safari" },
+        { id: "copy", title: "Copiază link-ul", image: "link" },
+        { id: "browser", title: "Deschide în browser", image: "safari" },
         ...((watching ? canWatch : canStartWatch) && open
           ? [
               {
                 id: "watch",
-                title: watching ? "Stop watching" : "Watch for changes",
+                title: watching ? "Nu mai urmări" : "Urmărește modificările",
                 image: watching ? "eye.slash" : "eye",
               },
             ]
@@ -139,7 +142,8 @@ export function useLinkedPullRequestActions(input: {
           ? [
               {
                 id: "unlink",
-                title: link.source === "stack" ? "Dismiss from thread" : "Unlink from thread",
+                title:
+                  link.source === "stack" ? "Elimină din conversație" : "Dezleagă de conversație",
                 image: "xmark",
                 attributes: { destructive: true },
               },
@@ -160,12 +164,15 @@ export function useLinkedPullRequestActions(input: {
               sourceControlClients.findByChangeRequestUrl(link.url) ??
               sourceControlClients.get(undefined)
             ).changeRequest;
-            Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
+            Dialog.alert(
+              `${shortLabel} nu a putut fi deschis`,
+              `${singular} nu a putut fi deschis.`,
+            );
           }
         });
       else if (action === "watch" && thread !== null)
         void run(
-          "Couldn't change watching",
+          "Urmărirea nu a putut fi schimbată",
           watch({
             environmentId: thread.environmentId,
             input: {

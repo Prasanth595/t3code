@@ -18,11 +18,11 @@ export function resolveNewTaskWorkspaceSelection(input: {
 export function resolveNewTaskWorkspaceLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+}): "Checkout curent" | "Worktree curent" | "Worktree nou" {
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return "Worktree nou";
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath ? "Worktree curent" : "Checkout curent";
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {
@@ -80,10 +80,10 @@ export function resolveNewTaskBranchLabel(input: {
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
     const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
-    if (parsed) return `From ${parsed.definition.changeRequest.shortLabel} #${parsed.link.number}`;
+    if (parsed) return `Din ${parsed.definition.changeRequest.shortLabel} #${parsed.link.number}`;
   }
   if (!input.branchName) {
-    return "Choose branch";
+    return "Alege branch-ul";
   }
 
   if (input.workspaceMode === "local") {
@@ -91,7 +91,7 @@ export function resolveNewTaskBranchLabel(input: {
   }
 
   // Only the server can determine a local branch's configured remote.
-  return input.startFromOrigin ? `From ${input.branchName} (remote)` : `From ${input.branchName}`;
+  return input.startFromOrigin ? `Din ${input.branchName} (remote)` : `Din ${input.branchName}`;
 }
 
 export function shouldCheckoutNewTaskBranch(input: {

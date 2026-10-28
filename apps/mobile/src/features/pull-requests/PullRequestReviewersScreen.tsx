@@ -113,7 +113,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       setError(
-        cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
+        cause instanceof Error
+          ? cause.message
+          : "Cererea de revizuire nu a putut fi actualizată. Încearcă din nou.",
       );
       return;
     }
@@ -124,7 +126,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
   const searchOptions = {
-    placeholder: "Search reviewers",
+    placeholder: "Caută revizori",
     autoCapitalize: "none" as const,
     onChangeText: (event: { nativeEvent: { text: string } }) => setQuery(event.nativeEvent.text),
     onCancelButtonPress: () => setQuery(""),
@@ -137,10 +139,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   return (
     <View className="flex-1 bg-sheet">
       <SheetHeader
-        title="Request review"
+        title="Cere revizuire"
         subtitle={`#${route.params.number} · ${route.params.repository}`}
         onClose={() => navigation.goBack()}
-        accessibilityLabel="Close request review"
+        accessibilityLabel="Închide"
       />
       <NativeStackScreenOptions
         options={{
@@ -149,7 +151,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             listCandidates && integratedSearch
               ? [
                   createNativeMailSearchToolbarItem({
-                    placeholder: "Search reviewers",
+                    placeholder: "Caută revizori",
                     onSearchTextChange: setQuery,
                     showsSearchDismissButton: true,
                     searchTextChangeId: "pr-reviewer-search",
@@ -174,12 +176,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ListHeaderComponent={
             <View className="gap-3 px-4 py-4">
               <Text className="text-xs text-foreground-muted">
-                Tap someone to request a review. Tap a requested reviewer to remove the request.
+                Atinge pe cineva ca să-i ceri revizuirea. Atinge un revizor deja cerut ca să anulezi
+                cererea.
               </Text>
               {Platform.OS === "android" ? (
                 <TextInput
-                  accessibilityLabel="Search reviewers"
-                  placeholder="Search reviewers"
+                  accessibilityLabel="Caută revizori"
+                  placeholder="Caută revizori"
                   placeholderTextColorClassName="accent-foreground-muted"
                   value={query}
                   onChangeText={setQuery}
@@ -204,7 +207,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             return (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
+                accessibilityLabel={`${item.isRequested ? "Anulează cererea de revizuire pentru" : "Cere revizuire de la"} ${item.kind === "team" ? "echipa " : ""}${item.login}`}
                 accessibilityState={{ disabled: !allowed || pending !== null }}
                 disabled={!allowed || pending !== null}
                 onPress={() => void update(item)}
@@ -217,7 +220,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   </Text>
                   <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                     {item.login}
-                    {item.kind === "team" ? " · Team" : ""}
+                    {item.kind === "team" ? " · Echipă" : ""}
                   </Text>
                 </View>
                 {pending === id ? (
@@ -241,23 +244,23 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 <EmptyState
                   title={
                     result.error
-                      ? "Couldn't load reviewers"
+                      ? "Revizorii nu au putut fi încărcați"
                       : query.trim()
-                        ? "No matching reviewers"
-                        : "No reviewers available"
+                        ? "Niciun revizor găsit"
+                        : "Niciun revizor disponibil"
                   }
-                  detail={result.error ?? "Search people and teams with access to this repository."}
+                  detail={result.error ?? "Caută persoane și echipe cu acces la acest repository."}
                   variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? <Button label="Reîncearcă" onPress={result.refresh} /> : null}
               </View>
             )
           }
           ListFooterComponent={
             result.data?.truncated ? (
               <Text className="px-4 py-4 text-xs text-foreground-muted">
-                The provider has more reviewers than it returned. Find additional reviewers on the
-                provider.
+                Furnizorul are mai mulți revizori decât a returnat. Găsește-i pe ceilalți la
+                furnizor.
               </Text>
             ) : undefined
           }
@@ -274,17 +277,17 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               <AppActivityIndicator />
             ) : (
               <Text className="text-danger-foreground">
-                {detail.error ?? `Couldn't load this ${singular}.`}
+                {detail.error ?? `${singular} nu a putut fi încărcat.`}
               </Text>
             )
           ) : (
             <>
               <Text className="text-sm text-foreground-muted">
-                This provider accepts a reviewer ID but cannot list candidates.
+                Acest furnizor acceptă un ID de revizor, dar nu poate lista candidații.
               </Text>
               <TextInput
-                accessibilityLabel="Reviewer ID"
-                placeholder="Reviewer login or ID"
+                accessibilityLabel="ID revizor"
+                placeholder="Utilizator sau ID revizor"
                 placeholderTextColorClassName="accent-foreground-muted"
                 value={query}
                 onChangeText={setQuery}
@@ -293,13 +296,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
               />
               <Button
-                label="Request review"
+                label="Cere revizuire"
                 fullWidth
                 disabled={!allowed || !query.trim() || pending !== null}
                 onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
               />
               <Button
-                label="Remove review request"
+                label="Anulează cererea de revizuire"
                 fullWidth
                 tone="text"
                 disabled={!allowed || !query.trim() || pending !== null}

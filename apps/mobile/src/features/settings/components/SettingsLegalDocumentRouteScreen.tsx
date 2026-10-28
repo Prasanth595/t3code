@@ -17,7 +17,7 @@ export function SettingsLegalDocumentCloseHeaderButton() {
 
   return (
     <SheetCloseButton
-      accessibilityLabel="Close legal document"
+      accessibilityLabel="Închide documentul legal"
       onClose={() => navigation.goBack()}
     />
   );
@@ -32,7 +32,7 @@ export function SettingsLegalDocumentExternalHeaderButton({
 
   return (
     <IconButton
-      accessibilityLabel="Open legal documents in external browser"
+      accessibilityLabel="Deschide documentele legale în browser"
       icon="safari"
       onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
     />
@@ -87,7 +87,7 @@ export function SettingsLegalDocumentRouteScreen({
         </View>
         <View className="w-full max-w-[320px] gap-2">
           <Button
-            label="Try Again"
+            label="Încearcă din nou"
             tone="contrast"
             fullWidth
             onPress={() => {
@@ -100,7 +100,9 @@ export function SettingsLegalDocumentRouteScreen({
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
+            <Text className="font-t3-medium text-base text-foreground-muted">
+              Deschide în browser
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -145,12 +147,12 @@ export function SettingsLegalDocumentRouteScreen({
         }}
         onError={(event) => {
           setLoadProgress(0);
-          setLoadError(event.nativeEvent.description || "The page could not be loaded.");
+          setLoadError(event.nativeEvent.description || "Pagina nu a putut fi încărcată.");
         }}
         onHttpError={(event) => {
           if (!isLegalDocumentUrl(event.nativeEvent.url)) return;
           setLoadProgress(0);
-          setLoadError(`The server returned status ${event.nativeEvent.statusCode}.`);
+          setLoadError(`Serverul a returnat starea ${event.nativeEvent.statusCode}.`);
         }}
         renderLoading={() => (
           <View className="absolute inset-0 items-center justify-center bg-sheet">

@@ -33,7 +33,7 @@ export function appendGuestPendingMessages(
 ): ReadonlyArray<ThreadFeedRow> {
   const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
   if (share === null || pending.length === 0) return presentedFeed;
-  const guestName = share.guestName ?? "Guest";
+  const guestName = share.guestName ?? "Invitat";
   return [
     ...presentedFeed,
     ...pending.map((message): GuestPendingFeedEntry => ({

@@ -9,10 +9,10 @@ export function navigationCustomizationAvailable(
 }
 
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
-  chats: "Chats",
+  chats: "Chat-uri",
   threads: "Agent",
   pullRequests: "Pulls",
-  usage: "Usage",
+  usage: "Utilizare",
 };
 
 function isNavigationTab(value: unknown): value is NavigationTab {

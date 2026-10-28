@@ -109,7 +109,7 @@ function DeviceStreamDocumentView({
     setStatus("error");
   };
   const bootstrapTimedOut = useEffectEvent(() =>
-    fail("Device viewer could not start. Reconnect to try again."),
+    fail("Vizualizarea dispozitivului nu a putut porni. Reconectează-te și încearcă din nou."),
   );
   useEffect(() => {
     if (started) return;
@@ -144,7 +144,8 @@ function DeviceStreamDocumentView({
   const processTerminated = () => {
     if (!active.current || failed.current) return;
     void onInputConnected(false);
-    if (!onRecoverProcess()) fail("Device viewer stopped. Reconnect to try again.");
+    if (!onRecoverProcess())
+      fail("Vizualizarea dispozitivului s-a oprit. Reconectează-te și încearcă din nou.");
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
@@ -159,8 +160,16 @@ function DeviceStreamDocumentView({
         contentInsetAdjustmentBehavior="never"
         setSupportMultipleWindows={false}
         style={{ flex: 1, backgroundColor: background }}
-        onError={() => fail("Device viewer could not load. Reconnect to try again.")}
-        onHttpError={() => fail("Device viewer could not load. Reconnect to try again.")}
+        onError={() =>
+          fail(
+            "Vizualizarea dispozitivului nu s-a putut încărca. Reconectează-te și încearcă din nou.",
+          )
+        }
+        onHttpError={() =>
+          fail(
+            "Vizualizarea dispozitivului nu s-a putut încărca. Reconectează-te și încearcă din nou.",
+          )
+        }
         onContentProcessDidTerminate={processTerminated}
         onRenderProcessGone={processTerminated}
         onShouldStartLoadWithRequest={(request) =>
@@ -174,7 +183,8 @@ function DeviceStreamDocumentView({
           else if (message?.type === "retry") onRetry();
           else if (message?.type === "status") {
             setStarted(true);
-            if (message.status === "error") fail(message.detail ?? "Device stream failed.");
+            if (message.status === "error")
+              fail(message.detail ?? "Transmisia dispozitivului a eșuat.");
             else {
               setStatus(message.status);
               if (message.status === "streaming") onStreaming();
@@ -192,11 +202,11 @@ function DeviceStreamDocumentView({
             accessibilityLiveRegion="polite"
             className="text-center text-sm text-foreground-muted"
           >
-            {status === "error" ? error : "Connecting to device..."}
+            {status === "error" ? error : "Se conectează la dispozitiv..."}
           </AppText>
           {status === "error" ? (
             <View className="items-center">
-              <Button label="Reconnect" tone="secondary" onPress={onRetry} />
+              <Button label="Reconectează" tone="secondary" onPress={onRetry} />
             </View>
           ) : null}
         </View>

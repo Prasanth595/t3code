@@ -21,10 +21,10 @@ import { miraChatHistory, useMiraChatHistory } from "./miraChat";
 
 const confirmDelete = (chat: SaasChatConversation) =>
   Dialog.confirm({
-    title: "Delete this chat?",
-    message: "It is removed from every device signed in to your account.",
-    cancelText: "Cancel",
-    confirmText: "Delete",
+    title: "Ștergi acest chat?",
+    message: "Va fi șters de pe toate dispozitivele conectate la contul tău.",
+    cancelText: "Anulează",
+    confirmText: "Șterge",
     destructive: true,
     onConfirm: () => miraChatHistory.remove(chat.id),
   });
@@ -42,10 +42,10 @@ function ChatListRow(props: {
   const preview = chatPreview(chat);
   const deleteAction = useMemo(
     () => ({
-      accessibilityLabel: `Delete ${chat.title}`,
+      accessibilityLabel: `Șterge ${chat.title}`,
       destructive: true,
       icon: "trash" as const,
-      label: "Delete",
+      label: "Șterge",
       onPress: () => confirmDelete(chat),
     }),
     [chat],
@@ -67,7 +67,7 @@ function ChatListRow(props: {
         <RowPressable
           accessibilityRole="button"
           accessibilityLabel={chat.title}
-          accessibilityHint="Opens the chat. Swipe left or long press to delete."
+          accessibilityHint="Deschide chat-ul. Glisează la stânga sau ține apăsat pentru a șterge."
           className="bg-screen"
           interactionClassName="bg-row-hover"
           onPress={props.onOpen}
@@ -105,7 +105,7 @@ function NewChatHeaderButton() {
   const navigation = useNavigation();
   return (
     <IconButton
-      accessibilityLabel="New chat"
+      accessibilityLabel="Chat nou"
       icon="square.and.pencil"
       onPress={() => navigation.navigate("Chat", {})}
     />
@@ -125,12 +125,12 @@ export function ChatHome() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Chats" />
+          <AndroidScreenHeader title="Chat-uri" />
         </>
       ) : (
         <NativeStackScreenOptions
           options={{
-            title: "Chats",
+            title: "Chat-uri",
             headerRight: NewChatHeaderButton,
           }}
         />
@@ -144,9 +144,9 @@ export function ChatHome() {
           <View className="flex-1 items-center justify-center px-4">
             <EmptyState
               variant="plain"
-              title="No chats yet"
-              detail="Ask Mira anything. Chat works without a connected computer."
-              actionLabel={Platform.OS === "android" ? undefined : "New chat"}
+              title="Niciun chat încă"
+              detail="Întreabă-o pe Mira orice. Chat-ul merge și fără un calculator conectat."
+              actionLabel={Platform.OS === "android" ? undefined : "Chat nou"}
               onAction={Platform.OS === "android" ? undefined : newChat}
             />
           </View>
@@ -176,7 +176,7 @@ export function ChatHome() {
       </View>
       {Platform.OS === "android" ? (
         <FloatingActionButton
-          label="New chat"
+          label="Chat nou"
           icon="plus.bubble"
           variant="extended"
           tone="primary"

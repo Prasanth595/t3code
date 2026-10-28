@@ -57,20 +57,20 @@ import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usagePro
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
-  { value: "usage", label: "Usage" },
-  { value: "limits", label: "Limits" },
+  { value: "usage", label: "Utilizare" },
+  { value: "limits", label: "Limite" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
 
 const WINDOW_OPTIONS = [
-  { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
-  { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
-  { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
-  { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  { value: 1, label: "24h", accessibilityLabel: "Ultimele 24 de ore" },
+  { value: 7, label: "7z", accessibilityLabel: "Ultimele 7 zile" },
+  { value: 30, label: "30z", accessibilityLabel: "Ultimele 30 de zile" },
+  { value: 90, label: "90z", accessibilityLabel: "Ultimele 90 de zile" },
 ] as const;
 
 const METRIC_OPTIONS = [
   { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
+  { value: "tokens", label: "Tokeni" },
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
@@ -185,7 +185,7 @@ function UsageScreen(props: {
   const environmentActions = [
     {
       id: "all",
-      title: "All environments",
+      title: "Toate mediile",
       subtitle: undefined,
       state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
     },
@@ -211,14 +211,14 @@ function UsageScreen(props: {
     <Menu
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
-      title="Environments"
+      accessibilityLabel="Filtrează mediile"
+      title="Medii"
       actions={environmentActions}
       onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
+        accessibilityLabel="Filtrează mediile"
         className={cn(
           "items-center justify-center rounded-full",
           Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
@@ -230,7 +230,7 @@ function UsageScreen(props: {
   ) : null;
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
+    <SettingsScreen title="Utilizare" trailing={environmentFilter} workspaceRoot={props.workspace}>
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
@@ -240,12 +240,12 @@ function UsageScreen(props: {
               showEnvironmentFilter
                 ? [
                     withNativeGlassHeaderItem({
-                      accessibilityLabel: "Filter usage environments",
+                      accessibilityLabel: "Filtrează mediile",
                       icon: { name: filterIcon, type: "sfSymbol" },
                       label: "",
                       type: "menu",
                       menu: {
-                        title: "Environments",
+                        title: "Medii",
                         items: environmentActions.map((action) => ({
                           type: "action" as const,
                           label: action.title,
@@ -314,13 +314,13 @@ function UsageScreen(props: {
               ) : null}
               {isPending ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
-                  Scanning provider transcripts…
+                  Se analizează conversațiile furnizorilor…
                 </Text>
               ) : selectedEnvironments.length === 0 ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
                   {environments.length === 0
-                    ? "Connect an environment to see usage."
-                    : "Select an environment to see usage."}
+                    ? "Conectează un mediu ca să vezi utilizarea."
+                    : "Alege un mediu ca să vezi utilizarea."}
                 </Text>
               ) : !canReadDiagnostics ? (
                 <View className="gap-2 py-16">
@@ -426,15 +426,15 @@ function ChartCard(props: {
     <View className="gap-4 rounded-[24px] border-continuous bg-grouped-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
-          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+          {metric === "cost" ? "Cost brut tokeni" : "Tokeni procesați"}
         </Text>
         <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {metric === "cost"
-            ? "* if billed at full API rate"
-            : `Across ${formatCount(merged.sessions)} sessions`}
+            ? "* dacă ar fi facturat la tariful API complet"
+            : `În ${formatCount(merged.sessions)} sesiuni`}
         </Text>
       </View>
 
@@ -497,7 +497,7 @@ function ProviderSection(props: {
   const rows = ordered.map((provider) => ({ kind: "usage" as const, provider }));
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title="Furnizori">
       {rows.map((row, index) => {
         const provider = row.provider;
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
@@ -529,8 +529,8 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? `${formatPercent(share)} din cost · ${formatTokens(provider.totalTokens)} tokeni`
+                : `${formatPercent(share)} din tokeni · ${formatUsd(provider.costUsd)}`}
             </Text>
           </View>
         );
@@ -549,41 +549,41 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals">
+    <SettingsSection title="Totaluri">
       <View className="flex-row flex-wrap">
         <MetricCell
-          label="Processed tokens"
+          label="Tokeni procesați"
           value={formatTokens(merged.totalTokens)}
-          detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
+          detail={`${formatTokens(periodAverage)} pe ${props.isPast24Hours ? "oră" : "zi"} activă`}
         />
         <MetricCell
-          label="Cache savings"
+          label="Economii din cache"
           value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
-              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
+              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x costul brut`
               : "vs full input rates"
           }
         />
         <MetricCell
-          label="Cached input"
+          label="Intrare din cache"
           value={formatTokens(merged.cachedInputTokens)}
-          detail={`${formatPercent(cachedShare)} of observed input`}
+          detail={`${formatPercent(cachedShare)} din intrarea observată`}
         />
         <MetricCell
-          label="Uncached input"
+          label="Intrare fără cache"
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail={`${formatTokens(merged.cacheCreationTokens)} scrieri în cache`}
         />
         <MetricCell
-          label="Output"
+          label="Ieșire"
           value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
+          detail={`incl. ${formatTokens(merged.reasoningTokens)} raționament`}
         />
         <MetricCell
-          label="Unpriced"
+          label="Fără preț"
           value={formatPercent(merged.costQuality.unpricedShare)}
-          detail="of records, excluded from cost"
+          detail="din înregistrări, excluse din cost"
         />
       </View>
     </SettingsSection>
@@ -594,32 +594,32 @@ function CostSection(props: { readonly merged: MergedUsage }) {
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
   const byType = [
-    { label: "Input", value: categoryCost.input, color: colors.input },
-    { label: "Cache read", value: categoryCost.cacheRead, color: colors.cacheRead },
-    { label: "Cache write", value: categoryCost.cacheWrite, color: colors.cacheWrite },
-    { label: "Output", value: categoryCost.output, color: colors.output },
+    { label: "Intrare", value: categoryCost.input, color: colors.input },
+    { label: "Citire cache", value: categoryCost.cacheRead, color: colors.cacheRead },
+    { label: "Scriere cache", value: categoryCost.cacheWrite, color: colors.cacheWrite },
+    { label: "Ieșire", value: categoryCost.output, color: colors.output },
     // Reported cost with no rates to split it, or from older servers. Below a
     // cent it is rounding, not usage.
     {
-      label: "Other",
+      label: "Altele",
       value: categoryCost.unsplit >= 0.005 ? categoryCost.unsplit : 0,
       color: colors.other,
     },
   ];
   const bySpeed = [
     { label: "Standard", value: speedCost.standard, color: colors.standard },
-    { label: "Fast", value: speedCost.fast, color: colors.fast },
-    { label: "Ultrafast", value: speedCost.ultrafast, color: colors.ultrafast },
+    { label: "Rapid", value: speedCost.fast, color: colors.fast },
+    { label: "Ultrarapid", value: speedCost.ultrafast, color: colors.ultrafast },
   ];
   if (props.merged.costUsd <= 0) return null;
 
   return (
     <SettingsSection title="Cost">
-      <ShareBar label="By type" segments={byType} />
+      <ShareBar label="După tip" segments={byType} />
       {speedCost.fast + speedCost.ultrafast > 0 ? (
         <View className="border-t border-border-subtle">
           <ShareBar
-            label="By speed"
+            label="După viteză"
             segments={bySpeed}
             aside={`${formatUsd(speedCost.premium)} premium`}
           />
@@ -694,7 +694,7 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
   );
 
   return (
-    <SettingsSection title="By model">
+    <SettingsSection title="După model">
       {ordered.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
@@ -718,15 +718,15 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
                     isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
                   }`
                 : isModelCostUnknown(model)
-                  ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                  : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                  ? `fără tarife cunoscute · ${formatTokens(model.totalTokens)} tokeni`
+                  : `${formatPercent(model.costShare)} din cost · ${formatTokens(model.totalTokens)} tokeni`}
             </Text>
           </View>
           <Text className="text-base tabular-nums text-foreground">
             {metric === "tokens"
               ? formatTokens(model.totalTokens)
               : isModelCostUnknown(model)
-                ? "Unpriced"
+                ? "Fără preț"
                 : formatUsd(model.costUsd)}
           </Text>
         </View>
@@ -748,13 +748,17 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing:
     });
   }
   if (environment.error)
-    return environment.summary ? `${environment.error} Showing saved totals.` : environment.error;
+    return environment.summary
+      ? `${environment.error} Se arată totalurile salvate.`
+      : environment.error;
   if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+    return environment.summary
+      ? "Deconectat · se arată utilizarea salvată"
+      : "Se așteaptă conexiunea…";
   const progress = usageEnvironmentProgress(environment, refreshing);
-  if (progress.phase === "loading") return "Loading usage…";
-  if (progress.phase === "stale") return "Updating usage…";
+  if (progress.phase === "loading") return "Se încarcă utilizarea…";
+  if (progress.phase === "stale") return "Se actualizează utilizarea…";
   if (progress.phase === "partway")
     return updatingProvidersLabel(progress.providers, providerLabel);
-  return "Usage up to date";
+  return "Utilizare la zi";
 }

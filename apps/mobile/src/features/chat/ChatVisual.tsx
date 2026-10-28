@@ -13,7 +13,7 @@ import { AppText } from "../../components/ui/AppText";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { postTheme, useHtmlRenderTheme } from "../threads/HtmlRenderWebView";
 
-const TITLE = "Visual";
+const TITLE = "Vizual";
 // Near a small chart, so most visuals grow a little when they appear instead of jumping.
 const PLACEHOLDER_HEIGHT = 160;
 const MAX_REMEMBERED_SIZES = 200;
@@ -59,7 +59,7 @@ function Placeholder() {
   return (
     <View className="flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-subtle">
       <AppActivityIndicator />
-      <AppText className="text-xs text-foreground-muted">Preparing visual…</AppText>
+      <AppText className="text-xs text-foreground-muted">Se pregătește vizualul…</AppText>
     </View>
   );
 }

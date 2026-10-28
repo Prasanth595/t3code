@@ -68,7 +68,7 @@ function ContextSource(props: { source: ElementContextSource | null }) {
     : null;
   return (
     <ContextField
-      label="Source"
+      label="Sursă"
       value={[source.functionName, location].filter(Boolean).join("\n")}
       code
     />
@@ -208,13 +208,13 @@ export function ComposerContextSheet(props: {
         ) : null}
         {!record ? (
           <Text className="text-foreground">
-            Context unavailable. The reference was copied without its payload. Copy it again from
-            the original message or remove it.
+            Context indisponibil. Referința a fost copiată fără conținut. Copiaz-o din nou din
+            mesajul original sau elimin-o.
           </Text>
         ) : "payload" in record ? (
           <Text className="text-foreground">
-            This context type is not supported by this version of the app. Its payload will be
-            preserved when sent.
+            Acest tip de context nu e suportat de această versiune a aplicației. Conținutul va fi
+            păstrat la trimitere.
           </Text>
         ) : (
           <>
@@ -247,7 +247,7 @@ export function ComposerContextSheet(props: {
               <>
                 {record.pullRequest ? (
                   <ContextField
-                    label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
+                    label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "ciornă" : record.pullRequest.state}`}
                     value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
                   />
                 ) : null}
@@ -263,11 +263,11 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "preview-annotation" ? (
               <>
-                <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />
+                <ContextField label="Pagină" value={record.pageTitle ?? record.pageUrl} />
                 <ContextField label="URL" value={record.pageUrl} />
-                <ContextField label="Comment" value={record.comment} />
-                <ContextField label="Selection" value={record.targetSummary} />
-                <ContextField label="Requested changes" value={record.styleChanges.join("\n")} />
+                <ContextField label="Comentariu" value={record.comment} />
+                <ContextField label="Selecție" value={record.targetSummary} />
+                <ContextField label="Modificări cerute" value={record.styleChanges.join("\n")} />
                 {record.elements?.map((element, index) => (
                   <View key={`${element.selector ?? element.tagName}:${index}`} className="gap-3">
                     <ContextField
@@ -284,7 +284,7 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "element" ? (
               <>
-                <ContextField label="Page" value={record.pageUrl} />
+                <ContextField label="Pagină" value={record.pageUrl} />
                 <ContextField label="Element" value={record.componentName ?? record.tagName} />
                 <ContextField label="Selector" value={record.selector} code />
                 <ContextSource source={record.source} />
@@ -294,19 +294,19 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "image" ? (
               <ContextField
-                label="File"
+                label="Fișier"
                 value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
               />
             ) : null}
             {record.kind === "mention" ? (
-              <ContextField label="Path" value={record.path} code />
+              <ContextField label="Cale" value={record.path} code />
             ) : null}
             {record.kind === "thread" ? (
               <View className="gap-3">
-                <ContextField label="Thread" value={record.title} />
+                <ContextField label="Conversație" value={record.title} />
                 {props.onOpenThread ? (
                   <Button
-                    label="Open thread"
+                    label="Deschide conversația"
                     tone="secondary"
                     onPress={() =>
                       props.onOpenThread?.({
@@ -321,14 +321,14 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "skill" ? (
               <View className="gap-3">
-                <ContextField label="Skill" value={record.name} />
+                <ContextField label="Abilitate" value={record.name} />
                 <ContextField
-                  label="Description"
-                  value={props.skillDescription ?? "No description is available for this skill."}
+                  label="Descriere"
+                  value={props.skillDescription ?? "Nu există descriere pentru această abilitate."}
                 />
                 {props.onOpenSkill ? (
                   <Button
-                    label="View instructions"
+                    label="Vezi instrucțiunile"
                     tone="secondary"
                     onPress={props.onOpenSkill}
                     fullWidth
@@ -359,7 +359,10 @@ export function ComposerContextSheet(props: {
             onPress={() => {
               props.onClose();
               void openPullRequest(pullRequestUrl).catch(() =>
-                Dialog.alert(`Could not open ${changeRequestTerm}`, "Try again when connected."),
+                Dialog.alert(
+                  `${changeRequestTerm} nu a putut fi deschis`,
+                  "Încearcă din nou când ești conectat.",
+                ),
               );
             }}
             className="rounded-xl bg-subtle p-4"
@@ -369,7 +372,7 @@ export function ComposerContextSheet(props: {
         ) : null}
         {props.onOpenAttachment ? (
           <Button
-            label="Open attachment"
+            label="Deschide atașamentul"
             tone="secondary"
             onPress={props.onOpenAttachment}
             fullWidth
@@ -377,14 +380,14 @@ export function ComposerContextSheet(props: {
         ) : null}
         {props.onOpenPullRequest && !pullRequestUrl ? (
           <Button
-            label={`Open ${changeRequestTerm}`}
+            label={`Deschide ${changeRequestTerm}`}
             tone="secondary"
             onPress={props.onOpenPullRequest}
             fullWidth
           />
         ) : null}
         {props.onRemove ? (
-          <Button label="Remove from draft" tone="secondary" onPress={props.onRemove} fullWidth />
+          <Button label="Elimină din ciornă" tone="secondary" onPress={props.onRemove} fullWidth />
         ) : null}
       </ScrollView>
     </Sheet>

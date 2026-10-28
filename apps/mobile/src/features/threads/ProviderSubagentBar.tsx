@@ -28,7 +28,7 @@ export function ProviderSubagentBar(props: {
       {}
       <View
         accessible
-        accessibilityLabel={`${modelDescription} subagent, ${statusLabel}. It runs on its own and cannot take messages.`}
+        accessibilityLabel={`${modelDescription} subagent, ${statusLabel}. Rulează singur și nu poate primi mesaje.`}
         className="min-w-0 flex-1 gap-0.5"
       >
         <View className="min-w-0 flex-row items-center gap-1.5">
@@ -60,7 +60,7 @@ export function ProviderSubagentBar(props: {
         </Text>
       </View>
       {props.onOpenParent ? (
-        <Button label="Open parent" tone="secondary" onPress={props.onOpenParent} />
+        <Button label="Deschide părintele" tone="secondary" onPress={props.onOpenParent} />
       ) : null}
     </View>
   );

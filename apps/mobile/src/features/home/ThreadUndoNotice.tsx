@@ -15,9 +15,9 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
       pointerEvents="box-none"
     >
       <Toast
-        message={`${notice.action} thread`}
+        message={`Conversație ${notice.action}`}
         action={{
-          label: "Undo",
+          label: "Anulează",
           onPress: () => {
             void notice.undo();
           },

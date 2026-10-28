@@ -41,7 +41,7 @@ function load() {
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
-        error: "Could not restore review drafts. Reopen this screen to retry.",
+        error: "Ciornele revizuirii nu au putut fi restaurate. Redeschide ecranul ca să reîncerci.",
       });
       loading = null;
     }
@@ -67,7 +67,8 @@ async function persist() {
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
-        error: "Drafts are kept in this session, but could not be saved on this device.",
+        error:
+          "Ciornele sunt păstrate în această sesiune, dar nu au putut fi salvate pe dispozitiv.",
       });
     }
   });

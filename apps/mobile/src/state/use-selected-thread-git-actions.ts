@@ -84,7 +84,7 @@ export function useSelectedThreadGitActions() {
           Cause.fail(
             new EnvironmentAuthorizationError({
               requiredScope: AuthOrchestrationOperateScope,
-              message: "This connection cannot update the thread's branch.",
+              message: "Această conexiune nu poate actualiza branch-ul conversației.",
             }),
           ),
         );
@@ -125,13 +125,14 @@ export function useSelectedThreadGitActions() {
             target,
             {
               operation: "refresh_status",
-              label: "Refreshing source control status",
+              label: "Se reîmprospătează starea",
             },
             execute,
           );
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Failed to refresh git status.";
+        const message =
+          error instanceof Error ? error.message : "Starea git nu a putut fi reîmprospătată.";
         setPendingConnectionError(message);
         return null;
       }
@@ -207,9 +208,9 @@ export function useSelectedThreadGitActions() {
           : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Git action failed.";
+        const message = error instanceof Error ? error.message : "Acțiunea Git a eșuat.";
         setPendingConnectionError(message);
-        showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        showGitActionResult({ type: "error", title: "Acțiunea Git a eșuat", description: message });
         return null;
       }
       return result.value;
@@ -250,7 +251,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       return runSelectedThreadGitMutation(
         "switch_ref",
-        "Switching branch",
+        "Se schimbă branch-ul",
         async ({ thread, cwd }) => {
           const result = await switchRef({
             environmentId: thread.environmentId,
@@ -284,7 +285,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       return runSelectedThreadGitMutation(
         "create_ref",
-        "Creating branch",
+        "Se creează branch-ul",
         async ({ thread, cwd }) => {
           const result = await createRef({
             environmentId: thread.environmentId,
@@ -318,7 +319,7 @@ export function useSelectedThreadGitActions() {
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
       return runSelectedThreadGitMutation(
         "create_worktree",
-        "Creating worktree",
+        "Se creează worktree-ul",
         async ({ thread, project }) => {
           const result = await createWorktree({
             environmentId: thread.environmentId,
@@ -351,7 +352,7 @@ export function useSelectedThreadGitActions() {
   const onPullSelectedThreadBranch = useCallback(async () => {
     await runSelectedThreadGitMutation(
       "pull",
-      "Pulling latest changes",
+      "Se aduc ultimele modificări",
       async ({ thread, cwd }) => {
         const result = await pull({
           environmentId: thread.environmentId,
@@ -365,8 +366,8 @@ export function useSelectedThreadGitActions() {
           type: "success",
           title:
             result.value.status === "skipped_up_to_date"
-              ? "Already up to date"
-              : `Pulled latest on ${result.value.refName}`,
+              ? "Deja la zi"
+              : `Ultimele modificări aduse pe ${result.value.refName}`,
         });
         return result;
       },
@@ -378,7 +379,7 @@ export function useSelectedThreadGitActions() {
       const actionId = uuidv4();
       return await runSelectedThreadGitMutation(
         "run_change_request",
-        "Running source control action",
+        "Se rulează acțiunea",
         async ({ thread, cwd }) => {
           const result = await runStackedAction({
             actionId,

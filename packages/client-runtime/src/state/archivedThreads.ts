@@ -59,7 +59,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         }
 
         if (error === null && result._tag === "Failure") {
-          error = "Failed to load archived threads.";
+          error = "Conversațiile arhivate nu au putut fi încărcate.";
         }
       }
 

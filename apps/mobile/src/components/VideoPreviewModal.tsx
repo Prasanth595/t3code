@@ -76,7 +76,7 @@ function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
       },
       (cause: unknown) => {
         if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "Could not load this video.");
+          setError(cause instanceof Error ? cause.message : "Video-ul nu a putut fi încărcat.");
         }
       },
     );
@@ -156,7 +156,7 @@ function OpenVideoPreviewModal(props: {
           <MediaActionsMenu media={mediaActions} inModal />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close video"
+            accessibilityLabel="Închide video-ul"
             onPress={props.onRequestClose}
             className="size-12 items-center justify-center"
           >
@@ -188,13 +188,15 @@ function OpenVideoPreviewModal(props: {
         ) : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Save or share video"
+          accessibilityLabel="Salvează sau partajează video-ul"
           disabled={playback.uri === null || mediaActions.sharing}
           onPress={mediaActions.share}
           className="mx-4 my-3 min-h-12 items-center justify-center rounded-xl bg-white/15 px-4"
         >
           <AppText className="font-t3-medium text-base text-white">
-            {mediaActions.sharing ? "Opening share sheet..." : "Save or share video"}
+            {mediaActions.sharing
+              ? "Se deschide partajarea..."
+              : "Salvează sau partajează video-ul"}
           </AppText>
         </Pressable>
       </View>

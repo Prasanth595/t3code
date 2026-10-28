@@ -5,31 +5,31 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
   switch (state) {
     case "connected":
       return {
-        label: "Connected",
+        label: "Conectat",
         pillClassName: "bg-adaptive-emerald-500-a12-a16",
         textClassName: "text-adaptive-emerald-700-300",
       };
     case "reconnecting":
       return {
-        label: "Reconnecting",
+        label: "Se reconectează",
         pillClassName: "bg-warning",
         textClassName: "text-warning-foreground",
       };
     case "connecting":
       return {
-        label: "Connecting",
+        label: "Se conectează",
         pillClassName: "bg-update",
         textClassName: "text-update-foreground",
       };
     case "unsupported":
       return {
-        label: "Client not supported",
+        label: "Client nesuportat",
         pillClassName: "bg-subtle",
         textClassName: "text-foreground-secondary",
       };
     case "error":
       return {
-        label: "Connection failed",
+        label: "Conectare eșuată",
         pillClassName: "bg-danger",
         textClassName: "text-danger-foreground",
       };
@@ -41,7 +41,7 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
       };
     case "available":
       return {
-        label: "Available",
+        label: "Disponibil",
         pillClassName: "bg-subtle",
         textClassName: "text-foreground-secondary",
       };

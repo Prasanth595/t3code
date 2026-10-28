@@ -93,20 +93,20 @@ type ScheduledTaskRoutes = {
 };
 
 const DAYS = [
-  { index: 1, label: "Mon" },
-  { index: 2, label: "Tue" },
-  { index: 3, label: "Wed" },
-  { index: 4, label: "Thu" },
-  { index: 5, label: "Fri" },
-  { index: 6, label: "Sat" },
-  { index: 0, label: "Sun" },
+  { index: 1, label: "Lun" },
+  { index: 2, label: "Mar" },
+  { index: 3, label: "Mie" },
+  { index: 4, label: "Joi" },
+  { index: 5, label: "Vin" },
+  { index: 6, label: "Sâm" },
+  { index: 0, label: "Dum" },
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
-  if (task.schedule.type === "webhook") return "On webhook";
+  if (task.schedule.type === "webhook") return "La webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
-  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Zilnic";
+  return `${days} la ${formatTime(task.schedule.timeOfDay)}`;
 }
 
 function formatTime(value: string): string {
@@ -131,12 +131,13 @@ function timePickerValue(value: string): Date {
 
 function repeatLabel(weekdays: ReadonlyArray<number>): string {
   const days = new Set(weekdays);
-  if (days.size === 7) return "Every day";
-  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return "Weekdays";
+  if (days.size === 7) return "Zilnic";
+  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day)))
+    return "În zilele lucrătoare";
   return (
     DAYS.filter((day) => days.has(day.index))
       .map((day) => day.label)
-      .join(", ") || "Choose days"
+      .join(", ") || "Alege zilele"
   );
 }
 
@@ -245,7 +246,7 @@ function WebhookFilterRows(props: {
             <Text className="min-w-0 flex-1 text-sm text-foreground-muted">Filter {index + 1}</Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Remove filter ${index + 1}`}
+              accessibilityLabel={`Elimină filtrul ${index + 1}`}
               disabled={props.disabled}
               hitSlop={8}
               onPress={() => props.onChange(removeWebhookFilterDraft(props.filters, filter.id))}
@@ -255,14 +256,14 @@ function WebhookFilterRows(props: {
             </Pressable>
           </View>
           <FormField
-            label="Path"
+            label="Cale"
             value={filter.path}
             placeholder="body.action"
             disabled={props.disabled}
             onChange={(path) => update(index, { path })}
           />
           <SelectRow
-            label="Test"
+            label="Condiție"
             value={WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? ""}
             actions={WEBHOOK_FILTER_OPS.map((option) => ({
               id: option.op,
@@ -276,7 +277,7 @@ function WebhookFilterRows(props: {
           />
           {filter.op === "exists" ? null : (
             <FormField
-              label={filter.op === "in" ? "Values, comma-separated" : "Value"}
+              label={filter.op === "in" ? "Valori, separate prin virgulă" : "Valoare"}
               value={filter.value}
               placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
               disabled={props.disabled}
@@ -292,14 +293,15 @@ function WebhookFilterRows(props: {
           onPress={() => props.onChange([...props.filters, emptyWebhookFilterDraft()])}
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
         >
-          <Text className="min-w-0 flex-1 text-lg text-foreground">Add filter</Text>
+          <Text className="min-w-0 flex-1 text-lg text-foreground">Adaugă filtru</Text>
           <SymbolView name="plus" size={16} tintColorClassName="accent-icon" />
         </Pressable>
       ) : null}
       {props.filters.length > 0 ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Runs only when every filter matches. Other requests are logged as filtered. Separate “is
-          one of” values with commas; a value can't contain a comma.
+          Rulează doar când toate filtrele se potrivesc. Celelalte cereri sunt înregistrate ca
+          filtrate. Separă valorile „este unul din” prin virgulă; o valoare nu poate conține
+          virgulă.
         </Text>
       ) : null}
     </>
@@ -377,7 +379,7 @@ export function SettingsScheduledTasksRouteScreen() {
           withNativeGlassHeaderItem({
             type: "button",
             label: "",
-            accessibilityLabel: "New task",
+            accessibilityLabel: "Sarcină nouă",
             icon: { type: "sfSymbol", name: "plus" } as const,
             disabled: visibleEnvironments.length === 0,
             onPress: newTask,
@@ -385,13 +387,13 @@ export function SettingsScheduledTasksRouteScreen() {
         ]}
       />
       <SettingsScreen
-        title="Scheduled Tasks"
+        title="Sarcini programate"
         trailing={
           <View className="flex-row items-center">
             <AndroidSettingsEnvironmentFilter />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="New task"
+              accessibilityLabel="Sarcină nouă"
               accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
               disabled={visibleEnvironments.length === 0}
               onPress={newTask}
@@ -439,8 +441,8 @@ export function SettingsScheduledTasksRouteScreen() {
           ) : (
             <Text className="px-2 text-base text-foreground-muted">
               {availableTargets.length === 0
-                ? "Connect an environment to view and create scheduled tasks."
-                : "No environments match these filters. Change the filter above."}
+                ? "Conectează un mediu ca să vezi și să creezi sarcini programate."
+                : "Niciun mediu nu corespunde filtrelor. Schimbă filtrul de mai sus."}
             </Text>
           )}
         </ScrollView>
@@ -458,11 +460,11 @@ export function SettingsScheduledTaskNewRouteScreen() {
     initialized.current = true;
     resetEditor();
   }, [availableTargets.length, resetEditor]);
-  return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="Sarcină programată nouă" />;
 }
 
 export function SettingsScheduledTaskEditRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="Editează sarcina programată" />;
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
@@ -521,13 +523,13 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
   const preventRemove = !saved && (hasChanges || saving);
   usePreventRemove(preventRemove, ({ data }) => {
     if (saving) {
-      Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Dialog.alert("Se salvează sarcina", "Așteaptă să se termine salvarea înainte să ieși.");
       return;
     }
-    Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
-      { text: "Keep editing", style: "cancel" },
+    Dialog.alert("Renunți la modificări?", "Modificările nesalvate se vor pierde.", [
+      { text: "Continuă editarea", style: "cancel" },
       {
-        text: "Discard changes",
+        text: "Renunță la modificări",
         style: "destructive",
         onPress: () => {
           if (voiceInput.isBusy) voiceInput.cancel();
@@ -556,7 +558,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
               withNativeGlassHeaderItem({
                 type: "button",
                 label: "",
-                accessibilityLabel: "Back",
+                accessibilityLabel: "Înapoi",
                 icon: { type: "sfSymbol", name: "chevron.backward" },
                 onPress: () => navigation.goBack(),
               }),
@@ -618,8 +620,8 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
-              : "No environments match the current filters. Change the filters to create a task."}
+              ? "Conectează un mediu ca să creezi o sarcină programată."
+              : "Niciun mediu nu corespunde filtrelor. Schimbă filtrele ca să creezi o sarcină."}
           </Text>
         )}
       </ScrollView>
@@ -704,20 +706,20 @@ function TaskForm({
       parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
     ) {
       Dialog.alert(
-        "Invalid age limit",
-        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+        "Limită de vechime invalidă",
+        `Introdu un număr întreg de minute între 1 și ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES} sau lasă gol.`,
       );
       return;
     }
     const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
     if (draft.schedule.mode === "webhook" && "error" in parsedFilters) {
-      Dialog.alert("Invalid filter", parsedFilters.error);
+      Dialog.alert("Filtru invalid", parsedFilters.error);
       return;
     }
     if (draft.schedule.mode === "webhook" && schedule === null) {
       Dialog.alert(
-        "Invalid webhook settings",
-        "Each dedupe key must contain a valid request placeholder. The coalesce window must be whole seconds from 10 to 3600, or blank.",
+        "Setări webhook invalide",
+        "Fiecare cheie de deduplicare trebuie să conțină un placeholder valid. Fereastra de comasare trebuie să fie un număr întreg de secunde între 10 și 3600 sau goală.",
       );
       return;
     }
@@ -730,13 +732,13 @@ function TaskForm({
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
-        "Incomplete task",
-        "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
+        "Sarcină incompletă",
+        "Adaugă un nume, un prompt, un proiect, un model, un program valid și calea checkout-ului dacă e nevoie.",
       );
       return;
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
-      Dialog.alert("Project unavailable", "Choose a project in this environment.");
+      Dialog.alert("Proiect indisponibil", "Alege un proiect din acest mediu.");
       return;
     }
     const input: ScheduledTaskUpsertInput = {
@@ -768,7 +770,7 @@ function TaskForm({
     setSaving(false);
     if (result._tag === "Failure") {
       submissionPending.current = false;
-      failure("Could not save task", result);
+      failure("Sarcina nu a putut fi salvată", result);
       return;
     }
     onSaved();
@@ -783,17 +785,19 @@ function TaskForm({
         importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
       >
         {taskMissing ? (
-          <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
+          <Text className="px-1 text-base text-danger-foreground">
+            Această sarcină nu mai există.
+          </Text>
         ) : null}
 
         {environmentUnavailable ? (
           <Text className="px-1 text-base text-danger-foreground">
-            This environment is disconnected. Reconnect before saving.
+            Acest mediu este deconectat. Reconectează-te înainte să salvezi.
           </Text>
         ) : null}
         <SettingsSection>
           <SelectRow
-            label="Runs on"
+            label="Rulează pe"
             value={environmentLabel}
             valueIcon={
               <EnvironmentMachineSymbol
@@ -821,12 +825,12 @@ function TaskForm({
             }}
           />
         </SettingsSection>
-        <SettingsSection title="Task">
+        <SettingsSection title="Sarcină">
           <FormField
-            label="Name"
+            label="Nume"
             disabled={saving}
             value={draft.title}
-            placeholder="Check for issues"
+            placeholder="Verifică problemele"
             onChange={(title) => setDraft({ ...draft, title })}
           />
           {promptField}
@@ -834,10 +838,10 @@ function TaskForm({
 
         <SettingsSection title="Context">
           <SelectRow
-            label="Project"
+            label="Proiect"
             value={
               projects.find((project) => project.id === draft.projectId)?.title ??
-              (projects.length ? "Choose project" : "No projects available")
+              (projects.length ? "Alege proiectul" : "Niciun proiect disponibil")
             }
             actions={projects.map((project) => ({
               id: project.id,
@@ -876,37 +880,37 @@ function TaskForm({
                   option.selection.model === draft.modelSelection?.model,
               )?.label ??
               draft.modelSelection?.model ??
-              (modelOptions.length ? "Choose model" : "No models available")
+              (modelOptions.length ? "Alege modelul" : "Niciun model disponibil")
             }
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
             disabled={saving || dictationPending || environmentUnavailable}
           />
         </SettingsSection>
 
-        <SettingsSection title="Workspace">
+        <SettingsSection title="Spațiu de lucru">
           <SelectRow
-            label="Run in"
+            label="Rulează în"
             value={
               draft.workspace === "worktree"
-                ? "New worktree"
+                ? "Worktree nou"
                 : draft.workspace === "root"
-                  ? "Project checkout"
-                  : "Specific checkout"
+                  ? "Checkout-ul proiectului"
+                  : "Checkout specific"
             }
             actions={[
               {
                 id: "worktree",
-                title: "New worktree",
+                title: "Worktree nou",
                 state: draft.workspace === "worktree" ? "on" : undefined,
               },
               {
                 id: "root",
-                title: "Project checkout",
+                title: "Checkout-ul proiectului",
                 state: draft.workspace === "root" ? "on" : undefined,
               },
               {
                 id: "existing_worktree",
-                title: "Specific checkout",
+                title: "Checkout specific",
                 state: draft.workspace === "existing_worktree" ? "on" : undefined,
               },
             ]}
@@ -917,7 +921,7 @@ function TaskForm({
           />
           {draft.workspace === "worktree" ? (
             <PickerRow
-              label="Base branch"
+              label="Branch de bază"
               value={resolveNewTaskBranchLabel({
                 branchName: draft.baseRef,
                 startFromOrigin: draft.startFromOrigin,
@@ -930,7 +934,7 @@ function TaskForm({
           ) : null}
           {draft.workspace === "existing_worktree" ? (
             <FormField
-              label="Checkout path"
+              label="Calea checkout-ului"
               disabled={saving}
               value={draft.checkoutPath}
               borderTop
@@ -939,13 +943,13 @@ function TaskForm({
           ) : null}
         </SettingsSection>
 
-        <SettingsSection title="Schedule">
+        <SettingsSection title="Program">
           <View className="px-4 py-3">
             <SegmentedControl
               options={[
-                { value: "fixed_time", label: "At a time" },
+                { value: "fixed_time", label: "La o oră" },
                 { value: "interval", label: "Interval" },
-                { value: "webhook", label: "On webhook" },
+                { value: "webhook", label: "La webhook" },
               ]}
               selected={draft.schedule.mode}
               onSelect={(mode) => {
@@ -965,11 +969,11 @@ function TaskForm({
             <>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
+                accessibilityLabel={`Ora, ${formatTime(draft.schedule.timeOfDay)}`}
                 onPress={() => setTimePickerOpen((open) => !open)}
                 className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
               >
-                <Text className="text-lg text-foreground">Time</Text>
+                <Text className="text-lg text-foreground">Ora</Text>
                 <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
                   {formatTime(draft.schedule.timeOfDay)}
                 </Text>
@@ -993,19 +997,22 @@ function TaskForm({
                 />
               ) : null}
               <SelectRow
-                label="Repeat"
+                label="Repetă"
                 value={repeatLabel(draft.schedule.weekdays)}
                 borderTop
                 actions={[
                   {
                     id: "every_day",
-                    title: "Every day",
+                    title: "Zilnic",
                     state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
                   },
                   {
                     id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    title: "În zilele lucrătoare",
+                    state:
+                      repeatLabel(draft.schedule.weekdays) === "În zilele lucrătoare"
+                        ? "on"
+                        : undefined,
                   },
                   ...DAYS.map((day) => ({
                     id: String(day.index),
@@ -1047,9 +1054,9 @@ function TaskForm({
                 disabled={!canOperate || saving || environmentUnavailable}
               />
               <FormField
-                label="Skip requests older than (minutes)"
+                label="Ignoră cererile mai vechi de (minute)"
                 value={draft.schedule.maxDeliveryAgeMinutes}
-                placeholder="Run every request"
+                placeholder="Rulează orice cerere"
                 keyboardType="number-pad"
                 disabled={saving}
                 borderTop
@@ -1065,7 +1072,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Replay key template"
+                label="Șablon cheie de repetare"
                 value={draft.schedule.replayKey}
                 placeholder="{{headers.delivery-id}}"
                 disabled={saving}
@@ -1075,7 +1082,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Coalesce key template"
+                label="Șablon cheie de comasare"
                 value={draft.schedule.coalesceKey}
                 placeholder="{{body.id}}"
                 disabled={saving}
@@ -1085,7 +1092,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Coalesce window (seconds, 10–3600)"
+                label="Fereastră de comasare (secunde, 10–3600)"
                 value={draft.schedule.coalesceWindowSeconds}
                 placeholder="120"
                 keyboardType="number-pad"
@@ -1096,14 +1103,14 @@ function TaskForm({
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Replay keys suppress repeats for 7 days. Coalescing runs the latest payload when the
-                window from the first delivery closes. Empty keys run normally.
+                Cheile de repetare blochează duplicatele timp de 7 zile. Comasarea rulează ultimul
+                payload când se închide fereastra de la prima livrare. Cheile goale rulează normal.
               </Text>
             </>
           ) : (
             <>
               <FormField
-                label="Minutes between runs"
+                label="Minute între rulări"
                 value={draft.schedule.intervalMinutes}
                 keyboardType="decimal-pad"
                 disabled={saving}
@@ -1114,21 +1121,21 @@ function TaskForm({
               />
               {Number(draft.schedule.intervalMinutes) < 1 ? (
                 <Text className="px-4 pb-3 text-sm text-danger-foreground">
-                  Intervals must be at least 1 minute. Update this interval before saving.
+                  Intervalul trebuie să fie de cel puțin 1 minut. Modifică-l înainte să salvezi.
                 </Text>
               ) : draft.task?.schedule.type === "interval" &&
                 draft.task.schedule.everyMs < 60_000 ? (
                 <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                  This task previously ran more than once per minute. Saving requires an interval of
-                  at least 1 minute.
+                  Această sarcină rula mai des de o dată pe minut. Pentru salvare e nevoie de un
+                  interval de cel puțin 1 minut.
                 </Text>
               ) : null}
             </>
           )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-            <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
+            <Text className="min-w-0 flex-1 text-lg text-foreground">Activă</Text>
             <ThemedSwitch
-              accessibilityLabel="Task enabled"
+              accessibilityLabel="Sarcină activă"
               value={draft.enabled}
               onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />
@@ -1136,7 +1143,7 @@ function TaskForm({
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
-            Time uses the environment's time zone, which may differ from your phone's.
+            Ora folosește fusul orar al mediului, care poate fi diferit de cel al telefonului.
           </Text>
         ) : null}
       </View>
@@ -1146,7 +1153,7 @@ function TaskForm({
         loading={saving}
         disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
         onPress={() => void save()}
-        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+        label={saving ? "Se salvează…" : draft.task ? "Salvează modificările" : "Creează sarcina"}
       />
     </View>
   );
@@ -1177,23 +1184,25 @@ function WebhookScheduleDetails({
     <View className="gap-2 border-t border-border-subtle px-4 py-3">
       <Text className="text-sm text-foreground-muted">
         {
-          "The prompt can use {{body.a.b}}, {{headers.name}}, {{query.name}}, {{body}} and {{request}}. The filled-in prompt is all the agent sees."
+          "Promptul poate folosi {{body.a.b}}, {{headers.name}}, {{query.name}}, {{body}} și {{request}}. Agentul vede doar promptul completat."
         }
       </Text>
       {task === null || resolved === null ? (
-        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+        <Text className="text-sm text-foreground-muted">
+          Salvează sarcina ca să primești adresa webhook.
+        </Text>
       ) : (
         <>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Copy webhook URL"
-            accessibilityHint="Copies the URL to the clipboard"
+            accessibilityLabel="Copiază adresa webhook"
+            accessibilityHint="Copiază adresa în clipboard"
             disabled={!resolved.copyable}
             onPress={() => void tryCopyTextWithHaptic(resolved.address)}
             className="gap-1 active:opacity-70"
           >
             <Text className="text-lg text-foreground">
-              {resolved.copyable ? "Webhook URL" : "Webhook path"}
+              {resolved.copyable ? "Adresă webhook" : "Cale webhook"}
             </Text>
             <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
               {resolved.address}
@@ -1203,14 +1212,14 @@ function WebhookScheduleDetails({
             <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
           ) : null}
           <Button
-            label={rotating ? "Rotating…" : "Rotate URL"}
+            label={rotating ? "Se schimbă…" : "Schimbă adresa"}
             tone="danger"
             disabled={disabled || rotating}
             onPress={() =>
-              Dialog.alert("Rotate URL?", "The current URL stops working immediately.", [
-                { text: "Cancel", style: "cancel" },
+              Dialog.alert("Schimbi adresa?", "Adresa curentă nu va mai funcționa imediat.", [
+                { text: "Anulează", style: "cancel" },
                 {
-                  text: "Rotate",
+                  text: "Schimbă",
                   style: "destructive",
                   onPress: () => {
                     setRotating(true);
@@ -1218,7 +1227,7 @@ function WebhookScheduleDetails({
                       setRotating(false);
                       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                         Dialog.alert(
-                          "Could not rotate URL",
+                          "Adresa nu a putut fi schimbată",
                           String(squashAtomCommandFailure(result)),
                         );
                       }
@@ -1233,7 +1242,7 @@ function WebhookScheduleDetails({
       )}
       {signatureConfigured ? (
         <Text className="text-sm text-foreground-muted">
-          Signature check configured on desktop/web.
+          Verificarea semnăturii e configurată pe desktop/web.
         </Text>
       ) : null}
     </View>
@@ -1287,7 +1296,10 @@ function EnvironmentTasks({
         : action === "toggle"
           ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
           : await remove({ environmentId, input: { id: task.id } });
-    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
+    failure(
+      `Sarcina nu a putut fi ${action === "toggle" ? "actualizată" : action === "run" ? "rulată" : action === "delete" ? "ștearsă" : "modificată"}`,
+      result,
+    );
   };
 
   return (
@@ -1306,10 +1318,12 @@ function EnvironmentTasks({
       {tasks.error ? (
         <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
       ) : !tasks.data ? (
-        <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
+        <Text className="p-4 text-base text-foreground-muted">Se încarcă sarcinile…</Text>
       ) : visibleTasks?.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
-          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
+          {projectIds === null
+            ? "Nicio sarcină programată încă."
+            : "Nicio sarcină în acest proiect."}
         </Text>
       ) : (
         visibleTasks?.map((task, index) => (
@@ -1323,7 +1337,7 @@ function EnvironmentTasks({
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Edit ${task.title}`}
+              accessibilityLabel={`Editează ${task.title}`}
               onPress={() => {
                 onEdit(task);
               }}
@@ -1335,7 +1349,7 @@ function EnvironmentTasks({
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
                 {describeSchedule(task)}
                 {!task.enabled
-                  ? " · Paused"
+                  ? " · Pusă pe pauză"
                   : task.nextRunAt
                     ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
                     : ""}
@@ -1348,18 +1362,18 @@ function EnvironmentTasks({
             </Pressable>
             <Menu
               actions={[
-                { id: "edit", title: "Edit" },
+                { id: "edit", title: "Editează" },
                 {
                   id: "toggle",
-                  title: task.enabled ? "Pause" : "Resume",
+                  title: task.enabled ? "Pauză" : "Reia",
                   attributes: { disabled: !canOperate },
                 },
                 ...(task.schedule.type === "webhook"
                   ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                  : [{ id: "run", title: "Rulează acum", attributes: { disabled: !canOperate } }]),
                 {
                   id: "delete",
-                  title: "Delete",
+                  title: "Șterge",
                   attributes: { destructive: true, disabled: !canOperate },
                 },
               ]}
@@ -1368,10 +1382,10 @@ function EnvironmentTasks({
                 if (action === "edit") {
                   onEdit(task);
                 } else if (action === "delete") {
-                  Dialog.alert("Delete task?", task.title, [
-                    { text: "Cancel", style: "cancel" },
+                  Dialog.alert("Ștergi sarcina?", task.title, [
+                    { text: "Anulează", style: "cancel" },
                     {
-                      text: "Delete",
+                      text: "Șterge",
                       style: "destructive",
                       onPress: () => void act(task, "delete"),
                     },
@@ -1383,7 +1397,7 @@ function EnvironmentTasks({
             >
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Actions for ${task.title}`}
+                accessibilityLabel={`Acțiuni pentru ${task.title}`}
                 className="h-11 w-11 items-center justify-center"
               >
                 <SymbolView

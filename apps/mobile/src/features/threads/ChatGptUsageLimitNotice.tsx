@@ -25,18 +25,20 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
     >
       <View className="flex-row items-center gap-2">
         <ProviderIcon provider="codex" size={16} />
-        <Text className="text-sm font-t3-medium text-foreground">ChatGPT usage limit reached</Text>
+        <Text className="text-sm font-t3-medium text-foreground">
+          Ai atins limita de utilizare ChatGPT
+        </Text>
       </View>
       <Text className="text-xs text-foreground-muted">
         {workspaceLimit
           ? status === "copied"
-            ? "Request copied. Send it to your workspace admin."
-            : "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
-          : "Review your usage settings in ChatGPT."}
+            ? "Cererea a fost copiată. Trimite-o administratorului spațiului de lucru."
+            : "Ai atins limita spațiului de lucru pentru folosirea planului ChatGPT în alte aplicații. Copiază o cerere ca să-i ceri administratorului limite mai mari."
+          : "Verifică setările de utilizare în ChatGPT."}
       </Text>
       {workspaceLimit ? (
         <Button
-          label="Copy request for admin"
+          label="Copiază cererea pentru administrator"
           tone="primary"
           onPress={() =>
             void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST).then(
@@ -47,7 +49,7 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
         />
       ) : (
         <Button
-          label="Manage usage"
+          label="Gestionează utilizarea"
           tone="primary"
           onPress={() =>
             void Linking.openURL(CHATGPT_USAGE_URL).then(
@@ -60,8 +62,8 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
       {status === "copy-failed" || status === "open-failed" ? (
         <Text accessibilityRole="alert" className="text-xs text-destructive">
           {status === "copy-failed"
-            ? "Could not copy the request. Try again."
-            : "Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."}
+            ? "Cererea nu a putut fi copiată. Încearcă din nou."
+            : "ChatGPT nu a putut fi deschis. Mergi la chatgpt.com → Settings → Usage."}
         </Text>
       ) : null}
     </View>

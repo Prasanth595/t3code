@@ -116,15 +116,14 @@ export function useRemoteConnections() {
       const result = await controller.connectPairingUrl(nextPairingUrl, expectedEnvironmentId);
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message =
-          error instanceof Error ? error.message : "Failed to pair with the environment.";
+        const message = error instanceof Error ? error.message : "Asocierea cu mediul a eșuat.";
         if (
           error !== null &&
           typeof error === "object" &&
           "reason" in error &&
           error.reason === "unsupported"
         ) {
-          Dialog.alert("Client not supported", message);
+          Dialog.alert("Client nesuportat", message);
         } else {
           setPendingConnectionError(message);
         }
@@ -162,7 +161,7 @@ export function useRemoteConnections() {
         return;
       }
       const remove = {
-        text: "Remove",
+        text: "Elimină",
         style: "destructive",
         onPress: () => {
           void controller.removeEnvironment(environmentId);
@@ -170,12 +169,12 @@ export function useRemoteConnections() {
       } as const;
       if (environment.isRelayManaged) {
         Dialog.alert(
-          "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
+          "Elimini de pe acest dispozitiv?",
+          `Uită ${environment.environmentLabel} și conversațiile salvate pe acest dispozitiv.\n\nRămâne în contul tău Mira și își păstrează locul de gazdă. Elimină-l din Cont Mira → T3 Connect ca să-l eliberezi.`,
           [
-            { text: "Cancel", style: "cancel" },
+            { text: "Anulează", style: "cancel" },
             {
-              text: "Open T3 Account",
+              text: "Deschide contul Mira",
               onPress: () => navigation.navigate("SettingsAuth"),
             },
             remove,
@@ -184,9 +183,9 @@ export function useRemoteConnections() {
         return;
       }
       Dialog.alert(
-        "Remove from this device?",
-        `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-        [{ text: "Cancel", style: "cancel" }, remove],
+        "Elimini de pe acest dispozitiv?",
+        `Uită ${environment.environmentLabel} și conversațiile salvate pe acest dispozitiv. Dezactivează-l în schimb ca să rămână salvat.`,
+        [{ text: "Anulează", style: "cancel" }, remove],
       );
     },
     [connectedEnvironments, controller, navigation],

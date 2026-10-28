@@ -29,7 +29,7 @@ export function useThreadPromptLink(
     navigation.setParams(clearedPromptLinkParams(THREAD_LINK_KEYS));
     const parsed = parseThreadLinkPrompt(search);
     if (!parsed.ok) {
-      Dialog.alert("Could not open link", parsed.error);
+      Dialog.alert("Link-ul nu a putut fi deschis", parsed.error);
       return;
     }
     if (parsed.value === null) return;

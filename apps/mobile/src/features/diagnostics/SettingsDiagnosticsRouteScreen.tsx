@@ -69,7 +69,7 @@ export function SettingsDiagnosticsRouteScreen() {
   };
 
   return (
-    <SettingsScreen title="Diagnostics">
+    <SettingsScreen title="Diagnosticare">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -77,7 +77,7 @@ export function SettingsDiagnosticsRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title="Startup crashes">
+        <SettingsSection title="Blocări la pornire">
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
               <AppActivityIndicator />
@@ -86,14 +86,14 @@ export function SettingsDiagnosticsRouteScreen() {
           ) : state.status === "unavailable" ? (
             <EmptyState
               icon="exclamationmark.triangle"
-              title="Crash log unavailable"
-              detail="Startup crash records are only kept in store and TestFlight builds."
+              title="Jurnalul de blocări nu e disponibil"
+              detail="Blocările la pornire sunt înregistrate doar în versiunile din magazin și TestFlight."
             />
           ) : records.length === 0 ? (
             <EmptyState
               icon="checkmark.circle"
-              title="No startup crashes"
-              detail="Nothing has taken the app down during launch in the last 7 days."
+              title="Nicio blocare la pornire"
+              detail="Aplicația nu s-a blocat la pornire în ultimele 7 zile."
             />
           ) : (
             records.map((record, index) => (
@@ -103,18 +103,18 @@ export function SettingsDiagnosticsRouteScreen() {
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title="Actions">
+          <SettingsSection title="Acțiuni">
             <SettingsActionRow
               icon={copied ? "checkmark" : "doc.on.doc"}
-              label={copied ? "Copied" : "Copy crash report"}
+              label={copied ? "Copiat" : "Copiază raportul"}
               disabled={state.status !== "ready"}
               onPress={() => void copyReport()}
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Paste the report into a GitHub issue. It contains the app version, the JavaScript error
-            message, and the component stack. Error messages can quote values from the app, so read
-            it over before sharing.
+            Lipește raportul într-un issue GitHub. Conține versiunea aplicației, eroarea JavaScript
+            și stiva de componente. Mesajele de eroare pot cita valori din aplicație, așa că
+            citește-l înainte să-l trimiți.
           </Text>
         </View>
       </ScrollView>

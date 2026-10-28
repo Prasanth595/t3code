@@ -105,24 +105,24 @@ export function ComposerEditor({
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
         Dialog.alert(
-          "Could not paste context",
-          "Remove some attachments or context items from the draft, then paste again.",
+          "Contextul nu a putut fi lipit",
+          "Elimină câteva atașamente sau elemente de context din ciornă, apoi lipește din nou.",
         );
         return;
       }
       const warnings: string[] = [];
       if (result.failures.length > 0)
         warnings.push(
-          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          "Unele atașamente nu au putut fi copiate. Reconectează-te la mediul sursă și copiază-le din nou.",
         );
       if (result.skippedThreads.length > 0)
         warnings.push(
-          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "este" : "sunt"} pe alt calculator.`,
         );
       if (warnings.length > 0)
         Dialog.alert(
-          "Some context is unavailable",
-          [...warnings, "Those references are marked unavailable."].join("\n\n"),
+          "O parte din context nu e disponibilă",
+          [...warnings, "Acele referințe sunt marcate ca indisponibile."].join("\n\n"),
         );
     });
     setComposerContextImporting(draftKey, false);
@@ -131,8 +131,8 @@ export function ComposerEditor({
     if (AsyncResult.isFailure(settled) && !controller.signal.aborted) {
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
-        "Could not paste context",
-        error instanceof Error ? error.message : "Try copying again.",
+        "Contextul nu a putut fi lipit",
+        error instanceof Error ? error.message : "Încearcă să copiezi din nou.",
       );
     }
   };
@@ -211,7 +211,10 @@ export function ComposerEditor({
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
           label={
-            selectedReference?.label ?? selectedSkill?.displayName ?? selectedSkill?.name ?? "Skill"
+            selectedReference?.label ??
+            selectedSkill?.displayName ??
+            selectedSkill?.name ??
+            "Abilitate"
           }
           record={
             record ??

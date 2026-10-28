@@ -16,7 +16,7 @@ export function resolveUsageAccess(input: {
     return {
       canReadDiagnostics: false,
       isPending: false,
-      error: "Could not check this connection's access to diagnostics and usage.",
+      error: "Nu am putut verifica accesul conexiunii la diagnosticare și utilizare.",
     };
   }
   if (input.session === null) {
@@ -29,7 +29,7 @@ export function resolveUsageAccess(input: {
     return {
       canReadDiagnostics: false,
       isPending,
-      error: isPending ? null : "This environment is not connected.",
+      error: isPending ? null : "Mediul nu e conectat.",
     };
   }
   const canReadDiagnostics = sessionGrantsScope(input.session, AuthDiagnosticsReadScope);
@@ -38,6 +38,6 @@ export function resolveUsageAccess(input: {
     isPending: false,
     error: canReadDiagnostics
       ? null
-      : "This connection does not have access to diagnostics and usage.",
+      : "Această conexiune nu are acces la diagnosticare și utilizare.",
   };
 }

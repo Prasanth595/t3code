@@ -36,12 +36,12 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     !pr || allowed
       ? null
       : !connected
-        ? "Reconnect to change labels."
+        ? "Reconectează-te ca să schimbi etichetele."
         : !canWrite
-          ? "This device isn't allowed to change source control on this environment."
+          ? "Acest dispozitiv nu are voie să modifice controlul versiunilor în acest mediu."
           : pr.capabilities.labels !== true
-            ? "This provider doesn't support changing labels."
-            : "Changing labels needs triage access on this repository.";
+            ? "Acest furnizor nu suportă schimbarea etichetelor."
+            : "Schimbarea etichetelor necesită acces de triere în acest repository.";
   const result = useEnvironmentQuery(composerPullRequests.labelCandidates(target));
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
@@ -66,15 +66,19 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     setPending(undefined);
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
-      setError(cause instanceof Error ? cause.message : "Couldn't update this label. Try again.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Eticheta nu a putut fi actualizată. Încearcă din nou.",
+      );
     }
   };
   return (
     <PullRequestSearchSheet
-      title="Labels"
-      placeholder="Search labels"
-      closeAccessibilityLabel="Close labels"
-      clearAccessibilityLabel="Clear label search"
+      title="Etichete"
+      placeholder="Caută etichete"
+      closeAccessibilityLabel="Închide etichetele"
+      clearAccessibilityLabel="Șterge căutarea"
       searchTextChangeId="pr-label-search"
       query={query}
       onQueryChange={setQuery}
@@ -126,28 +130,28 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
                 <EmptyState
                   title={
                     result.error
-                      ? "Couldn't load labels"
+                      ? "Etichetele nu au putut fi încărcate"
                       : needle
-                        ? "No matching labels"
-                        : "This repository has no labels"
+                        ? "Nicio etichetă găsită"
+                        : "Acest repository nu are etichete"
                   }
                   detail={
                     result.error ??
                     (needle
-                      ? "Try another name."
-                      : "Create labels on the provider to use them here.")
+                      ? "Încearcă alt nume."
+                      : "Creează etichete la furnizor ca să le folosești aici.")
                   }
                   variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? <Button label="Reîncearcă" onPress={result.refresh} /> : null}
               </View>
             )
           }
           ListFooterComponent={
             result.data?.truncated ? (
               <Text className="py-4 text-xs text-foreground-muted">
-                This repository has more labels than are listed here. Apply the rest on the
-                provider.
+                Acest repository are mai multe etichete decât apar aici. Aplică-le pe celelalte la
+                furnizor.
               </Text>
             ) : undefined
           }

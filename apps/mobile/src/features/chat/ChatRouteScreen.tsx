@@ -8,7 +8,7 @@ export function ChatRouteScreen({ route }: StaticScreenProps<{ readonly chatId?:
   const navigation = useNavigation();
   const chatId = route.params?.chatId ?? null;
   const { chats } = useMiraChatHistory();
-  const title = chats.find((chat) => chat.id === chatId)?.title ?? "New chat";
+  const title = chats.find((chat) => chat.id === chatId)?.title ?? "Chat nou";
   return (
     <>
       <NativeStackScreenOptions options={{ title }} />

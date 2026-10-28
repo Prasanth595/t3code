@@ -289,10 +289,10 @@ export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
 export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
   if (destination === "snoozed") return null;
-  if (destination === "settled") return source === "settled" ? null : "Settle";
-  if (source === destination) return "Reorder";
-  if (destination === "pinned") return "Pin";
-  if (source === "pinned") return "Unpin";
-  if (source === "settled") return "Unsettle";
-  return "Unsnooze";
+  if (destination === "settled") return source === "settled" ? null : "Finalizează";
+  if (source === destination) return "Reordonează";
+  if (destination === "pinned") return "Fixează";
+  if (source === "pinned") return "Defixează";
+  if (source === "settled") return "Redeschide";
+  return "Reactivează";
 }

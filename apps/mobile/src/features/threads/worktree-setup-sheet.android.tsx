@@ -25,9 +25,9 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
             }}
           >
             <AndroidSheetHeader
-              title="Worktree setup"
+              title="Pregătire worktree"
               actions={[
-                { accessibilityLabel: "Close setup details", icon: "xmark", onPress: onClose },
+                { accessibilityLabel: "Închide detaliile", icon: "xmark", onPress: onClose },
               ]}
             />
             {children}

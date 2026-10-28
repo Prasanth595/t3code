@@ -74,7 +74,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Your computers"
+        title="Calculatoarele tale"
         onClose={handleClose}
         trailing={
           Platform.OS === "android" ? (
@@ -82,14 +82,14 @@ function ConfiguredConnectOnboardingRouteScreen() {
               <View
                 className="size-12 items-center justify-center"
                 accessible
-                accessibilityLabel="Refreshing environments"
+                accessibilityLabel="Se reîmprospătează mediile"
                 accessibilityState={{ busy: true }}
               >
                 <AppActivityIndicator />
               </View>
             ) : (
               <IconButton
-                accessibilityLabel="Refresh environments"
+                accessibilityLabel="Reîmprospătează mediile"
                 icon="arrow.clockwise"
                 onPress={handleRefresh}
               />
@@ -117,8 +117,8 @@ function ConfiguredConnectOnboardingRouteScreen() {
       >
         {isSignedIn ? (
           <Text className="text-sm leading-normal text-foreground-muted">
-            Computers signed in to your Mira account show up here by themselves. To add one, install
-            Mira on it and sign in with this account.
+            Calculatoarele conectate la contul tău Mira apar aici automat. Ca să adaugi unul,
+            instalează Mira pe el și autentifică-te cu acest cont.
           </Text>
         ) : null}
         {isSignedIn ? (
@@ -131,13 +131,13 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your Mira account to see your computers.
+              Autentifică-te în contul Mira ca să-ți vezi calculatoarele.
             </Text>
           </View>
         )}
 
         {userId ? (
-          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
+          <Button label={"Nu mai arăta"} tone="text" onPress={handleDontShowAgain} />
         ) : null}
       </ScrollView>
     </View>

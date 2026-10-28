@@ -45,11 +45,11 @@ export function DraftThreadHeader(props: {
     });
   };
   const requiresThread = () =>
-    Dialog.alert("Available after the first message", "This action needs a saved thread.");
+    Dialog.alert("Disponibil după primul mesaj", "Această acțiune necesită o conversație salvată.");
   return (
     <ThreadHeader
       draft
-      title="New thread"
+      title="Conversație nouă"
       subtitle=""
       headerColor={themeVariables["--color-header"]}
       usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}
@@ -83,13 +83,13 @@ export function DraftThreadHeader(props: {
           if (!canWriteGit || !props.cwd) return;
           const result = await pull({ environmentId, input: { cwd: props.cwd } });
           if (AsyncResult.isFailure(result))
-            Dialog.alert("Could not pull", String(Cause.squash(result.cause)));
+            Dialog.alert("Pull-ul a eșuat", String(Cause.squash(result.cause)));
         },
         onRunAction: async (input) => {
           if (!canWriteGit || !props.cwd) return null;
           const result = await runAction({ ...input, actionId: uuidv4() });
           if (AsyncResult.isFailure(result)) {
-            Dialog.alert("Git action failed", String(Cause.squash(result.cause)));
+            Dialog.alert("Acțiunea Git a eșuat", String(Cause.squash(result.cause)));
             return null;
           }
           return result.value;

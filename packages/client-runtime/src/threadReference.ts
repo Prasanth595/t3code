@@ -27,14 +27,14 @@ export function resolveThreadReferenceCopyTarget(input: {
         kind: "pull-request",
         value: pullRequestUrl,
         clipboardTarget: "pull request link",
-        successTitle: "PR link copied",
-        failureTitle: "Failed to copy PR link",
+        successTitle: "Link-ul PR a fost copiat",
+        failureTitle: "Link-ul PR nu a putut fi copiat",
       }
     : {
         kind: "thread",
         value: input.threadId,
         clipboardTarget: "thread ID",
-        successTitle: "Thread ID copied",
-        failureTitle: "Failed to copy thread ID",
+        successTitle: "ID-ul conversației a fost copiat",
+        failureTitle: "ID-ul conversației nu a putut fi copiat",
       };
 }
