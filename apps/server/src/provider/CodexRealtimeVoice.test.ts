@@ -198,6 +198,14 @@ describe("CodexRealtimeVoice", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("refuses calls on instances that turned voice calls off", () =>
+    Effect.gen(function* () {
+      const { voice } = yield* setup("chatgpt", { enabled: false });
+      const exit = yield* Effect.exit(voice.start({ sdp: "offer-sdp" }));
+      expect(String(exit)).toContain("This provider is disabled");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("limits concurrent calls per instance", () =>
     Effect.gen(function* () {
       const { voice } = yield* setup("chatgpt");

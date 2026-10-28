@@ -3455,7 +3455,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <VoiceCallButton
                     environmentId={environmentId}
                     cwd={gitCwd ?? undefined}
-                    threadId={activeThreadId ?? undefined}
+                    threadId={props.activeThreadShell?.id}
                     preferredInstanceId={selectedModelSelection.instanceId}
                   />
                   <ComposerFooterPrimaryActions

@@ -162,6 +162,19 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /** A call that never started leaves no chat behind in the thread's lineage. */
+  const discardChat = (chat: { chatThreadId: ThreadId; thread: RealtimeVoiceThread }) =>
+    chat.thread.release.pipe(
+      Effect.andThen(
+        orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`voice-call:discard:${chat.chatThreadId}`),
+          threadId: chat.chatThreadId,
+        }),
+      ),
+      Effect.catch((error) => Effect.logWarning("Voice call chat was not discarded.", error)),
+    );
+
   return RealtimeVoice.of({
     start: Effect.fn("RealtimeVoice.start")(function* ({ instanceId, threadId, ...request }) {
       const account = yield* resolve(instanceId);
@@ -177,7 +190,7 @@ const make = Effect.gen(function* () {
             );
       const started = yield* account.realtimeVoice
         .start({ ...request, ...(chat === undefined ? {} : { thread: chat.thread }) })
-        .pipe(Effect.onError(() => chat?.thread.release ?? Effect.void));
+        .pipe(Effect.onError(() => (chat === undefined ? Effect.void : discardChat(chat))));
       return chat === undefined ? started : { ...started, chatThreadId: chat.chatThreadId };
     }),
     stop: Effect.fn("RealtimeVoice.stop")(function* ({ instanceId, sessionId }) {

@@ -180,12 +180,16 @@ export class VoiceCall {
       this.publishBands(heard.local.map((level, band) => Math.max(level, heard.remote[band]!)));
     };
     const stopWatchingLocal = this.platform.watchAudio(microphone, hear("local"));
+    let released = false;
     const teardown = async () => {
-      stopRemote();
-      stopWatchingLocal();
-      microphone.getTracks().forEach((track) => track.stop());
-      connection.close();
-      this.microphone = null;
+      if (!released) {
+        released = true;
+        stopRemote();
+        stopWatchingLocal();
+        microphone.getTracks().forEach((track) => track.stop());
+        connection.close();
+        this.microphone = null;
+      }
       const ended = sessionId;
       sessionId = null;
       if (ended) await this.signaling.stop(ended).catch(() => {});

@@ -56,14 +56,17 @@ describe("VoiceCall", () => {
   it("ends the server's call and the microphone when hung up while connecting", async () => {
     const { call, track, signaling } = setup();
     let opened!: () => void;
+    let requested!: () => void;
+    const startRequested = new Promise<void>((resolve) => (requested = resolve));
     signaling.start.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           opened = () => resolve({ sessionId: "session-1", answerSdp: "answer-sdp" });
+          requested();
         }),
     );
     const starting = call.start();
-    await vi.waitFor(() => expect(signaling.start).toHaveBeenCalled());
+    await startRequested;
     await call.hangUp();
     expect(track.stop).toHaveBeenCalled();
     opened();

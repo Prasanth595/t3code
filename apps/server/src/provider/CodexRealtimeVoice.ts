@@ -163,6 +163,7 @@ export const makeCodexRealtimeVoice = Effect.fn("CodexRealtimeVoice.make")(funct
 
   const start: ProviderRealtimeVoice["start"] = Effect.fn("CodexRealtimeVoice.start")(
     function* (request) {
+      if (!input.enabled) return yield* fail("disabled");
       const sessionId = yield* crypto
         .randomUUIDv4()
         .pipe(Effect.mapError((cause) => fail("failed", cause)));

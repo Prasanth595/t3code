@@ -239,9 +239,10 @@ describe("RealtimeVoice", () => {
     }),
   );
 
-  it.effect("revokes the chat's access when the call fails to start", () =>
+  it.effect("revokes the chat's access and deletes the chat when the call fails to start", () =>
     Effect.gen(function* () {
       const revoked: Array<string> = [];
+      const dispatched: Array<OrchestrationV2ServerCommand> = [];
       const instance = {
         enabled: true,
         realtimeVoice: {
@@ -253,8 +254,11 @@ describe("RealtimeVoice", () => {
         instance,
         (voice) => voice.start({ instanceId, threadId, sdp: "offer" }),
         revoked,
+        [],
+        dispatched,
       ).pipe(Effect.flip);
       expect(revoked).toEqual(["credential-1"]);
+      expect(dispatched.map(({ type }) => type)).toEqual(["thread.delete"]);
     }),
   );
 

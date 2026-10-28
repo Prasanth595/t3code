@@ -31,6 +31,7 @@ const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+const deletedThreadId = ThreadId.make("thread:deleted-call-chat");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
   ...liveThreadShell(threadId, { activeRunId: null }),
@@ -54,6 +55,13 @@ const shells = new Map([
     {
       ...backgroundShell(archivedThreadId, ProviderInstanceId.make("codex")),
       archivedAt: liveThreadShell(archivedThreadId).updatedAt,
+    },
+  ],
+  [
+    deletedThreadId,
+    {
+      ...liveThreadShell(deletedThreadId, { activeRunId: null }),
+      deletedAt: liveThreadShell(deletedThreadId).updatedAt,
     },
   ],
   [
@@ -231,6 +239,10 @@ const mismatchedProvider = {
 };
 // A call acts for the chat it opened, which has no run of its own, until the call ends.
 const callCaller = { ...ended, thread: { ...ended.thread!, call: true } };
+const deletedCallChat = {
+  ...threadCaller(deletedThreadId),
+  thread: { ...threadCaller(deletedThreadId).thread!, call: true },
+};
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
@@ -271,6 +283,7 @@ it.effect.each([
   ["writes", callCaller, {}, "ran"],
   ["acts_as_caller", callCaller, {}, "ran"],
   ["writes_threads", callCaller, { threadId: supervisedThreadId }, "ran"],
+  ["writes_threads", deletedCallChat, { threadId: supervisedThreadId }, "thread_not_found"],
   ["writes", background, {}, "ran"],
   ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],
