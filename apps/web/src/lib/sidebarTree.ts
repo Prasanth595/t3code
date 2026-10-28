@@ -16,13 +16,14 @@ export function installSidebarTree(root: HTMLElement) {
   let ownsFocus = false;
   let contextMenuRow: HTMLElement | undefined;
 
+  const isVisibleRow = (row: HTMLElement) => {
+    const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
+    // A dialog can temporarily make the whole workspace inert. Keep rows navigable
+    // for its return while still excluding exiting row clones.
+    return (!hidden || !root.contains(hidden)) && !row.matches(":disabled");
+  };
   const visibleRows = () =>
-    Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter((row) => {
-      const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
-      // A dialog can temporarily make the whole workspace inert. Keep rows navigable
-      // for its return while still excluding exiting row clones.
-      return (!hidden || !root.contains(hidden)) && !row.matches(":disabled");
-    });
+    Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter(isVisibleRow);
 
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
@@ -43,11 +44,14 @@ export function installSidebarTree(root: HTMLElement) {
   const restoreFocus = () => {
     if (!ownsFocus || focusedId === undefined) return;
     const active = document.activeElement;
-    const onExitingRow =
-      active instanceof HTMLElement && root.contains(active) && active.matches(ROW);
-    if (active !== document.body && !onExitingRow) return;
+    const lost =
+      active === document.body ||
+      (active instanceof HTMLElement &&
+        root.contains(active) &&
+        active.matches(ROW) &&
+        !isVisibleRow(active));
+    if (!lost) return;
     const rows = visibleRows();
-    if (onExitingRow && rows.includes(active)) return;
     const target =
       rows.find((row) => row.dataset.sidebarRow === focusedId) ??
       rows.find((row) => row.dataset.sidebarRow === focusedParent) ??

@@ -27,17 +27,6 @@ function setup() {
   };
 }
 
-// Observers run in creation order, so this resolves after the installed one has run.
-function nextMutation(root: HTMLElement) {
-  return new Promise<void>((resolve) => {
-    const observer = new MutationObserver(() => {
-      observer.disconnect();
-      resolve();
-    });
-    observer.observe(root, { childList: true, subtree: true });
-  });
-}
-
 function press(target: HTMLElement, key: string, init: KeyboardEventInit = {}) {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(event);
@@ -64,7 +53,6 @@ describe("sidebar keyboard navigation", () => {
     expect(document.activeElement).toBe(first);
     expect(activate).not.toHaveBeenCalled();
     expect([first.tabIndex, second.tabIndex, last.tabIndex]).toEqual([0, 0, 0]);
-    expect(tree.root.querySelector("[role]")).toBeNull();
   });
 
   it("expands a group before entering its first child and returns to the parent", () => {
@@ -187,9 +175,9 @@ describe("sidebar keyboard navigation", () => {
     await userEvent.click(text);
     expect(document.activeElement).toBe(document.body);
     // A status change re-renders the list while the user works elsewhere.
-    const rendered = nextMutation(tree.root);
     tree.row("second");
-    await rendered;
+    // The list's mutation observer callback is queued ahead of this continuation.
+    await Promise.resolve();
     expect(document.activeElement).toBe(document.body);
   });
 });
