@@ -2827,6 +2827,7 @@ function claudePendingBackgroundTask(input: {
   readonly description: string | undefined;
   // Undeclared SDK field: the subagent whose own background work this is.
   readonly parentTaskId: unknown;
+  readonly toolUseId: string | undefined;
 }): OrchestrationV2PendingBackgroundTask {
   return {
     taskId: input.taskId,
@@ -2841,6 +2842,7 @@ function claudePendingBackgroundTask(input: {
     ...(typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
       ? { parentTaskId: input.parentTaskId }
       : {}),
+    ...(input.toolUseId === undefined ? {} : { nativeItemId: input.toolUseId }),
   };
 }
 
@@ -2884,6 +2886,7 @@ function claudePendingBackgroundTasksFromRoster(
 function parseClaudeBackgroundTaskEntry(
   entry: unknown,
   monitorTasks: ReadonlyMap<string, unknown>,
+  toolUseIds: ReadonlyMap<string, string>,
 ): OrchestrationV2PendingBackgroundTask | null {
   if (entry === null || typeof entry !== "object") {
     return null;
@@ -2904,6 +2907,7 @@ function parseClaudeBackgroundTaskEntry(
     startedByMonitor: monitorTasks.has(taskId),
     description: typeof description === "string" ? description : undefined,
     parentTaskId: Reflect.get(entry, "parent_task_id"),
+    toolUseId: toolUseIds.get(taskId),
   });
 }
 
@@ -4712,6 +4716,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const lastKnownOpaqueTasks = yield* Ref.make(
           new Map<string, OrchestrationV2PendingBackgroundTask>(),
         );
+        // Roster entries carry only Claude's task id; the timeline item is keyed by the tool call.
+        const toolUseIdsByTaskId = yield* Ref.make(new Map<string, string>());
         const claudeMonitors = yield* Ref.make<{
           readonly calls: ReadonlySet<string>;
           readonly tasks: ReadonlyMap<
@@ -7857,8 +7863,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
+            const toolUseIds = yield* Ref.get(toolUseIdsByTaskId);
             for (const entry of roster) {
-              const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
+              const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks, toolUseIds);
               if (task !== null) {
                 nextTasks.push(task);
               }
@@ -7866,7 +7873,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_started") {
-            if (!isClaudeNonSubagentTask(message) || message.is_backgrounded === false) {
+            if (!isClaudeNonSubagentTask(message)) {
+              return false;
+            }
+            const toolUseId = message.tool_use_id?.trim() || undefined;
+            if (toolUseId !== undefined) {
+              // A foreground command can move to the background later, so remember every one.
+              yield* Ref.update(toolUseIdsByTaskId, (current) => {
+                const updated = new Map(current).set(message.task_id, toolUseId);
+                for (const oldest of updated.keys()) {
+                  if (updated.size <= 64) break;
+                  updated.delete(oldest);
+                }
+                return updated;
+              });
+            }
+            if (message.is_backgrounded === false) {
               return false;
             }
             yield* upsertPendingBackgroundTask(
@@ -7882,6 +7904,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 description:
                   typeof message.description === "string" ? message.description : undefined,
                 parentTaskId: Reflect.get(message, "parent_task_id"),
+                toolUseId,
               }),
             );
             rosterChanged = true;

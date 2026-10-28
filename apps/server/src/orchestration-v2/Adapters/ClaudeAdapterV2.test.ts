@@ -7586,7 +7586,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect(
-    "uses task_started as an incremental roster fallback and clears on empty snapshot",
+    "uses task_started as an incremental roster fallback, keeps its tool call, and clears on empty snapshot",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -7618,10 +7618,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
           );
           assert.isAtLeast(afterStart.length, 1);
-          assert.equal(
-            (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0]?.taskId,
-            WAKE_TASK_ID,
-          );
+          const started = (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0];
+          assert.equal(started?.taskId, WAKE_TASK_ID);
+          assert.equal(started?.nativeItemId, WAKE_TOOL_USE_ID);
 
           yield* Queue.offer(
             harness.sdkMessages,
@@ -7635,6 +7634,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   description: "sleep 150",
                   parent_task_id: "agent-1",
                 },
+                {
+                  task_id: WAKE_TASK_ID,
+                  task_type: "local_bash",
+                  description: WAKE_TASK_DESCRIPTION,
+                },
               ],
               uuid: "00000000-0000-4000-8000-000000000203",
               session_id: WAKE_NATIVE_SESSION,
@@ -7643,7 +7647,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.until(() =>
             providerThreadRosterEvents(harness.events).some(
               (event) =>
-                event.providerThread.pendingBackgroundTasks?.[0]?.parentTaskId === "agent-1",
+                event.providerThread.pendingBackgroundTasks?.[0]?.parentTaskId === "agent-1" &&
+                event.providerThread.pendingBackgroundTasks[1]?.nativeItemId === WAKE_TOOL_USE_ID,
             ),
           );
 
@@ -8336,7 +8341,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command" },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              nativeItemId: "toolu-roster-a",
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));
