@@ -360,6 +360,37 @@ describe("mobile model options", () => {
     ).toMatchObject({ instanceId, model: "claude-opus-5-5" });
   });
 
+  it("explains turned-off models when the stored selection is the provider's only row", () => {
+    const restrictedModels = [{ slug: "claude-fable-5-1", name: "Claude Fable 5.1" }];
+    const config = {
+      providers: [
+        {
+          instanceId: "claude_work",
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5", capabilities: null }],
+          restrictedModels,
+        },
+      ],
+      settings: {
+        providerInstances: { claude_work: { driver: "claudeAgent" } },
+        providerModelPreferences: { claude_work: { hiddenModels: ["claude-opus-5-5"] } },
+      },
+    } as unknown as ServerConfig;
+    const instanceId = ProviderInstanceId.make("claude_work");
+
+    const groups = groupByProvider(
+      buildModelOptions(config, { instanceId, model: "claude-fable-5-1" }, instanceId, null),
+    );
+
+    expect(groups.map((group) => group.models.map((option) => option.selection.model))).toEqual([
+      ["claude-fable-5-1"],
+    ]);
+    expect(groups[0]?.withheldModels?.restrictedModels).toEqual(restrictedModels);
+  });
+
   it("rejects stored selections whose provider is not usable", () => {
     const config = {
       providers: [

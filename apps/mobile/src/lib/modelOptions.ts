@@ -136,6 +136,21 @@ function normalizeSelectionOptions(
       };
 }
 
+function providerWithheldModels(
+  provider: T3ServerConfig["providers"][number],
+): ProviderWithheldModels | undefined {
+  if (!provider.updateRequiredModels?.length && !provider.restrictedModels?.length) {
+    return undefined;
+  }
+  return {
+    driver: provider.driver,
+    ...(provider.updateRequiredModels
+      ? { updateRequiredModels: provider.updateRequiredModels }
+      : {}),
+    ...(provider.restrictedModels ? { restrictedModels: provider.restrictedModels } : {}),
+  };
+}
+
 /** Claude Code answers a model the organization turned off with a different one. */
 function isRestrictedModel(
   provider: T3ServerConfig["providers"][number] | undefined,
@@ -327,16 +342,7 @@ export function buildModelOptions(
 
     const providerLabel = providerDisplayLabel(provider);
     const providerBadge = providerBadgeFor(provider.instanceId);
-    const withheldModels =
-      provider.updateRequiredModels?.length || provider.restrictedModels?.length
-        ? {
-            driver: provider.driver,
-            ...(provider.updateRequiredModels
-              ? { updateRequiredModels: provider.updateRequiredModels }
-              : {}),
-            ...(provider.restrictedModels ? { restrictedModels: provider.restrictedModels } : {}),
-          }
-        : undefined;
+    const withheldModels = providerWithheldModels(provider);
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
@@ -407,6 +413,7 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      const withheldModels = provider ? providerWithheldModels(provider) : undefined;
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
@@ -438,6 +445,7 @@ export function buildModelOptions(
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),
+        ...(withheldModels ? { providerWithheldModels: withheldModels } : {}),
         capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
