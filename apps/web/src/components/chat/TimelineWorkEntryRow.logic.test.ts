@@ -13,6 +13,11 @@ describe("thoughtPreviewSource", () => {
     expect(source.endsWith("word")).toBe(true);
   });
 
+  it("keeps the text when the only whitespace is leading", () => {
+    const source = thoughtPreviewSource(`\n\n${"字".repeat(2_001)}`);
+    expect(source).toBe(`\n\n${"字".repeat(1_998)}`);
+  });
+
   it("never cuts inside an emoji when the trace has no whitespace", () => {
     expect(thoughtPreviewSource(`${"a".repeat(1_999)}🙂${"b".repeat(10)}`)).toBe("a".repeat(1_999));
   });

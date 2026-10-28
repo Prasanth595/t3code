@@ -196,8 +196,10 @@ export function thoughtPreviewSource(text: string): string {
   if (text.length <= THOUGHT_PREVIEW_MAX_CHARS) return text;
   const head = text.slice(0, THOUGHT_PREVIEW_MAX_CHARS);
   const boundary = head.search(/\s\S*$/);
-  // Without whitespace, drop a lone high surrogate so the cut never splits an emoji.
-  return boundary > 0 ? head.slice(0, boundary) : head.replace(/[\uD800-\uDBFF]$/, "");
+  const wordCut = boundary > 0 ? head.slice(0, boundary) : "";
+  if (wordCut.trim()) return wordCut;
+  // Without a usable word boundary, drop a lone high surrogate so the cut never splits an emoji.
+  return head.replace(/[\uD800-\uDBFF]$/, "");
 }
 
 /** Compact reasoning keeps formulas while flattening other Markdown into label text. */
