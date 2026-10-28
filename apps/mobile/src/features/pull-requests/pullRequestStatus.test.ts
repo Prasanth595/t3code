@@ -33,7 +33,7 @@ describe("mobile overview review status", () => {
         review("APPROVED", "2026-10-10T09:00:00Z"),
       ]),
     );
-    expect(result.title).toBe("Changes requested");
+    expect(result.title).toBe("Modificări cerute");
     expect(result.reviews).toHaveLength(1);
   });
 
@@ -54,7 +54,7 @@ describe("mobile overview review status", () => {
         ],
       },
     );
-    expect(result.title).toBe("Awaiting review");
+    expect(result.title).toBe("Așteaptă revizuire");
   });
 
   it("keeps an approval when a later review only comments, and normalizes provider spelling", () => {
@@ -65,14 +65,14 @@ describe("mobile overview review status", () => {
         review("COMMENTED", "2026-10-10T10:00:00Z"),
       ]),
     );
-    expect(result.title).toBe("Approved by julius");
+    expect(result.title).toBe("Aprobat de julius");
     expect(result.reviews).toHaveLength(1);
     expect(
       pullRequestReviewSummary(
         { reviewers: [] },
         activity([review("changes-requested", "2026-10-10T11:00:00Z")]),
       ).title,
-    ).toBe("Changes requested");
+    ).toBe("Modificări cerute");
   });
 });
 

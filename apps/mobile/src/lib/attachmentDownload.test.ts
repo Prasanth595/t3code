@@ -164,7 +164,7 @@ describe("downloadAndShareAttachment", () => {
     mocks.available.mockResolvedValue(false);
     await expect(
       downloadAndShareAttachment({ ...input, signal: new AbortController().signal }),
-    ).rejects.toThrow("Saving and sharing files is unavailable on this device.");
+    ).rejects.toThrow("Salvarea și partajarea fișierelor nu sunt disponibile pe acest dispozitiv.");
     expect(mocks.download).not.toHaveBeenCalled();
     expect(mocks.directories.size).toBe(0);
   });
@@ -208,7 +208,7 @@ describe("downloadAndShareAttachment", () => {
     mocks.share.mockRejectedValue(new Error("No activity can open this file"));
     await expect(
       downloadAndShareAttachment({ ...input, signal: new AbortController().signal }),
-    ).rejects.toThrow("Could not open the share sheet. Try again.");
+    ).rejects.toThrow("Partajarea nu a putut fi deschisă. Încearcă din nou.");
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
   });
 

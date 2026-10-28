@@ -75,7 +75,7 @@ describe("preparing native PDFs", () => {
     mocks.read.mockResolvedValue(new TextEncoder().encode("<html"));
     await expect(
       preparePdfPreview("https://remote.test/a.pdf", new AbortController().signal),
-    ).rejects.toThrow("did not return a PDF");
+    ).rejects.toThrow("nu a returnat un PDF");
     expect(mocks.close).toHaveBeenCalledOnce();
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });

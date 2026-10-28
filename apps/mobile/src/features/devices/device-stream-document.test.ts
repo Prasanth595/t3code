@@ -29,7 +29,7 @@ describe("native device stream document", () => {
     expect(JSON.parse(postMessage.mock.calls[0]![0] as string)).toEqual({
       type: "status",
       status: "error",
-      detail: "Device viewer stopped unexpectedly.",
+      detail: "Vizualizarea dispozitivului s-a oprit neașteptat.",
     });
   });
 });

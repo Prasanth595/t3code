@@ -30,8 +30,8 @@ vi.mock("./SettingsSection", () => ({
 
 import { BranchNamingSettings } from "./BranchNamingSettings";
 
-const PREFIX = "Branch prefix";
-const INSTRUCTIONS = "Branch naming instructions";
+const PREFIX = "Prefix branch";
+const INSTRUCTIONS = "Instrucțiuni denumire branch";
 
 let root: Root;
 const onChange = vi.fn();

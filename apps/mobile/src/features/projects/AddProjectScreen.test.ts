@@ -130,7 +130,7 @@ function cloneAction() {
       remoteUrl: "https://example.com/repo.git",
       repositoryName: "repo",
     }),
-    "Clone project",
+    "Clonează proiectul",
   );
   if (!action) throw new Error("Clone action missing");
   return action;

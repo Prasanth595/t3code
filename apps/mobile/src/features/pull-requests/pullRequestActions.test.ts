@@ -42,22 +42,22 @@ describe("mobile pull request actions", () => {
         "merge",
       ),
     ).toBe(false);
-    expect(mergeUnavailableReason(detail(), false, GITHUB)).toContain("read-only");
+    expect(mergeUnavailableReason(detail(), false, GITHUB)).toContain("doar pentru citire");
   });
 
   it("blocks a conflicting PR's immediate merge and explains why", () => {
     const pr = detail({ mergeability: "conflicting" });
     expect(canPerformPullRequestAction(pr, "merge")).toBe(false);
-    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("conflicts");
-    expect(mergeSummary(pr, true, GITHUB)).toBe("Has conflicts");
+    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("conflictele");
+    expect(mergeSummary(pr, true, GITHUB)).toBe("Are conflicte");
   });
 
   it("names the change request with its host's term", () => {
-    expect(pullRequestActionLabel("close", GITHUB)).toBe("Close pull request");
-    expect(pullRequestActionLabel("close", GITLAB)).toBe("Close merge request");
-    expect(pullRequestActionLabel("revert", GITLAB)).toBe("Create revert merge request");
+    expect(pullRequestActionLabel("close", GITHUB)).toBe("Închide pull request");
+    expect(pullRequestActionLabel("close", GITLAB)).toBe("Închide merge request");
+    expect(pullRequestActionLabel("revert", GITLAB)).toBe("Creează merge request de revert");
     expect(mergeUnavailableReason(detail({ state: "merged" }), true, GITLAB)).toBe(
-      "This merge request has been merged.",
+      "Acest merge request a fost deja îmbinat.",
     );
   });
 });

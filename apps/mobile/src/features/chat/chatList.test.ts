@@ -22,10 +22,10 @@ describe("chatListSections", () => {
     expect(
       sections.map((section) => [section.title, section.chats.map((item) => item.id)]),
     ).toEqual([
-      ["Today", ["a", "b"]],
-      ["Yesterday", ["c"]],
-      ["Previous 7 days", ["d"]],
-      ["Previous 30 days", ["e"]],
+      ["Azi", ["a", "b"]],
+      ["Ieri", ["c"]],
+      ["Ultimele 7 zile", ["d"]],
+      ["Ultimele 30 de zile", ["e"]],
     ]);
   });
 });

@@ -240,7 +240,7 @@ describe("mobile context clipboard imports", () => {
         COMPOSER_CONTEXT_MAX_RECORDS - 2,
         EnvironmentId.make("destination"),
       ),
-    ).rejects.toThrow("Remove some context");
+    ).rejects.toThrow("Elimină câteva elemente de context");
     expect(mocks.download).not.toHaveBeenCalled();
   });
 

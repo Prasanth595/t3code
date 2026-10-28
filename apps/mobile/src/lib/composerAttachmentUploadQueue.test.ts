@@ -323,7 +323,7 @@ describe("draft upload scope and offline submission", () => {
         ...input,
         states: { [key]: { status: "failed", reason: "Offline" } },
       }),
-    ).toBe("Retry or remove the failed attachment");
+    ).toBe("Reîncearcă sau elimină atașamentul eșuat");
     expect(
       composerAttachmentsStillUploading({
         ...input,

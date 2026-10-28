@@ -96,7 +96,7 @@ describe("incoming native shares", () => {
     });
 
     expect(result.attachments).toEqual([]);
-    expect(result.warnings).toEqual(["'huge.png' exceeds the 10 MB attachment limit."]);
+    expect(result.warnings).toEqual(["„huge.png” depășește limita de 10 MB."]);
     expect(readBase64).not.toHaveBeenCalled();
     expect(removeOwnedFile).toHaveBeenCalledWith(image.value);
     expect(hasIncomingShareContent(result)).toBe(false);
@@ -188,7 +188,7 @@ describe("incoming native shares", () => {
       }),
     ).toEqual({
       attachments: [],
-      warnings: [`'${video.originalName}' exceeds the 10 MB attachment limit.`],
+      warnings: [`„${video.originalName}” depășește limita de 10 MB.`],
     });
   });
 
@@ -212,7 +212,7 @@ describe("incoming native shares", () => {
     });
 
     expect(result.attachments).toEqual([]);
-    expect(result.warnings).toEqual(["'empty.txt' is empty or could not be read."]);
+    expect(result.warnings).toEqual(["„empty.txt” e gol sau nu a putut fi citit."]);
   });
 
   it("reads an Android content URI's size after copying it into app-owned storage", async () => {
@@ -276,7 +276,7 @@ describe("incoming native shares", () => {
     });
 
     expect(result.attachments).toEqual([]);
-    expect(result.warnings).toEqual(["'report' is empty or could not be read."]);
+    expect(result.warnings).toEqual(["„report” e gol sau nu a putut fi citit."]);
     expect(removeOwnedFile.mock.calls.map(([uri]) => uri)).toContain(persistedUri);
   });
 
@@ -400,7 +400,7 @@ describe("incoming native shares", () => {
 
     expect(result.attachments).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
     expect(result.warnings).toEqual([
-      `Only the first ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} shared images were attached.`,
+      `Au fost atașate doar primele ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} imagini partajate.`,
     ]);
     expect(readBase64).toHaveBeenCalledTimes(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
     expect(removeOwnedFile).toHaveBeenCalledTimes(payloads.length);

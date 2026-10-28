@@ -235,7 +235,7 @@ describe("buildReviewParsedDiff", () => {
       return;
     }
 
-    expect(parsed.notice).toContain("server size cap");
+    expect(parsed.notice).toContain("limita de mărime a serverului");
     expect(parsed.fileCount).toBe(1);
     expect(parsed.files[0]?.rows[0]).toMatchObject({
       kind: "hunk",
@@ -270,7 +270,7 @@ describe("applyReviewDiffMetadata", () => {
     expect(result.additions).toBe(4100);
     expect(result.deletions).toBe(3020);
     expect(result.files[0]?.additions).toBe(4000);
-    expect(result.notice).toContain("Counts include all changes");
+    expect(result.notice).toContain("Totalurile includ toate modificările");
     expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
   });
 });
