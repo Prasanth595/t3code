@@ -842,11 +842,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
     shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
-  const measureContentOverflow = () =>
+  const measureContentOverflow = useStableCallback(() =>
     timelineContentOverflowsViewport(listRef.current?.getState?.(), {
       composerInset: contentInsetEndAdjustment,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-    });
+    }),
+  );
   // Read next frame, after LegendList's layout effects settle row positions.
   const contentOverflowFrameRef = useRef<number | null>(null);
   const cancelContentOverflowFrame = () => {

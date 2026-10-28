@@ -31,7 +31,7 @@ import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
-import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import { CHAT_TIMELINE_ANCHOR_OFFSET, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found",
@@ -179,6 +179,22 @@ describe("MessagesTimeline messages", () => {
 
     await screen.rerender(timeline(80));
     await vi.waitFor(() => expect(onContentOverflowChange).toHaveBeenLastCalledWith(true));
+    expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
+
+    const list = props.listRef.current!;
+    const state = list.getState();
+    const lastIndex = state.data.length - 1;
+    const lastBottom = state.positionAtIndex(lastIndex)! + state.sizeAtIndex(lastIndex)!;
+    using _state = vi.spyOn(list, "getState").mockReturnValue({
+      ...state,
+      scrollLength: lastBottom + CHAT_TIMELINE_ANCHOR_OFFSET + 120,
+    });
+    using _timers = fakeTimers();
+    onContentOverflowChange.mockClear();
+    await act(() => list.getScrollableNode()!.dispatchEvent(new Event("scroll")));
+    await screen.rerender(timeline(150));
+    await act(() => vi.runOnlyPendingTimers());
+    expect(onContentOverflowChange).toHaveBeenCalledWith(true);
     expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
 
     await screen.unmount();
