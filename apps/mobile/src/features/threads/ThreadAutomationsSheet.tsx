@@ -10,7 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -65,11 +65,13 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
   const environmentLabel =
     useEnvironmentPresentation(environmentId).presentation?.entry.target.label ?? "";
   const [now, setNow] = useState(Date.now);
-  useFocusEffect(() => {
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  });
+  useFocusEffect(
+    useCallback(() => {
+      setNow(Date.now());
+      const timer = setInterval(() => setNow(Date.now()), 60_000);
+      return () => clearInterval(timer);
+    }, []),
+  );
   const canOperate = useAtomValue(
     serverEnvironment.runScheduledTaskNow.permissionAtom(environmentId),
   );
